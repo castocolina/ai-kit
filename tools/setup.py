@@ -3412,7 +3412,7 @@ def _engine_ns(paths, host, sample_json):
 
     cfg, sample, entry, _wiring = _statusline_paths(paths, host)
 
-    def _render_preview(segments, layout=None):
+    def _render_preview(segments, layout=None, cols=None):
         base_config = None
         if layout is not None:
             cfg_src = cfg if os.path.isfile(cfg) else sample
@@ -3421,7 +3421,8 @@ def _engine_ns(paths, host, sample_json):
                     base_config = fh.read()
             except OSError:
                 base_config = ""
-        return render_preview(entry, segments, sample_json, {},
+        env = {"STATUSLINE_COLS": str(cols), "STATUSLINE_LINES": "60"} if cols else {}
+        return render_preview(entry, segments, sample_json, env,
                               layout=layout, base_config=base_config, host=host)
 
     return _types.SimpleNamespace(

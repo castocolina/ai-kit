@@ -15,15 +15,21 @@ one panel group per step, and a ``#footerbar`` key bar; ``_render()`` toggles
 """
 from __future__ import annotations
 
+import contextlib
+import functools
+import json
+import re
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import NamedTuple, Protocol
+from typing import Any, NamedTuple, Protocol, cast
 
 from rich.markup import escape
+from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.timer import Timer
 from textual.widgets import Static
 
 # ---- palette lifted verbatim from mockup-textual.html :root -----------------
@@ -40,10 +46,29 @@ KEYCAP = "#21262d"
 STEP_CHOOSE, STEP_ARRANGE, STEP_REVIEW, STEP_DONE = 0, 1, 2, 3
 LANE_GATE = {1: 20, 2: 30}  # Line 2 needs ≥20 rows, Line 3 needs ≥30
 
+# Arrange preview (D-10..D-12): the preview is a real render of the host's own
+# renderer, titled for the host on screen; the fallback note says it is not one.
+PREVIEW_TITLE = "live preview — {host} (sample data)"
+TRAY_TITLE = "OFF (Space turns a chip on → its home line)"
+PREVIEW_FALLBACK_NOTE = "sample text, render unavailable"
+
+# Choose shows one tab per component kind; global rules is not a tab (ruling 1), it is
+# toggled on Review with `g`. Empty copy is the UI-SPEC "nothing to install" body (ruling 5).
+KINDS = ("skills", "agents", "commands", "hooks")
+GLOBAL_RULES_CAT = "global rules"
+NOTHING_TO_INSTALL = ("nothing to install: no skill, agent, command or hook is installable "
+                      "from this checkout. Enter continues to the status-line panes.")
+GLOBAL_RULES_NOTHING = ("global rules: nothing to change (no global instruction file holds "
+                        "codegraph's installer sentence)")
+# Renderer output is untrusted: keep SGR colour, drop OSC, other CSI and C0 controls.
+_OSC_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+_CSI_NON_SGR_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-ln-~]")
+_C0_RE = re.compile(r"[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f]")
+
 # footer key-bar per step: (label, cap, primary?)  — order matches the HTML
 FOOTERS = [
-    [("Continue", "Enter", True), ("Toggle", "Space", False), ("Move", "↑↓", False),
-     ("Category", "a/n", False), ("Help", "?", False)],
+    [("Continue", "Enter", True), ("Toggle", "Space", False), ("Kind", "←→", False),
+     ("Move", "↑↓", False), ("This kind", "a/n", False), ("Help", "?", False)],
     [("Continue", "Enter", True), ("Back", "Esc", False), ("Move", "←→", False),
      ("Line", "↑↓", False), ("On/off", "Space", False), ("Reset", "r", False),
      ("Help", "?", False)],
@@ -53,10 +78,11 @@ FOOTERS = [
 QUIT_KEY = ("Quit", "q")
 
 HELP = {
-    STEP_CHOOSE: [("↑ ↓", "Move the highlight between components"),
+    STEP_CHOOSE: [("← →", "Switch the component kind (tab)"),
+                  ("↑ ↓", "Move the highlight inside the kind"),
                   ("Space", "Install / skip the highlighted component"),
-                  ("a / n", "Select all / none in the current category"),
-                  ("A / N", "Select all / none across every category"),
+                  ("a / n", "Select all / none of this kind"),
+                  ("A / N", "Select all / none of every kind"),
                   ("Enter", "Continue to Arrange"), ("q", "Quit the installer")],
     STEP_ARRANGE: [("← →", "Reorder the focused chip within its line"),
                    ("↑ ↓", "Move the chip across lines (↑ off Line 1 → OFF tray)"),
@@ -66,7 +92,8 @@ HELP = {
                    ("Enter / Esc", "Continue to Review / back to Choose"),
                    ("q", "Quit the installer")],
     STEP_REVIEW: [("Enter", "Install / write the config"),
-                  ("Esc", "Back to Arrange"), ("q", "Quit")],
+                  ("Esc", "Back to Arrange"), ("g", "Toggle the global rules rewrite"),
+                  ("q", "Quit")],
     STEP_DONE: [("Enter", "Finish and exit"), ("q", "Quit")],
 }
 
@@ -74,8 +101,7 @@ HELP = {
 TITLES = ["Choose what to install", "Arrange your status line",
           "Review & confirm", "✓ ai-kit is installed"]
 SUBS = [
-    "↑↓ move · Space toggle · ◉ install · ◯ skip · a/n this category · "
-    "A/N everything · ? help",
+    "←→ kind · ↑↓ move · Space toggle · a/n this kind · A/N every kind · ? help",
     f"Focus is the [{PINK}]\\[>chip<][/] brackets. ←→ move within a line · "
     "↑↓ across lines (↑ off Line 1 → OFF tray) · Space turns on/off · "
     "Tab/⇧Tab next/prev chip · r reset to defaults · ? help. "
@@ -137,6 +163,12 @@ class WizardResult(NamedTuple):
     state: dict
 
 
+# Injected by setup.py in plans 04 and 05 (doctor run and foreign-status-line preparation);
+# documented here so the context shape is fixed before those plans land.
+DoctorFactoryFn = Callable[..., object]
+PrepareForeignFn = Callable[..., object]
+
+
 class WizardContext(NamedTuple):
     """All data and behaviour the wizard needs, injected by setup.py at
     call-time.  wizard_app imports nothing from setup.py; this is the seam.
@@ -158,6 +190,10 @@ class WizardContext(NamedTuple):
     # {"selection", "initial_enabled"}. Runs IN-UI once the housekeeping gate is
     # answered. None → legacy no-op (fine when housekeeping is empty).
     apply_housekeeping: ApplyHousekeepingFn | None = None
+    # Plans 04 and 05: doctor(...) runs the status-line doctor for one host; prepare_foreign
+    # prepares a foreign status line for keep / remove / customize. Unused until then.
+    doctor: DoctorFactoryFn | None = None
+    prepare_foreign: PrepareForeignFn | None = None
 
 
 @dataclass
@@ -196,6 +232,8 @@ class FlowState:
     gate_done: bool = False
     host_index: int = 0    # the detected host whose gate/board is on Arrange
     result: WizardResult | None = None
+    kind: str = ""         # the active Choose tab (a KINDS entry)
+    kind_cursor: dict = field(default_factory=dict)  # kind -> last cursor index in that kind
 
 
 @dataclass
@@ -214,6 +252,23 @@ class HousekeepingState:
     applying: bool = False
     error: str | None = None
     done: bool = True
+
+
+# One field per render rule (sequence, key, timer, in-flight flags, both durations); splitting
+# them would only move the same bookkeeping behind another object.
+@dataclass
+class PreviewState:  # pylint: disable=too-many-instance-attributes
+    """The Arrange preview's render bookkeeping: a sequence token (the newest
+    render wins, since a cancelled thread worker still delivers), the key of the
+    board last scheduled, one debounce timer, and at most one render in flight."""
+    seq: int = 0
+    done_seq: int = -1
+    key: tuple | None = None
+    timer: Timer | None = None
+    debounce_s: float = 0.15
+    deadline_s: float = 2.0
+    running: bool = False
+    pending: bool = False
 
 
 class WizardCrash(Exception):
@@ -263,8 +318,9 @@ class WizardApp(App):
     #preview {{ border: round {LINE}; background: #010409; height: auto; padding: 0 1;
                border-title-color: {DIM}; }}
 
+    #kind-tabs {{ height: 1; }}
     #picksbox {{ border: round {LINE}; background: #0f141b; height: auto; padding: 0 1;
-                border-title-color: {DIM}; }}
+                border-title-color: {DIM}; text-wrap: nowrap; text-overflow: clip; }}
     #picksCount {{ padding: 1 0 0 0; }}
 
     .rbox {{ border: round {LINE}; background: #0f141b; height: auto; padding: 0 1;
@@ -299,6 +355,7 @@ class WizardApp(App):
             pending=hk_pending,
             done=not hk_pending,
         )
+        self.preview = PreviewState()
         super().__init__()
 
     # ---- the active pane (derived reads, never a mirrored attribute) ------
@@ -453,9 +510,6 @@ class WizardApp(App):
                 out.append(f" [{LINE}]|[/] ".join(parts))
         return out or [f"[{DIM}](all segments off)[/]"]
 
-    def _preview(self):
-        return self._preview_lines(self._pane())
-
     # ---- compose ---------------------------------------------------------
     def _compose_header(self) -> ComposeResult:
         with Horizontal(id="headerbar"):
@@ -464,8 +518,9 @@ class WizardApp(App):
 
     def _compose_choose(self) -> ComposeResult:
         with VerticalScroll(id="step-choose"):
+            yield Static("", id="kind-tabs")
             pb = Static("", id="picksbox")
-            pb.border_title = "select components"
+            pb.border_title = "components"
             yield pb
             yield Static("", id="picksCount")
 
@@ -482,14 +537,8 @@ class WizardApp(App):
             fc = Static("", id="focchip")
             fc.border_title = "focused chip"
             yield fc
-            tray = Static("", id="tray")
-            tray.border_title = "OFF — disabled  (Space activates → its home line)"
-            yield tray
-            pv = Static("", id="preview")
-            pv.border_title = ("live preview — " + (self.hosts[self.flow.host_index].label
-                               if self.hosts else "no host")
-                               + "  (full width, like the real status line)")
-            yield pv
+            yield Static("", id="tray")
+            yield Static("", id="preview")
 
     def _compose_review(self) -> ComposeResult:
         with VerticalScroll(id="step-review"):
@@ -640,6 +689,8 @@ class WizardApp(App):
             keys = [("Yes", "Y", True), ("No", "N", False)]
         else:
             keys = FOOTERS[self.flow.step]
+            if self.flow.step == STEP_REVIEW and self._global_rules_on() is not None:
+                keys = [*keys[:-1], ("Global rules", "g", False), keys[-1]]
         left = sep.join(self._cap(*k) for k in keys)
         self.query_one("#footer-left", Static).update(left)
         self.query_one("#footer-q", Static).update(self._cap(*QUIT_KEY, False))
@@ -682,17 +733,38 @@ class WizardApp(App):
                     "n = remove them (kept in backups) [/]")
         picksbox.update(gate)
 
-    def _choose_category_groups(
-        self, items: list[tuple[str, str, bool]],
-    ) -> tuple[list[str], dict[str, list[int]]]:
-        cats: list[str] = []
-        by_cat: dict[str, list[int]] = {}
-        for idx, (cat, _name, _on) in enumerate(items):
-            if cat not in by_cat:
-                cats.append(cat)
-                by_cat[cat] = []
-            by_cat[cat].append(idx)
-        return cats, by_cat
+    def _choose_kinds(self) -> list[str]:
+        """The tabs: each KINDS entry that has at least one item, in KINDS order."""
+        present = {cat for cat, _name, _on in self.model.sel.items}
+        return [kind for kind in KINDS if kind in present]
+
+    def _kind_indexes(self, kind: str) -> list[int]:
+        return [i for i, (cat, _name, _on) in enumerate(self.model.sel.items) if cat == kind]
+
+    def _kind_counts(self, kind: str) -> tuple[int, int]:
+        idxs = self._kind_indexes(kind)
+        return sum(1 for i in idxs if self.model.sel.items[i][2]), len(idxs)
+
+    def _active_kind(self) -> str | None:
+        """The shown tab: the remembered one while it still has items, else the first."""
+        kinds = self._choose_kinds()
+        if not kinds:
+            return None
+        if self.flow.kind not in kinds:
+            self.flow.kind = kinds[0]
+        return self.flow.kind
+
+    def _sync_kind_cursor(self) -> None:
+        """Move the cursor into the active kind only when it lies outside it; an in-kind
+        cursor (or a housekeeping-replaced selection) is left alone."""
+        kind = self._active_kind()
+        if kind is None:
+            return
+        idxs = self._kind_indexes(kind)
+        if self.model.sel.cursor in idxs:
+            return
+        remembered = self.flow.kind_cursor.get(kind)
+        self.model.sel.cursor = remembered if remembered in idxs else idxs[0]
 
     def _choose_component_row(self, cat: str, name: str, selected: bool, focused: bool) -> str:
         glyph = f"[{GREEN}]◉[/]" if selected else f"[{DIM}]◯[/]"
@@ -706,25 +778,34 @@ class WizardApp(App):
         if not self.hk.done:
             self._render_housekeeping_gate()
             return
+        self._sync_kind_cursor()
         items = self.model.sel.items
-        cur_cat = items[self.model.sel.cursor][0] if items else None
-        cats, by_cat = self._choose_category_groups(items)
-        out: list[str] = []
-        for cat in cats:
-            idxs = by_cat[cat]
-            on = sum(1 for i in idxs if items[i][2])
-            hint = f"[{GREEN}]{on}[/]/{len(idxs)} on"
-            if cat == cur_cat:
-                hint += f"   [{DIM}]· a all · n none[/]"
-            out.append(f"[{CYAN}]▌ {cat.upper()}[/]   {hint}")
-            for i in idxs:
-                _c2, name, selected = items[i]
-                out.append(self._choose_component_row(
-                    cat, name, selected, i == self.model.sel.cursor))
-        self.query_one("#picksbox", Static).update("\n".join(out))
-        sel_n = sum(1 for _c, _n, on in items if on)
+        active = self._active_kind()
+        tabs = []
+        for kind in self._choose_kinds():
+            on, total = self._kind_counts(kind)
+            tabs.append(f"[b {ACCENT}]\\[{kind} {on}/{total}][/]" if kind == active
+                        else f"[{DIM}]{kind} {on}/{total}[/]")
+        self.query_one("#kind-tabs", Static).update("  ".join(tabs))
+        picks = self.query_one("#picksbox", Static)
+        if active is None:
+            picks.border_title = "components"
+            picks.update(f"[{DIM}]{NOTHING_TO_INSTALL}[/]")
+        else:
+            on, total = self._kind_counts(active)
+            picks.border_title = f"{active} {on}/{total}"
+            idxs = self._kind_indexes(active)
+            cursor = self.model.sel.cursor
+            picks.update("\n".join(
+                self._choose_component_row(active, items[i][1], items[i][2], i == cursor)
+                for i in idxs))
+            # Keep the cursor row on screen: a kind can hold more rows than the terminal.
+            scroll = self.query_one("#step-choose", VerticalScroll)
+            row = max(0, idxs.index(cursor) - 3)
+            self.call_after_refresh(lambda: scroll.scroll_to(y=row, animate=False))
+        in_kinds = [on for cat, _n, on in items if cat in KINDS]
         self.query_one("#picksCount", Static).update(
-            f"[{GREEN}]{sel_n}[/] of {len(items)} components selected")
+            f"[{GREEN}]{sum(in_kinds)}[/] of {len(in_kinds)} components selected")
 
     def _chip(self, seg: str, focused: bool, parked: bool) -> str:
         is_ext = seg in self.model.ext_by_id
@@ -792,10 +873,8 @@ class WizardApp(App):
         self.query_one("#tray", Static).update(
             "  ".join(tray_chips) if tray_chips else empty_tray)
         self._render_focus_chip(zones)
-        on_count = sum(len(line) for line in self.board.lines)
-        self.query_one("#preview", Static).update(
-            "\n".join(f"[#d6dee8]{p}[/]" for p in self._preview())
-            + f"\n[{DIM}]{on_count} on · {len(self.board.tray)} off[/]")
+        # The preview's width is known only after layout, so it is scheduled, not drawn here.
+        self.call_after_refresh(self._schedule_preview)
 
     def _render_arrange(self) -> None:
         lane0 = self.query_one("#lane0", Static)
@@ -804,32 +883,149 @@ class WizardApp(App):
             return
         lane0.remove_class("gate-attention")
         lane0.border_title = "Line 1"
+        host_label = self.hosts[self.flow.host_index].label if self.hosts else "no host"
+        self.query_one("#tray", Static).border_title = TRAY_TITLE
+        self.query_one("#preview", Static).border_title = PREVIEW_TITLE.format(host=host_label)
         self._render_arrange_board()
+
+    # ---- arrange preview: a real render through the host's renderer (D-10..D-12) ----
+    async def _on_resize(self, event: events.Resize) -> None:
+        """A new terminal width re-renders the preview with no key press (D-11). Textual's
+        own App resize handler stops the event, so the hook runs after it, not as on_resize."""
+        await super()._on_resize(event)
+        if self.flow.step == STEP_ARRANGE:
+            self.set_timer(0.05, self._schedule_preview)  # after the screen takes the new size
+
+    def _count_markup(self) -> str:
+        pane = self._pane()
+        on_count = sum(len(line) for line in pane.board.lines)
+        return f"[{DIM}]{on_count} on · {len(pane.board.tray)} off[/]"
+
+    def _sample_markup(self) -> str:
+        """The inventory sample lines of the pane on screen, plus the count line."""
+        body = "\n".join(f"[#d6dee8]{p}[/]" for p in self._preview_lines(self._pane()))
+        return f"{body}\n{self._count_markup()}"
+
+    def _schedule_preview(self) -> None:
+        """Key the preview on host, board and width. An unchanged key is a no-op; a
+        changed key drops any render in flight for the old board and debounces a new one."""
+        if self.flow.step != STEP_ARRANGE or not self.hosts:
+            return
+        host_id = self.hosts[self.flow.host_index].id
+        widget = self.query_one("#preview", Static)
+        st = self._serialize_state()
+        cols = widget.content_size.width or 100
+        key = (host_id, json.dumps([st["segments"], st["layout"]], sort_keys=True), cols)
+        if key == self.preview.key:
+            return
+        prev_host = self.preview.key[0] if self.preview.key else None
+        self.preview.key = key
+        self.preview.seq += 1
+        if self.preview.timer is not None:
+            self.preview.timer.stop()
+            self.preview.timer = None
+        self.preview.pending = False
+        if prev_host is not None and prev_host != host_id:
+            # Never show the previous host's render under the new host's title (REVIEWS).
+            widget.update(Text.from_markup(self._sample_markup()))
+        if not any(self.board.lines):
+            widget.update(Text.from_markup(f"[{DIM}](all segments off)[/]\n{self._count_markup()}"))
+            return
+        self.preview.timer = self.set_timer(self.preview.debounce_s, self._kick_preview)
+
+    def _kick_preview(self) -> None:
+        """Start one render for the current board, or mark one pending while a render runs."""
+        self.preview.timer = None
+        seq = self.preview.seq
+        # Armed on every kick, so a render queued behind a stuck one still gets its deadline.
+        self.set_timer(self.preview.deadline_s,
+                       functools.partial(self._preview_timeout, seq))
+        if self.preview.running:
+            self.preview.pending = True
+            return
+        host = self.hosts[self.flow.host_index]
+        if not callable(getattr(host.engine, "render_preview", None)):
+            self._show_preview_fallback()
+            return
+        st = self._serialize_state()
+        cols = self.query_one("#preview", Static).content_size.width or 100
+        self.preview.running = True
+        self._render_preview_job(seq, host.id, st["segments"], st["layout"], cols)
+
+    @work(thread=True, exclusive=True, group="preview")
+    def _render_preview_job(self, seq, host_id, segments, layout, cols) -> None:
+        """Worker: the host's renderer, off the UI thread. Any failure is None (a concrete
+        tuple, so no broad except); the result lands on the UI thread only if still current."""
+        host = next(h for h in self.hosts if h.id == host_id)
+        try:
+            out = cast(Any, host.engine).render_preview(segments, layout=layout, cols=cols)
+        except (OSError, RuntimeError, ValueError, TypeError, AttributeError, KeyError):
+            out = None
+        # The app may have exited while the render ran; quitting does not wait for it.
+        with contextlib.suppress(RuntimeError):
+            self.call_from_thread(self._apply_preview, seq, host_id, out)
+
+    def _apply_preview(self, seq, host_id, out) -> None:
+        self.preview.running = False
+        if self.preview.pending:
+            self.preview.pending = False
+            self._kick_preview()
+        on_screen = bool(self.hosts) and self.hosts[self.flow.host_index].id == host_id
+        if seq != self.preview.seq or self.flow.step != STEP_ARRANGE or not on_screen:
+            return
+        self.preview.done_seq = seq
+        if not out:
+            self._show_preview_fallback()
+            return
+        self.query_one("#preview", Static).update(
+            Text.assemble(self._preview_text(out), "\n", Text.from_markup(self._count_markup())))
+
+    def _preview_timeout(self, seq) -> None:
+        """The 2 s display deadline: a render still running shows the samples and the note."""
+        if seq == self.preview.seq and self.preview.done_seq != seq:
+            self.preview.seq += 1  # the late result is dropped by the seq check
+            self._show_preview_fallback()
+
+    def _show_preview_fallback(self) -> None:
+        body = "\n".join(f"[#d6dee8]{p}[/]" for p in self._preview_lines(self._pane()))
+        self.query_one("#preview", Static).update(Text.from_markup(
+            f"{body}\n[{DIM}]{PREVIEW_FALLBACK_NOTE}[/]\n{self._count_markup()}"))
+
+    @staticmethod
+    def _preview_text(out: str) -> Text:
+        """Renderer output as styled text: SGR colour only; OSC, other CSI, C0 removed."""
+        clean = _OSC_RE.sub("", out)
+        clean = _CSI_NON_SGR_RE.sub("", clean)
+        return Text.from_ansi(_C0_RE.sub("", clean))
 
     def _review_component_rows(self) -> tuple[list[str], int]:
         """Review's per-category component lines plus the non-hook count — the
         number of components Confirm actually symlinks."""
-        cats: list[str] = []
-        by_cat: dict[str, list[str]] = {}
-        for cat, name, on in self.model.sel.items:
-            if cat not in by_cat:
-                cats.append(cat)
-                by_cat[cat] = []
-            if on:
-                by_cat[cat].append(name)
-        rows = [f"[{CYAN}]{cat}[/]: "
-                + (", ".join(by_cat[cat]) if by_cat[cat] else f"[{DIM}](none)[/]")
-                for cat in cats]
+        rows = []
+        for kind in self._choose_kinds():   # the same counts as the tab row and the card
+            on, total = self._kind_counts(kind)
+            names = [name for cat, name, flag in self.model.sel.items if cat == kind and flag]
+            rows.append(f"[{CYAN}]{kind}[/] {on}/{total}: "
+                        + (", ".join(names) if names else f"[{DIM}](none)[/]"))
         ncomp = sum(1 for cat, _n, on in self.model.sel.items
-                    if on and cat not in ("hooks", "global rules"))
+                    if on and cat not in ("hooks", GLOBAL_RULES_CAT))
         return rows, ncomp
+
+    def _global_rules_on(self) -> bool | None:
+        """The global-rules item's state, or None when this checkout has no such item."""
+        for cat, _name, flag in self.model.sel.items:
+            if cat == GLOBAL_RULES_CAT:
+                return bool(flag)
+        return None
 
     def _review_global_rules_lines(self) -> list[str]:
         """Review's global-rules bullet and per-file preview, shown only while the
-        item is on (Phase 30, D-11). Previews live in ctx.state, never in per-host meta."""
+        item is on (Phase 30, D-11). Previews live in ctx.state, never in per-host meta.
+        With no item at all, one dim line says there is nothing to change."""
+        on = self._global_rules_on()
+        if on is None:
+            return [f"[{DIM}]{GLOBAL_RULES_NOTHING}[/]"]
         rules = self.ctx.state.get("_global_rules")
-        on = any(cat == "global rules" and name == "codegraph sentence" and flag
-                 for cat, name, flag in self.model.sel.items)
         if not rules or not on:
             return []
         count = len(rules["changes"])
@@ -1007,19 +1203,22 @@ class WizardApp(App):
         if not self.hk.done:
             return self._key_housekeeping(event)
         ch, k = event.character, event.key
-        n = len(self.model.sel.items)
-        if not n:
+        kind = self._active_kind()
+        if kind is None:            # nothing installable: only Enter acts
             return k == "enter" and self._enter_arrange()
-        if k == "up":
-            self.model.sel.cursor = (self.model.sel.cursor - 1) % n
-        elif k == "down":
-            self.model.sel.cursor = (self.model.sel.cursor + 1) % n
+        sel = self.model.sel
+        if k in ("left", "right"):
+            self._switch_kind(1 if k == "right" else -1)
+        elif k in ("up", "down"):
+            self._move_in_kind(1 if k == "down" else -1)
         elif k == "space":
-            self.model.sel.toggle_cursor()
+            sel.toggle_cursor()
         elif ch in ("a", "n"):
-            self.model.sel.set_category(self.model.sel.items[self.model.sel.cursor][0], ch == "a")
+            sel.set_category(kind, ch == "a")
         elif ch in ("A", "N"):
-            self.model.sel.set_all(ch == "A")
+            # Per kind, never set_all: that would also flip the global-rules item.
+            for every in self._choose_kinds():
+                sel.set_category(every, ch == "A")
         elif k == "enter":
             return self._enter_arrange()
         elif k == "tab":
@@ -1027,6 +1226,25 @@ class WizardApp(App):
         else:
             return False
         return True
+
+    def _switch_kind(self, step: int) -> None:
+        kinds = self._choose_kinds()
+        active = self._active_kind()
+        if len(kinds) < 2 or active is None:
+            return
+        self.flow.kind_cursor[active] = self.model.sel.cursor
+        self.flow.kind = kinds[(kinds.index(active) + step) % len(kinds)]
+        self._sync_kind_cursor()
+
+    def _move_in_kind(self, step: int) -> None:
+        kind = self._active_kind()
+        if kind is None:
+            return
+        self._sync_kind_cursor()
+        idxs = self._kind_indexes(kind)
+        new = idxs[(idxs.index(self.model.sel.cursor) + step) % len(idxs)]
+        self.model.sel.cursor = new
+        self.flow.kind_cursor[kind] = new
 
     def _key_housekeeping(self, event: events.Key) -> bool:
         if self.hk.applying:
@@ -1218,7 +1436,13 @@ class WizardApp(App):
         can never bypass a host's gate (the two-host PTY scenario pins this)."""
         return all(self.views[h.id].answered for h in self.hosts)
 
-    def _key_review(self, event: events.Key) -> bool:
+    def _key_review(self, event: events.Key) -> bool:  # pylint: disable=too-many-return-statements
+        if event.character == "g":
+            on = self._global_rules_on()
+            if on is None:
+                return False       # no item in this checkout: `g` is not consumed
+            self.model.sel.set_category(GLOBAL_RULES_CAT, not on)
+            return True
         if event.key == "enter":
             if not self._has_net_change():
                 self.query_one("#cta", Static).update(

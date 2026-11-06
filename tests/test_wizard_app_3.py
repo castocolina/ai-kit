@@ -506,6 +506,56 @@ class TestGlobalRulesReview(unittest.IsolatedAsyncioTestCase):
             what = str(query_static(app, "#rev-what").content)
             self.assertNotIn("Rewrite codegraph's sentence", what)
 
+    async def test_g_toggles_the_item_on_review(self):
+        app = wa.WizardApp(self._ctx(True))
+        async with app.run_test() as pilot:
+            self.assertEqual(await self._to_review(app, pilot), wa.STEP_REVIEW)
+            await pilot.press("g")
+            await pilot.pause()
+            self.assertFalse(app._global_rules_on())
+            self.assertNotIn("Rewrite codegraph's sentence",
+                             str(query_static(app, "#rev-what").content))
+            self.assertIn("Global rules", str(query_static(app, "#footer-left").content))
+            await pilot.press("g")
+            await pilot.pause()
+            self.assertTrue(app._global_rules_on())
+
+    async def test_enter_commits_with_the_item_off_after_g(self):
+        calls = []
+
+        def commit(selection, states):
+            calls.append([(c, n, on) for c, n, on in selection.items])
+            return {"ok": True, "adopt": False, "log": [], "hosts": {}}
+        ctx = self._ctx(True)._replace(commit=commit)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("space")          # a real change: the first skill goes off
+            for _ in range(6):
+                if app.flow.step == wa.STEP_REVIEW:
+                    break
+                await pilot.press("enter")
+                await pilot.pause()
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+            await pilot.press("g")              # the item goes off on Review
+            await pilot.press("enter")          # install
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertEqual(len(calls), 1)
+        global_rules = [on for c, _n, on in calls[0] if c == "global rules"]
+        self.assertEqual(global_rules, [False])
+
+    async def test_without_the_item_review_says_nothing_to_change(self):
+        app = wa.WizardApp(make_ctx(host_ids=()))
+        async with app.run_test() as pilot:
+            self.assertEqual(await self._to_review(app, pilot), wa.STEP_REVIEW)
+            self.assertIn("global rules: nothing to change",
+                          str(query_static(app, "#rev-what").content))
+            await pilot.press("g")              # no item: `g` is not consumed
+            await pilot.pause()
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+
 
 def _rules_body():
     # The installer sentence sits inside the block (rewritten) and once outside it (kept).

@@ -431,8 +431,8 @@ class TestPhase1E2E(unittest.TestCase):
         choose_output = b"".join(all_captured)
         self.assertIn(b"ai-kit install wizard", choose_output,
                       msg="Choose: expected header 'ai-kit install wizard' on first screen")
-        self.assertIn(b"select components", choose_output,
-                      msg="Choose: expected picksbox border title 'select components'")
+        self.assertIn(b"Choose what to install", choose_output,
+                      msg="Choose: expected the Choose step title")
         self.assertIn(b"components selected", choose_output,
                       msg="Choose: expected pick count '... components selected'")
         self.assertNotIn(b"render_time", choose_output,
@@ -714,6 +714,12 @@ class TestPhase2E2E(unittest.TestCase):
                 captured=captured,
             )
 
+            # Choose shows one kind card at a time: move to the hooks tab (→ twice) so its
+            # rows render and the capture below can check them. Tab switching keeps selection.
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"\x1b[C\x1b[C")
+            captured.append(_settle(master_fd, time.time() + 0.5))
+
             # ── Step 2: Enter → Choose → Arrange (adoption gate shown) ───────
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
@@ -784,10 +790,10 @@ class TestPhase2E2E(unittest.TestCase):
         # Choose screen
         self.assertIn("ai-kit install wizard", all_output,
                       msg="Choose: expected header 'ai-kit install wizard' in output")
-        self.assertIn("select components", all_output,
-                      msg="Choose: expected picksbox border title 'select components'")
-        self.assertIn("HOOKS", all_output,
-                      msg="Choose: expected the six-row hooks category")
+        self.assertIn("skills ", all_output,
+                      msg="Choose: expected the 'skills N/M' tab")
+        self.assertIn("hooks ", all_output,
+                      msg="Choose: expected the 'hooks N/M' tab")
         hook_ids = ("session-briefing", "tool-advisor", "tool-reminder",
                     "decision-probe", "precompact", "session-wake")
         # Match only the HOOKS rows (a bullet, then the id): a bare substring also matches the
@@ -1083,15 +1089,15 @@ class TestPhase3E2E(unittest.TestCase):
     # Scenario 2
     # ------------------------------------------------------------------
 
-    def test_reconfigure_preloads_saved_arrangement(self):
-        """reconfigure pre-loads the on-disk arrangement into the Arrange board.
+    # The live preview renders the sample directory of the path segment verbatim: the
+    # sample lives outside $HOME, so no "~" abbreviation (probed against the real renderer).
+    _PATH_SAMPLE = "/home/dev/project"
 
-        Pre-seeds config_toml with path=false (path toggled OFF).  Spawns
-        reconfigure, drives to the Arrange board, and proves the on-disk state was
-        loaded (not the defaults): ``path`` appears in the UI but its preview
-        sample ``~/proj`` is ABSENT — i.e. path is OFF (in the tray), which only
-        happens if the saved arrangement was pre-loaded (by default path is ON and
-        its sample would render in the live preview).  Then aborts with ``q``.
+    def _capture_reconfigure_board(self, seed_toml):
+        """Drive ``reconfigure`` to the Arrange board and return the whole terminal capture.
+
+        ``seed_toml`` is the pre-seeded config text, or None to run on the defaults.
+        Aborts with ``q`` once the board has rendered.
         """
         uv = _uv_cmd()
         claude_dir = self._mk_temp_dir()
@@ -1099,19 +1105,14 @@ class TestPhase3E2E(unittest.TestCase):
         config_toml = self._config_toml_path(xdg_home)
         env = self._base_env(claude_dir, xdg_home)
 
-        # Pre-seed config_toml with path=false so the saved state differs from
-        # defaults (defaults: path=true).  The doctor accepts this file.
-        self._seed_config_toml(
-            config_toml,
-            "[segments]\npath = false\n",
-        )
-
-        # Verify the doctor accepts the pre-seeded file before we even run.
-        pre_check_rc = self._run_doctor_check(config_toml)
-        self.assertEqual(
-            pre_check_rc, 0,
-            msg=f"Pre-seeded config_toml is not valid; doctor check returned {pre_check_rc}",
-        )
+        if seed_toml is not None:
+            self._seed_config_toml(config_toml, seed_toml)
+            # Verify the doctor accepts the pre-seeded file before we even run.
+            pre_check_rc = self._run_doctor_check(config_toml)
+            self.assertEqual(
+                pre_check_rc, 0,
+                msg=f"Pre-seeded config_toml is not valid; doctor check returned {pre_check_rc}",
+            )
 
         pid, master_fd = spawn_pty(
             [uv, "run", "--script", SETUP, "reconfigure"],
@@ -1179,7 +1180,17 @@ class TestPhase3E2E(unittest.TestCase):
             with contextlib.suppress(ChildProcessError, OSError):
                 os.waitpid(pid, 0)
 
-        all_output = b"".join(captured).decode("utf-8", errors="replace")
+        return b"".join(captured).decode("utf-8", errors="replace")
+
+    def test_reconfigure_preloads_saved_arrangement(self):
+        """reconfigure pre-loads the on-disk arrangement into the Arrange board.
+
+        Pre-seeds config_toml with path=false (path toggled OFF).  The board shows
+        ``path`` as a chip, but its live-preview text (the sample directory) must be
+        ABSENT: path is OFF (in the tray).  The positive control below proves the
+        same text does render when path is ON, so this absence check can fail.
+        """
+        all_output = self._capture_reconfigure_board("[segments]\npath = false\n")
 
         # The board rendered: the 'path' segment is present in the UI (as a chip).
         self.assertIn(
@@ -1190,17 +1201,25 @@ class TestPhase3E2E(unittest.TestCase):
                 f"after reconfigure.\nCaptured output:\n{all_output}"
             ),
         )
-
-        # Proof the saved arrangement was pre-loaded (not defaults): path is OFF,
-        # so it sits in the tray and its preview sample '~/proj' is NOT rendered.
-        # By default path is ON and '~/proj' would appear in the live preview.
         self.assertNotIn(
-            "~/proj",
+            self._PATH_SAMPLE,
             all_output,
             msg=(
-                "Expected path's preview sample '~/proj' to be ABSENT (path OFF / "
+                f"Expected path's preview text {self._PATH_SAMPLE!r} to be ABSENT (path OFF / "
                 "in tray) after reconfigure pre-loaded the saved path=false "
                 f"arrangement, but it was rendered.\nCaptured output:\n{all_output}"
+            ),
+        )
+
+    def test_reconfigure_default_board_previews_path(self):
+        """Positive control: on the defaults path is ON, so its preview text renders."""
+        all_output = self._capture_reconfigure_board(None)
+        self.assertIn(
+            self._PATH_SAMPLE,
+            all_output,
+            msg=(
+                f"Expected path's preview text {self._PATH_SAMPLE!r} on the default board "
+                f"(path is ON by default), but it was not rendered.\nCaptured output:\n{all_output}"
             ),
         )
 
@@ -1299,8 +1318,8 @@ class TestCurlBashE2E(unittest.TestCase):
             msg=f"wizard did not render a TUI under piped stdin; got {decoded!r}",
         )
         self.assertIn(
-            "select components", decoded,
-            msg="curl|bash path: expected Choose-screen text 'select components' "
+            "skills ", decoded,
+            msg="curl|bash path: expected Choose-screen tab row 'skills N/M' "
                 f"in piped-stdin output; got {decoded!r}",
         )
         # 'q' abort is a clean exit; a hung/failed driver would not exit 0.

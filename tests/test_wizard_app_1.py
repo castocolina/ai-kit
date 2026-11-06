@@ -17,7 +17,7 @@ from tests.wizard_app_common import HAVE_TEXTUAL, query_static
 from tools import wizard_app as wa
 
 if HAVE_TEXTUAL:
-    from tests.wizard_fixtures import make_ctx
+    from tests.wizard_fixtures import make_ctx, make_ctx_kinds
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
@@ -73,62 +73,132 @@ class TestStructuralFidelity(unittest.IsolatedAsyncioTestCase):
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
-class TestChoose(unittest.IsolatedAsyncioTestCase):
-    """Choose (step 0) drives ctx.selection only."""
+class TestChooseTabs(unittest.IsolatedAsyncioTestCase):
+    """Choose (step 0): one tab per kind that has items, one card on screen (D-01, D-02)."""
 
-    async def test_down_up_wrap_cursor(self):
-        app = wa.WizardApp(make_ctx())
-        n = len(app.model.sel.items)
+    def _tabs(self, app):
+        return str(query_static(app, "#kind-tabs").content)
+
+    async def test_tab_row_counts_and_no_commands_tab(self):
+        app = wa.WizardApp(make_ctx_kinds())
         async with app.run_test() as pilot:
             await pilot.pause()
-            self.assertEqual(app.model.sel.cursor, 0)
-            await pilot.press("up")            # wrap to last
-            self.assertEqual(app.model.sel.cursor, n - 1)
-            await pilot.press("down")          # wrap back to first
-            self.assertEqual(app.model.sel.cursor, 0)
+            tabs = self._tabs(app)
+            self.assertIn("skills 3/3", tabs)
+            self.assertIn("agents 1/1", tabs)
+            self.assertIn("hooks 1/2", tabs)
+            self.assertNotIn("commands", tabs)
+            self.assertIn("skills 3/3", str(query_static(app, "#picksbox").border_title))
 
-    async def test_space_toggles_cursor_item(self):
-        app = wa.WizardApp(make_ctx())
-        before = app.model.sel.items[0][2]
+    async def test_right_wraps_and_left_goes_back(self):
+        app = wa.WizardApp(make_ctx_kinds())
         async with app.run_test() as pilot:
             await pilot.pause()
+            self.assertEqual(app.flow.kind, "skills")
+            await pilot.press("right")
+            self.assertEqual(app.flow.kind, "agents")
+            await pilot.press("right")
+            self.assertEqual(app.flow.kind, "hooks")
+            await pilot.press("right")          # past the last tab wraps to the first
+            self.assertEqual(app.flow.kind, "skills")
+            await pilot.press("left")           # past the first wraps to the last
+            self.assertEqual(app.flow.kind, "hooks")
+
+    async def test_down_wraps_inside_card_and_each_tab_keeps_its_cursor(self):
+        app = wa.WizardApp(make_ctx_kinds())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("down")
+            self.assertEqual(app.model.sel.cursor, 1)
+            await pilot.press("down")
+            await pilot.press("down")           # three skills: wraps to the first
+            self.assertEqual(app.model.sel.cursor, 0)
+            await pilot.press("down")
+            await pilot.press("right")          # agents: its own cursor
+            self.assertEqual(app.model.sel.items[app.model.sel.cursor][0], "agents")
+            await pilot.press("left")           # back to skills: cursor 1 remembered
+            self.assertEqual(app.model.sel.cursor, 1)
+
+    async def test_space_changes_only_its_card_and_review_counts(self):
+        app = wa.WizardApp(make_ctx_kinds())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.press("right")          # hooks; cursor on tool-advisor
+            await pilot.press("down")           # rtk-hint (off)
             await pilot.press("space")
-        self.assertEqual(app.model.sel.items[0][2], not before)
+            tabs = self._tabs(app)
+            self.assertIn("hooks 2/2", tabs)
+            self.assertIn("skills 3/3", tabs)
+            self.assertIn("agents 1/1", tabs)
+            rows, _ncomp = app._review_component_rows()
+            self.assertTrue(any("2/2: tool-advisor, rtk-hint" in row for row in rows), rows)
 
-    async def test_a_n_set_cursor_category(self):
-        app = wa.WizardApp(make_ctx())  # cursor 0 → category "agents" (2 items)
+    async def test_n_and_upper_n_and_upper_a(self):
+        app = wa.WizardApp(make_ctx_kinds())
         async with app.run_test() as pilot:
             await pilot.pause()
+            await pilot.press("right")          # agents, one item
             await pilot.press("n")
-            agents = [it for it in app.model.sel.items if it[0] == "agents"]
-            self.assertTrue(all(not it[2] for it in agents))
-            # other categories untouched
-            self.assertTrue(app.model.sel.items[2][2])  # commands/code-review still on
-            await pilot.press("a")
-            self.assertTrue(all(it[2] for it in agents))
+            self.assertEqual(app.model.sel.items[3][2], False)
+            self.assertIn("skills 3/3", self._tabs(app))
+            self.assertIn("hooks 1/2", self._tabs(app))
+            await pilot.press("N")
+            self.assertTrue(all(not on for _c, _n, on in app.model.sel.items))
+            await pilot.press("A")
+            self.assertTrue(all(on for _c, _n, on in app.model.sel.items))
 
-    async def test_upper_a_n_set_all(self):
-        app = wa.WizardApp(make_ctx())
+    async def test_one_kind_catalog_has_one_tab_and_arrows_do_nothing(self):
+        app = wa.WizardApp(make_ctx_kinds(items=[("skills", "brainstorming", True)]))
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("N")
-            self.assertTrue(all(not it[2] for it in app.model.sel.items))
-            await pilot.press("A")
-            self.assertTrue(all(it[2] for it in app.model.sel.items))
+            self.assertIn("skills 1/1", self._tabs(app))
+            await pilot.press("right")
+            await pilot.press("left")
+            self.assertEqual(app.flow.kind, "skills")
+
+    async def test_empty_catalog_shows_nothing_to_install_and_enter_leaves(self):
+        app = wa.WizardApp(make_ctx_kinds(items=[]))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.assertIn("nothing to install", str(query_static(app, "#picksbox").content))
+            await pilot.press("enter")
+            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
 
     async def test_tab_is_noop(self):
-        app = wa.WizardApp(make_ctx())
+        app = wa.WizardApp(make_ctx_kinds())
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("tab")
             self.assertEqual(app.flow.step, wa.STEP_CHOOSE)
 
     async def test_enter_advances_to_arrange(self):
-        app = wa.WizardApp(make_ctx())
+        app = wa.WizardApp(make_ctx_kinds())
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")
             self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
+
+    async def test_twenty_five_skills_scroll_to_the_last_item(self):
+        items = [("skills", f"skill-{i:02d}", True) for i in range(25)]
+        app = wa.WizardApp(make_ctx_kinds(items=items))
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            scroll = app.query_one("#step-choose")
+            self.assertGreater(scroll.max_scroll_y, 0)
+            await pilot.press("up")             # wraps to the last skill
+            await pilot.pause()
+            self.assertGreater(scroll.scroll_y, 0)
+
+    async def test_wide_descriptions_keep_one_row_each(self):
+        items = [("skills", f"skill-{i:02d}", True) for i in range(25)]
+        wide = "説明😀" * 20                     # East Asian and emoji cells, far past 80 columns
+        ctx = make_ctx_kinds(items=items)._replace(
+            component_meta={f"skill-{i:02d}": wide for i in range(25)})
+        app = wa.WizardApp(ctx)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            self.assertEqual(query_static(app, "#picksbox").content_size.height, 25)
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")

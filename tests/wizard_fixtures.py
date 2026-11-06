@@ -25,7 +25,7 @@ def _host_sample(host_id):
         return "{}"
 
 
-def make_hosts(host_ids=("claude",), sl_state="unset", with_external=False):
+def make_hosts(host_ids=("claude",), sl_state="unset", with_external=False, engine=None):
     """Build HostView entries for the named host ids (detection order kept).
 
     The harness can't know a real Cursor install's files here, so every entry
@@ -66,13 +66,13 @@ def make_hosts(host_ids=("claude",), sl_state="unset", with_external=False):
             status_line=lambda _s=sl_state: {"state": _s, "current_command": None},
             segment_meta=meta, external_segments=external,
             sample_json=_host_sample(host_id) if host_id == "claude" else "{}",
-            engine=None,
+            engine=engine,
             done_hint=f"Open a new {label} session to see your status line.",
         ))
     return tuple(hosts)
 
 
-def make_ctx(with_external=False, sl_state="unset", host_ids=("claude",)):
+def make_ctx(with_external=False, sl_state="unset", host_ids=("claude",), engine=None):
     """A component-level context plus the named hosts' views."""
     sel = setup.Selection([
         ("agents", "ui-ux-designer", True),
@@ -87,4 +87,31 @@ def make_ctx(with_external=False, sl_state="unset", host_ids=("claude",)):
         component_meta={name: "" for _, name, _ in sel.items},
         housekeeping={"stale": [], "predecessors": []},
         hosts=make_hosts(host_ids=host_ids, sl_state=sl_state,
-                         with_external=with_external))
+                         with_external=with_external, engine=engine))
+
+
+_KIND_ITEMS = [
+    ("skills", "brainstorming", True), ("skills", "tdd", True), ("skills", "debugging", True),
+    ("agents", "ui-ux-designer", True),
+    ("hooks", "tool-advisor", True), ("hooks", "rtk-hint", False),
+]
+
+
+def make_ctx_kinds(items=None, host_ids=("claude",), sl_state="ours", engine=None,
+                   global_rules=False):
+    """A commands-free multi-kind selection for the Choose tabs; ``global_rules`` adds
+    Phase 30's global-rules item and its per-file preview (ctx.state)."""
+    sel_items = list(_KIND_ITEMS if items is None else items)
+    if global_rules:
+        sel_items.append(("global rules", "codegraph sentence", True))
+    sel = setup.Selection(sel_items)
+    state: dict = {"_initial_enabled": {(c, n): False for c, n, _ in sel.items}}
+    if global_rules:
+        state["_global_rules"] = {"changes": [],
+                                  "preview": ["- old sentence", "+ new sentence"]}
+    return wa.WizardContext(
+        selection=cast(wa.SelectionLike, sel),
+        state=state,
+        component_meta={name: "" for _, name, _ in sel.items},
+        housekeeping={"stale": [], "predecessors": []},
+        hosts=make_hosts(host_ids=host_ids, sl_state=sl_state, engine=engine))

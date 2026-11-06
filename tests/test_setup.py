@@ -265,6 +265,20 @@ class TestPreviewFixture(unittest.TestCase):
                          "render produced the unavailable sentinel — fixture may have drifted")
 
 
+class TestEnginePreviewCols(unittest.TestCase):
+    """The wizard's engine passes the preview width to the renderer env (D-11)."""
+
+    def test_cols_reach_renderer_env_and_absent_cols_pass_empty_env(self):
+        with tempfile.TemporaryDirectory() as home:
+            engine = setup._engine_ns(setup.resolve_paths({"HOME": home}), "claude", "{}")
+            with mock.patch.object(setup, "render_preview", return_value="x") as rec:
+                engine.render_preview({"cost": True}, cols=72)
+                engine.render_preview({"cost": True})
+        self.assertEqual(rec.call_args_list[0].args[3],
+                         {"STATUSLINE_COLS": "72", "STATUSLINE_LINES": "60"})
+        self.assertEqual(rec.call_args_list[1].args[3], {})
+
+
 class TestPatchSegments(unittest.TestCase):
     def test_uncomments_and_sets_single_key(self):
         text = ("# [segments]\n"
