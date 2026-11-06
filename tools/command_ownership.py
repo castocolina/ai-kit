@@ -58,7 +58,8 @@ def rewrite_owned_command(command, old_entry, new_entry):
         script_index = None
     if script and not os.path.isabs(script):
         script = os.path.abspath(script)
-    if script_index is not None and os.path.normpath(script) == os.path.normpath(old_entry):
+    # realpath: a line written through an alias spelling of the kit (a symlinked HOME) is ours.
+    if script_index is not None and os.path.realpath(script) == os.path.realpath(old_entry):
         argv[script_index] = new_entry
         return shlex.join(argv)
     return None

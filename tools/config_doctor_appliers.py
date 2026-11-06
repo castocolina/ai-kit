@@ -147,9 +147,10 @@ def atomic_write_text(path, text):
         pass
 
 
-# JSONC surgical helpers, ported VERBATIM from the JSONC scanner (_classify lines 30-88,
-# _skip_insignificant 91-94, _string_end 97-101, _skip_value 104-134, find_object_span 137-152,
-# significant_indices 251-272). Format-mechanics only — no "provider"-
+# JSONC surgical helpers (_classify, _skip_insignificant, _string_end, _skip_value,
+# find_object_span, significant_indices); the read-only scanner copy in
+# skills/ai-kit-spec-review/ai_kit_spec/jsonc_read.py is drift-tested against this reader.
+# Format-mechanics only — no "provider"-
 # specific logic. Cited rather than imported (a tools/ module importing a
 # skills/ package would be a layering violation; tools/setup.py:1383-1394,
 # 04-RESEARCH.md Common Pitfall 1).
@@ -311,11 +312,9 @@ def significant_indices(text: str, start: int, end: int) -> list[int]:
 def _find_top_level_key_span(text, key_name):
     """Span of a top-level key of any JSON type, or None if absent.
 
-    Generalizes jsonc_edit.find_provider_object's depth-1 key-match walk
-    (lines 155-186), replacing the hardcoded ``"provider"`` literal with
-    ``key_name`` and using ``_skip_value`` (not ``find_object_span``) to
-    bound the value — a top-level value can be any JSON type (``share`` is
-    a plain string, not an object). Returns ``(key_start, value_start,
+    A depth-1 key-match walk for any ``key_name``, using ``_skip_value``
+    (not ``find_object_span``) to bound the value — a top-level value can be
+    any JSON type (``share`` is a plain string, not an object). Returns ``(key_start, value_start,
     value_end)`` or None.
     """
     kinds = _classify(text)

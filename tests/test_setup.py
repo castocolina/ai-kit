@@ -5796,6 +5796,22 @@ class TestStatuslineOwnershipCounterexamples(unittest.TestCase):
                 f"python3 -m mod {ours}", f"python3 --check {ours}",
                 f"python3 -v {ours}"]
 
+    def test_alias_spelled_line_stays_ours_on_both_hosts(self):
+        """A line written through an alias spelling of the kit (symlinked HOME) is ours."""
+        os.makedirs(os.path.join(self.install, "tools"), exist_ok=True)
+        alias = os.path.join(self.tmp, "alias")
+        os.symlink(self.install, alias)
+        command = f"python3 -S {os.path.join(alias, 'tools', 'claude-status-line.py')}"
+        self._claude(command)
+        self.assertEqual(setup.detect_statusline(self.paths)["state"], "ours")
+        self._cursor(command.replace("claude-status-line", "cursor-status-line"))
+        self.assertEqual(setup.detect_statusline_cursor(self.paths)["state"], "ours")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertTrue(setup.unwire_statusline(
+                self.paths.settings, self.paths.install_dir, False))
+        with open(self.paths.settings, encoding="utf-8") as f:
+            self.assertNotIn("statusLine", json.load(f))
+
     def test_counterexamples_are_foreign_on_both_hosts(self):
         for command in self._counterexamples():
             with self.subTest(command=command):
@@ -7400,6 +7416,38 @@ class TestHeadlessPrune(unittest.TestCase):
             rc = setup.cmd_install_headless(env, False, None, False, False)
         self.assertEqual(rc, 0)
         self.assertFalse(os.path.lexists(os.path.join(self.claude, "ai-kit-retired-gamma")))
+
+    def test_unremovable_link_warns_and_the_run_goes_on(self):
+        self._seed_dead(self.claude)
+        env = {"PATH": os.environ.get("PATH", ""), "HOME": self.home,
+               "AI_KIT_DIR": self.kit, "AI_KIT_REFUSE_REAL_HOME": "1",
+               "XDG_CACHE_HOME": os.path.join(self.home, ".cache"),
+               "XDG_CONFIG_HOME": os.path.join(self.home, ".config")}
+        real_remove = os.remove
+
+        def denied(path, *args, **kwargs):
+            if os.path.basename(path) == "ai-kit-retired-beta":
+                raise PermissionError(13, "Permission denied", path)
+            return real_remove(path, *args, **kwargs)
+
+        err = io.StringIO()
+        with mock.patch.object(setup.os, "remove", side_effect=denied), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = setup.cmd_install_headless(env, False, None, False, False)
+        self.assertEqual(rc, 1)
+        self.assertIn("warn: could not remove dead ai-kit link skills/ai-kit-retired-beta",
+                      err.getvalue())
+        self.assertTrue(os.path.lexists(os.path.join(self.claude, "ai-kit-retired-beta")))
+        for name in ("ai-kit-retired-alpha", "ai-kit-retired-gamma"):
+            self.assertFalse(os.path.lexists(os.path.join(self.claude, name)), name)
+
+    def test_dry_run_says_would_remove(self):
+        self._seed_dead(self.claude)
+        proc = self._run("install", "--headless", "--dry-run")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("warn: would remove dead ai-kit link skills/ai-kit-retired-alpha",
+                      proc.stderr)
+        self.assertTrue(os.path.lexists(os.path.join(self.claude, "ai-kit-retired-alpha")))
 
 
 if __name__ == "__main__":

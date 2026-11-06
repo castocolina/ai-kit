@@ -140,7 +140,7 @@ def read_provider_names(path: str) -> list[str] | None:
             raw = handle.read(MAX_BYTES)
         text = raw.decode("utf-8")
         data = json.loads(strip_trailing_commas(strip_jsonc_comments(text)))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):  # deep nesting in a repo file fails soft too
         return None
     if not isinstance(data, dict):
         return None

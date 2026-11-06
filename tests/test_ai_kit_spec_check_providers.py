@@ -205,6 +205,13 @@ class TestCheckProvidersSources(_Scratch):
         self.assertIn("served providers: not checked: opencode listed no models", lines)
         self.assertFalse([line for line in lines if line.startswith("warning:")])
 
+    def test_listing_without_model_lines_is_not_checked(self):
+        self._local_reviewers(("g", "opencode", "gone/m"))
+        self.listing = "Loading...\n"
+        lines = self._report()
+        self.assertIn("served providers: not checked: opencode listed no models", lines)
+        self.assertFalse([line for line in lines if line.startswith("warning:")])
+
     def test_fallback_is_unconfirmed_and_reads_jsonc_names(self):
         self._local_reviewers(
             ("builtin", "opencode", "opencode/free-y"),

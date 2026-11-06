@@ -94,6 +94,12 @@ class TestJsoncReadDrift(unittest.TestCase):
         self.assertIsNone(jsonc_read.read_provider_names(path))
         self.assertIsNone(jsonc_read.read_provider_names(os.path.join(self.tmp, "missing.json")))
 
+    def test_deeply_nested_file_returns_none(self):
+        path = os.path.join(self.tmp, "deep.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("[" * 200000)
+        self.assertIsNone(jsonc_read.read_provider_names(path))
+
 
 if __name__ == "__main__":
     unittest.main()

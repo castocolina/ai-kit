@@ -290,7 +290,8 @@ main() {
   ensure_python
   # Resolve an alias spelling (a symlinked AI_KIT_DIR) to its physical path, so
   # setup.py compares resolved paths. pwd -P is portable (no readlink -f on macOS).
-  if [ -d "$INSTALL_DIR" ]; then INSTALL_DIR="$(cd "$INSTALL_DIR" && pwd -P)"; fi
+  # CDPATH= keeps cd from printing a matched dir into the substitution.
+  INSTALL_DIR="$(CDPATH='' cd -- "$INSTALL_DIR" >/dev/null 2>&1 && pwd -P)"
   # Hand the resolved location to setup.py so its resolve_paths() finds
   # claude-status-line.py / the sample under the SAME checkout we just resolved —
   # critical for a LOCAL clone, where INSTALL_DIR isn't the ~/.local/share default.

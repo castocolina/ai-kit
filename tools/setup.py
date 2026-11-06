@@ -1494,11 +1494,19 @@ def apply_stale_prune(claude_dir, stale, dry, counts):
 
 
 def _prune_headless(root, stale, dry, counts):
-    """Headless prune: one warn line per dead ai-kit link (sorted), then remove them."""
+    """Headless prune: one warn line per dead ai-kit link (sorted), then remove it.
+    A link that cannot be removed warns and the run goes on; returns False then."""
+    ok = True
+    verb = "would remove" if dry else "removing"
     for item in sorted(stale):
-        print(f"warn: removing dead ai-kit link {item} (entry removed upstream)",
+        print(f"warn: {verb} dead ai-kit link {item} (entry removed upstream)",
               file=sys.stderr)
-    apply_stale_prune(root, stale, dry, counts)
+        try:
+            apply_stale_prune(root, [item], dry, counts)
+        except OSError as exc:
+            print(f"warn: could not remove dead ai-kit link {item}: {exc}", file=sys.stderr)
+            ok = False
+    return ok
 
 
 def prune_stale(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1527,13 +1535,16 @@ def prune_stale(  # pylint: disable=too-many-arguments,too-many-positional-argum
 def _headless_prune_roots(paths, entries, dry, counts):
     """Headless installs and reconfigures prune dead ai-kit links first: the claude
     root, then the pi root when it exists (its skills/ items only, as the wizard
-    filters). Never creates the pi dir."""
+    filters). Never creates the pi dir. Returns False when a link could not be removed."""
     present = {cat: {n for n, _ in entries[cat]} for cat in CATEGORIES}
-    prune_stale(paths.claude_dir, paths.install_dir, present, None, dry, counts)
+    ok = _prune_headless(paths.claude_dir,
+                         stale_link_candidates(paths.claude_dir, paths.install_dir, present),
+                         dry, counts)
     if os.path.isdir(paths.pi_dir):
         pi_stale = [i for i in stale_link_candidates(paths.pi_dir, paths.install_dir, present)
                     if i.startswith("skills/")]
-        _prune_headless(paths.pi_dir, pi_stale, dry, counts)
+        ok = _prune_headless(paths.pi_dir, pi_stale, dry, counts) and ok
+    return ok
 
 
 def predecessor_candidates(claude_dir, install_dir, entries):
@@ -4820,7 +4831,7 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     counts = new_counts()
     # Headless installs prune dead ai-kit links (claude root, then pi root) before
     # linking; the wizard asks first.
-    _headless_prune_roots(paths, entries, dry, counts)
+    pruned_ok = _headless_prune_roots(paths, entries, dry, counts)
 
     # Re-normalized in place (not a new local): main() already resolved
     # `--with-statusline=<hosts>` at command entry, so this is the host list to
@@ -4831,11 +4842,11 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
                  or with_hooks or examples_flag is not None)
     if requested:
         migrate_statusline(paths, dry)
-    replaced =(_headless_replace(paths, entries, skills_flag, dry, counts)
+    replaced = (_headless_replace(paths, entries, skills_flag, dry, counts)
                 if replace_existing else set())
     ok, chosen = _headless_link_skills(skills_flag, entries, paths.claude_dir,
                                        dry, counts, replaced=frozenset(replaced or ()))
-    ok = ok and replaced is not None
+    ok = ok and pruned_ok and replaced is not None
     # Only a run that named --skills links into the pi root; bare --headless and
     # hooks/statusline-only runs only prune its dead ai-kit links (above) and leave
     # every other pi link as it was.

@@ -4,8 +4,7 @@ Read-only: each review-spec and catalog file is read once and nothing is written
 prints provider ids and the reviewer/catalog model reference only; it never opens opencode's
 auth.json and never prints a key or an apiKey value. Stdlib only.
 
-Ported from the retired opencode-providers scan (`cross_reference.py`) with the substring match
-replaced by a provider-id match on the model id's provider part.
+It matches on the provider part of each model id (`provider/model`), never a substring.
 """
 
 import os
@@ -148,12 +147,12 @@ def served_providers(deps, env: dict, cwd: str) -> tuple[set[str] | None, str, b
     listed = None
     if binary:
         listed = detection.detect_opencode_models(binary, run_fn=deps.run_fn, env=env)
-    if listed:
-        ids = {line.split("/", 1)[0] for line in listed if "/" in line}
+    ids = {line.split("/", 1)[0] for line in listed or [] if "/" in line}
+    if ids:
         extra = _names_from(jsonc_read.project_config_paths(cwd)) - ids
         label = "listed by opencode plus project config files" if extra else "listed by opencode"
         return ids | extra, label, True
-    if listed == []:
+    if listed is not None:  # exit 0 but no provider/model line: nothing confirmed
         return None, "not checked: opencode listed no models", True
     names = _names_from(jsonc_read.opencode_config_paths(env, cwd))
     if names:
