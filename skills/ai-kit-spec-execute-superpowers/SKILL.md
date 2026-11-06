@@ -104,7 +104,7 @@ mechanism; if not, STOP and tell the user (nothing to delegate to). Follow its o
 (workspace, ledger, plan read, pre-flight scan). `$CWD`, `$PLAN_FILE`, `$TASK_N`, and `$BRIEF_FILE`
 are values it already holds at each task's implementer dispatch — read them, never invent them.
 
-Before the first task, start the plan's unit: **MANDATORY: read [`references/start-step.md`](references/start-step.md) in full and run its block once** (`fold.py start --plan`; it handles every refusal). superpowers' planning skills commit the spec and plan before this step; `start` carries those local-only commits onto the unit branch, so they stay in its PR and below `FOLD_BASE`.
+Before the first task, start the plan's unit: **MANDATORY: read [`references/start-step.md`](references/start-step.md) in full and run its block once** (`fold.py start --plan`; it handles every refusal). superpowers' planning skills commit the spec and plan before this step; `start` carries those local-only commits onto the unit branch, so they stay in its PR and below `FOLD_BASE`. superpowers writes the plan before this skill runs, so the plan writer is briefed by the instruction-file rule (run `python3 <fold skill>/scripts/fold.py boundary --next --point plan`, with the fold skill found as in `references/start-step.md`, then hand `.aikit/brief/SKILL.md` to the plan writer).
 
 After the Task paths block prints `SCALARS`, record the start commit once (later tasks keep it):
 `[ -n "$FOLD_BASE" ] || printf 'FOLD_BASE=%s\n' "$(git -C "$CWD" rev-parse HEAD)" | tee -a "$SCALARS"`;
@@ -245,7 +245,7 @@ never the runner's lane file:
 if [ -n "$RESUME_STATE_PATH" ]; then rm -f -- "$RESUME_STATE_PATH"; fi
 ```
 
-**`mode == "native"`:** this host's own subagent mechanism, unchanged. On Claude Code, pass `model` as
+**`mode == "native"`:** this host's own subagent mechanism, unchanged. The native brief carries the same unit-brief line that `references/dispatch-external-cli.md` puts in the `<objective>`. On Claude Code, pass `model` as
 the `Agent` tool's `model` parameter (omit it when empty) and record the returned agent identity;
 fix-loop rounds 1–3 resume that same agent. Its round 4/5 model bump follows that skill's own rule (a
 more capable model) and happens before the round's dispatch, after a review returned findings. On any other host the native case is

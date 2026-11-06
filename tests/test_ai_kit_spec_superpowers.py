@@ -31,7 +31,7 @@ from ai_kit_spec_superpowers import dispatch_injection, task_classification
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
                                  "ai-kit-session-wake"))
-from tests import fold_fixtures, session_wake_fakes
+from tests import fold_fixtures, index_fakes, session_wake_fakes
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
                                  "ai-kit-commit-fold", "scripts"))
@@ -2959,8 +2959,86 @@ class TestStartStep(unittest.TestCase):
         guide = (_SUPER_SKILL.parent / "references" / "start-step.md").read_text(encoding="utf-8")
         self.assertIn("`refused no_remote`", guide)
 
+    def test_start_block_writes_the_wave_point_brief(self):
+        # 30-07: the block as written runs the wave boundary; a non-GSD fixture gets no .planning/
+        fold_fixtures.make_remote(self.root, self.env, self.repo, github=False)
+        main_before = fold_fixtures.run_git(self.repo, self.env, "rev-parse", "main").strip()
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        brief = self.repo / ".aikit" / "brief" / "SKILL.md"
+        self.assertIn("point: wave", brief.read_text(encoding="utf-8"))
+        self.assertFalse((self.repo / ".planning").exists())
+        calls = index_fakes.index_calls(index_fakes.fakes_dir(self.root / "home") / "calls.log")
+        in_repo = {call["name"] for call in calls
+                   if pathlib.Path(call["cwd"]).resolve() == self.repo.resolve()}
+        self.assertTrue({"codegraph", "graphify"} <= in_repo, calls)
+        # _run() commits the plan on main first; the boundary adds nothing after that commit
+        self.assertEqual(main_before, fold_fixtures.run_git(
+            self.repo, self.env, "rev-parse", "main^").strip())
+
 
 _SUPER_REFS = _SUPER_SKILL.parent / "references"
+
+
+class TestUnitBriefDelivery(unittest.TestCase):
+    """30-07: the start block runs the wave-point boundary; implementers get the unit brief."""
+
+    BOUNDARY_LINE = ('python3 "$FOLD_PY" boundary --plan "$PLAN_FILE" --point wave '
+                     '--repo "$CWD" || true')
+    START_LINE = 'python3 "$FOLD_PY" start --plan "$PLAN_FILE" --repo "$CWD" || exit $?'
+    BRIEF_LINE = ("Unit brief: read .aikit/brief/SKILL.md in $CWD after the plan and spec; "
+                  "it lists the previous unit's changed files and the documents that mention them. "
+                  "If it is missing, says no brief, or names another unit, say so and continue.")
+    PLAN_WRITER = ("python3 <fold skill>/scripts/fold.py boundary --next --point plan")
+    HAND_OFF = " then hand `.aikit/brief/SKILL.md` to the plan writer"
+    NATIVE_LINE = "The native brief carries the same unit-brief line"
+    START_PROSE = "`start` already runs the boundary for the unit's start"
+    WAVE_PROSE = "this second run is the one before the first task"
+    NEVER_STOPS = "a boundary problem never stops the plan"
+
+    def _pins(self):
+        start_step = (_SUPER_REFS / "start-step.md").read_text(encoding="utf-8")
+        dispatch = (_SUPER_REFS / "dispatch-external-cli.md").read_text(encoding="utf-8")
+        skill = _super_text()
+        return [
+            ("start-step.md", start_step, self.BOUNDARY_LINE),
+            ("start-step.md", start_step, self.START_PROSE),
+            ("start-step.md", start_step, self.WAVE_PROSE),
+            ("start-step.md", start_step, self.NEVER_STOPS),
+            ("dispatch-external-cli.md", dispatch, self.BRIEF_LINE),
+            ("SKILL.md", skill, self.PLAN_WRITER),
+            ("SKILL.md", skill, self.HAND_OFF),
+            ("SKILL.md", skill, self.NATIVE_LINE),
+        ]
+
+    def test_start_block_runs_the_wave_point_boundary_after_start(self):
+        text = (_SUPER_REFS / "start-step.md").read_text(encoding="utf-8")
+        self.assertIn(self.BOUNDARY_LINE, text)
+        self.assertLess(text.index(self.START_LINE), text.index(self.BOUNDARY_LINE))
+
+    def test_every_implementer_brief_points_at_the_unit_brief(self):
+        text = (_SUPER_REFS / "dispatch-external-cli.md").read_text(encoding="utf-8")
+        objective = text[text.index("## Compose"):text.index("## Status contract")]
+        self.assertIn(self.BRIEF_LINE, objective)
+        self.assertIn(".aikit/brief/SKILL.md", objective)
+
+    def test_skill_states_how_the_plan_writer_is_briefed(self):
+        text = _super_text()
+        self.assertIn(self.PLAN_WRITER, text)
+        self.assertIn(self.HAND_OFF, text)
+        self.assertIn(self.NATIVE_LINE, text)
+
+    def test_each_pinned_string_is_required(self):
+        for name, text, needle in self._pins():
+            with self.subTest(file=name, needle=needle):
+                self.assertIn(needle, text)
+
+    def test_each_pinned_string_fails_its_check_when_removed(self):
+        for name, text, needle in self._pins():
+            with self.subTest(file=name, needle=needle):
+                stripped = text.replace(needle, "")
+                with self.assertRaises(AssertionError):
+                    self.assertIn(needle, stripped)
 
 
 class TestFixRoundAndWakeScope(unittest.TestCase):

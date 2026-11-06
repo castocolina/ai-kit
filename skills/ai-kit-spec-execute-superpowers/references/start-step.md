@@ -30,9 +30,12 @@ if [ -z "$FOLD_PY" ]; then
   printf 'ERROR: ai-kit-commit-fold (scripts/fold.py) is not installed -- STOP and tell the user\n'; exit 1
 fi
 python3 "$FOLD_PY" start --plan "$PLAN_FILE" --repo "$CWD" || exit $?
+python3 "$FOLD_PY" boundary --plan "$PLAN_FILE" --point wave --repo "$CWD" || true
 cd "$CWD" && [ -f "$PLAN_FILE" ] || {
   printf 'ERROR: %s left the tree after start -- STOP and tell the user\n' "$PLAN_FILE"; exit 1; }
 ```
+
+The second boundary line is the wave-point run before the first task: `start` already runs the boundary for the unit's start, and this second run is the one before the first task. That is why a boundary problem never stops the plan (`|| true`).
 
 ## Reading the result
 
