@@ -13,6 +13,7 @@ from common_types import (
     GIT_TIMEOUT_S,
     Env,
     GitSnapshot,
+    fmt_ago,
     util_branch_from_porcelain,
     util_git_cache_path,
     util_to_int,
@@ -246,6 +247,61 @@ def probe_rss_kb_via_ps(pid: int) -> int | None:
     return util_to_int(probe_ps_field(pid, "rss"))
 
 
+def probe_has_proc() -> bool:
+    """True when the Linux /proc filesystem is available (else the ps readers are used)."""
+    return os.path.isdir("/proc")
+
+
+def probe_cmdline_via_proc(pid: int) -> str | None:
+    """Command line of /proc/<pid> with NUL separators as spaces, or None on error.
+
+    Non-UTF-8 bytes are decoded with replacement; callers only substring-match it."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    return raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+
+
+def probe_exe_via_proc(pid: int) -> str | None:
+    """Program path of /proc/<pid> (the exe link), or None on error."""
+    try:
+        return os.readlink(f"/proc/{pid}/exe")
+    except OSError:
+        return None
+
+
+def probe_cmdline_via_ps(pid: int) -> str | None:
+    """Command line via `ps -o command=`, or None on error."""
+    return probe_ps_field(pid, "command")
+
+
+def probe_ancestor_rss_bytes(match: "Callable[[int], bool | None]", depth: int) -> int | None:
+    """VmRSS (bytes) of the nearest ancestor for which match(pid) is True, or None.
+
+    The walk starts at os.getppid(), so the status-line script itself is never matched.
+    match(pid) returns None for an unreadable entry, which ends the walk; the walk also
+    stops when the parent is 0 or the pid itself, or after `depth` ancestors."""
+    use_proc = probe_has_proc()
+    ppid_of = probe_ppid_via_proc if use_proc else probe_ppid_via_ps
+    rss_kb_of = probe_rss_kb_via_proc if use_proc else probe_rss_kb_via_ps
+
+    pid = os.getppid()
+    for _ in range(depth):
+        verdict = match(pid)
+        if verdict is None:
+            return None
+        if verdict:
+            kb = rss_kb_of(pid)
+            return kb * 1024 if kb is not None else None
+        parent = ppid_of(pid)
+        if parent is None or parent in (0, pid):
+            return None
+        pid = parent
+    return None
+
+
 # ── per-render memoized probe accessors (module-level; cost lands in FR-R.2) ──
 
 def probe_memo(ctx: "Context", key: str, fn: "Callable[[], Any]") -> Any:
@@ -260,3 +316,16 @@ def probe_git_for(ctx: "Context") -> "GitSnapshot":
     """Memoized git snapshot for this render (branch/dirty/worktree/…)."""
     return probe_memo(ctx, "git",
                  lambda: probe_git_snapshot(ctx.work_dir, ctx.line_conf))
+
+
+def probe_transcript_ago(ctx: "Context") -> str:
+    """Memoized age of the payload's transcript file (time since its last write), or ''."""
+    def _compute() -> str:
+        path = ctx.transcript_path
+        if not path or not os.path.isfile(path):
+            return ""
+        try:
+            return fmt_ago(int(time.time()) - int(os.path.getmtime(path)))
+        except OSError:
+            return ""
+    return probe_memo(ctx, "ago", _compute)

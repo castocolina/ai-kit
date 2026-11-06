@@ -94,6 +94,9 @@ class Context:  # pylint: disable=too-many-instance-attributes  # per-render bag
     slowest: tuple[str, int] | None = None
     # memoization cache for per-render probes (keyed by probe name)
     probe_cache: dict[str, Any] = field(default_factory=core_probe_cache)
+    # neutral payload data shared by both hosts (empty or False when the host lacks it)
+    transcript_path: str = ""
+    model_max: bool = False
 
 
 def core_doctor_cmd(suffix: str) -> str:

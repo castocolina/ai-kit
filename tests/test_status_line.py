@@ -3216,6 +3216,75 @@ class TestRampFromConfig(unittest.TestCase):
         self.assertEqual(cfg.ramps, {})
 
 
+class TestTranscriptAgeProbe(unittest.TestCase):
+    """Shared transcript-age probe (D-06): one memoized age, the value Claude's segment shows."""
+
+    NOW = 1_700_000_000
+
+    def _transcript(self, directory, name="t.jsonl", age=300):
+        path = os.path.join(directory, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("{}\n")
+        os.utime(path, (self.NOW - age, self.NOW - age))
+        return path
+
+    def _probe_ctx(self, transcript_path="", host=None):
+        return common_render.Context(
+            raw={}, line_conf=None, theme=None, cols=80, lines=0, dim_assumed=False,
+            t_start=None, model_name="", model_id="", work_dir="", home="", clock="",
+            context_pct=0, context_max=0, host=host, transcript_path=transcript_path,
+        )
+
+    def test_matches_claude_segment_probe(self):
+        with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as tmp:
+            path = self._transcript(tmp)
+            with mock.patch("common_probe.time.time", return_value=self.NOW):
+                neutral = common_probe.probe_transcript_ago(self._probe_ctx(path))
+                claude = claude_probes.probe_ago(self._probe_ctx("", mock.Mock(transcript=path)))
+        self.assertEqual(neutral, common_types.fmt_ago(300))
+        self.assertEqual(neutral, claude)
+
+    def test_empty_or_missing_path_gives_empty_string(self):
+        with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as tmp:
+            missing = os.path.join(tmp, "missing.jsonl")
+            for path in ("", missing):
+                with self.subTest(path=path):
+                    self.assertEqual(common_probe.probe_transcript_ago(self._probe_ctx(path)), "")
+
+    def test_age_is_memoized_per_render(self):
+        with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as tmp:
+            path = self._transcript(tmp)
+            ctx = self._probe_ctx(path)
+            with mock.patch("common_probe.time.time", return_value=self.NOW):
+                first = common_probe.probe_transcript_ago(ctx)
+            os.remove(path)
+            self.assertEqual(common_probe.probe_transcript_ago(ctx), first)
+        self.assertEqual(first, common_types.fmt_ago(300))
+
+    def test_unreadable_mtime_gives_empty_string(self):
+        with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as tmp:
+            path = self._transcript(tmp)
+            with mock.patch("os.path.getmtime", side_effect=OSError("gone")):
+                self.assertEqual(common_probe.probe_transcript_ago(self._probe_ctx(path)), "")
+
+    def test_non_ascii_name_gives_its_age(self):
+        with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as tmp:
+            path = self._transcript(tmp, "trans cript é ✓.jsonl")
+            with mock.patch("common_probe.time.time", return_value=self.NOW):
+                age = common_probe.probe_transcript_ago(self._probe_ctx(path))
+        self.assertEqual(age, common_types.fmt_ago(300))
+
+    def test_claude_adapter_carries_the_transcript_path(self):
+        with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as tmp:
+            path = self._transcript(tmp)
+            raw = {"transcript_path": path, "model": {"id": "m", "display_name": "M"}}
+            config = common_config.cfg_default_config(claude_host.SPEC)
+            theme = common_render.core_build_theme(config, claude_host.HOST)
+            ctx = claude_payload.core_claude_context(raw, config, theme, {"HOME": tmp}, None)
+        self.assertEqual(ctx.transcript_path, path)
+        self.assertIs(ctx.model_max, False)
+
+
 class TestRendererRobustness(unittest.TestCase):
     def test_doctor_cmd_is_concrete(self):
         cmd = common_render.core_doctor_cmd("--doctor")

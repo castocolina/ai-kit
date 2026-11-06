@@ -106,6 +106,7 @@ def core_build_context(
             session=session,
             claude_dir=claude_dir,
         ),
+        transcript_path=transcript,
     )
 
 

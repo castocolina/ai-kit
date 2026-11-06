@@ -1892,6 +1892,8 @@ _RETIRED_LITERALS = {
         "skills/ai-kit-spec-review/ai_kit_spec/detection.py",
         # the tripwire stubs every host binary name, cursor-agent included
         "tools/run_unittest_parallel.py",
+        # the live agent's process name, matched in /proc command lines (not a runtime id)
+        "tools/cursor_probes.py",
     }),
     _RETIRED_FIELD: frozenset({"skills/ai-kit-spec-review/ai_kit_spec/config_io.py"}),
     _RETIRED_MODE: frozenset(),
@@ -2364,6 +2366,7 @@ _SPLIT_MODULES = (
     "claude_host",
     "cursor_payload",
     "cursor_quota",
+    "cursor_probes",
     "cursor_segments",
     "cursor_host",
 )

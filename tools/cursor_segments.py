@@ -6,8 +6,17 @@ from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple
 
 from common_fmt import util_window_gap
-from common_types import DIM, RESET, util_first_fitting, util_gap_color, util_gap_sign
+from common_types import (
+    DIM,
+    RESET,
+    fmt_bytes,
+    util_first_fitting,
+    util_gap_color,
+    util_gap_sign,
+    util_icon,
+)
 from cursor_payload import core_cursor_data
+from cursor_probes import probe_cursor_rss
 
 if TYPE_CHECKING:
     from common_render import Context, Theme
@@ -111,3 +120,10 @@ def seg_cursor_reset(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     wide = f"↺ {datetime.fromtimestamp(reset).strftime('%b %d %H:%M')}{_marker(quota.state, True)}"
     narrow = f"↺ {datetime.fromtimestamp(reset).strftime('%b %d')}{_marker(quota.state, False)}"
     return util_first_fitting([wide, narrow], avail)
+
+
+def seg_alt_process_memory(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    n = probe_cursor_rss(ctx)
+    if n is None:
+        return None
+    return util_first_fitting([util_icon("🧮", fmt_bytes(n))], avail)

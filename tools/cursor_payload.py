@@ -25,6 +25,8 @@ class PayloadFields(NamedTuple):
     work_dir: str
     context_pct: int | None
     context_max: int | None
+    transcript_path: str = ""
+    model_max: bool = False
 
 
 # ═══ 6. CORE — render machinery and host payload ═══════════════════════════
@@ -51,7 +53,15 @@ def core_payload_fields(raw: dict[str, Any]) -> PayloadFields:
         context_pct = int(percentage)
     maximum = window.get("context_window_size")
     context_max = maximum if isinstance(maximum, int) and not isinstance(maximum, bool) else None
-    return PayloadFields(name, model_id, work_dir, context_pct, context_max)
+    return PayloadFields(
+        name,
+        model_id,
+        work_dir,
+        context_pct,
+        context_max,
+        raw["transcript_path"] if isinstance(raw.get("transcript_path"), str) else "",
+        model.get("max_mode") is True,
+    )
 
 
 def core_cursor_data(ctx: Context) -> CursorData:
@@ -88,4 +98,6 @@ def core_cursor_context(
         context_pct=fields.context_pct,
         context_max=fields.context_max,
         host=CursorData(quota),
+        transcript_path=fields.transcript_path,
+        model_max=fields.model_max,
     )

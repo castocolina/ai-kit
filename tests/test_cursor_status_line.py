@@ -1,8 +1,10 @@
 """Synthetic payload and cache tests for the Cursor status-line host."""
 
+import contextlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -27,9 +29,11 @@ sys.path.insert(0, str(ROOT / "tools"))
 import claude_host
 import common_config
 import common_fmt
+import common_probe
 import common_types
 import cursor_host
 import cursor_payload
+import cursor_probes
 import cursor_segments
 from common_config import cfg_default_config, cfg_load_config
 from common_render import Context, core_build_theme, core_render
@@ -414,6 +418,227 @@ class TestCursorStatusLine(unittest.TestCase):
             result = self._run_entry(SYNTHETIC, env)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(result.stdout.splitlines()[0].startswith("extra "))
+
+
+AGENT_EXE = "/scratch/.local/share/cursor-agent/versions/2026.10.22/node"
+
+
+def _plain(text: str | None) -> str:
+    return re.sub(r"\033\[[0-9;]*m", "", text or "")
+
+
+class TestCursorContextFields(unittest.TestCase):
+    """Neutral transcript_path and model_max carried by Cursor's context (D-05, D-06)."""
+
+    def _context(self, payload: dict[str, Any]):
+        config = cfg_default_config(cursor_host.SPEC)
+        theme = core_build_theme(config, cursor_host.HOST)
+        with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as tmp:
+            env = {
+                "HOME": tmp,
+                "XDG_CACHE_HOME": os.path.join(tmp, "cache"),
+                "XDG_CONFIG_HOME": os.path.join(tmp, "config"),
+            }
+            return cursor_payload.core_cursor_context(payload, config, theme, env, None)
+
+    def test_transcript_path_is_carried(self):
+        payload = json.loads(json.dumps(SYNTHETIC))
+        payload["transcript_path"] = "/scratch/trans cript é/t.jsonl"
+        ctx = self._context(payload)
+        self.assertEqual(ctx.transcript_path, "/scratch/trans cript é/t.jsonl")
+        self.assertIs(ctx.model_max, False)
+
+    def test_only_a_true_boolean_max_mode_sets_model_max(self):
+        for value, expected in ((True, True), (False, False), ("true", False), (None, False)):
+            with self.subTest(value=value):
+                payload = json.loads(json.dumps(SYNTHETIC))
+                model = dict(payload.get("model") or {})
+                if value is None:
+                    model.pop("max_mode", None)  # None stands for an absent key
+                else:
+                    model["max_mode"] = value
+                payload["model"] = model
+                self.assertIs(self._context(payload).model_max, expected)
+
+    def test_absent_transcript_path_gives_empty_string(self):
+        payload = json.loads(json.dumps(SYNTHETIC))
+        payload.pop("transcript_path", None)
+        self.assertEqual(self._context(payload).transcript_path, "")
+
+
+class TestCursorProcessMemory(unittest.TestCase):
+    """Cursor's 🧮 segment through the shared ancestor walk; /proc and ps are faked."""
+
+    _context = TestCursorStatusLine._context
+    _quota = staticmethod(TestCursorStatusLine._quota)
+
+    @contextlib.contextmanager
+    def _fake_proc(
+        self,
+        table: dict[int, dict[str, Any]],
+        parent: int,
+        reads: list[int],
+        *,
+        ps: bool = False,
+    ):
+        """Serve /proc (or ps) readers and os.getppid from a pid table; log every pid read."""
+
+        def reader(field: str):
+            def read(pid: int):
+                reads.append(pid)
+                return table.get(pid, {}).get(field)
+
+            return read
+
+        if ps:
+            targets = [
+                (common_probe, "probe_ppid_via_ps", reader("ppid")),
+                (common_probe, "probe_rss_kb_via_ps", reader("rss")),
+                (cursor_probes, "probe_cmdline_via_ps", reader("cmd")),
+            ]
+        else:
+            targets = [
+                (common_probe, "probe_ppid_via_proc", reader("ppid")),
+                (common_probe, "probe_rss_kb_via_proc", reader("rss")),
+                (cursor_probes, "probe_cmdline_via_proc", reader("cmd")),
+                (cursor_probes, "probe_exe_via_proc", reader("exe")),
+            ]
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.object(common_probe, "probe_has_proc", return_value=not ps)
+            )
+            stack.enter_context(
+                mock.patch.object(cursor_probes, "probe_has_proc", return_value=not ps)
+            )
+            stack.enter_context(mock.patch.object(os, "getppid", return_value=parent))
+            for module, name, side_effect in targets:
+                stack.enter_context(mock.patch.object(module, name, side_effect=side_effect))
+            yield
+
+    def _chain(self, agent: dict[str, Any], *, wrapper: dict[str, Any] | None = None):
+        """Parent 200 is a plain shell whose parent 201 is the agent (or the wrapper pair)."""
+        table: dict[int, dict[str, Any]] = {
+            200: {"cmd": "/bin/sh -c x", "exe": "/usr/bin/sh", "ppid": 201},
+            201: agent,
+        }
+        if wrapper is not None:
+            table = {200: agent, 201: wrapper}
+        return table
+
+    def test_linux_chain_renders_agent_memory(self):
+        table = self._chain(
+            {"cmd": "node /opt/x/index.js", "exe": AGENT_EXE, "ppid": 1, "rss": 45056}
+        )
+        reads: list[int] = []
+        ctx, theme = self._context(self._quota())
+        with self._fake_proc(table, 200, reads):
+            self.assertEqual(cursor_probes.probe_cursor_rss_bytes(), 46137344)
+            shown = _plain(cursor_segments.seg_alt_process_memory(ctx, 200, theme))
+        self.assertEqual(shown, "🧮 " + common_types.fmt_bytes(46137344))
+
+    def test_command_line_match_without_agent_path(self):
+        table = self._chain(
+            {
+                "cmd": "/scratch/.local/bin/cursor-agent --use-system-ca /x/index.js",
+                "exe": "/usr/bin/node",
+                "ppid": 1,
+                "rss": 45056,
+            }
+        )
+        with self._fake_proc(table, 200, []):
+            self.assertEqual(cursor_probes.probe_cursor_rss_bytes(), 46137344)
+
+    def test_node_outside_agent_directory_is_no_match(self):
+        table = self._chain(
+            {"cmd": "node /x/index.js", "exe": "/usr/bin/node", "ppid": 1, "rss": 45056}
+        )
+        ctx, theme = self._context(self._quota())
+        with self._fake_proc(table, 200, []):
+            self.assertIs(cursor_probes.probe_is_cursor(201), False)
+            self.assertIsNone(cursor_probes.probe_cursor_rss_bytes())
+            self.assertIsNone(cursor_segments.seg_alt_process_memory(ctx, 200, theme))
+
+    def test_unreadable_first_parent_stops_the_walk(self):
+        table: dict[int, dict[str, Any]] = {
+            200: {"cmd": None, "exe": None, "ppid": 201},
+            201: {"cmd": "node /x/index.js", "exe": AGENT_EXE, "ppid": 1, "rss": 45056},
+        }
+        reads: list[int] = []
+        with self._fake_proc(table, 200, reads):
+            self.assertIsNone(cursor_probes.probe_cursor_rss_bytes())
+        self.assertNotIn(201, reads)
+
+    def test_own_process_is_never_matched(self):
+        own = os.getpid()
+        table: dict[int, dict[str, Any]] = {
+            own: {"cmd": "cursor-agent", "exe": AGENT_EXE, "ppid": 200, "rss": 45056},
+            200: {"cmd": "/bin/sh", "exe": "/usr/bin/sh", "ppid": 1},
+            1: {"cmd": "init", "exe": "/sbin/init", "ppid": 0},
+        }
+        reads: list[int] = []
+        with self._fake_proc(table, 200, reads):
+            self.assertIsNone(cursor_probes.probe_cursor_rss_bytes())
+        self.assertNotIn(own, reads)
+
+    def test_non_utf8_command_line_still_matches(self):
+        raw = b"/x/cursor-agent\x00--flag\x00\xff\xfe\x00index.js\x00"
+        with (
+            mock.patch("builtins.open", mock.mock_open(read_data=raw)),
+            mock.patch.object(cursor_probes, "probe_has_proc", return_value=True),
+            mock.patch.object(cursor_probes, "probe_exe_via_proc", return_value=None),
+        ):
+            text = common_probe.probe_cmdline_via_proc(201)
+            matched = cursor_probes.probe_is_cursor(201)
+        self.assertIn("cursor-agent", text or "")
+        self.assertIn("�", text or "")
+        self.assertIs(matched, True)
+
+    def test_no_proc_uses_the_ps_readers(self):
+        table = self._chain(
+            {"cmd": "cursor-agent --x", "ppid": 1, "rss": 45056},
+        )
+        reads: list[int] = []
+        with self._fake_proc(table, 200, reads, ps=True):
+            self.assertEqual(cursor_probes.probe_cursor_rss_bytes(), 46137344)
+        self.assertIn(201, reads)
+
+    def test_memory_is_read_once_per_render(self):
+        ctx, theme = self._context(self._quota())
+        with mock.patch.object(
+            cursor_probes, "probe_cursor_rss_bytes", return_value=46137344
+        ) as walk:
+            cursor_segments.seg_alt_process_memory(ctx, 200, theme)
+            cursor_segments.seg_alt_process_memory(ctx, 200, theme)
+        walk.assert_called_once_with()
+
+    def test_nearest_agent_wins_over_a_wrapper_further_up(self):
+        table = self._chain(
+            {"cmd": "node /x/index.js", "exe": AGENT_EXE, "rss": 45056},
+            wrapper={"cmd": "/bin/sh /scratch/.local/bin/cursor-agent", "exe": "/usr/bin/sh",
+                     "ppid": 1, "rss": 2048},
+        )
+        reads: list[int] = []
+        with self._fake_proc(table, 200, reads):
+            self.assertEqual(cursor_probes.probe_cursor_rss_bytes(), 46137344)
+        self.assertNotIn(201, reads)
+
+    def test_either_signal_alone_matches(self):
+        cases = [
+            {"cmd": "node /x/index.js", "exe": AGENT_EXE, "rss": 45056},
+            {"cmd": "/scratch/.local/bin/cursor-agent --x", "exe": None, "rss": 45056},
+        ]
+        for agent in cases:
+            with self.subTest(agent=agent), self._fake_proc(self._chain(agent), 200, []):
+                self.assertEqual(cursor_probes.probe_cursor_rss_bytes(), 46137344)
+
+    def test_depth_bound_stops_after_twelve_ancestors(self):
+        table: dict[int, dict[str, Any]] = {
+            200 + i: {"cmd": "/bin/sh", "exe": "/usr/bin/sh", "ppid": 201 + i} for i in range(13)
+        }
+        reads: list[int] = []
+        with self._fake_proc(table, 200, reads):
+            self.assertIsNone(cursor_probes.probe_cursor_rss_bytes())
+        self.assertLessEqual(len(set(reads)), 12)
 
 
 if __name__ == "__main__":
