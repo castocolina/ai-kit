@@ -168,7 +168,7 @@ from Line 1 sends it to the tray; Space on a tray chip brings it back.
   Review. A JSONC `cli-config.json` is left untouched with a warning.
 
 **Live preview.** Each pane's preview is a real render of the host's sample
-payload, titled `live preview — <host> (sample data)`; Review's status-line box
+payload, titled `preview — <host> (real renderer, sample data)`; Review's status-line box
 shows the same render for each host you turn on. When the render is not
 available, it falls back to sample text with a note. The sample values are not
 your live session's model, context or cost.
@@ -388,7 +388,18 @@ it alone; see [Headless install](#headless-install-ci--containers--no-tty)).
   only reads that cache and never waits on the network. Every figure therefore
   prints with a leading `≈` and the doctor reports it as
   `inferred — undocumented Cursor API`. `≈*` means the cache is stale: the last
-  refresh failed or never ran, so the number shown is the old one.
+  refresh failed or never ran, so the number shown is the old one. The quota line
+  reads, from the sample render (sample data, not a live Cursor run):
+  `⚡️ inc: +42% (↺ Nov 23, 17d) ≈ | 🪙 extra: +$2.50/$20.00 ≈`.
+- **Extra-spend alert:** `[cursor]` keys `extra_alert` (default `true`, env
+  `AI_KIT_CURSOR_EXTRA_ALERT`) and `extra_alert_usd` (env `AI_KIT_CURSOR_EXTRA_ALERT_USD`).
+  The alert fires when extra spend reaches your Cursor spend limit, read from ai-kit's own
+  Cursor quota cache (an inference from undocumented Cursor calls). `extra_alert_usd` is an
+  optional override of that limit. With no limit in the cache and no override there is no
+  alert. In the wizard's Cursor pane, `x` toggles the alert and `e` sets the override (empty
+  clears it); the limit is shown read-only. The doctor's `extra-spend alert:` line names the
+  limit source. `alt_process_memory` and `alt_time_ago` stay labelled unverified on Cursor
+  until a live run confirms them.
 - **Where its config file lives:** `cli-config.json` under the first Cursor
   directory that applies — a non-blank `CURSOR_CONFIG_DIR`, then
   `$XDG_CONFIG_HOME/cursor`, then `~/.cursor`; a blank or whitespace-only override

@@ -6816,5 +6816,274 @@ class TestWizardCommitPerHost(unittest.TestCase):
         self.assertNotIn("cost = true", published)
 
 
+_KEYS_ON = {"extra_alert": True, "extra_alert_usd": 5.0}
+
+
+class TestPatchHostKeys(unittest.TestCase):
+    """D-03 / D-12: the [cursor] keys are patched surgically, every other byte kept."""
+
+    def test_missing_table_is_appended_once_and_stable(self):
+        text = "[segments]\nalt_cost = true\n"
+        out = setup.patch_host_keys(text, "cursor", _KEYS_ON)
+        self.assertEqual(out, text + "\n[cursor]\nextra_alert = true\nextra_alert_usd = 5.00\n")
+        self.assertEqual(setup.patch_host_keys(out, "cursor", _KEYS_ON), out)
+
+    def test_live_table_rewrites_key_lines_in_place(self):
+        text = ("[cursor]\n# keep me\nextra_alert = false  # note\n"
+                "# extra_alert_usd = 0.0\nother = 1\n")
+        out = setup.patch_host_keys(text, "cursor", {"extra_alert": True, "extra_alert_usd": 5.5})
+        self.assertEqual(out, "[cursor]\n# keep me\nextra_alert = true  # note\n"
+                              "extra_alert_usd = 5.50\nother = 1\n")
+
+    def test_commented_header_and_sample_keys_are_uncommented_in_place(self):
+        text = "# [cursor]\n# extra_alert = true\n# extra_alert_usd = 20.0\n\n[segments]\n"
+        out = setup.patch_host_keys(text, "cursor",
+                                    {"extra_alert": False, "extra_alert_usd": 5.5})
+        self.assertEqual(out, "[cursor]\nextra_alert = false\nextra_alert_usd = 5.50\n\n"
+                              "[segments]\n")
+
+    def test_none_comments_out_a_live_line_and_never_appends(self):
+        text = "[cursor]\nextra_alert = true\nextra_alert_usd = 5.00\n"
+        out = setup.patch_host_keys(text, "cursor", {"extra_alert": True, "extra_alert_usd": None})
+        self.assertEqual(out, "[cursor]\nextra_alert = true\n# extra_alert_usd = 5.00\n")
+        absent = "[cursor]\nextra_alert = true\n"
+        self.assertEqual(
+            setup.patch_host_keys(absent, "cursor", {"extra_alert": True,
+                                                     "extra_alert_usd": None}), absent)
+
+    def test_equal_values_return_the_input_unchanged(self):
+        text = "[cursor]\nextra_alert = false\nextra_alert_usd = 5.50\n"
+        self.assertEqual(
+            setup.patch_host_keys(text, "cursor", {"extra_alert": False,
+                                                   "extra_alert_usd": 5.5}), text)
+
+
+class TestCurrentHostKeys(unittest.TestCase):
+
+    def test_defaults_missing_file_claude_and_invalid_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "cursor-statusline.toml")
+            defaults = {"cursor": {"extra_alert": True, "extra_alert_usd": None}}
+            self.assertEqual(setup.current_host_keys(path, "cursor"), defaults)
+            self.assertEqual(setup.current_host_keys(path, "claude"), {})
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write('[cursor]\nextra_alert = "yes"\nextra_alert_usd = 7\n')
+            self.assertEqual(setup.current_host_keys(path, "cursor"),
+                             {"cursor": {"extra_alert": True, "extra_alert_usd": 7.0}})
+
+
+class TestCursorLimitText(unittest.TestCase):
+    """D-12: the limit is read from ai-kit's own Cursor cache only, nothing created."""
+
+    NOW = 1_700_000_000.0
+
+    def _env(self, tmp):
+        return {"XDG_CACHE_HOME": tmp, "HOME": tmp}
+
+    def _write_cache(self, tmp, cache):
+        cq = setup._sibling("cursor_quota")
+        path = cq.probe_cache_paths(common_config.cfg_cache_base(self._env(tmp)))[0]
+        cq.probe_write_cache(path, cache)
+
+    def test_fixed_limit_names_source_and_age(self):
+        cq = setup._sibling("cursor_quota")
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(subprocess, "Popen") as popen:
+            self._write_cache(tmp, cq.core_synthetic_cache(self.NOW - 120))
+            text = setup.cursor_limit_text(self._env(tmp), self.NOW)
+            popen.assert_not_called()
+        age = setup._sibling("common_types").fmt_ago(120)
+        self.assertEqual(text, f"Cursor spend limit: $20.00 (ai-kit quota cache, {age} old; "
+                               "inferred ≈)")
+
+    def test_unlimited_and_disabled_texts(self):
+        cq = setup._sibling("cursor_quota")
+        for kind, expected in (
+            ("unlimited", "Cursor spend limit: none (unlimited on Cursor) — "
+                          "set an override to alert"),
+            ("disabled", "Cursor spend limit: none (extra spend is off on Cursor)"),
+        ):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                cache = cq.core_synthetic_cache(self.NOW)
+                cache["data"]["od_kind"] = kind
+                self._write_cache(tmp, cache)
+                self.assertEqual(setup.cursor_limit_text(self._env(tmp), self.NOW), expected)
+
+    def test_no_cache_says_not_read_and_creates_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            text = setup.cursor_limit_text(self._env(tmp), self.NOW)
+            self.assertEqual(text, "Cursor spend limit: not read yet (no ai-kit Cursor quota "
+                                   "cache) — set an override to alert")
+            self.assertFalse(os.path.isdir(os.path.join(tmp, "ai-kit", "cursor")))
+
+
+class TestHostKeysPersist(unittest.TestCase):
+    """The host keys ride the one atomic config write, and an unchanged save writes nothing."""
+
+    def test_save_patches_host_keys_before_the_single_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "cursor-statusline.toml")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("# [cursor]\n# extra_alert = true\n# extra_alert_usd = 20.0\n")
+            with mock.patch.object(setup, "write_toml_preserving", return_value=True) as write:
+                setup.save_statusline_config(
+                    path, {}, None, None, host="cursor",
+                    host_keys={"cursor": {"extra_alert": False, "extra_alert_usd": 5.5}})
+            written_text = write.call_args.args[1]
+            self.assertEqual(write.call_count, 1)
+            self.assertIn("[cursor]\nextra_alert = false\nextra_alert_usd = 5.50\n", written_text)
+
+    _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _CURSOR_SAMPLE = os.path.join(_REPO, "tools", "cursor-statusline.toml.sample")
+
+    def _cursor_seed(self, tmp):
+        """A scratch Cursor config seeded from the shipped sample (synthetic, under tmp)."""
+        cfg = os.path.join(tmp, "cursor-statusline.toml")
+        with open(self._CURSOR_SAMPLE, encoding="utf-8") as handle:
+            seed = handle.read()
+        with open(cfg, "w", encoding="utf-8") as handle:
+            handle.write(seed)
+        return cfg
+
+    def _cursor_paths(self, tmp):
+        import types as _types  # pylint: disable=import-outside-toplevel
+        return _types.SimpleNamespace(
+            cursor_config_toml=os.path.join(tmp, "cursor-statusline.toml"),
+            cursor_sample=self._CURSOR_SAMPLE,
+            cursor_status_line=os.path.join(self._REPO, "tools", "cursor-status-line.py"),
+            cursor_cli_config=os.path.join(tmp, "cli-config.json"),
+            statusline_doctor=os.path.join(self._REPO, "tools", "statusline-doctor.py"),
+            config_dir=tmp,
+        )
+
+    def test_torn_write_spy_sees_old_target_and_complete_candidate(self):
+        """At the moment of os.replace the target still holds the old values and the
+        candidate already holds the complete new ones (R12 concurrency backstop)."""
+        import tomllib  # pylint: disable=import-outside-toplevel
+        real_replace = os.replace
+        seen = []
+
+        def spy(src, dst):
+            with open(dst, "rb") as handle:
+                old = tomllib.load(handle)["cursor"]
+            with open(src, "rb") as handle:
+                new = tomllib.load(handle)["cursor"]
+            seen.append((old, new))
+            return real_replace(src, dst)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cursor_seed(tmp)
+            doctor = os.path.join(self._REPO, "tools", "statusline-doctor.py")
+            self.assertTrue(setup.save_statusline_config(
+                cfg, {}, None, doctor, host="cursor",
+                host_keys={"cursor": {"extra_alert": True, "extra_alert_usd": 20.0}}))
+            with mock.patch.object(setup.os, "replace", side_effect=spy):
+                self.assertTrue(setup.save_statusline_config(
+                    cfg, {}, None, doctor, host="cursor",
+                    host_keys={"cursor": {"extra_alert": False, "extra_alert_usd": 5.5}}))
+        self.assertEqual(seen, [({"extra_alert": True, "extra_alert_usd": 20.0},
+                                 {"extra_alert": False, "extra_alert_usd": 5.5})])
+
+    def test_second_save_of_the_same_values_is_byte_identical(self):
+        values = {"cursor": {"extra_alert": False, "extra_alert_usd": 5.5}}
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cursor_seed(tmp)
+            doctor = os.path.join(self._REPO, "tools", "statusline-doctor.py")
+            self.assertTrue(setup.save_statusline_config(
+                cfg, {}, None, doctor, host="cursor", host_keys=values))
+            with open(cfg, "rb") as handle:
+                first = handle.read()
+            self.assertTrue(setup.save_statusline_config(
+                cfg, {}, None, doctor, host="cursor", host_keys=values))
+            with open(cfg, "rb") as handle:
+                second = handle.read()
+        self.assertEqual(first, second)
+
+    def test_unchanged_state_writes_nothing(self):
+        """_persist_layout returns before any write when the host keys match the file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cursor_seed(tmp)
+            state = {
+                "segments": setup.current_segments(cfg, "cursor"),
+                "layout": setup.current_layout(cfg, "cursor"),
+                "dirty": False,
+                "host_keys": setup.current_host_keys(cfg, "cursor"),
+            }
+            with mock.patch.object(setup, "save_statusline_config") as save:
+                ok = setup._persist_layout(self._cursor_paths(tmp), state, dry=False,  # pylint: disable=protected-access
+                                           host="cursor")
+        self.assertTrue(ok)
+        save.assert_not_called()
+
+
+class TestInventoryCursorKeys(unittest.TestCase):
+    """D-01: a Cursor entry's own wording (cursor_description, cursor_sample) reaches the wizard."""
+
+    _INVENTORY = (
+        '[alt_time_ago]\nhosts = ["claude", "cursor"]\ndescription = "claude wording"\n'
+        'sample = "claude sample"\nline = 1\ncursor_description = "cursor wording"\n'
+        'cursor_sample = "3m ago"\n\n'
+        '[shared]\nhosts = ["claude", "cursor"]\ndescription = "shared wording"\n'
+        'sample = "shared sample"\nline = 2\n'
+    )
+
+    def test_cursor_view_uses_cursor_keys_and_claude_view_keeps_shared_ones(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "inventory.toml")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(self._INVENTORY)
+            cursor = setup.load_segment_inventory(path, "cursor")
+            claude = setup.load_segment_inventory(path, "claude")
+        self.assertEqual(cursor["alt_time_ago"]["description"], "cursor wording")
+        self.assertEqual(cursor["alt_time_ago"]["sample"], "3m ago")
+        self.assertEqual(claude["alt_time_ago"]["description"], "claude wording")
+        self.assertEqual(claude["alt_time_ago"]["sample"], "claude sample")
+        self.assertEqual(cursor["shared"]["description"], "shared wording")
+
+    def test_wording_note_for_the_transcript_age_segment(self):
+        self.assertEqual(setup._SEGMENT_NOTES["alt_time_ago"],  # pylint: disable=protected-access
+                         "time since the last transcript write")
+
+
+class TestCursorSampleFallback(unittest.TestCase):
+    """D-08 / D-13: the Cursor sample render goes through the real renderer and needs no Cursor
+    binary. This is not evidence about Cursor detection or a live run."""
+
+    def test_sample_render_needs_no_cursor_binary_and_shows_the_quota_line(self):
+        import re  # pylint: disable=import-outside-toplevel
+        with tempfile.TemporaryDirectory() as home:
+            path_dir = os.path.join(home, "no-bin")
+            os.makedirs(path_dir)
+            for name in ("agent", "cursor-agent"):
+                self.assertIsNone(shutil.which(name, path=path_dir))
+            env = {"HOME": home, "XDG_CACHE_HOME": os.path.join(home, ".cache"),
+                   "XDG_CONFIG_HOME": os.path.join(home, ".config"), "PATH": path_dir}
+            entry = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                 "tools", "cursor-status-line.py")
+            with open(setup._sample_input_path("cursor"),  # pylint: disable=protected-access
+                      encoding="utf-8") as handle:
+                sample = handle.read()
+            segments = setup.current_segments(os.path.join(home, "absent.toml"), "cursor")
+            out = setup.render_preview(entry, segments, sample, env, host="cursor")
+        plain = re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", out)
+        self.assertIn("⚡️ inc: ", plain)
+        self.assertIn("🪙 extra: ", plain)
+        self.assertNotIn("\x1b[1m", out)   # the sample's $2.50 of $20.00 does not alert (D-12)
+
+
+class TestPreviewTitle(unittest.TestCase):
+    """D-13: the preview title says it is the real renderer on sample data."""
+
+    def test_title_text_and_no_live_preview_wording(self):
+        try:
+            from tools import wizard_app  # pylint: disable=import-outside-toplevel
+        except ImportError:
+            self.skipTest("textual not installed (run under uv)")
+        self.assertEqual(wizard_app.PREVIEW_TITLE,
+                         "preview — {host} (real renderer, sample data)")
+        self.assertEqual(wizard_app.PREVIEW_TITLE.format(host="Cursor CLI"),
+                         "preview — Cursor CLI (real renderer, sample data)")
+
+
 if __name__ == "__main__":
     unittest.main()

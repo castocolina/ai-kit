@@ -820,8 +820,8 @@ class TestPhase2E2E(unittest.TestCase):
                       msg="Arrange: expected lane border title 'Line 2'")
         self.assertIn("Line 3", all_output,
                       msg="Arrange: expected lane border title 'Line 3'")
-        self.assertIn("live preview", all_output,
-                      msg="Arrange: expected live preview panel")
+        self.assertIn("preview — ", all_output,
+                      msg="Arrange: expected preview panel")
         # Review screen
         self.assertIn("components to install", all_output,
                       msg="Review: expected 'components to install' panel")
@@ -1573,8 +1573,8 @@ class TestToggleOffE2E(_TwoHostRunMixin, unittest.TestCase):
     Done screen reports the removal. Afterwards cli-config.json has no statusLine,
     every other key keeps its value, and Claude's statusLine is unchanged."""
 
-    _CLAUDE_PREVIEW = "live preview — Claude Code (sample data)".encode()
-    _CURSOR_PREVIEW = "live preview — Cursor CLI (sample data)".encode()
+    _CLAUDE_PREVIEW = "preview — Claude Code (real renderer, sample data)".encode()
+    _CURSOR_PREVIEW = "preview — Cursor CLI (real renderer, sample data)".encode()
     _OFF_NOTE = b"Off: Review removes ai-kit's entry"
     _REVIEW_LINE = b"Cursor CLI: remove ai-kit's"
     _DONE_LINE = b"Cursor CLI: status line removed"

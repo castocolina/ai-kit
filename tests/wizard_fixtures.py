@@ -7,6 +7,7 @@ config — the wizard view itself imports nothing from setup, so exercising it
 through a real context (with one or more ``HostView`` entries) is the faithful
 test seam.
 """
+import types
 from typing import cast
 
 from tools import setup
@@ -26,7 +27,7 @@ def _host_sample(host_id):
 
 
 def make_hosts(host_ids=("claude",), sl_state="unset", with_external=False, engine=None,
-               current_command=None, sl_states=None):
+               current_command=None, sl_states=None, host_keys=None, alert_limit_text=None):
     """Build HostView entries for the named host ids (detection order kept).
 
     The harness can't know a real Cursor install's files here, so every entry
@@ -58,6 +59,9 @@ def make_hosts(host_ids=("claude",), sl_state="unset", with_external=False, engi
         label = _HOST_LABELS[host_id]
         # Per-host status-line state: sl_states[host_id] wins over the shared sl_state.
         host_state = (sl_states or {}).get(host_id, sl_state)
+        host_engine = engine
+        if host_id == "cursor" and alert_limit_text is not None:
+            host_engine = types.SimpleNamespace(alert_limit_text=lambda: alert_limit_text)
         hosts.append(wa.HostView(
             id=host_id, label=label,
             config_label=f"~/.config/ai-kit/{spec.config_filename}",
@@ -65,19 +69,21 @@ def make_hosts(host_ids=("claude",), sl_state="unset", with_external=False, engi
             state={"segments": segments,
                    "layout": [{"min_rows": ln.min_rows, "segments": list(ln.segments)}
                               for ln in spec.default_layout],
-                   "dirty": False, "adopt": host_state == "ours"},
+                   "dirty": False, "adopt": host_state == "ours",
+                   "host_keys": ({t: dict(v) for t, v in host_keys.items()}
+                                 if host_id == "cursor" and host_keys else {})},
             status_line=lambda _s=host_state, _c=current_command: {
                 "state": _s, "current_command": _c},
             segment_meta=meta, external_segments=external,
             sample_json=_host_sample(host_id) if host_id == "claude" else "{}",
-            engine=engine,
+            engine=host_engine,
             done_hint=f"Open a new {label} session to see your status line.",
         ))
     return tuple(hosts)
 
 
 def make_ctx(with_external=False, sl_state="unset", host_ids=("claude",), engine=None,
-             current_command=None, sl_states=None):
+             current_command=None, sl_states=None, host_keys=None, alert_limit_text=None):
     """A component-level context plus the named hosts' views."""
     sel = setup.Selection([
         ("agents", "ui-ux-designer", True),
@@ -93,7 +99,8 @@ def make_ctx(with_external=False, sl_state="unset", host_ids=("claude",), engine
         housekeeping={"stale": [], "predecessors": []},
         hosts=make_hosts(host_ids=host_ids, sl_state=sl_state,
                          with_external=with_external, engine=engine,
-                         current_command=current_command, sl_states=sl_states))
+                         current_command=current_command, sl_states=sl_states,
+                         host_keys=host_keys, alert_limit_text=alert_limit_text))
 
 
 _KIND_ITEMS = [

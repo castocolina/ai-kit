@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import json
+import math
 import re
 import shutil
 from collections.abc import Callable
@@ -31,7 +32,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.timer import Timer
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 # ---- palette lifted verbatim from mockup-textual.html :root -----------------
 FG = "#c9d1d9"
@@ -95,10 +96,18 @@ LANE_GATE = {1: 20, 2: 30}  # Line 2 needs ≥20 rows, Line 3 needs ≥30
 
 # Arrange preview (D-10..D-12): the preview is a real render of the host's own
 # renderer, titled for the host on screen; the fallback note says it is not one.
-PREVIEW_TITLE = "live preview — {host} (sample data)"
+# Sample session payload and, for Cursor, sample quota; the renderer measures only the
+# clock, its timing and host memory (D-13).
+PREVIEW_TITLE = "preview — {host} (real renderer, sample data)"
 TRAY_TITLE = "OFF (Space turns a chip on → its home line)"
 PREVIEW_FALLBACK_NOTE = "sample text, render unavailable"
 PREVIEW_RENDERING_NOTE = "sample text, rendering…"
+ALERT_LABEL = "Extra-spend alert"
+ALERT_HINT = "x on/off · e set an override (empty uses your Cursor limit; Enter saves, Esc cancels)"
+ALERT_BAD_INPUT = "Override must be a plain amount like 5 or 5.50 (no $, no comma, not " \
+    "negative), or empty to use your Cursor spend limit; nothing was changed."
+ALERT_LIMIT_UNKNOWN = "Cursor spend limit: unknown"
+ALERT_AMOUNT_RE = re.compile(r"[0-9]+(\.[0-9]{1,2})?")   # ASCII digits only, full match
 
 # Choose shows one tab per component kind; global rules is not a tab (ruling 1), it is
 # toggled on Review with `g`. Empty copy is the UI-SPEC "nothing to install" body (ruling 5).
@@ -137,6 +146,8 @@ HELP = {
                    ("Space", "Turn the focused segment on/off (off → tray)"),
                    ("Tab / ⇧Tab", "Focus the next / previous chip"),
                    ("o", "Status line on/off; another tool's line: keep / remove / customize"),
+                   ("x / e", "Cursor: extra-spend alert on/off / set a dollar override of your "
+                             "Cursor spend limit (empty clears it)"),
                    ("r", "Reset the layout to defaults"),
                    ("Enter / Esc", "Continue to the next host or Review / back"),
                    ("q", "Quit the installer")],
@@ -275,9 +286,11 @@ class LayoutBoard:
 @dataclass
 class HostPane:
     """ONE host's Arrange state: its model/board pair. Grouped so the app keeps
-    one active pane instead of mirroring a model/board pair as separate attributes."""
+    one active pane instead of mirroring a model/board pair as separate attributes.
+    `alert_limit` caches the read-only Cursor spend limit for the pane (D-12)."""
     model: WizardModel
     board: LayoutBoard
+    alert_limit: str | None = None
 
 
 @dataclass
@@ -418,6 +431,8 @@ class WizardApp(App):
     #band-name {{ width: 1fr; }}
     #band-toggle {{ width: auto; }}
     #band-note {{ height: auto; }}
+    #alert-row {{ height: auto; }}
+    #alert-usd {{ width: 12; }}
     .locked {{ text-opacity: 50%; }}
     #focchip {{ border: round {PINK}; background: #1b1016; height: auto; padding: 0 1;
                margin-bottom: 1; border-title-color: {PINK}; }}
@@ -493,6 +508,7 @@ class WizardApp(App):
         shared selection, and the host's live status-line state (the band toggle's
         start state, pinned for every host)."""
         state = dict(host.state)
+        state["host_keys"] = {t: dict(v) for t, v in host.state.get("host_keys", {}).items()}
         sl = host.status_line()
         state["start_state"] = sl.get("state", "unset")
         # The wiring value the pane shows; the commit re-reads the host's wiring
@@ -634,6 +650,14 @@ class WizardApp(App):
                 yield Static("", id="band-name")
                 yield Static("", id="band-toggle")
             yield Static("", id="band-note")
+            with Horizontal(id="alert-row"):
+                yield Static(ALERT_LABEL, id="alert-label")
+                yield Static("", id="alert-toggle")
+                yield Static("", id="alert-limit")
+                box = Input(id="alert-usd", placeholder="Cursor limit", max_length=10)
+                box.can_focus = False   # Tab must not reach the box (only `e` enables it)
+                yield box
+                yield Static(ALERT_HINT, id="alert-msg")
             with Vertical(id="board"):
                 for i in range(3):
                     lane = Static("", id=f"lane{i}",
@@ -1018,7 +1042,82 @@ class WizardApp(App):
         host_label = self.hosts[self.flow.host_index].label if self.hosts else "no host"
         self.query_one("#tray", Static).border_title = TRAY_TITLE
         self.query_one("#preview", Static).border_title = PREVIEW_TITLE.format(host=host_label)
+        self._render_alert_row()
         self._render_arrange_board()
+
+    def _alert_row_shown(self) -> bool:
+        """The extra-spend alert row belongs to the Cursor pane only (D-03)."""
+        return bool(self.hosts) and self.hosts[self.flow.host_index].id == "cursor" \
+            and "cursor" in (self.model.state.get("host_keys") or {})
+
+    def _alert_limit_text(self) -> str:
+        """The read-only Cursor spend limit (D-12), read once per pane and cached on it."""
+        pane = self._pane()
+        if pane.alert_limit is None:
+            getter = getattr(self.hosts[self.flow.host_index].engine, "alert_limit_text", None)
+            pane.alert_limit = ALERT_LIMIT_UNKNOWN if getter is None else getter()
+        return pane.alert_limit or ALERT_LIMIT_UNKNOWN
+
+    def _render_alert_row(self) -> None:
+        row = self.query_one("#alert-row")
+        row.display = self._alert_row_shown()
+        if not row.display:
+            return
+        keys = self.model.state["host_keys"]["cursor"]
+        self.query_one("#alert-toggle", Static).update(
+            escape(TOGGLE_ON if keys["extra_alert"] else TOGGLE_OFF))
+        self.query_one("#alert-limit", Static).update(escape(self._alert_limit_text()))
+        box = self.query_one("#alert-usd", Input)
+        if not box.has_focus:
+            usd = keys["extra_alert_usd"]
+            box.value = "" if usd is None else f"{usd:.2f}"
+        row.set_class(not self.model.state.get("adopt"), "locked")
+
+    def _key_alert(self, ch: str | None) -> bool:
+        """`x` flips the alert toggle, `e` opens the threshold box (Cursor pane only)."""
+        if ch not in ("x", "e") or not self._alert_row_shown():
+            return False
+        if not self.model.state.get("adopt"):
+            self.notify(LOCKED_NOTICE)
+            return True
+        if ch == "x":
+            keys = self.model.state["host_keys"]["cursor"]
+            keys["extra_alert"] = not keys["extra_alert"]
+        else:
+            box = self.query_one("#alert-usd", Input)
+            box.can_focus = True
+            box.focus()
+        return True
+
+    def _leave_alert_box(self) -> None:
+        """Hand focus back to the board and make the box unfocusable again (Tab, D-03)."""
+        self.query_one("#alert-usd", Input).can_focus = False
+        self.set_focus(None)
+
+    def _restore_alert_box(self) -> None:
+        """Esc in the box: the last stored value comes back and the box is left."""
+        usd = self.model.state.get("host_keys", {}).get("cursor", {}).get("extra_alert_usd")
+        self.query_one("#alert-usd", Input).value = "" if usd is None else f"{usd:.2f}"
+        self.query_one("#alert-msg", Static).update(escape(ALERT_HINT))
+        self._leave_alert_box()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in the box: an empty value clears the override (None), a plain amount is
+        stored, anything else is refused and nothing changes (R12)."""
+        if event.input.id != "alert-usd":
+            return
+        event.stop()
+        text = event.value.strip()
+        keys = self.model.state["host_keys"]["cursor"]
+        msg = self.query_one("#alert-msg", Static)
+        if text and not (ALERT_AMOUNT_RE.fullmatch(text) and math.isfinite(float(text))):
+            msg.update(escape(ALERT_BAD_INPUT))
+            self.notify(ALERT_BAD_INPUT, severity="error")
+            return
+        keys["extra_alert_usd"] = float(text) if text else None
+        msg.update(escape(ALERT_HINT))
+        self._leave_alert_box()
+        self._render()
 
     # ---- arrange preview: a real render through the host's renderer (D-10..D-12) ----
     async def _on_resize(self, event: events.Resize) -> None:
@@ -1261,12 +1360,19 @@ class WizardApp(App):
         what = [f"[{DIM}]•[/] Symlink [bold]{ncomp}[/] components into "
                 f"~/.claude/(agents|commands|skills)/"]
         writes = ("wire", "update", "replace_foreign")
-        for host in self.hosts:
+        for index, host in enumerate(self.hosts):
             action = self._host_action(host.id)
             text = OUTCOME_TEXT[action].format(label=escape(host.label))
             if action in writes:
                 text += f" ({host.config_label} + {host.wiring_label})"
             what.append(f"[{DIM}]•[/] {escape(host.label)}: {text}")
+            picked = (self._pane(index).model.state.get("host_keys") or {}).get("cursor")
+            if picked and picked != (host.state.get("host_keys") or {}).get("cursor"):
+                usd = picked["extra_alert_usd"]
+                where = "your Cursor spend limit" if usd is None else f"${usd:.2f} override"
+                on = "on" if picked["extra_alert"] else "off"
+                what.append(f"[{DIM}]•[/] {escape(host.label)}: extra-spend alert {on}, "
+                            f"threshold {where} (written with its status-line config)")
         if any(self._host_action(h.id) in writes for h in self.hosts):
             what.append(f"[{DIM}]•[/] Validate with the status line doctor before saving")
         if not self.hosts:
@@ -1376,6 +1482,13 @@ class WizardApp(App):
     def on_key(self, event: events.Key) -> None:
         if len(self.screen_stack) > 1:
             return                 # a pushed screen (the modal, the doctor) owns the key
+        if isinstance(self.focused, Input):
+            # The threshold box owns every key while it has focus (T-30.2-14): Esc leaves it,
+            # every other key is typed into it and never reaches the wizard's keys.
+            if event.key == "escape":
+                self._restore_alert_box()
+                event.stop()
+            return
         if event.key == "ctrl+c":
             return
         if event.character == "?":
@@ -1549,6 +1662,8 @@ class WizardApp(App):
 
     def _key_arrange_board(self, event: events.Key) -> bool:  # pylint: disable=too-many-return-statements
         ch, k = event.character, event.key
+        if self._key_alert(ch):
+            return True
         if ch == "o":
             self.model.state["foreign_ok"] = False   # a Yes for another choice no longer counts
             if self.model.state.get("start_state") == "foreign":

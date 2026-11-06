@@ -199,11 +199,16 @@ def load_segment_inventory(path, host="claude"):
         if host not in entry_hosts:
             continue
         line = int(val.get("line", 0))
+        description = str(val.get("description", ""))
+        sample = str(val.get("sample", ""))
         if host == "cursor":
+            # D-01: a Cursor entry may carry its own wording (cursor_description, cursor_sample)
             line = int(val.get("cursor_line", line))
+            description = str(val.get("cursor_description", description))
+            sample = str(val.get("cursor_sample", sample))
         inv[key] = {
-            "description": str(val.get("description", "")),
-            "sample": str(val.get("sample", "")),
+            "description": description,
+            "sample": sample,
             "icon": str(val.get("icon", "")),
             "line": line,
         }
@@ -437,7 +442,7 @@ _SEGMENT_NOTES = {
     "alt_git_worktree": "⎇ active linked-worktree name",
     "todo": "📝 current TODO  (📝 in-progress / ⏸ pending)",
     "model": "active model name (e.g. Opus)",
-    "alt_time_ago": "time since the session's first message",
+    "alt_time_ago": "time since the last transcript write",
     "alt_time_clock": "⏰ current wall-clock time",
     "effort": "🧠 reasoning-effort ladder + level ([auto] when auto)",
     "lines": "📃 lines added / removed this session",
@@ -529,6 +534,109 @@ def _append_missing(out, changes, written):
         comment = f"          # {note}" if note else ""
         out.append(f"{key} = {'true' if val else 'false'}{comment}\n")
         written.add(key)
+
+
+def _host_key_literal(value):
+    """TOML literal for one host scalar: `true`/`false` or a two-place number."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return f"{float(value):.2f}"
+
+
+def patch_host_keys(text, table, values):  # pylint: disable=too-many-locals
+    """Surgically set the host scalars `values` ({key: bool | float | None}) under
+    the `[table]` header of `text`'s raw TOML (D-03, D-12), like `patch_segments`.
+
+    A live or commented key line is rewritten in place; a commented `# [table]`
+    header is uncommented in place; a missing key is inserted after the table's
+    last key line; a missing table is appended. A `None` value (no override)
+    comments out a live key line and never appends. Every other byte is kept.
+    Returns the input unchanged when no line changes."""
+    if not values:
+        return text
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, line in enumerate(lines) if _header_name(line) == table), None)
+    if start is None:
+        live = {k: v for k, v in values.items() if v is not None}
+        if not live:
+            return text
+        head = text if not text or text.endswith("\n") else text + "\n"
+        body = "".join(f"{k} = {_host_key_literal(v)}\n" for k, v in live.items())
+        return f"{head}\n[{table}]\n{body}"
+    end = next((i for i in range(start + 1, len(lines))
+                if _header_name(lines[i]) is not None), len(lines))
+    written, last_key = set(), start
+    for i in range(start + 1, end):
+        m = _KEY_RE.match(lines[i])
+        if not m or m.group("key") not in values or m.group("key") in written:
+            continue
+        key, indent, value = m.group("key"), m.group("indent"), values[m.group("key")]
+        if value is None:
+            if not lines[i].lstrip().startswith("#"):
+                lines[i] = f"{indent}# {lines[i][len(indent):]}"
+            continue
+        nl = "\n" if lines[i].endswith("\n") else ""
+        lines[i] = f"{indent}{key} = {_host_key_literal(value)}{m.group('trail') or ''}{nl}"
+        written.add(key)
+        last_key = i
+    missing = [k for k, v in values.items() if v is not None and k not in written]
+    if missing:
+        if lines[last_key] and not lines[last_key].endswith("\n"):
+            lines[last_key] += "\n"
+        lines[last_key + 1:last_key + 1] = [
+            f"{k} = {_host_key_literal(values[k])}\n" for k in missing]
+    if written or missing:
+        lines[start] = re.sub(r"^(\s*)#\s*", r"\1", lines[start], count=1)
+    return "".join(lines)
+
+
+def current_host_keys(path, host="claude"):
+    """Each host scalar table's values from the file at `path` (D-03, D-12): the
+    defaults for a missing file, table or key, and for an invalid value; a valid
+    file value replaces its default, coerced to its kind (lenient, like
+    `current_segments`)."""
+    common = _sibling("common_config")
+    raw = read_toml(path)
+    result = {}
+    for table, defaults in (host_config(host).host_scalars or {}).items():
+        values = dict(defaults)
+        section = raw.get(table)
+        for key, value in (section.items() if isinstance(section, dict) else []):
+            if common.cfg_host_key_problem(defaults, key, value) is not None:
+                continue
+            if common.cfg_scalar_kind(defaults[key]) == "bool":
+                values[key] = bool(value)
+            elif value is not None:
+                values[key] = float(value)
+        result[table] = values
+    return result
+
+
+def cursor_limit_text(env, now):
+    """The Cursor spend limit as ai-kit's own Cursor quota cache holds it (D-12).
+
+    A local read of one file only: no API call, no refresher, no directory is
+    created, and never `~/.cursor`."""
+    not_read = ("Cursor spend limit: not read yet (no ai-kit Cursor quota cache) "
+                "— set an override to alert")
+    common, cq = _sibling("common_config"), _sibling("cursor_quota")
+    base = common.cfg_cache_base(dict(env))
+    if not os.path.isabs(base):
+        return not_read
+    cache = cq.probe_read_cache(os.path.join(base, "cursor", "usage.json"))
+    if cache is None:
+        return not_read
+    quota = cq.core_quota_state(cache, now)
+    if quota.od_kind == "fixed" and quota.od_ceiling_usd:
+        fetched = quota.fetched_at if quota.fetched_at is not None else now
+        age = _sibling("common_types").fmt_ago(max(0, now - fetched))
+        return (f"Cursor spend limit: ${quota.od_ceiling_usd:.2f} "
+                f"(ai-kit quota cache, {age} old; inferred ≈)")
+    if quota.od_kind == "unlimited":
+        return "Cursor spend limit: none (unlimited on Cursor) — set an override to alert"
+    if quota.od_kind == "disabled":
+        return "Cursor spend limit: none (extra spend is off on Cursor)"
+    return not_read
 
 
 def _render_line_blocks(lines):
@@ -2921,18 +3029,21 @@ def _segment_changes_vs_recipe(path, segments, host="claude"):
             if k in current and current.get(k) != v}
 
 
-def save_statusline_config(path, seg_changes, layout, statusline_doctor,
-                           host="claude"):
+def save_statusline_config(path, seg_changes, layout, statusline_doctor,  # pylint: disable=too-many-arguments,too-many-positional-arguments
+                           host="claude", *, host_keys=None):
     """Apply the managed edits to the file at `path` via surgical text patches,
     then validate-offline + atomically publish. `seg_changes` is the minimal
     changed {key: bool}; `layout` is None (unchanged) or the full list of line
-    dicts. Returns True on success."""
+    dicts; `host_keys` is None or {table: {key: value}} (the host scalars, one
+    patch per table, D-03). Returns True on success."""
     with open(path, encoding="utf-8") as f:
         text = f.read()
     if seg_changes:
         text = patch_segments(text, seg_changes)
     if layout is not None:
         text = patch_layout(text, layout)
+    for table, values in (host_keys or {}).items():
+        text = patch_host_keys(text, table, values)
     return write_toml_preserving(path, text, statusline_doctor, host=host)
 
 
@@ -3222,7 +3333,7 @@ def _provider_dir(paths, host):
     return os.path.join(paths.config_dir, host_config(host).provider_dir)
 
 
-def _persist_layout(paths, state, dry, known_ext_ids=None, host="claude"):
+def _persist_layout(paths, state, dry, known_ext_ids=None, host="claude"):  # pylint: disable=too-many-locals
     """Compute the host's minimal seg_changes + layout diff vs that host's own
     config, then delegate to ``save_statusline_config`` for the offline
     validation + atomic publish (FR-W.5 / D-23).  Returns True on success
@@ -3273,14 +3384,18 @@ def _persist_layout(paths, state, dry, known_ext_ids=None, host="claude"):
             seg_changes[ext_id] = desired
     layout = state["layout"] if state["layout"] != current_layout(cfg, host) \
         else None
-    if not (seg_changes or layout is not None):
+    current = current_host_keys(cfg, host)
+    key_changes = {t: dict(v) for t, v in (state.get("host_keys") or {}).items()
+                   if t in current and v != current[t]}
+    if not (seg_changes or layout is not None or key_changes):
         return True   # nothing to write — already up-to-date
     # D-19: hand the publish primitive this host's entry too, so validation is
     # structural check PLUS an offline dry render of the candidate (synthetic
     # quota for Cursor) — never the fetch-capable `--doctor`.
     _cfg, _sample, entry, _wiring = _statusline_paths(paths, host)
     return save_statusline_config(cfg, seg_changes, layout,
-                                  (paths.statusline_doctor, entry), host=host)
+                                  (paths.statusline_doctor, entry), host=host,
+                                  host_keys=key_changes)
 
 
 def _recover_incompatible_config(paths, dry, host="claude"):
@@ -3425,6 +3540,9 @@ def _engine_ns(paths, host, sample_json):
         return render_preview(entry, segments, sample_json, env,
                               layout=layout, base_config=base_config, host=host)
 
+    extra = {}
+    if host == "cursor":   # D-12: the read-only Cursor spend limit for the alert row
+        extra["alert_limit_text"] = lambda: cursor_limit_text(os.environ, time.time())
     return _types.SimpleNamespace(
         render_preview=_render_preview,
         apply_command=_apply_wizard_command,
@@ -3433,6 +3551,7 @@ def _engine_ns(paths, host, sample_json):
         layout_move=layout_move,
         layout_toggle=layout_toggle,
         off_tray=off_tray,
+        **extra,
     )
 
 
@@ -3473,7 +3592,8 @@ def _host_view_state(paths, cfg, host, external):
             cfg, ext["id"], default_on=ext["provenance"] == "user")
     return {"segments": segments,
             "layout": current_layout(cfg, host), "dirty": False,
-            "adopt": _detect_for(paths, host)["state"] == "ours"}
+            "adopt": _detect_for(paths, host)["state"] == "ours",
+            "host_keys": current_host_keys(cfg, host)}
 
 
 def _host_done_hint(host, label):

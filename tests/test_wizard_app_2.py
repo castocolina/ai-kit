@@ -396,7 +396,7 @@ class TestRealPreview(unittest.IsolatedAsyncioTestCase):
             self.assertIn("RED", _preview_plain(app))
             self.assertIn("model", _preview_plain(app))  # an on-segment of the default layout
             self.assertEqual(preview.border_title,
-                             "live preview — Claude Code (sample data)")
+                             "preview — Claude Code (real renderer, sample data)")
             self.assertEqual(query_static(app, "#tray").border_title,
                              wa.TRAY_TITLE)
 
