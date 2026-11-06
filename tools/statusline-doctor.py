@@ -282,6 +282,21 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
             errors.append(f"unknown [git] key: {k}")
         elif problem == "bad_ttl":
             errors.append(f"[git] cache_ttl must be an integer, got {v!r}")
+    for table, defaults in (spec.host_scalars or {}).items():
+        table_raw = raw.get(table)
+        if table_raw is None:
+            continue
+        if not isinstance(table_raw, dict):
+            errors.append(f"[{table}] must be a table")
+            continue
+        for k, v in cast(dict[str, Any], table_raw).items():
+            problem = common_config.cfg_host_key_problem(defaults, k, v)
+            if problem == "unknown":
+                errors.append(f"unknown [{table}] key: {k}")
+            elif problem == "bad_value":
+                is_bool = common_config.cfg_scalar_kind(defaults[k]) == "bool"
+                desc = "true/false" if is_bool else "a non-negative number"
+                errors.append(f"[{table}] {k} must be {desc}, got {v!r}")
     ext: Any = raw.get("external")
     if ext is not None:
         if not isinstance(ext, dict):
@@ -412,7 +427,73 @@ _QUOTA_HINTS = {
 }
 
 
-def quota_report(env: Env, now: float, fetch_quota: FetchQuota | None = None) -> str:
+# Keys shown as unverified until R11's live Cursor run confirms them; a key the run
+# confirms is removed from this tuple.
+UNVERIFIED_CURSOR_SEGMENTS = ("alt_process_memory", "alt_time_ago")
+
+# The cycle statement must be true for each period (30.2 D-01, D-09 / R7).
+CURSOR_CYCLE_LINES = {
+    "monthly": "data difference: one monthly billing cycle; no 5-hour or 7-day window",
+    "weekly": (
+        "data difference: included quota resets weekly; billing stays monthly; no 5-hour window"
+    ),
+    "unknown": "data difference: billing cycle period unknown; no 5-hour window",
+}
+
+
+def cursor_data_differences(period: str | None) -> list[str]:
+    """The fixed-order statements about how Cursor's quota differs from Claude's:
+    the billing cycle for the cache's period, the inferred source, then each
+    unverified segment (R7). Plain text, no ANSI."""
+    lines = [CURSOR_CYCLE_LINES.get(period or "unknown", CURSOR_CYCLE_LINES["unknown"])]
+    lines.append(f"data difference: quota source{_QUOTA_LABEL}; the line marks it with ≈")
+    for key in UNVERIFIED_CURSOR_SEGMENTS:
+        lines.append(
+            f"unverified on Cursor: {key} (shown only when its data is found; "
+            "no live Cursor run has confirmed it yet)"
+        )
+    return lines
+
+
+def cursor_alert_line(alert: cursor_quota.ExtraAlert, state: str) -> str:
+    """The doctor's extra-spend alert line (D-12). The Cursor-limit and no-limit
+    sources name a non-ok quota state, so a stale limit never reads as current."""
+    if alert.source == "off":
+        return "extra-spend alert: off"
+    if alert.source == "config":
+        return f"extra-spend alert: at ${alert.threshold:.2f} (config override)"
+    if alert.source == "cursor":
+        line = (
+            f"extra-spend alert: at ${alert.threshold:.2f} "
+            "(Cursor spend limit, inferred — undocumented Cursor API)"
+        )
+        return line if state == "ok" else f"{line}; quota cache {state}"
+    line = "extra-spend alert: none (no Cursor spend limit in the quota cache and no override)"
+    return line if state == "ok" else f"{line}; quota cache {state}"
+
+
+def _cursor_knobs(env: Env, host: common_render.Host) -> dict[str, object] | None:
+    """The resolved [cursor] knob table, or None when the config does not load."""
+    try:
+        return (common_config.cfg_load_config(env, host.config).host_knobs or {}).get("cursor")
+    except ValueError:
+        return None
+
+
+def _absent_quota_report(exc: OSError, knobs: dict[str, object] | None) -> str:
+    """The quota report when the cache directory cannot be read (token-free)."""
+    absent = cursor_quota.QuotaResult("absent")
+    alert = cursor_alert_line(cursor_quota.core_extra_alert(knobs, absent), absent.state)
+    head = [f"quota: absent{_QUOTA_LABEL}", f"quota cache: unavailable ({exc})"]
+    return "\n".join([*head, *cursor_data_differences(None), alert])
+
+
+def quota_report(
+    env: Env,
+    now: float,
+    fetch_quota: FetchQuota | None = None,
+    knobs: dict[str, object] | None = None,
+) -> str:
     """One explicit foreground quota refresh + cache state, as report lines.
 
     Only a manual `--doctor --host cursor` calls this. When the single-flight
@@ -425,7 +506,7 @@ def quota_report(env: Env, now: float, fetch_quota: FetchQuota | None = None) ->
         cache_base = common_config.cfg_cache_base(dict(env))
         cache_path, lock_path = cursor_quota.probe_cache_paths(cache_base)
     except OSError as exc:
-        return f"quota: absent{_QUOTA_LABEL}\nquota cache: unavailable ({exc})"
+        return _absent_quota_report(exc, knobs)
     descriptor = cursor_quota.probe_try_lock(lock_path)
     if descriptor is None:
         note = "refresh: none started — a refresh is in progress (single-flight lock held)"
@@ -445,6 +526,8 @@ def quota_report(env: Env, now: float, fetch_quota: FetchQuota | None = None) ->
     if hint is not None:
         lines.append(hint)
     lines.append(note)
+    lines.extend(cursor_data_differences(result.included_period))
+    lines.append(cursor_alert_line(cursor_quota.core_extra_alert(knobs, result), result.state))
     return "\n".join(lines)
 
 
@@ -482,7 +565,7 @@ def cmd_doctor(
     quota_lines = ""
     if host.name == "cursor":
         stamp = time.time() if now is None else now
-        quota_lines = quota_report(env, stamp, fetch_quota)
+        quota_lines = quota_report(env, stamp, fetch_quota, knobs=_cursor_knobs(env, host))
     path = common_config.cfg_config_path(env, spec)
     errors: list[str] = []
     if os.path.exists(path):

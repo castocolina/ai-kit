@@ -1,6 +1,7 @@
 """Config resolution and external discovery for the Phase 23 D-02 status-line split."""
 # pyright: strict
 
+import math
 import os
 import re
 import sys
@@ -53,18 +54,21 @@ def cfg_warn(msg: str) -> None:
 
 
 def cfg_coerce(raw: Any, kind: str, source: str, label: str) -> tuple[Any, str | None]:
-    """Coerce a raw config value to `kind` ('bool'|'int') from `source`
+    """Coerce a raw config value to `kind` ('bool'|'int'|'number') from `source`
     ('env'|'toml'). Returns (value, problem):
       (value, None)   -> a coerced value to apply,
       (None, None)    -> no override / skip (no real config value is None),
       (None, problem) -> present but not coercible; `problem` is the core text.
     source='env' (raw is str): bool via _ENV_TRUE/_ENV_FALSE, UNRECOGNIZED -> skip
-    (preserves today's SILENT env-bad-bool); int via int(raw).
+    (preserves today's SILENT env-bad-bool); int via int(raw); number via float(raw).
     source='toml' (raw already typed): bool must be a real bool; int must be int
-    and not bool. `label` is the message subject (env var name / "segment 'x'" /
-    '[git] cache_ttl')."""
-    desc = "true/false" if kind == "bool" else "an integer"
+    and not bool; number must be an int or float, not bool. A number must be finite
+    and >= 0 from either source. `label` is the message subject (env var name /
+    "segment 'x'" / '[git] cache_ttl')."""
+    desc = {"bool": "true/false", "number": "a non-negative number"}.get(kind, "an integer")
     bad = f"{label} must be {desc}, got {raw!r} — ignored"
+    if kind == "number":
+        return cfg_coerce_number(raw, source, bad)
     if source == "env":
         if kind == "bool":
             value, recognized = cfg_coerce_env_bool(cast(str, raw))
@@ -77,6 +81,85 @@ def cfg_coerce(raw: Any, kind: str, source: str, label: str) -> tuple[Any, str |
     if kind == "bool":
         return (raw, None) if isinstance(raw, bool) else (None, bad)
     return (raw, None) if isinstance(raw, int) and not isinstance(raw, bool) else (None, bad)
+
+
+def cfg_coerce_number(raw: Any, source: str, bad: str) -> tuple[Any, str | None]:
+    """The 'number' kind of cfg_coerce: a finite float >= 0 from either source (env
+    float(raw); toml an int or float, never a bool)."""
+    if source == "env":
+        try:
+            num: Any = float(cast(str, raw))
+        except (TypeError, ValueError):
+            return None, bad
+    else:
+        num = raw if isinstance(raw, (int, float)) and not isinstance(raw, bool) else None
+    if num is None or not math.isfinite(num) or num < 0:
+        return None, bad
+    return float(num), None
+
+
+def cfg_scalar_kind(default: Any) -> str:
+    """Kind of a host scalar from its default: a bool default is 'bool', any other
+    default is 'number' (a `None` default is an optional number with no default
+    value, D-12)."""
+    return "bool" if isinstance(default, bool) else "number"
+
+
+def cfg_host_key_problem(defaults: dict[str, Any], key: str, value: Any) -> str | None:
+    """Classify one host-scalar key/value so the config binder and the doctor share
+    one rule (each formats its own message). Returns 'unknown', 'bad_value' or None."""
+    if key not in defaults:
+        return "unknown"
+    _value, prob = cfg_coerce(value, cfg_scalar_kind(defaults[key]), "toml", key)
+    return "bad_value" if prob else None
+
+
+def cfg_bind_host_table(
+    table: str, defaults: dict[str, Any], raw_table: Any, env: Env, spec: ConfigSpec
+) -> tuple[dict[str, Any], list[str]]:
+    """Bind one host scalar table: its TOML table, then env on top. A bad value keeps
+    the current value and is reported. Returns (values, problems)."""
+    vals = dict(defaults)
+    problems: list[str] = []
+    if raw_table is not None and not isinstance(raw_table, dict):
+        problems.append(f"[{table}] must be a table — ignored")
+    elif isinstance(raw_table, dict):
+        for key, value in cast(dict[str, Any], raw_table).items():
+            if cfg_host_key_problem(defaults, key, value) == "unknown":
+                problems.append(f"unknown [{table}] key '{key}'")
+                continue
+            coerced, prob = cfg_coerce(
+                value, cfg_scalar_kind(defaults[key]), "toml", f"[{table}] {key}"
+            )
+            if prob:
+                problems.append(prob)
+            else:
+                vals[key] = coerced
+    # the table name is dropped: key `extra_alert` reads <PREFIX>EXTRA_ALERT (one table per host)
+    for key, default in defaults.items():
+        label = spec.env_prefix + key.upper()
+        raw = env.get(label)
+        if raw is None:
+            continue
+        value, prob = cfg_coerce(raw, cfg_scalar_kind(default), "env", label)
+        if prob:
+            problems.append(prob)
+        elif value is not None:
+            vals[key] = value
+    return vals, problems
+
+
+def cfg_bind_host_scalars(
+    raw_toml: dict[str, Any], env: Env, spec: ConfigSpec
+) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """Bind every ConfigSpec.host_scalars table (see cfg_bind_host_table).
+    Returns (knobs, problems)."""
+    knobs: dict[str, dict[str, Any]] = {}
+    problems: list[str] = []
+    for table, defaults in (spec.host_scalars or {}).items():
+        knobs[table], prob = cfg_bind_host_table(table, defaults, raw_toml.get(table), env, spec)
+        problems.extend(prob)
+    return knobs, problems
 
 
 def cfg_source_get(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -170,6 +253,7 @@ def cfg_default_config(spec: ConfigSpec) -> "Config":
         palette={},
         ramps={},
         git=dict(GIT_DEFAULTS),
+        host_knobs={t: dict(d) for t, d in (spec.host_scalars or {}).items()},
     )
 
 
@@ -341,6 +425,8 @@ def cfg_load_config_verbose(  # pylint: disable=too-many-locals,too-many-branche
         raw, env, git, ext_dir, ext_ttl, spec.env_prefix
     )
     problems.extend(prob_scalars)
+    host_knobs, prob_host = cfg_bind_host_scalars(raw, env, spec)
+    problems.extend(prob_host)
 
     # Discover external providers using the final resolved dir/ttl (env wins over TOML).
     specs = core_discover_external(ext_dir, ext_ttl, os.path.join(cache_base, spec.provider_cache))
@@ -386,6 +472,7 @@ def cfg_load_config_verbose(  # pylint: disable=too-many-locals,too-many-branche
             dir=ext_dir, cache_ttl=ext_ttl, providers=external, env_prefix=spec.provider_env
         ),
         cache_base=cache_base,
+        host_knobs=host_knobs,
     )
     return cfg, problems
 

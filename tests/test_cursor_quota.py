@@ -21,8 +21,10 @@ from tools.cursor_quota import (
     NEGATIVE_TTL_S,
     PERIOD_ENUM,
     WEEK_MS,
+    ExtraAlert,
     FetchContext,
     QuotaResult,
+    core_extra_alert,
     core_needs_refresh,
     core_normalize,
     core_quota_state,
@@ -1034,6 +1036,100 @@ class TestCursorQuota(unittest.TestCase):
                     self.assertNotIn(token.encode(), content, name)
             self.assertGreaterEqual(walked, 1)
 
+
+
+class TestSyntheticCacheMidCycle(unittest.TestCase):
+    """The preview cache sits 13 of 30 days into its cycle (30.2-02 D-09)."""
+
+    NOW = 1_762_000_000
+
+    def test_cycle_is_mid_cycle_and_included_gauge_is_green(self):
+        tools_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tools"))
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        import common_fmt
+
+        data = cast(dict[str, Any], core_synthetic_cache(self.NOW)["data"])
+        end = int((self.NOW + 17 * 86400) * 1000)
+        self.assertEqual(data["cycle_end_ms"], end)
+        self.assertEqual(data["cycle_start_ms"], end - 30 * 86400 * 1000)
+        self.assertEqual(data["included_pct"], 42.0)
+        self.assertEqual(data["api_pct"], 18.0)
+        self.assertEqual(data["od_used_usd"], 2.5)
+        self.assertEqual(data["od_ceiling_usd"], 20.0)
+        self.assertEqual(data["included_period"], "monthly")
+        start_s = cast(int, data["cycle_start_ms"]) / 1000
+        end_s = cast(int, data["cycle_end_ms"]) / 1000
+        gap = common_fmt.util_window_gap(42.0, start_s, end_s, self.NOW)
+        self.assertIsNotNone(gap)
+        self.assertLessEqual(abs(cast(float, gap)), 5.0)
+
+
+class TestIncludedPeriod(unittest.TestCase):
+    NOW = 1_762_000_000.0
+
+    def _cache_with(self, period: object, *, drop: bool = False) -> dict[str, object]:
+        cache = core_synthetic_cache(self.NOW)
+        data = cast(dict[str, Any], cache["data"])
+        if drop:
+            del data["included_period"]
+        else:
+            data["included_period"] = period
+        return cache
+
+    def _period(self, cache: dict[str, object]) -> str | None:
+        return core_quota_state(cache, self.NOW).included_period
+
+    def test_period_is_carried_only_when_in_the_enum(self):
+        self.assertEqual(self._period(self._cache_with("monthly")), "monthly")
+        self.assertEqual(self._period(self._cache_with("weekly")), "weekly")
+        for bad in (None, "daily"):
+            self.assertIsNone(self._period(self._cache_with(bad)))
+        self.assertIsNone(self._period(self._cache_with(None, drop=True)))
+
+
+class TestExtraAlert(unittest.TestCase):
+    """The one alert rule (30.2-02 D-12): at or above the threshold, source named."""
+
+    def _quota(self, used, kind="fixed", ceiling: float | None = 20.0):
+        return QuotaResult("ok", od_kind=kind, od_used_usd=used, od_ceiling_usd=ceiling)
+
+    def test_cursor_limit_fires_at_or_above_and_not_below(self):
+        at = core_extra_alert(None, self._quota(20.0))
+        self.assertEqual(at, ExtraAlert(True, 20.0, "cursor"))
+        below = core_extra_alert(None, self._quota(19.99))
+        self.assertEqual(below, ExtraAlert(False, 20.0, "cursor"))
+        self.assertTrue(core_extra_alert(None, self._quota(20.004)).fires)
+
+    def test_override_wins_and_zero_is_valid(self):
+        knobs: dict[str, object] = {"extra_alert": True, "extra_alert_usd": 0.0}
+        self.assertEqual(core_extra_alert(knobs, self._quota(2.5)), ExtraAlert(True, 0.0, "config"))
+        self.assertEqual(
+            core_extra_alert({"extra_alert_usd": 5.0}, self._quota(2.5)),
+            ExtraAlert(False, 5.0, "config"),
+        )
+        self.assertTrue(core_extra_alert({"extra_alert_usd": 2.5}, self._quota(2.5)).fires)
+        self.assertFalse(core_extra_alert({"extra_alert_usd": 0.0}, self._quota(0.0)).fires)
+
+    def test_switch_off_and_no_limit_give_no_alert(self):
+        off = {"extra_alert": False, "extra_alert_usd": 5.0}
+        self.assertEqual(core_extra_alert(off, self._quota(9.0)), ExtraAlert(False, None, "off"))
+        for kind in ("unlimited", "disabled", "unavailable"):
+            self.assertEqual(
+                core_extra_alert(None, self._quota(2.5, kind=kind)), ExtraAlert(False, None, "none")
+            )
+        for ceiling in (None, 0.0):
+            self.assertEqual(
+                core_extra_alert(None, self._quota(2.5, ceiling=ceiling)),
+                ExtraAlert(False, None, "none"),
+            )
+        unlimited = self._quota(2.5, kind="unlimited")
+        self.assertTrue(core_extra_alert({"extra_alert_usd": 0.0}, unlimited).fires)
+
+    def test_synthetic_cache_uses_the_cursor_limit_by_default(self):
+        now = 1_762_000_000.0
+        quota = core_quota_state(core_synthetic_cache(now), now)
+        self.assertEqual(core_extra_alert(None, quota), ExtraAlert(False, 20.0, "cursor"))
 
 
 if __name__ == "__main__":

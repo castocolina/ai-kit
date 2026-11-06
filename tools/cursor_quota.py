@@ -42,6 +42,16 @@ class QuotaResult(NamedTuple):
     od_kind: str = "unavailable"
     od_used_usd: float | None = None
     od_ceiling_usd: float | None = None
+    included_period: str | None = None
+
+
+class ExtraAlert(NamedTuple):
+    """The extra-spend alert verdict (D-12): whether it fires, its threshold in USD
+    and where the threshold comes from (off, config, cursor or none)."""
+
+    fires: bool
+    threshold: float | None
+    source: str
 
 
 class FetchResult(NamedTuple):
@@ -263,7 +273,28 @@ def core_quota_state(cache: object, now: float) -> QuotaResult:
         cast(float, data["od_ceiling_usd"])
         if isinstance(data.get("od_ceiling_usd"), (int, float))
         else None,
+        cast(str, data["included_period"])
+        if isinstance(data.get("included_period"), str) and data["included_period"] in PERIOD_ENUM
+        else None,
     )
+
+
+def core_extra_alert(knobs: dict[str, object] | None, quota: QuotaResult) -> ExtraAlert:
+    """The one extra-spend alert rule for the renderer, the doctor and the wizard
+    (D-12). `knobs` None means the defaults (on, no override). At or above the
+    threshold, because Cursor stops extra usage at its limit. Pure: no I/O."""
+    knobs = knobs or {}
+    if knobs.get("extra_alert", True) is False:
+        return ExtraAlert(False, None, "off")
+    override = knobs.get("extra_alert_usd")
+    if override is not None:
+        threshold, source = float(cast(float, override)), "config"
+    elif quota.od_kind == "fixed" and (quota.od_ceiling_usd or 0) > 0:
+        threshold, source = cast(float, quota.od_ceiling_usd), "cursor"
+    else:
+        return ExtraAlert(False, None, "none")
+    used = round(quota.od_used_usd or 0.0, 2)
+    return ExtraAlert(used > 0 and used >= round(threshold, 2), threshold, source)
 
 
 def core_needs_refresh(cache: object, now: float) -> bool:
@@ -284,8 +315,9 @@ def core_needs_refresh(cache: object, now: float) -> bool:
 
 
 def core_synthetic_cache(now: float) -> dict[str, object]:
-    """Return fresh, token-free mid-cycle cache data for previews."""
-    end = int((now + 86400) * 1000)
+    """Return fresh, token-free mid-cycle cache data for previews. Mid-cycle: 13 of 30
+    days elapsed, so the 42% included gauge renders green (30.2-02, see SUMMARY)."""
+    end = int((now + 17 * 86400) * 1000)
     data: dict[str, object] = {
         "cycle_start_ms": end - 30 * 86400 * 1000,
         "cycle_end_ms": end,

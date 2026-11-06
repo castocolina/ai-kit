@@ -49,6 +49,8 @@ class ConfigSpec(NamedTuple):
     provider_dir: str
     provider_cache: str
     provider_env: str
+    # Host scalar tables (data only): table -> key -> default; a None default is an optional number.
+    host_scalars: dict[str, dict[str, Any]] | None = None
 
 
 # Meta-segments: they report the whole render, not a single builder, so the
@@ -148,6 +150,8 @@ class Config(NamedTuple):
     git: dict[str, int] | None = None
     external: "ExternalConf | None" = None
     cache_base: str = ""
+    # Resolved host scalar tables: table -> key -> value (see ConfigSpec.host_scalars).
+    host_knobs: dict[str, dict[str, Any]] | None = None
 
 
 # Fixed (non-overridable) colors.

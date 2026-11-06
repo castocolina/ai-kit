@@ -1,6 +1,8 @@
 """Cursor host defaults and HOST assembly; imports Cursor and host-neutral modules only."""
 # pyright: strict
 
+from typing import Any
+
 import common_segments
 import cursor_segments
 from common_render import Host, core_discover_builders
@@ -31,6 +33,8 @@ LAYOUT = [
     Line(0, ["render_time", "slowest", "alt_time_clock", "alt_term_dimensions"]),
 ]
 PINNED = {"path", "context"}
+# `extra_alert_usd` None: no override, the alert uses the Cursor spend limit (D-12).
+HOST_SCALARS: dict[str, dict[str, Any]] = {"cursor": {"extra_alert": True, "extra_alert_usd": None}}
 
 # ═══ 6. core_ — host spec and renderer contract ═════════════════════════════
 
@@ -43,6 +47,7 @@ SPEC = ConfigSpec(
     "segments-cursor",
     "segments-cursor",
     "AI_KIT_CURSOR_PROVIDER_",
+    host_scalars=HOST_SCALARS,
 )
 BUILDERS = core_discover_builders(common_segments, cursor_segments)
 HOST = Host(
