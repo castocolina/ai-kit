@@ -30,7 +30,6 @@ def check_tool_presence(
         for name in MODERN_CLI_TOOLS
     }
     result: dict[str, bool] = {
-        "rtk": shutil.which("rtk", path=search_path) is not None,
         "modern-cli": any(per_tool.values()),
         "codegraph": os.path.isdir(os.path.join(root, ".codegraph")),
         "graphify": (

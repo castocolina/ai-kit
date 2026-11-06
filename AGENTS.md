@@ -125,12 +125,7 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 - Don't add a new dev dependency without checking whether an existing
   stdlib-only or already-approved approach covers the need (e.g. the
   hand-rolled-JSONC-scanner precedent over a JSONC-parser dependency).
-- uz's local shell may layer extra CLI tooling over the defaults: `rtk`
-  (automatic tool substitution via a token-killer hook), modern
-  `rg`/`bat`/`sd`/`fd`/`eza`, and `graphify` (knowledge-graph indexing,
-  emitting `graph.json` via graphify-out) — see
-  [CLI Environment](.claude/cli-environment.md) for what each does and how
-  to use it when present.
+- uz's local shell may add modern CLI tools (`rg`, `bat`, `sd`, `fd`, `eza`) and `graphify` (knowledge-graph indexing; `graph.json` under `graphify-out/`) over the defaults; use them when present.
 
 ## Testing
 

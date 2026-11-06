@@ -106,7 +106,7 @@ def make_ctx(with_external=False, sl_state="unset", host_ids=("claude",), engine
 _KIND_ITEMS = [
     ("skills", "brainstorming", True), ("skills", "tdd", True), ("skills", "debugging", True),
     ("agents", "ui-ux-designer", True),
-    ("hooks", "tool-advisor", True), ("hooks", "rtk-hint", False),
+    ("hooks", "tool-advisor", True), ("hooks", "extra-hint", False),
 ]
 
 

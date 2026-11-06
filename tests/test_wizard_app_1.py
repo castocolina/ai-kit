@@ -178,14 +178,14 @@ class TestChooseTabs(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("right")
             await pilot.press("right")          # hooks; cursor on tool-advisor
-            await pilot.press("down")           # rtk-hint (off)
+            await pilot.press("down")           # extra-hint (off)
             await pilot.press("space")
             tabs = self._tabs(app)
             self.assertIn("hooks 2/2", tabs)
             self.assertIn("skills 3/3", tabs)
             self.assertIn("agents 1/1", tabs)
             rows, _ncomp = app._review_component_rows()
-            self.assertTrue(any("2/2: tool-advisor, rtk-hint" in row for row in rows), rows)
+            self.assertTrue(any("2/2: tool-advisor, extra-hint" in row for row in rows), rows)
 
     async def test_n_and_upper_n_and_upper_a(self):
         app = wa.WizardApp(make_ctx_kinds())

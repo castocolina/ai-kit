@@ -1,13 +1,13 @@
 ---
 name: ai-kit-project-rules-agents
-description: Use when an AGENTS.md or CLAUDE.md-style agent-instruction file needs checking against ai-kit's own 20-rule house ruleset (a CLAUDE.md audit, missing workflow rules, broken relative links), or to fix it: insert missing house rules, repair broken links, via one /agent-md-refactor pass; also for "is my AGENTS.md missing any workflow rules". Triggers: "house rules", "agent instructions", "workflow-rule audit". Route a whole-repo "check everything" request to `ai-kit-project-rules-all` instead.
+description: Use when an AGENTS.md or CLAUDE.md-style agent-instruction file needs checking against ai-kit's own 19-rule house ruleset (a CLAUDE.md audit, missing workflow rules, broken relative links), or to fix it: insert missing house rules, repair broken links, via one /agent-md-refactor pass; also for "is my AGENTS.md missing any workflow rules". Triggers: "house rules", "agent instructions", "workflow-rule audit". Route a whole-repo "check everything" request to `ai-kit-project-rules-all` instead.
 ---
 
 # ai-kit-project-rules-agents
 
 ## Scope
 
-This skill checks a target repo's AGENTS.md/CLAUDE.md-style instruction file against ai-kit's own 20-rule house ruleset (`rules.py`). The 20 rules are ai-kit's own accumulated convention, applied here to whichever repo is being checked — they are NOT a general-purpose rules engine offered to other projects.
+This skill checks a target repo's AGENTS.md/CLAUDE.md-style instruction file against ai-kit's own 19-rule house ruleset (`rules.py`). The 19 rules are ai-kit's own accumulated convention, applied here to whichever repo is being checked — they are NOT a general-purpose rules engine offered to other projects.
 
 ## Resolve the entrypoint
 
@@ -34,7 +34,7 @@ Paths used below, relative to the skill directory (`SKILL_DIR`): the rule table 
 
 ## Trust gate (before running)
 
-When `<repo_root>/.planning/` exists, `check` and `remediate` run a GSD identity probe for R18/R19: `node` runs `runtime-identity` (after a `git rev-parse` to find the project root) on the gsd-tools that GSD's own launcher order resolves for that repo, which is the repo's own `gsd-core/`, `.claude/gsd-core/` or `.codex/gsd-core/` copy first, then the host homes, then `gsd_run` on PATH. A project-local copy is the target repo's own code. Unless the user has already said they trust that repo's code (their own project, or they asked you to run its GSD commands), ask before running. If they decline, or no one can be asked, prefix each command with `AI_KIT_SKIP_GSD_PROBE=1`: the probe is the only step that executes anything from the repo, and the flag skips all of it. With the flag R18/R19 always come back as `unverified` notices (expected, not a sign the flag failed; do not rerun without it); without it they get a real verdict when the probe succeeds, and the same notice when it fails. Everything else only reads: tool presence looks up `rtk`, `graphify` and the modern CLIs by name on PATH and checks for `.codegraph/`, `graphify-out/` and `.planning/` directories, without running a binary. Without the flag, a stderr line `ai-kit: gsd identity probe ran <path>` means the probe already executed that path (no sibling skills or no gsd-tools prints nothing); with the flag it never appears. The probe also needs the sibling skills `ai-kit-gsd-curated-config` and `ai-kit-spec-review` installed; without them R18/R19 always come back as `unverified` notices, and the fix is to install those siblings, not to change the trust answer.
+When `<repo_root>/.planning/` exists, `check` and `remediate` run a GSD identity probe for R18/R19: `node` runs `runtime-identity` (after a `git rev-parse` to find the project root) on the gsd-tools that GSD's own launcher order resolves for that repo, which is the repo's own `gsd-core/`, `.claude/gsd-core/` or `.codex/gsd-core/` copy first, then the host homes, then `gsd_run` on PATH. A project-local copy is the target repo's own code. Unless the user has already said they trust that repo's code (their own project, or they asked you to run its GSD commands), ask before running. If they decline, or no one can be asked, prefix each command with `AI_KIT_SKIP_GSD_PROBE=1`: the probe is the only step that executes anything from the repo, and the flag skips all of it. With the flag R18/R19 always come back as `unverified` notices (expected, not a sign the flag failed; do not rerun without it); without it they get a real verdict when the probe succeeds, and the same notice when it fails. Everything else only reads: tool presence looks up `graphify` and the modern CLIs by name on PATH and checks for `.codegraph/`, `graphify-out/` and `.planning/` directories, without running a binary. Without the flag, a stderr line `ai-kit: gsd identity probe ran <path>` means the probe already executed that path (no sibling skills or no gsd-tools prints nothing); with the flag it never appears. The probe also needs the sibling skills `ai-kit-gsd-curated-config` and `ai-kit-spec-review` installed; without them R18/R19 always come back as `unverified` notices, and the fix is to install those siblings, not to change the trust answer.
 
 ## Run the check
 
@@ -62,9 +62,10 @@ Output shapes (JSON on stdout; the trimmed `remediate` example follows). `remedi
     {"kind": "workflow", "id": "R01", "status": "missing", "criticality": 1,
      "summary": "...", "signals": ["english only", "english-only", "non-negotiable"],
      "matched_signals": [], "auto_apply": true},
-    {"kind": "workflow", "id": "R05", "status": "near_miss", "criticality": 3,
-     "summary": "...", "signals": ["rtk", "token killer", "tool substitution"],
-     "matched_signals": ["rtk"], "auto_apply": false}
+    {"kind": "workflow", "id": "R06", "status": "missing", "criticality": 3,
+     "summary": "When modern CLI tools (rg, bat, sd, fd, eza) are present, agents should be told to prefer them over their legacy counterparts, with a short usage hint for each installed tool.",
+     "signals": [["rg", ["rg", "ripgrep"]], ["bat", ["bat", "batcat"]], ["sd", ["sd", "stream editor", "sed replacement"]], ["fd", ["fd", "fd-find"]], ["eza", ["eza", "exa"]]],
+     "matched_signals": [], "auto_apply": true}
   ],
   "blocked": [], "notices": []
 }
@@ -153,4 +154,4 @@ Findings and remediation results are reported INLINE in the conversation only. T
 
 ## Ruleset reference
 
-`ai_kit_project_rules_agents/rules.py` (skill-relative) is the source of truth for the 20 house rules (id/category/criticality/condition/signals/summary). This document points at it rather than restating the rule text; the `remediate` payload already carries what Step C needs. R20 is composed per detected stack: its clause for each stack comes from `ai_kit_rules_common.tool_catalog.PARALLEL_TEST_FORMS`.
+`ai_kit_project_rules_agents/rules.py` (skill-relative) is the source of truth for the 19 house rules (id/category/criticality/condition/signals/summary). This document points at it rather than restating the rule text; the `remediate` payload already carries what Step C needs. R20 is composed per detected stack: its clause for each stack comes from `ai_kit_rules_common.tool_catalog.PARALLEL_TEST_FORMS`.

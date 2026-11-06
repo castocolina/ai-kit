@@ -1,4 +1,4 @@
-"""ai-kit's 20-rule house ruleset as structured data (D-06).
+"""ai-kit's 19-rule house ruleset as structured data (D-06).
 
 Each entry is a plain dict with keys: id, category, criticality, condition,
 signals, summary. `signals` drives Task 2's keyword heuristic and comes in
@@ -101,18 +101,6 @@ RULES: tuple[dict, ...] = (
             "Every plan must enable cross-AI plan-review, cross-AI "
             "cheap-model execution, and generate path-agnostic (PATH-"
             "resolved, never machine-specific absolute) commands."
-        ),
-    },
-    {
-        "id": "R05",
-        "category": "workflow",
-        "criticality": CRITICALITY_MEDIUM,
-        "condition": condition_tool_presence("rtk"),
-        "signals": ("rtk", "token killer", "tool substitution"),
-        "summary": (
-            "When rtk (Rust Token Killer CLI proxy) is present, agents "
-            "should be told how its hook-based command rewriting (e.g. "
-            "`git status` -> `rtk git status`) works."
         ),
     },
     {

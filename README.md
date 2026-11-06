@@ -35,7 +35,7 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`ai-kit-spec-config`](skills/ai-kit-spec-config/SKILL.md) | skill | Wizard for the reviewer config: picks (runtime, model) pairs, writes `review-spec.toml`; a runtime outside the runner table is a trust-gated custom command. |
 | [`ai-kit-spec-execute`](skills/ai-kit-spec-execute/SKILL.md) | skill | Router: detects which framework (GSD, superpowers, …) generated a plan/phase, then hands a GSD phase to GSD's own `/gsd-execute-phase` and a superpowers plan to `ai-kit-spec-execute-superpowers`. |
 | [`ai-kit-spec-execute-superpowers`](skills/ai-kit-spec-execute-superpowers/SKILL.md) | skill | Resolves a live-quota-checked (runtime, model) pair for each task of a superpowers implementation plan and injects it at `superpowers:subagent-driven-development`'s implementer-dispatch point, leaving that harness's TDD enforcement, review and fix-loop intact and, after the final review, folds the finished plan into one commit per logical feature through `ai-kit-commit-fold` (push and PR stay with ai-kit's unit flow). Not for `superpowers:executing-plans`. |
-| [`ai-kit-project-rules-agents`](skills/ai-kit-project-rules-agents/SKILL.md) | skill | Checks an AGENTS.md/CLAUDE.md file against ai-kit's own 20-rule house ruleset, then wraps `/agent-md-refactor` to remediate gaps. |
+| [`ai-kit-project-rules-agents`](skills/ai-kit-project-rules-agents/SKILL.md) | skill | Checks an AGENTS.md/CLAUDE.md file against ai-kit's own 19-rule house ruleset, then wraps `/agent-md-refactor` to remediate gaps. |
 | [`ai-kit-project-rules-makefile`](skills/ai-kit-project-rules-makefile/SKILL.md) | skill | Checks a target repo's Makefile target shape — validate-<category> alias chain, recipe length, Docker build-before-up, shellcheck threshold. Detects and reports only. |
 | [`ai-kit-project-rules-precommit`](skills/ai-kit-project-rules-precommit/SKILL.md) | skill | Checks Makefile↔pre-commit parity (both directions), classifies pre-commit tooling into the 6-category taxonomy, and flags enable-everything configs, missing Duplicate-code/Dead-code tooling, and ruff/golangci-lint anti-patterns. Detects and reports only. |
 | [`ai-kit-project-rules-arch`](skills/ai-kit-project-rules-arch/SKILL.md) | skill | Checks that a repo's `arch-test`-shaped Makefile target exists, is chained into `test`, and (where discoverable) is AST-only rather than importing/executing the module it architecturally checks; states the per-stack canonical-tool baseline. Detects and reports only. |
@@ -46,7 +46,7 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`ai-kit-gsd-curated-config`](skills/ai-kit-gsd-curated-config/SKILL.md) | skill | v2-primary GSD config pipeline: inventory, recommend, plan-set/unset, apply (dry-run + backup), the template-8 cross-ai.mjs runner (`ensure-runner`, one CLI per call with a configurable soft ladder, no automatic fallback), skill wiring, and grouped follow-ups; kept v1 one-question `model_profile` path that writes the runner command; pi not live-validated; cursor validated headless (interactive confirmation pending); config keys written only through gsd-tools (a failed apply restores the backup bytes directly). |
 | [`ai-kit-gsd-spec-discuss`](skills/ai-kit-gsd-spec-discuss/SKILL.md) | skill | Chains GSD `/gsd-spec-phase` then `/gsd-discuss-phase` over a phase range in one of two run modes, auto (spec `--auto`, assumptions-mode discuss) or interactive (discuss with `--analyze --all --batch`, the user answering), settling gray areas through an optional local → consented-remote → own-reasoning decision ladder, asked of the shared `jev-fast-decision` skill (advisory; it owns the backends and the consent ask), with decision logs, a deferred ledger, engine-checked Edge Coverage and a best-over-easy (or `mvp_mode`) design rule. Works with no decision backend. |
 | [`ai-kit-spec-goal-prompt`](skills/ai-kit-spec-goal-prompt/SKILL.md) | skill | Builds a ready-to-paste `/goal`, `/loop` or `/gsd-autonomous` prompt file (one-shot goal, autonomous run) for GSD phases or superpowers plans, with rails, quota directives and e2e-based done. Detects host primitives (labelled verified or unverified), picks one to three strategies, writes a committable file. Never runs the prompt. |
-| [`ai-kit-usage-metrics`](skills/ai-kit-usage-metrics/SKILL.md) | skill | Runs the local capture-refine-dashboard pipeline over Claude Code, opencode, Codex, Cursor and rtk session logs, then opens a static, filterable HTML usage-metrics dashboard. Does not export or import data. |
+| [`ai-kit-usage-metrics`](skills/ai-kit-usage-metrics/SKILL.md) | skill | Runs the local capture-refine-dashboard pipeline over Claude Code, opencode, Codex and Cursor session logs, plus previously stored CLI command history, then opens a static, filterable HTML usage-metrics dashboard. Does not export or import data. |
 | [`jev-fast-decision`](skills/jev-fast-decision/SKILL.md) | skill | Shared System One client: one backend table (local Laya, TypeSafe, OpenCode Zen), `--probe`, one escalation ladder with a per-item trail, a consent record, an answer log, a dated capability matrix, one entry point for every caller (`ladder`, `detect`, `consent`) and the installed-skill lookup callers copy — advisory only. Linked for claude/opencode and pi; codex is a documented gap (`~/.agents/skills` is shared by other hosts) and cursor is reached through its `~/.claude/skills` compatibility read (cited in `reference.md`, not live-verified). |
 | [`ai-kit-judge`](agents/ai-kit-judge.md) | agent | Read-only native judge lane for Claude Code (Opus; Read, Grep and Glob only): follows the given prompt and replies only with what it asks, such as verdict JSON lines. Linked to `~/.claude/agents/ai-kit-judge.md`. |
 
@@ -686,14 +686,14 @@ Agent-Skills-conformant tool its orchestrator logic in
 `skills/ai-kit-spec-review/SKILL.md` is discovered and can be followed directly.
 
 Session-start hooks in [`tools/hooks/`](tools/hooks/README.md) inject a live
-briefing of which curated `rtk` substitutions are actually on PATH. Claude Code
+briefing of which curated modern CLI tools are actually on PATH. Claude Code
 and Cursor are wired. The same directory documents the pre-summary hook, which
 uses the local decision backend to classify context before compaction.
 
 `tools/setup.py --config-doctor` opens a read-only Checks Catalog for Claude
 Code, opencode, Codex, and Cursor — retention, sandboxing, telemetry, and
 permission settings across whichever of those runtimes have a config file on
-this machine, plus a cross-runtime `rtk`-Cursor-integration check. A handful of
+this machine. A handful of
 rows can be applied one at a time, each behind an explicit confirm screen that
 shows the literal resulting config for security-relevant settings; there is no
 bulk-apply. The same doctor opens from the wizard's Done screen with `d`.

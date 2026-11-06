@@ -141,7 +141,10 @@ class TestToolPresence(unittest.TestCase):
     def test_empty_path_and_repo_all_false(self):
         with tempfile.TemporaryDirectory() as repo:
             result = check_tool_presence(search_path="", repo_root=repo)
-        self.assertFalse(result["rtk"])
+        self.assertEqual(
+            set(result) - {f"modern-cli:{tool}" for tool in MODERN_CLI_TOOLS},
+            {"modern-cli", "codegraph", "graphify", "gsd"},
+        )
         self.assertFalse(result["modern-cli"])
         self.assertFalse(result["codegraph"])
         self.assertFalse(result["graphify"])

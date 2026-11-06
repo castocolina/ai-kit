@@ -773,53 +773,6 @@ class TestCursorRows(_ScratchRuntimes):
             self.assertIn("permanently", by_id[row_id].why)
 
 
-_VERIFIED_RTK_SHOW = """\
-rtk Configuration:
-
-[ok] Hook: rtk hook claude (native binary command)
-[ok] RTK.md: /home/bazzite/.claude/RTK.md (slim mode)
-[ok] Global (~/.claude/CLAUDE.md): @RTK.md reference
-[--] Local (./CLAUDE.md): not found
-[ok] settings.json: RTK hook configured
-[ok] OpenCode: plugin installed (/home/bazzite/.config/opencode/plugins/rtk.ts)
-[ok] Cursor hook: registered in hooks.json
-"""
-
-_RTK_SHOW_NOT_REGISTERED = _VERIFIED_RTK_SHOW.replace(
-    "[ok] Cursor hook: registered in hooks.json",
-    "[--] Cursor hook: not registered",
-)
-
-_RTK_SHOW_NO_CURSOR_LINE = """\
-rtk Configuration:
-
-[ok] Hook: rtk hook claude (native binary command)
-[ok] OpenCode: plugin installed (/home/bazzite/.config/opencode/plugins/rtk.ts)
-"""
-
-
-def _rtk_stub_body(stdout_text):
-    return (
-        "#!/bin/sh\n"
-        "if [ \"$1\" = init ] && [ \"$2\" = --show ]; then\n"
-        "cat <<'EOF'\n"
-        f"{stdout_text}"
-        "EOF\n"
-        "fi\n"
-        "exit 0\n"
-    )
-
-
-def _fake_bin(root, names, body):
-    os.makedirs(root, exist_ok=True)
-    for name in names:
-        path = os.path.join(root, name)
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(body)
-        os.chmod(path, stat.S_IRWXU)
-    return root
-
-
 def _write_full_catalog_tree(scratch):
     """Realistic fixtures for all four runtimes under a _ScratchRuntimes tree."""
     _write(
@@ -860,67 +813,9 @@ class TestCrossRuntimeRow(_ScratchRuntimes):
     def test_appears_when_all_four_config_files_absent(self):
         catalog = checks.build_catalog(self._env())
         self.assertIn("cross", self._runtimes(catalog))
-        row = _row_by_id(catalog, "rtk-cursor-integration")
-        self.assertEqual(row["id"], "rtk-cursor-integration")
+        row = _row_by_id(catalog, "codegraph-global-sentence")
+        self.assertEqual(row["id"], "codegraph-global-sentence")
         self.assertTrue(row["current_display"])
-
-    def test_rtk_absent_from_path(self):
-        empty = os.path.join(self.tmp, "empty-bin")
-        os.makedirs(empty)
-        env = self._env()
-        env["PATH"] = empty
-        catalog = checks.build_catalog(env)
-        row = _row_by_id(catalog, "rtk-cursor-integration")
-        self.assertEqual(row["current_display"], "rtk not installed on PATH")
-
-    def test_registered_against_verbatim_verified_block(self):
-        bin_dir = _fake_bin(
-            os.path.join(self.tmp, "bin"),
-            ["rtk"],
-            _rtk_stub_body(_VERIFIED_RTK_SHOW),
-        )
-        env = self._env()
-        env["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
-        catalog = checks.build_catalog(env, runner=subprocess.run)
-        row = _row_by_id(catalog, "rtk-cursor-integration")
-        self.assertEqual(row["current_display"], "registered")
-        self.assertEqual(row["confidence"], "HIGH")
-        self.assertEqual(
-            row["source"],
-            ".planning/milestones/v1.0-phases/03-tool-substitution-awareness-hook/03-CONTEXT.md",
-        )
-        self.assertIn("point-in-time", row["why"].lower())
-        self.assertIn("re-probe", row["why"])
-
-    def test_not_registered(self):
-        bin_dir = _fake_bin(
-            os.path.join(self.tmp, "bin"),
-            ["rtk"],
-            _rtk_stub_body(_RTK_SHOW_NOT_REGISTERED),
-        )
-        env = self._env()
-        env["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
-        catalog = checks.build_catalog(env, runner=subprocess.run)
-        row = _row_by_id(catalog, "rtk-cursor-integration")
-        self.assertEqual(row["current_display"], "not registered")
-
-    def test_unreadable_when_cursor_line_absent(self):
-        bin_dir = _fake_bin(
-            os.path.join(self.tmp, "bin"),
-            ["rtk"],
-            _rtk_stub_body(_RTK_SHOW_NO_CURSOR_LINE),
-        )
-        env = self._env()
-        env["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
-        catalog = checks.build_catalog(env, runner=subprocess.run)
-        row = _row_by_id(catalog, "rtk-cursor-integration")
-        self.assertEqual(row["current_display"], "unreadable (see Why)")
-
-    def test_probe_docstring_cites_research(self):
-        doc = readers.probe_rtk_cursor_hook.__doc__ or ""
-        self.assertIn("03-RESEARCH.md:527-540", doc)
-        self.assertIn("not fixed by this research session", doc)
-        self.assertIn("Cursor hook", doc)
 
     def test_cross_pass_has_no_isfile_gate(self):
         source = __import__("inspect").getsource(checks.build_catalog)
@@ -929,24 +824,18 @@ class TestCrossRuntimeRow(_ScratchRuntimes):
 
 
 class TestFullCatalogRegression(_ScratchRuntimes):
-    def test_five_sections_twenty_six_rows(self):
+    def test_five_sections_row_count(self):
         _write_full_catalog_tree(self)
         env = self._env()
         env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
-        bin_dir = _fake_bin(
-            os.path.join(self.tmp, "bin"),
-            ["rtk"],
-            _rtk_stub_body(_VERIFIED_RTK_SHOW),
-        )
-        env["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
         catalog = checks.build_catalog(env, runner=subprocess.run)
-        self.assertEqual(len(checks.CONFIG_DOCTOR_ROWS), 27)
+        self.assertEqual(len(checks.CONFIG_DOCTOR_ROWS), 26)
         self.assertEqual(
             self._runtimes(catalog),
             ["claude", "opencode", "codex", "cursor", "cross"],
         )
         total = sum(len(section["rows"]) for section in catalog["sections"])
-        self.assertEqual(total, 26)
+        self.assertEqual(total, 25)
         for section in catalog["sections"]:
             for row in section["rows"]:
                 display = row["current_display"]

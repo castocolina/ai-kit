@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import tomllib
 from collections.abc import Callable
@@ -598,22 +597,6 @@ def read_cursor_attribution(ctx):
     return f"attributeCommitsToAgent={commits}, attributePRsToAgent={prs}"
 
 
-def read_rtk_cursor_integration(ctx):
-    env = ctx.env if isinstance(ctx.env, dict) else {}
-    search_path = env.get("PATH")
-    if not search_path:
-        search_path = os.environ.get("PATH")
-    rtk_path = shutil.which("rtk", path=search_path)
-    if rtk_path is None:
-        return "rtk not installed on PATH"
-    signal = config_doctor_readers.probe_rtk_cursor_hook(rtk_path, ctx.runner)
-    if signal == config_doctor_readers.RTK_SIGNAL_CONFIRMED:
-        return "registered"
-    if signal == config_doctor_readers.RTK_SIGNAL_NOT_REGISTERED:
-        return "not registered"
-    return "unreadable (see Why)"
-
-
 _CODEX_SOURCE = "https://learn.chatgpt.com/docs/config-file/config-reference"
 _CURSOR_CONFIG_SOURCE = "https://cursor.com/docs/cli/reference/configuration"
 
@@ -1138,25 +1121,6 @@ CONFIG_DOCTOR_ROWS = [
         confidence="HIGH",
         why=('Adds a "Made with Cursor" trailer/footer to commits/PRs. Apply: yes, low-stakes.'),
         source=_CURSOR_CONFIG_SOURCE,
-    ),
-    # Source is a repo-relative citation to Phase 03 D-02, not an external URL.
-    CheckRow(
-        id="rtk-cursor-integration",
-        runtime="cross",
-        scope="runtime",
-        check="rtk Cursor integration",
-        read=read_rtk_cursor_integration,
-        recommended="rtk init -g --agent cursor if reported absent",
-        confidence="HIGH",
-        why=(
-            "Point-in-time — MUST be re-probed at build/verify time, never "
-            "cached or assumed stable across sessions. Per Phase 03 D-02, "
-            "ai-kit's hook entries are separate and never edit another tool's "
-            "own registration; this row only reports Cursor integration. "
-            "Apply: None in this wave."
-        ),
-        source=".planning/milestones/v1.0-phases/03-tool-substitution-awareness-hook/03-CONTEXT.md",
-        reads_section_file=False,
     ),
     CheckRow(
         id="codegraph-global-sentence",

@@ -361,7 +361,7 @@ class TestPlaywrightRow(_Scratch):
         self.write(json.dumps(data))
 
     def find_row(self):
-        with mock.patch.object(checks.shutil, "which", return_value=None):
+        with mock.patch.object(shutil, "which", return_value=None):
             catalog = checks.build_catalog(self.env, runner=None)
         for section in catalog["sections"]:
             for row in section["rows"]:

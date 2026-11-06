@@ -4,7 +4,6 @@ import contextlib
 import json
 import os
 import shutil
-import stat
 import subprocess
 import time
 import unittest
@@ -139,23 +138,6 @@ class TestConfigDoctorPty(unittest.TestCase):
         codex = self._mk_dir()
         cursor = self._mk_dir()
         home = self._mk_dir()
-        bin_dir = os.path.join(home, "bin")
-        os.makedirs(bin_dir)
-        rtk_path = os.path.join(bin_dir, "rtk")
-        with open(rtk_path, "w", encoding="utf-8") as handle:
-            handle.write(
-                "#!/bin/sh\n"
-                "if [ \"$1\" = init ] && [ \"$2\" = --show ]; then\n"
-                "cat <<'EOF'\n"
-                "rtk Configuration:\n"
-                "\n"
-                "[ok] Hook: rtk hook claude (native binary command)\n"
-                "[ok] Cursor hook: registered in hooks.json\n"
-                "EOF\n"
-                "fi\n"
-                "exit 0\n"
-            )
-        os.chmod(rtk_path, stat.S_IRWXU)
         with open(os.path.join(claude, "settings.json"), "w", encoding="utf-8") as handle:
             json.dump(
                 {
@@ -173,9 +155,7 @@ class TestConfigDoctorPty(unittest.TestCase):
             json.dump({"approvalMode": "allowlist"}, handle)
         with open(os.path.join(cursor, "sandbox.json"), "w", encoding="utf-8") as handle:
             json.dump({"type": "workspace_readonly"}, handle)
-        safe_path = os.pathsep.join(
-            [bin_dir, "/usr/bin", "/bin", os.environ.get("PATH", "")]
-        )
+        safe_path = os.pathsep.join(["/usr/bin", "/bin", os.environ.get("PATH", "")])
         env = dict(
             os.environ,
             UV_CACHE_DIR=_uv_cache_dir(),
@@ -197,7 +177,7 @@ class TestConfigDoctorPty(unittest.TestCase):
         all_captured: list[bytes] = []
         try:
             startup_output = drive_until(
-                master_fd, b"registered", boot_deadline, captured=all_captured
+                master_fd, b"approvalMode", boot_deadline, captured=all_captured
             )
         except AssertionError:
             startup_output = b"".join(all_captured)
@@ -217,7 +197,6 @@ class TestConfigDoctorPty(unittest.TestCase):
         self.assertIn("share", decoded)
         self.assertIn("sandbox_mode", decoded)
         self.assertIn("approvalMode", decoded)
-        self.assertIn("registered", decoded)
         self.assertEqual(exit_code, 0)
 
     def test_apply_confirm_flow_writes_the_target_value(self):

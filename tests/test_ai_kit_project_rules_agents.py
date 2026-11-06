@@ -127,7 +127,6 @@ class TestToolPresence(unittest.TestCase):
                 search_path=env["PATH"], repo_root=repo
             )
             expected = {
-                "rtk": False,
                 "modern-cli": False,
                 "modern-cli:rg": False,
                 "modern-cli:bat": False,
@@ -173,7 +172,7 @@ class TestRuleChecker(unittest.TestCase):
         return finding
 
     def _always_false_presence(self):
-        presence = {"rtk": False, "modern-cli": False, "codegraph": False,
+        presence = {"modern-cli": False, "codegraph": False,
                     "graphify": False, "gsd": False}
         presence.update(
             {f"modern-cli:{t}": False for t in tool_presence.MODERN_CLI_TOOLS}
@@ -200,12 +199,13 @@ class TestRuleChecker(unittest.TestCase):
         )
         self.assertEqual(self._require_find(near, "R01")["status"], "near_miss")
 
-    def test_tool_presence_condition_not_applicable(self):
-        presence = {"rtk": False}
+    def test_retired_r05_is_absent_and_r06_still_reported(self):
+        presence = self._always_false_presence()
         findings = rule_checker.check_workflow_rules(
-            "no rtk mention here", presence, include_present=True
+            "nothing relevant here", presence, include_present=True
         )
-        self.assertEqual(self._require_find(findings, "R05")["status"], "not_applicable")
+        self.assertIsNone(self._find(findings, "R05"))
+        self.assertIsNotNone(self._find(findings, "R06"))
 
     def test_r02_included_by_signals_not_category(self):
         presence = self._always_false_presence()
@@ -549,7 +549,7 @@ class TestRemediation(unittest.TestCase):
     def test_entry_signals_are_what_a_clause_must_contain_to_classify_present(self):
         # The SKILL.md hand-off writes each clause around its entry's `signals`; the bare
         # summary alone classifies near_miss/missing for several rules (R01, R12, ...).
-        presence = {"gsd": True, "rtk": True, "modern-cli": True, "codegraph": True,
+        presence = {"gsd": True, "modern-cli": True, "codegraph": True,
                     "graphify": True, "opengsd": "ok"}
         presence.update({f"modern-cli:{t}": True for t in tool_presence.MODERN_CLI_TOOLS})
         entries = remediation.build_remediation(
