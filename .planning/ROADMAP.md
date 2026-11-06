@@ -896,36 +896,11 @@ Plans:
 
 ## Backlog
 
-v2.0 requirements cover these entries (kept here until `/gsd-review-backlog` removes them): 999.1 (FEAT-01, Phase 30.1),
+v2.0 requirements cover these entries (kept here until `/gsd-review-backlog` removes them):
 999.2 (HOOK-04), 999.5 (RUN-03), 999.7 (FEAT-02), 999.8 (JEV-05), 999.9 and 999.10 (JEV-01), 999.11 (DEF-04),
 999.12 (RUN-04), 999.14 (DIST-02), 999.15 (RUN-01, RUN-07, RUN-08, EXE-07; no new skill), 999.16 (RULE-01), 999.17 (EXE-03, JEV-06). The Playwright MCP Chrome path row in 999.1 is the FEAT-06 owner decision. The whole-tree layering suite once named 999.3 is ARCH-01 (Phase 52).
 999.13 is dropped as written (see REQUIREMENTS.md Out of Scope). 999.6 stays open (secondary runtime).
 Finished entries move to **Done** at the end of this section, with the date and what delivered them.
-
-### Phase 999.1: Config Doctor reachable from the setup wizard (BACKLOG)
-
-**Goal:** [Captured for future planning] Config Doctor (v1.0 Phase 4) is a
-standalone `textual` TUI reached only through `setup.py --config-doctor`; the
-setup wizard (`tools/wizard_app.py`: housekeeping, Choose, Arrange, Review,
-Done) never offers it, and `make doctor` runs the different status-line
-doctor. Make Config Doctor reachable from the wizard (for example an entry on
-the Done step, or a dedicated step) reusing the existing stdlib-only engine
-(`config_doctor_checks.py` / `config_doctor_readers.py` /
-`config_doctor_appliers.py`) and `config_doctor_app.py` screen, with no second
-implementation. Coordinate with v1.3 Phase 23 C2 (per-host
-status-line step); `worktree-context-tools-manager-plan1` no longer lands (2026-10-14). Candidate rows to add later: the Playwright MCP Chrome path
-on Bazzite. Rewritten 2026-10-13 from the former "shared core for a CLI
-variant" note, whose goal (engine not coupled to the TUI) is already met.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-
-**Moved 2026-10-13:** the host-split status line (former 999.4) was promoted to
-v1.3 Phase 23 on branch `gsd/v1.3-curated-config-v2`; former 999.3 was removed
-(resolved by v1.2 Phase 12; see git history).
 
 ### Phase 999.2: Cursor hooks path ignores CURSOR_CONFIG_DIR (BACKLOG)
 
@@ -1250,6 +1225,28 @@ Plans:
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
 ### Done
+
+#### Phase 999.1: Config Doctor reachable from the setup wizard (DONE 2026-11-06)
+
+**Goal:** [Captured for future planning] Config Doctor (v1.0 Phase 4) is a
+standalone `textual` TUI reached only through `setup.py --config-doctor`; the
+setup wizard (`tools/wizard_app.py`: housekeeping, Choose, Arrange, Review,
+Done) never offers it, and `make doctor` runs the different status-line
+doctor. Make Config Doctor reachable from the wizard (for example an entry on
+the Done step, or a dedicated step) reusing the existing stdlib-only engine
+(`config_doctor_checks.py` / `config_doctor_readers.py` /
+`config_doctor_appliers.py`) and `config_doctor_app.py` screen, with no second
+implementation. Coordinate with v1.3 Phase 23 C2 (per-host
+status-line step); `worktree-context-tools-manager-plan1` no longer lands (2026-10-14). Candidate rows to add later: the Playwright MCP Chrome path
+on Bazzite. Rewritten 2026-10-13 from the former "shared core for a CLI
+variant" note, whose goal (engine not coupled to the TUI) is already met.
+**Delivered by:** Phase 30.1 (completed 2026-11-06): `d` on the wizard's Done step opens the
+doctor screen, one class shared with `--config-doctor` (FEAT-01, 30.1-VERIFICATION.md), and the
+Playwright MCP Chrome path row shipped as the FEAT-06 owner decision.
+
+**Moved 2026-10-13:** the host-split status line (former 999.4) was promoted to
+v1.3 Phase 23 on branch `gsd/v1.3-curated-config-v2`; former 999.3 was removed
+(resolved by v1.2 Phase 12; see git history).
 
 #### Phase 999.18: Run the curated-config apply no-write guard on the gsd-core line in use (DONE 2026-11-06)
 
