@@ -82,6 +82,14 @@ Format: item (phase): why low risk; how an agent notices it.
 - lens-brief D7-1 evals miss the host rule and no-brief cases (30): GSD loads the file by path; `make check-dogfood` checks the wiring.
 - spec-execute D8-1 (high, pre-existing detector behaviour): already moved to Phase 32.2 (31-VERIFICATION.md).
 
+### From the wizard fixes after Phase 31 (2026-11-06)
+
+- project-rules agents/cicd/docker D7 no `evals/` directory (judge 95, 90 and 93 of 125, grade C, 0 critical or high; `tmp/judge-rules/`): the module tests cover the checkers; evals are a judge-score item for the Phase 45-46 project-rules rework.
+- project-rules cicd medium: "replace the CI line verbatim" while the checker matches only the command's first words; docker lows: the docker-events-* targets are named but never defined, leftover phase history in the body, and the entrypoint lookup uses an unset `$ENTRYPOINT`.
+- Several valid, described skills (project-rules all/arch/makefile/precommit, gsd-curated-config, cst-refactor, markdown-to-pdf, some gsd-*) still show an empty description in Claude Code's skill list; the cause is unconfirmed (a host listing budget is a guess) and the real `~/.claude` was not read.
+- `skills/ai-kit-gsd-curated-config/.../skill_scan.py` keeps its own description reader beside `setup._read_frontmatter` (a separate skill cannot import tools/setup.py).
+- Claude extra-usage segment: the owner asked whether Claude needs a segment like Cursor's extra-spend alert; whether Claude Code exposes extra-usage data to a status line is unverified, so research the data source before building anything.
+
 ## Solution
 
 Fix each when its module or skill is next changed; skill-text items go into the Phase 32.x
