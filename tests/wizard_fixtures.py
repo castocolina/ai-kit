@@ -84,12 +84,13 @@ def make_hosts(host_ids=("claude",), sl_state="unset", with_external=False, engi
 
 def make_ctx(with_external=False, sl_state="unset", host_ids=("claude",), engine=None,
              current_command=None, sl_states=None, host_keys=None, alert_limit_text=None):
-    """A component-level context plus the named hosts' views."""
+    """A component-level context plus the named hosts' views. One component kind, so Choose
+    is one card and one Enter leaves it; the card walk uses ``make_ctx_kinds``."""
     sel = setup.Selection([
-        ("agents", "ui-ux-designer", True),
-        ("agents", "code-reviewer", False),
-        ("commands", "code-review", True),
         ("skills", "brainstorming", True),
+        ("skills", "debugging", False),
+        ("skills", "tdd", True),
+        ("skills", "writing-plans", True),
     ])
     initial = {(c, n): False for c, n, _ in sel.items}
     return wa.WizardContext(
@@ -112,7 +113,7 @@ _KIND_ITEMS = [
 
 def make_ctx_kinds(items=None, host_ids=("claude",), sl_state="ours", engine=None,
                    global_rules=False):
-    """A commands-free multi-kind selection for the Choose tabs; ``global_rules`` adds
+    """A commands-free multi-kind selection for the Choose cards; ``global_rules`` adds
     Phase 30's global-rules item and its per-file preview (ctx.state)."""
     sel_items = list(_KIND_ITEMS if items is None else items)
     if global_rules:

@@ -331,6 +331,22 @@ def _drain_until(fd, done, deadline):
     return b"".join(chunks)
 
 
+def _to_last_choose_card(master_fd, captured, deadline):
+    """From Choose's first kind card, press Enter until the last card shows. Choose has one
+    card per component kind; the header reads "Step i of N" with N = cards + Arrange + Review
+    (a host is detected in every caller), so the walk needs no list of kinds."""
+    captured.append(_settle(master_fd, min(deadline, time.time() + 1.0)))
+    counts = re.findall(rb"Step 1 of (\d+)", b"".join(captured))
+    if not counts:
+        raise AssertionError("Choose: no 'Step 1 of N' header in the captured output")
+    total = int(counts[-1])                 # the newest paint (housekeeping can change N)
+    for step in range(2, total - 1):        # the last card is step N - 2
+        with contextlib.suppress(OSError):
+            os.write(master_fd, b"\r")
+        drive_until(master_fd, f"Step {step} of {total}".encode(), deadline, captured=captured)
+        captured.append(_settle(master_fd, min(deadline, time.time() + 1.0)))
+
+
 class TestPhase1E2E(unittest.TestCase):
     """End-to-end smoke tests for Phase-1 wizard behaviour under real process spawning."""
 
@@ -433,8 +449,8 @@ class TestPhase1E2E(unittest.TestCase):
         choose_output = b"".join(all_captured)
         self.assertIn(b"ai-kit install wizard", choose_output,
                       msg="Choose: expected header 'ai-kit install wizard' on first screen")
-        self.assertIn(b"Choose what to install", choose_output,
-                      msg="Choose: expected the Choose step title")
+        self.assertIn(b"Choose skills to install", choose_output,
+                      msg="Choose: expected the first kind card's title")
         self.assertIn(b"components selected", choose_output,
                       msg="Choose: expected pick count '... components selected'")
         self.assertNotIn(b"render_time", choose_output,
@@ -597,8 +613,9 @@ class TestPhase2E2E(unittest.TestCase):
                          time.time() + _STEP_DEADLINE)
             _settle(master_fd, time.time() + 2.0)
             # From here the existing pick test's key sequence:
-            # Enter (Choose -> Arrange, adoption gate) -> y (board) ->
+            # Enter per kind card (the last one -> Arrange) -> o (board) ->
             # Enter (Arrange -> Review) -> Enter (commit -> Done) -> Enter (exit).
+            _to_last_choose_card(master_fd, captured, time.time() + _STEP_DEADLINE)
             press_until(b"\r", "●off".encode(), time.time() + _STEP_DEADLINE)
             _settle(master_fd, time.time() + 1.0)
             press_until(b"o", b"git_branch", time.time() + _STEP_DEADLINE)
@@ -641,7 +658,7 @@ class TestPhase2E2E(unittest.TestCase):
 
         The picks default to all-ON on a first run.  The confirm path in the
         re-ported single-WizardApp flow is:
-        Enter (Choose → Arrange, band shown) → o (band on, board shows)
+        Enter per Choose kind card (the last → Arrange, band shown) → o (band on, board shows)
         → Enter (Arrange → Review) → Enter (Review → commit → Done) → Enter
         (Done → exit; setup applies the selection).  We then assert that at least
         one known skill symlink exists under the temp CLAUDE_CONFIG_DIR/skills.
@@ -715,13 +732,11 @@ class TestPhase2E2E(unittest.TestCase):
                 captured=captured,
             )
 
-            # Choose shows one kind card at a time: move to the hooks tab (→ twice) so its
-            # rows render and the capture below can check them. Tab switching keeps selection.
-            with contextlib.suppress(OSError):
-                os.write(master_fd, b"\x1b[C\x1b[C")
-            captured.append(_settle(master_fd, time.time() + 0.5))
+            # Choose shows one kind card per screen: Enter walks to the last card (hooks) so
+            # its rows render and the capture below can check them. The walk keeps selection.
+            _to_last_choose_card(master_fd, captured, time.time() + _SUMMARY_DEADLINE)
 
-            # ── Step 2: Enter → Choose → Arrange (adoption gate shown) ───────
+            # ── Step 2: Enter → last Choose card → Arrange (band shown) ──────
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
@@ -877,7 +892,7 @@ class TestPhase3E2E(unittest.TestCase):
       1. Spawn ``setup.py install`` under a PTY with temp dirs for both
          CLAUDE_CONFIG_DIR (symlinks land there) and XDG_CONFIG_HOME (config_toml
          lands at ``$XDG_CONFIG_HOME/ai-kit/claude-statusline.toml``).
-      2. Drive: Choose screen (◉ marker) → Enter (advance to Arrange) → gate
+      2. Drive: Choose screen (◉ marker) → Enter per kind card (advance to Arrange) → gate
          "●off" band appears (state=unset) → Enter leaves it off (adopt=False)
          → the segment board is SKIPPED and Review shows directly
          ("Review & confirm") → Enter (Review→Done) → "ai-kit is installed" →
@@ -986,8 +1001,9 @@ class TestPhase3E2E(unittest.TestCase):
                 captured=captured,
             )
 
-            # ── Step 2: Enter → Choose → Arrange (adoption gate shown) ───────
+            # ── Step 2: Enter per kind card; the last card's Enter → Arrange ──
             # Tab is a no-op on Choose in the re-ported flow; Enter advances.
+            _to_last_choose_card(master_fd, captured, time.time() + self._BOARD_DEADLINE)
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
@@ -1127,8 +1143,9 @@ class TestPhase3E2E(unittest.TestCase):
                 captured=captured,
             )
 
-            # ── Step 2: Enter → Choose → Arrange (adoption gate shown) ───────
+            # ── Step 2: Enter per kind card; the last card's Enter → Arrange ──
             # Tab is a no-op on Choose in the re-ported flow; Enter advances.
+            _to_last_choose_card(master_fd, captured, time.time() + self._BOARD_DEADLINE)
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
@@ -1409,6 +1426,7 @@ class _TwoHostRunMixin:
             drive_until(master_fd, b"components selected",
                         time.time() + self._BOOT_DEADLINE, captured=captured)
             _settle(master_fd, time.time() + 1.0)
+            _to_last_choose_card(master_fd, captured, time.time() + self._STEP_DEADLINE)
             self._drive(master_fd, captured, decline_cursor)
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")                  # Done -> exit
@@ -1440,11 +1458,11 @@ class TestTwoHostE2E(_TwoHostRunMixin, unittest.TestCase):
     """
 
     def _drive(self, master_fd, captured, decline_cursor):
-        """Walk Choose -> Claude's band (on) -> Cursor's band (on or left off) -> Review.
-        Returns when the Done title is on screen; the caller drains/exits."""
+        """Walk the last Choose card -> Claude's band (on) -> Cursor's band (on or left off)
+        -> Review. Returns when the Done title is on screen; the caller drains/exits."""
         step = self._STEP_DEADLINE
         _press_until(master_fd, b"\r", "●off".encode(),
-                     time.time() + step, captured)          # Choose -> Claude's pane
+                     time.time() + step, captured)          # last card -> Claude's pane
         _press_until(master_fd, b"o", b"git_branch",
                      time.time() + step, captured)          # Claude's band on, board shows
         _press_until(master_fd, b"\r", b"Cursor CLI",
@@ -1582,7 +1600,7 @@ class TestToggleOffE2E(_TwoHostRunMixin, unittest.TestCase):
     def _drive(self, master_fd, captured, decline_cursor):
         step = self._STEP_DEADLINE
         _press_until(master_fd, b"\r", self._CLAUDE_PREVIEW,
-                     time.time() + step, captured)          # Choose -> Claude's pane
+                     time.time() + step, captured)          # last card -> Claude's pane
         _press_until(master_fd, b"\r", self._CURSOR_PREVIEW,
                      time.time() + step, captured)          # Claude -> Cursor's pane
         _settle(master_fd, time.time() + 1.0)

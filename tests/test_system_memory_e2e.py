@@ -158,9 +158,14 @@ def _run_wizard_install(argv, env, timeout=45):
         return 0  # gave up reaping; treat as a non-zero-signaling failure below
 
     try:
-        _pty_read_until(master_fd, re.compile(r"\bChoose\b"), buf, timeout)
-        os.write(master_fd, b"\r")                      # choose -> arrange (band)
-        _pty_read_until(master_fd, re.compile(r"\bArrange\b"), buf, timeout)
+        header = re.compile(r"Step 1 of (\d+)")
+        _pty_read_until(master_fd, header, buf, timeout)
+        # One Choose card per component kind: N = cards + Arrange + Review.
+        total = int(header.search(_CSI.sub("", buf[0].decode("utf-8", "replace"))).group(1))
+        for step in range(2, total):                    # each card, then Arrange's step
+            os.write(master_fd, b"\r")
+            _pty_read_until(master_fd, re.compile(rf"Step {step} of {total}"), buf, timeout)
+        _pty_read_until(master_fd, re.compile(r"\bArrange your\b"), buf, timeout)
         os.write(master_fd, b"o")                       # band on (adopt)
         os.write(master_fd, b"\r")                       # arrange -> review
         _pty_read_until(master_fd, re.compile(r"\bReview\b"), buf, timeout)
@@ -168,7 +173,7 @@ def _run_wizard_install(argv, env, timeout=45):
         # The Done screen's title, once the in-UI commit worker finishes, is
         # literally "✓ ai-kit is installed" (see TITLES[STEP_DONE] in
         # tools/wizard_app.py) — NOT the word "Done" (that only appears in
-        # the Step-of-3 header pips label and the in-code HELP title, neither
+        # the Step-of-N header pips label and the in-code HELP title, neither
         # of which land in the title line we're scanning). Match the full title:
         # a bare "installed" also hits hook-row descriptions (present only on success;
         # "Installing…" and "install incomplete"

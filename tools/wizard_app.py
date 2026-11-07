@@ -110,8 +110,9 @@ ALERT_BAD_INPUT = "Override must be a plain amount like 5 or 5.50 (no $, no comm
 ALERT_LIMIT_UNKNOWN = "Cursor spend limit: unknown"
 ALERT_AMOUNT_RE = re.compile(r"[0-9]+(\.[0-9]{1,2})?")   # ASCII digits only, full match
 
-# Choose shows one tab per component kind; global rules is not a tab (ruling 1), it is
-# toggled on Review with `g`. Empty copy is the UI-SPEC "nothing to install" body (ruling 5).
+# Choose shows one card per component kind, walked with Enter / Esc; global rules is not a card
+# (ruling 1), it is toggled on Review with `g`. Empty copy is the UI-SPEC "nothing to install"
+# body (ruling 5).
 KINDS = ("skills", "agents", "commands", "hooks")
 GLOBAL_RULES_CAT = "global rules"
 NOTHING_TO_INSTALL = ("nothing to install: no skill, agent, command or hook is installable "
@@ -125,7 +126,7 @@ _C0_RE = re.compile(r"[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f-\x9f]")
 
 # footer key-bar per step: (label, cap, primary?)  — order matches the HTML
 FOOTERS = [
-    [("Continue", "Enter", True), ("Toggle", "Space", False), ("Kind", "←→", False),
+    [("Continue", "Enter", True), ("Back", "Esc", False), ("Toggle", "Space", False),
      ("Move", "↑↓", False), ("This kind", "a/n", False), ("Help", "?", False)],
     [("Continue", "Enter", True), ("Back", "Esc", False), ("Move", "←→", False),
      ("Line", "↑↓", False), ("On/off", "Space", False), ("Status line", "o", False),
@@ -136,12 +137,12 @@ FOOTERS = [
 QUIT_KEY = ("Quit", "q")
 
 HELP = {
-    STEP_CHOOSE: [("← →", "Switch the component kind (tab)"),
-                  ("↑ ↓", "Move the highlight inside the kind"),
+    STEP_CHOOSE: [("↑ ↓", "Move the highlight inside this kind's card"),
                   ("Space", "Install / skip the highlighted component"),
                   ("a / n", "Select all / none of this kind"),
                   ("A / N", "Select all / none of every kind"),
-                  ("Enter", "Continue to Arrange"), ("q", "Quit the installer")],
+                  ("Enter", "Next kind's card; the last card continues to Arrange"),
+                  ("Esc", "Back to the previous kind's card"), ("q", "Quit the installer")],
     STEP_ARRANGE: [("← →", "Reorder the focused chip within its line"),
                    ("↑ ↓", "Move the chip across lines (↑ off Line 1 → OFF tray)"),
                    ("Space", "Turn the focused segment on/off (off → tray)"),
@@ -164,7 +165,8 @@ HELP = {
 TITLES = ["Choose what to install", "Arrange your status line",
           "Review & confirm", "✓ ai-kit is installed"]
 SUBS = [
-    "←→ kind · ↑↓ move · Space toggle · a/n this kind · A/N every kind · ? help",
+    "↑↓ move · Space toggle · a/n this kind · A/N every kind · Enter next card · "
+    "Esc previous card · ? help",
     f"Focus is the [{PINK}]\\[>chip<][/] brackets. ←→ move within a line · "
     "↑↓ across lines (↑ off Line 1 → OFF tray) · Space turns on/off · "
     "Tab/⇧Tab next/prev chip · r reset to defaults · ? help. "
@@ -303,7 +305,7 @@ class FlowState:
     # Set before a deferred modal push, cleared by its answer: a key already queued behind the
     # push cannot open a second modal (the screen_stack guard is still false until then).
     modal_pending: bool = False
-    kind: str = ""       # the active Choose tab (a KINDS entry)
+    kind: str = ""       # the Choose card on screen (a KINDS entry)
     kind_cursor: dict = field(default_factory=dict)  # kind -> last cursor index in that kind
 
 
@@ -446,7 +448,6 @@ class WizardApp(App):
     #preview {{ border: round {LINE}; background: #010409; height: auto; padding: 0 1;
                border-title-color: {DIM}; }}
 
-    #kind-tabs {{ height: 1; }}
     #picksbox {{ border: round {LINE}; background: #0f141b; height: auto; padding: 0 1;
                 border-title-color: {DIM}; text-wrap: nowrap; text-overflow: clip; }}
     #picksCount {{ padding: 1 0 0 0; }}
@@ -643,7 +644,6 @@ class WizardApp(App):
 
     def _compose_choose(self) -> ComposeResult:
         with VerticalScroll(id="step-choose"):
-            yield Static("", id="kind-tabs")
             pb = Static("", id="picksbox")
             pb.border_title = "components"
             yield pb
@@ -739,6 +739,8 @@ class WizardApp(App):
         if self.flow.step == STEP_ARRANGE and self.hosts:
             host = self.hosts[self.flow.host_index]
             return f"Arrange your {host.label} status line"
+        if self.flow.step == STEP_CHOOSE and self.hk.done and self._active_kind():
+            return f"Choose {self._active_kind()} to install"
         return TITLES[self.flow.step]
 
     def _done_title_parts(self, done_failed: bool) -> tuple[str, str]:
@@ -818,13 +820,27 @@ class WizardApp(App):
         (self._render_choose, self._render_arrange,
          self._render_review, self._render_done)[self.flow.step]()
 
+    def _header_step(self) -> tuple[int, int]:
+        """(i, N) for "Step i of N": one step per Choose kind card (at least one), one for
+        Arrange when a host is detected (every host pane shares it), one for Review."""
+        kinds = self._choose_kinds()
+        cards = max(1, len(kinds))
+        total = cards + (1 if self.hosts else 0) + 1
+        if self.flow.step == STEP_CHOOSE:
+            kind = self._active_kind() if self.hk.done else None
+            return (kinds.index(kind) + 1 if kind else 1), total
+        if self.flow.step == STEP_ARRANGE:
+            return cards + 1, total
+        return total, total
+
     def _render_header(self) -> None:
+        step, total = self._header_step()
         if self.flow.step < STEP_DONE:
-            pips = " ".join(f"[{ACCENT}]●[/]" if k <= self.flow.step else f"[{LINE}]○[/]"
-                            for k in range(3))
-            label = f"[{DIM}]Step {self.flow.step + 1} of 3[/]"
+            pips = " ".join(f"[{ACCENT}]●[/]" if k < step else f"[{LINE}]○[/]"
+                            for k in range(total))
+            label = f"[{DIM}]Step {step} of {total}[/]"
         else:
-            pips = " ".join(f"[{GREEN}]●[/]" for _ in range(3))
+            pips = " ".join(f"[{GREEN}]●[/]" for _ in range(total))
             label = f"[{GREEN}]Done[/]"
         self.query_one("#header-right", Static).update(f"{label}    {pips}")
 
@@ -888,7 +904,7 @@ class WizardApp(App):
         picksbox.update(gate)
 
     def _choose_kinds(self) -> list[str]:
-        """The tabs: each KINDS entry that has at least one item, in KINDS order."""
+        """The cards: each KINDS entry that has at least one item, in KINDS order."""
         present = {cat for cat, _name, _on in self.model.sel.items}
         return [kind for kind in KINDS if kind in present]
 
@@ -900,7 +916,7 @@ class WizardApp(App):
         return sum(1 for i in idxs if self.model.sel.items[i][2]), len(idxs)
 
     def _active_kind(self) -> str | None:
-        """The shown tab: the remembered one while it still has items, else the first."""
+        """The shown card: the remembered one while it still has items, else the first."""
         kinds = self._choose_kinds()
         if not kinds:
             return None
@@ -935,12 +951,6 @@ class WizardApp(App):
         self._sync_kind_cursor()
         items = self.model.sel.items
         active = self._active_kind()
-        tabs = []
-        for kind in self._choose_kinds():
-            on, total = self._kind_counts(kind)
-            tabs.append(f"[b {ACCENT}]\\[{kind} {on}/{total}][/]" if kind == active
-                        else f"[{DIM}]{kind} {on}/{total}[/]")
-        self.query_one("#kind-tabs", Static).update("  ".join(tabs))
         picks = self.query_one("#picksbox", Static)
         if active is None:
             picks.border_title = "components"
@@ -1256,7 +1266,7 @@ class WizardApp(App):
         """Review's per-category component lines plus the non-hook count — the
         number of components Confirm actually symlinks."""
         rows = []
-        for kind in self._choose_kinds():   # the same counts as the tab row and the card
+        for kind in self._choose_kinds():   # the same counts as each kind's Choose card
             on, total = self._kind_counts(kind)
             names = [name for cat, name, flag in self.model.sel.items if cat == kind and flag]
             rows.append(f"[{CYAN}]{kind}[/] {on}/{total}: "
@@ -1552,9 +1562,7 @@ class WizardApp(App):
         if kind is None:            # nothing installable: only Enter acts
             return k == "enter" and self._enter_arrange()
         sel = self.model.sel
-        if k in ("left", "right"):
-            self._switch_kind(1 if k == "right" else -1)
-        elif k in ("up", "down"):
+        if k in ("up", "down"):
             self._move_in_kind(1 if k == "down" else -1)
         elif k == "space":
             sel.toggle_cursor()
@@ -1565,21 +1573,31 @@ class WizardApp(App):
             for every in self._choose_kinds():
                 sel.set_category(every, ch == "A")
         elif k == "enter":
-            return self._enter_arrange()
+            return self._step_kind(+1) or self._enter_arrange()
+        elif k == "escape":
+            self._step_kind(-1)   # the first card has no previous one: a no-op
         elif k == "tab":
             pass          # consume — Tab is a no-op on Choose (never advances)
         else:
             return False
         return True
 
-    def _switch_kind(self, step: int) -> None:
+    def _step_kind(self, step: int) -> bool:
+        """Show the next (+1) or previous (-1) kind's card; False past either end."""
         kinds = self._choose_kinds()
         active = self._active_kind()
-        if len(kinds) < 2 or active is None:
-            return
+        if active is None or not 0 <= kinds.index(active) + step < len(kinds):
+            return False
         self.flow.kind_cursor[active] = self.model.sel.cursor
-        self.flow.kind = kinds[(kinds.index(active) + step) % len(kinds)]
+        self.flow.kind = kinds[kinds.index(active) + step]
         self._sync_kind_cursor()
+        return True
+
+    def _back_to_choose(self) -> None:
+        """Esc into Choose from the next step lands on the last kind's card."""
+        while self._step_kind(+1):
+            pass
+        self.flow.step = STEP_CHOOSE
 
     def _move_in_kind(self, step: int) -> None:
         kind = self._active_kind()
@@ -1710,9 +1728,9 @@ class WizardApp(App):
 
     def _board_back(self) -> None:
         """Board Esc: back to the PREVIOUS host's pane (every pane is visited, so
-        the first host's pane backs out to Choose)."""
+        the first host's pane backs out to Choose's last card)."""
         if self.flow.host_index == 0 or not self.hosts:
-            self.flow.step = STEP_CHOOSE
+            self._back_to_choose()
         else:
             self._enter_host_arrange(self.flow.host_index - 1)
 
@@ -1780,7 +1798,7 @@ class WizardApp(App):
             if self.hosts:
                 self._enter_host_arrange(len(self.hosts) - 1)
             else:
-                self.flow.step = STEP_CHOOSE
+                self._back_to_choose()
             return True
         return False
 

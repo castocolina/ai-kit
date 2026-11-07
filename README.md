@@ -67,8 +67,8 @@ Adding or removing skills/commands/agents needs no change to the script — entr
 ### The install wizard
 
 After the repo is fetched, `install.sh` launches `tools/setup.py` — a
-full-screen **Textual** wizard with four steps: **Choose** (one tab per kind of
-component: skills, commands, agents, example segments, and the hooks group),
+full-screen **Textual** wizard with four steps: **Choose** (one card per kind of
+component that has items: skills, agents, commands and hooks, walked with Enter),
 **Arrange** (one pane per detected status-line host, each with a 2-D layout
 board that arranges status-line segments visually instead of hand-editing TOML),
 **Review & confirm**, and **✓ ai-kit is installed** (Done). You can also reach it directly:
@@ -111,18 +111,23 @@ separately from components.
 
 #### Choose keys
 
-The Choose step has one tab per component kind, each with its items and a
-selected count. Move between tabs with `←`/`→`, then move through the items
-with `↑`/`↓`.
+The Choose step shows one card per component kind that has items (skills,
+agents, commands, hooks, in that order), one card per screen, titled
+`Choose <kind> to install` with the selected count on its border. `enter` goes
+to the next kind's card and `esc` back to the previous one; the last card's
+`enter` continues to Arrange. The header counts every screen: `Step i of N`,
+where N is the number of cards, plus one for Arrange when a status-line host is
+detected (all host panes share it), plus one for Review. With skills, agents
+and hooks and a host, that is `Step 1 of 5` to `Step 5 of 5`.
 
 | Key | Action |
 |---|---|
-| `←` / `→` | Switch to the previous / next kind (tab) |
-| `↑` / `↓` | Move the highlight inside the kind |
+| `↑` / `↓` | Move the highlight inside this kind's card |
 | `space` | Install / skip the highlighted component |
 | `a` / `n` | Select all / none of this kind |
 | `A` / `N` | Select all / none of every kind |
-| `enter` | Continue to Arrange |
+| `enter` | Next kind's card; the last card continues to Arrange |
+| `esc` | Back to the previous kind's card (Arrange's `esc` lands on the last card) |
 | `?` | Help |
 | `q` | Quit the installer, nothing installed |
 

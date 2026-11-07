@@ -190,7 +190,7 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
         app = wa.WizardApp(ctx)
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("enter")
+            await pilot.press("enter", "enter")  # skills card -> hooks card -> Arrange
             await pilot.press("o")
             await pilot.press("enter")
             self.assertEqual(app.flow.step, wa.STEP_REVIEW)

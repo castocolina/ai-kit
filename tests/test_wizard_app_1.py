@@ -126,38 +126,103 @@ class TestChooseNameColumn(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
-class TestChooseTabs(unittest.IsolatedAsyncioTestCase):
-    """Choose (step 0): one tab per kind that has items, one card on screen (D-01, D-02)."""
+class TestChooseCards(unittest.IsolatedAsyncioTestCase):
+    """Choose: one card per kind that has items, each its own screen, walked with Enter / Esc."""
 
-    def _tabs(self, app):
-        return str(query_static(app, "#kind-tabs").content)
+    def _title(self, app):
+        return str(query_static(app, "#step-title").content)
 
-    async def test_tab_row_counts_and_no_commands_tab(self):
+    def _card(self, app):
+        return str(query_static(app, "#picksbox").border_title)
+
+    def _header(self, app):
+        return str(query_static(app, "#header-right").content)
+
+    async def test_card_title_and_border_and_no_tab_bar(self):
         app = wa.WizardApp(make_ctx_kinds())
         async with app.run_test() as pilot:
             await pilot.pause()
-            tabs = self._tabs(app)
-            self.assertIn("skills 3/3", tabs)
-            self.assertIn("agents 1/1", tabs)
-            self.assertIn("hooks 1/2", tabs)
-            self.assertNotIn("commands", tabs)
-            self.assertIn("skills 3/3", str(query_static(app, "#picksbox").border_title))
+            self.assertIn("Choose skills to install", self._title(app))
+            self.assertEqual(self._card(app), "skills 3/3")
+            self.assertEqual(len(app.query("#kind-tabs")), 0)
+            self.assertNotIn("agents", str(query_static(app, "#picksbox").content))
 
-    async def test_right_wraps_and_left_goes_back(self):
+    async def test_enter_walks_the_cards_then_arrange(self):
         app = wa.WizardApp(make_ctx_kinds())
         async with app.run_test() as pilot:
             await pilot.pause()
-            self.assertEqual(app.flow.kind, "skills")
-            await pilot.press("right")
+            for kind, card in (("agents", "agents 1/1"), ("hooks", "hooks 1/2")):
+                await pilot.press("enter")
+                self.assertEqual(app.flow.step, wa.STEP_CHOOSE)
+                self.assertIn(f"Choose {kind} to install", self._title(app))
+                self.assertEqual(self._card(app), card)
+            self.assertNotIn("commands", self._card(app))   # an empty kind has no card
+            await pilot.press("enter")          # the last card continues to Arrange
+            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
+
+    async def test_escape_walks_back_and_is_a_noop_on_the_first_card(self):
+        app = wa.WizardApp(make_ctx_kinds())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter", "enter")  # hooks
+            await pilot.press("escape")
             self.assertEqual(app.flow.kind, "agents")
-            await pilot.press("right")
-            self.assertEqual(app.flow.kind, "hooks")
-            await pilot.press("right")          # past the last tab wraps to the first
+            await pilot.press("escape")
             self.assertEqual(app.flow.kind, "skills")
-            await pilot.press("left")           # past the first wraps to the last
-            self.assertEqual(app.flow.kind, "hooks")
+            await pilot.press("escape")          # first card: nothing before it
+            self.assertEqual((app.flow.step, app.flow.kind), (wa.STEP_CHOOSE, "skills"))
 
-    async def test_down_wraps_inside_card_and_each_tab_keeps_its_cursor(self):
+    async def test_arrows_left_right_do_not_switch_cards(self):
+        app = wa.WizardApp(make_ctx_kinds())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("right", "left", "right")
+            self.assertEqual((app.flow.step, app.flow.kind), (wa.STEP_CHOOSE, "skills"))
+
+    async def test_escape_from_arrange_lands_on_the_last_card(self):
+        app = wa.WizardApp(make_ctx_kinds())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter", "enter", "enter")
+            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
+            await pilot.press("escape")
+            self.assertEqual((app.flow.step, app.flow.kind), (wa.STEP_CHOOSE, "hooks"))
+            self.assertIn("Choose hooks to install", self._title(app))
+
+    async def test_escape_from_review_with_zero_hosts_lands_on_the_last_card(self):
+        app = wa.WizardApp(make_ctx_kinds(host_ids=()))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter", "enter", "enter")
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+            await pilot.press("escape")
+            self.assertEqual((app.flow.step, app.flow.kind), (wa.STEP_CHOOSE, "hooks"))
+
+    async def test_header_counts_three_cards_arrange_and_review(self):
+        app = wa.WizardApp(make_ctx_kinds(host_ids=("claude", "cursor")))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            for step in (1, 2, 3, 4, 4, 5):     # three cards, two host panes share 4, Review
+                header = self._header(app)
+                self.assertIn(f"Step {step} of 5", header)
+                self.assertEqual((header.count("●"), header.count("○")), (step, 5 - step))
+                await pilot.press("enter")
+            app.flow.step = wa.STEP_DONE
+            app._render()
+            header = self._header(app)
+            self.assertIn("Done", header)
+            self.assertEqual(header.count("●"), 5)
+
+    async def test_header_without_a_host_skips_arrange(self):
+        app = wa.WizardApp(make_ctx_kinds(host_ids=()))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.assertIn("Step 1 of 4", self._header(app))
+            await pilot.press("enter", "enter", "enter")
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+            self.assertIn("Step 4 of 4", self._header(app))
+
+    async def test_down_wraps_inside_card_and_each_card_keeps_its_cursor(self):
         app = wa.WizardApp(make_ctx_kinds())
         async with app.run_test() as pilot:
             await pilot.pause()
@@ -167,23 +232,21 @@ class TestChooseTabs(unittest.IsolatedAsyncioTestCase):
             await pilot.press("down")           # three skills: wraps to the first
             self.assertEqual(app.model.sel.cursor, 0)
             await pilot.press("down")
-            await pilot.press("right")          # agents: its own cursor
+            await pilot.press("enter")          # agents: its own cursor
             self.assertEqual(app.model.sel.items[app.model.sel.cursor][0], "agents")
-            await pilot.press("left")           # back to skills: cursor 1 remembered
+            await pilot.press("escape")         # back to skills: cursor 1 remembered
             self.assertEqual(app.model.sel.cursor, 1)
 
     async def test_space_changes_only_its_card_and_review_counts(self):
         app = wa.WizardApp(make_ctx_kinds())
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("right")
-            await pilot.press("right")          # hooks; cursor on tool-advisor
+            await pilot.press("enter", "enter")  # hooks; cursor on tool-advisor
             await pilot.press("down")           # extra-hint (off)
             await pilot.press("space")
-            tabs = self._tabs(app)
-            self.assertIn("hooks 2/2", tabs)
-            self.assertIn("skills 3/3", tabs)
-            self.assertIn("agents 1/1", tabs)
+            self.assertEqual(self._card(app), "hooks 2/2")
+            self.assertEqual(app._kind_counts("skills"), (3, 3))
+            self.assertEqual(app._kind_counts("agents"), (1, 1))
             rows, _ncomp = app._review_component_rows()
             self.assertTrue(any("2/2: tool-advisor, extra-hint" in row for row in rows), rows)
 
@@ -191,30 +254,35 @@ class TestChooseTabs(unittest.IsolatedAsyncioTestCase):
         app = wa.WizardApp(make_ctx_kinds())
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("right")          # agents, one item
+            await pilot.press("enter")          # agents, one item
             await pilot.press("n")
             self.assertEqual(app.model.sel.items[3][2], False)
-            self.assertIn("skills 3/3", self._tabs(app))
-            self.assertIn("hooks 1/2", self._tabs(app))
+            self.assertEqual(self._card(app), "agents 0/1")
+            self.assertEqual(app._kind_counts("skills"), (3, 3))
+            self.assertEqual(app._kind_counts("hooks"), (1, 2))
             await pilot.press("N")
             self.assertTrue(all(not on for _c, _n, on in app.model.sel.items))
             await pilot.press("A")
             self.assertTrue(all(on for _c, _n, on in app.model.sel.items))
 
-    async def test_one_kind_catalog_has_one_tab_and_arrows_do_nothing(self):
+    async def test_one_kind_catalog_has_one_card_and_enter_leaves(self):
         app = wa.WizardApp(make_ctx_kinds(items=[("skills", "brainstorming", True)]))
         async with app.run_test() as pilot:
             await pilot.pause()
-            self.assertIn("skills 1/1", self._tabs(app))
-            await pilot.press("right")
-            await pilot.press("left")
-            self.assertEqual(app.flow.kind, "skills")
+            self.assertEqual(self._card(app), "skills 1/1")
+            self.assertIn("Step 1 of 3", self._header(app))
+            await pilot.press("escape")
+            self.assertEqual(app.flow.step, wa.STEP_CHOOSE)
+            await pilot.press("enter")
+            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
 
     async def test_empty_catalog_shows_nothing_to_install_and_enter_leaves(self):
         app = wa.WizardApp(make_ctx_kinds(items=[]))
         async with app.run_test() as pilot:
             await pilot.pause()
             self.assertIn("nothing to install", str(query_static(app, "#picksbox").content))
+            self.assertIn("Choose what to install", self._title(app))
+            self.assertIn("Step 1 of 3", self._header(app))
             await pilot.press("enter")
             self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
 
@@ -223,14 +291,7 @@ class TestChooseTabs(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("tab")
-            self.assertEqual(app.flow.step, wa.STEP_CHOOSE)
-
-    async def test_enter_advances_to_arrange(self):
-        app = wa.WizardApp(make_ctx_kinds())
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("enter")
-            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
+            self.assertEqual((app.flow.step, app.flow.kind), (wa.STEP_CHOOSE, "skills"))
 
     async def test_twenty_five_skills_scroll_to_the_last_item(self):
         items = [("skills", f"skill-{i:02d}", True) for i in range(25)]
