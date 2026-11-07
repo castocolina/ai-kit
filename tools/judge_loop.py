@@ -6,6 +6,8 @@ Usage (from a git checkout, or pass --root):
                 [--judge-package DIR]
   judge_loop.py ingest --lane-dir DIR --records DIR
   judge_loop.py check RECORDS [--skills S ...] [--judges J ...] [--gate] [--require-current]
+  judge_loop.py pool --loop L --native ID --probe-dir DIR --records DIR [--judges J ...]
+  judge_loop.py count --loop L --records DIR [--skill S ...] [--no-jev] [--client PATH]
 Exit codes: 0 ok, 1 an invalid, missing or mis-pinned verdict or a refused ingest, 2 usage.
 Stdlib only; the staged-test mapper is loaded beside this file by path.
 """
@@ -659,6 +661,382 @@ def check(root, records, opts):
     return lines, problems, notes
 
 
+# ─── the judge pool ───────────────────────────────────────────────────────────
+
+POOL_SIZE = 2
+SUBSTITUTE_ONE = "only one configured judge passed its probe"
+SUBSTITUTE_NONE = "no configured judge passed its probe"
+SUBSTITUTE_EMPTY = "judge list empty"
+
+
+def _probe_files(lane):
+    """(token, lane.out, lane.err) texts of a probe lane, or None when one of them is missing."""
+    names = ("token", "lane.out", "lane.err")
+    if not all((lane / name).is_file() for name in names):
+        return None
+    return tuple((lane / name).read_text(encoding="utf-8", errors="replace") for name in names)
+
+
+def _probe_verdict(judge, usable, status, reason):
+    return {"judge": judge, "usable": usable, "status_line": status, "reason": reason}
+
+
+def probe_result(probe_dir, judge):
+    """One judge's probe: usable only on a clean exit with the exact expected answer."""
+    files = _probe_files(Path(probe_dir) / judge_slug(judge))
+    if files is None:
+        return _probe_verdict(judge, False, None, "no probe output")
+    token, out, err = files
+    status = last_status_line(err)
+    fields = parse_status_line(status) if status else None
+    if not fields:
+        return _probe_verdict(judge, False, None, "no AIKIT-XAI line")
+    if not lane_ok(fields):
+        reason = (f"status {fields.get('status')} exit {fields.get('exit')} "
+                  f"tree {fields.get('tree')}")
+        return _probe_verdict(judge, False, status, reason)
+    if out.strip() != token.strip():
+        return _probe_verdict(judge, False, status, "answer is not the sentinel")
+    return _probe_verdict(judge, True, status, "")
+
+
+def choose_pool(judges, native, results):
+    """The pool: the first two usable judges; else one usable judge plus native; else native."""
+    if native in judges:
+        raise JudgeLoopError("the native id must not be in the judge list")
+    usable = [result["judge"] for result in results if result["usable"]]
+    pool = {"judges": list(judges), "native": native, "probes": list(results),
+            "members": [], "substitutes": []}
+    if len(usable) >= POOL_SIZE:
+        pool["members"] = usable[:POOL_SIZE]
+        return pool
+    if usable:
+        reason = SUBSTITUTE_ONE
+        pool["members"] = [usable[0], native]
+    else:
+        reason = SUBSTITUTE_EMPTY if not judges else SUBSTITUTE_NONE
+        pool["members"] = [native]
+    pool["substitutes"] = [{"judge": native, "reason": reason}]
+    return pool
+
+
+def read_loop_file(records, loop):
+    """The loop record <records>/loops/<loop>.json as a dict ({"loop": loop} when absent)."""
+    if not LOOP_RE.fullmatch(loop):
+        raise JudgeLoopError(f"bad loop id {loop!r}")
+    path = Path(records) / "loops" / f"{loop}.json"
+    if not path.is_file():
+        return {"loop": loop}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def update_loop_file(records, loop, key, value):
+    """Set `key` in the loop record, keeping its other keys; returns the record's path."""
+    data = read_loop_file(records, loop)
+    data[key] = value
+    path = Path(records) / "loops" / f"{loop}.json"
+    atomic_write_json(path, data)
+    return path
+
+
+def _cmd_pool(args, root):
+    probe_dir = _abs(root, args.probe_dir)
+    results = [probe_result(probe_dir, judge) for judge in args.judges]
+    pool = choose_pool(args.judges, args.native, results)
+    update_loop_file(_abs(root, args.records), args.loop, "pool", pool)
+    for result in results:
+        state = "usable" if result["usable"] else f"unusable ({result['reason']})"
+        print(f"{PREFIX} probe {result['judge']}: {state}")
+    for substitute in pool["substitutes"]:
+        print(f"{PREFIX} substitute {substitute['judge']}: {substitute['reason']}")
+    print(f"{PREFIX} pool {args.loop}: {', '.join(pool['members'])}")
+    return 0
+
+
+# ─── the judge count ──────────────────────────────────────────────────────────
+
+JEV_INSTRUCTIONS = ("How likely is it that the change since the last judged version moves a "
+                    "skill-judge score past normal run-to-run variation?")
+JEV_LEVELS = ("no change likely to move the score",
+              "a small move within run-to-run variation is possible",
+              "a move past run-to-run variation is likely",
+              "a move past run-to-run variation is near certain")
+BAR_TENTHS = 800
+BAND_TENTHS = 70
+
+
+class JevUnavailable(Exception):
+    """The jev client could not answer; the count keeps one judge and records why."""
+
+
+JEV_ITEM_ID = "judge-count"
+JEV_CALL_TIMEOUT = 120
+BASE_RE = re.compile(r"[0-9a-f]{7,40}")
+
+
+def deterministic_count(last_v4):
+    """(count, reasons) from the deterministic triggers alone: two when one applies, else one."""
+    if last_v4 is None:
+        return 2, ["no rubric-v4 verdict"]
+    reasons = []
+    if last_v4["critical"] or last_v4["high"]:
+        reasons.append("last verdict had a critical or high finding")
+    if abs(round(last_v4["percent"] * 10) - BAR_TENTHS) <= BAND_TENTHS:
+        reasons.append(f"last percent {last_v4['percent']:.1f} is within "
+                       f"{BAND_TENTHS / 10:.1f} points of {BAR_TENTHS / 10:.0f}")
+    if reasons:
+        return 2, reasons
+    return 1, ["no deterministic trigger"]
+
+
+def percent_words(percent):
+    """A fixed phrase for how far the last percent sat from the pass mark, never the number."""
+    distance = abs(round(percent * 10) - BAR_TENTHS)
+    side = "above" if percent >= BAR_TENTHS / 10 else "below"
+    if distance <= 100:
+        return f"the last score sat just outside judge variation, {side} the pass mark"
+    if distance <= 150:
+        return f"the last score sat moderately far {side} the pass mark"
+    return f"the last score sat far {side} the pass mark"
+
+
+def _lines_word(count):
+    if count == 0:
+        return "SKILL.md unchanged"
+    if count <= 10:
+        return "a few SKILL.md lines changed"
+    if count <= 50:
+        return "a moderate SKILL.md change"
+    return "a large SKILL.md change"
+
+
+def _files_word(count):
+    if count == 0:
+        return "none"
+    return "one or two files" if count <= 2 else "several files"
+
+
+def change_words(rows):
+    """Fixed words for the change since the judged commit; rows are (added, deleted, path)."""
+    paths = [path for _added, _deleted, path in rows]
+    lines = sum((added or 0) + (deleted or 0) for added, deleted, path in rows
+                if path.endswith("/SKILL.md"))
+    references = [p for p in paths if "/references/" in p]
+    evals = [p for p in paths if "/evals/" in p and p not in references]
+    scripts = [p for p in paths if p.endswith(CODE_SUFFIXES)
+               and p not in references and p not in evals]
+    return {"skill_md": _lines_word(lines), "references": _files_word(len(references)),
+            "scripts": _files_word(len(scripts)), "evals": _files_word(len(evals))}
+
+
+def jev_item(pct_word, words):
+    """The one score item sent to jev: fixed instructions, levels and words; no path or name."""
+    context = (f"{pct_word}; no critical or high findings; {words['skill_md']}; "
+               f"reference files: {words['references']}; script files: {words['scripts']}; "
+               f"eval files: {words['evals']}.")
+    return {"id": JEV_ITEM_ID, "type": "score", "instructions": JEV_INSTRUCTIONS,
+            "context": context, "criteria": list(JEV_LEVELS)}
+
+
+def jev_level(result, item):
+    """(level index, note) from a ladder document; the index is None without a usable answer."""
+    items = result.get("items") if isinstance(result, dict) else None
+    entry = items.get(item["id"]) if isinstance(items, dict) else None
+    if not isinstance(entry, dict):
+        return None, "jev gave no answer"
+    decided_by = entry.get("decided_by")
+    if not isinstance(decided_by, str) or decided_by == "own_reasoning":
+        return None, "jev needs_fallback (own reasoning)"
+    column = entry.get(decided_by)
+    choice = column.get("choice") if isinstance(column, dict) else None
+    if choice not in item["criteria"]:
+        return None, "jev answer is not one of the levels"
+    index = item["criteria"].index(choice)
+    return index, f"jev level {index} ({choice}) from {decided_by}"
+
+
+def final_count(det, level, note):
+    """The count after jev: a deterministic two stays; level 2 or more raises one to two."""
+    count, reasons = det
+    if count == 2:
+        return 2, list(reasons)
+    if level is None:
+        return 1, [*reasons, note]
+    if level >= 2:
+        return 2, [*reasons, f"{note}: asks for two"]
+    return 1, [*reasons, f"{note}: keeps one"]
+
+
+def ask_jev(item, client, run=subprocess.run):
+    """Send one score item to the jev client's ladder; JevUnavailable when it cannot answer."""
+    env = {**os.environ, "GSD_PATH_JEV": "1", "GSD_PATH_JEV_TIMEOUT_SECONDS": "30",
+           "JEV_CALLER": "judge_loop"}
+    try:
+        proc = run([sys.executable, "-B", str(client), "ladder"],
+                   input=json.dumps({"items": [item]}), capture_output=True, text=True,
+                   timeout=JEV_CALL_TIMEOUT, check=False, env=env)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise JevUnavailable(f"cannot run the jev client: {exc}") from exc
+    if proc.returncode != 0:
+        raise JevUnavailable(f"jev client exited {proc.returncode}")
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise JevUnavailable("jev client output is not JSON") from exc
+
+
+def find_jev_client(root, env, override):
+    """The jev client: `override` when it is a file, else the first installed copy found."""
+    if override is not None:
+        return str(override) if Path(override).is_file() else None
+    for base in skills_roots(env, str(root / "skills")):
+        candidate = os.path.join(base, JEV_ENTRY_REL)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def numstat(root, base, skill):
+    """(added, deleted, path) rows of the skill since `base`; None when `base` is no commit."""
+    if not SAFE_SKILL.fullmatch(skill):
+        raise JudgeLoopError(f"bad skill name {skill!r}")
+    if not BASE_RE.fullmatch(base):
+        return None
+    probe = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet",
+                            f"{base}^{{commit}}"], capture_output=True, text=True, check=False)
+    if probe.returncode != 0:
+        return None
+    diff = subprocess.run(["git", "-C", str(root), "diff", "--numstat", base, "HEAD", "--",
+                           f"skills/{skill}/"], capture_output=True, text=True, check=False)
+    rows = []
+    for line in diff.stdout.splitlines():
+        added, deleted, path = line.split("\t", 2)
+        rows.append((None if added == "-" else int(added),
+                     None if deleted == "-" else int(deleted), path))
+    return rows
+
+
+def _ask_jev_level(root, name, last, ask, jev):
+    """Fill `jev` (item, asked, level, note) for a skill whose judged commit is known."""
+    rows = numstat(root, last["judged_at"], name)
+    if rows is None:
+        jev["note"] = f"jev input absent: base commit {last['judged_at']} not found"
+        return
+    item = jev_item(percent_words(last["percent"]), change_words(rows))
+    jev["item"] = item
+    jev["asked"] = True
+    try:
+        answer = ask(item)
+    except (JevUnavailable, OSError, subprocess.SubprocessError, ValueError) as exc:
+        jev["note"] = f"jev unavailable: {exc}"
+        return
+    jev["level"], jev["note"] = jev_level(answer, item)
+
+
+def count_skill(root, name, entry, ask):
+    """One skill's count record: the deterministic triggers, then the jev item when it applies."""
+    last = entry["last_v4"]
+    det = deterministic_count(last)
+    jev = {"asked": False, "item": None, "level": None, "note": ""}
+    if det[0] == 2:
+        jev["note"] = "not asked (deterministic two)"
+    elif ask is None:
+        jev["note"] = "jev not asked (--no-jev)"
+    elif last["judged_at"] is None:
+        jev["note"] = "jev input absent: no base commit recorded"
+    else:
+        _ask_jev_level(root, name, last, ask, jev)
+    count, reasons = final_count(det, jev["level"], jev["note"])
+    return {"count": count, "reasons": reasons, "last_v4": last, "jev": jev}
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _last_ok(last):
+    return (isinstance(last, dict) and _is_number(last.get("percent"))
+            and _is_int(last.get("critical")) and _is_int(last.get("high"))
+            and (last.get("judged_at") is None or isinstance(last.get("judged_at"), str))
+            and isinstance(last.get("source"), str))
+
+
+def _old_ok(old):
+    return (isinstance(old, dict) and isinstance(old.get("value"), str)
+            and isinstance(old.get("source"), str))
+
+
+def _entry_error(name, entry):
+    """The shape problem of one skills entry, or None."""
+    batch = entry.get("batch") if isinstance(entry, dict) else None
+    if not isinstance(batch, str) or not LOOP_RE.fullmatch(batch):
+        return f"skill {name} has no valid batch"
+    if entry.get("last_v4") is not None and not _last_ok(entry["last_v4"]):
+        return f"skill {name} has a malformed last_v4"
+    if entry.get("old_score") is not None and not _old_ok(entry["old_score"]):
+        return f"skill {name} has a malformed old_score"
+    return None
+
+
+def load_inputs(records):
+    """inputs.json: the skills to count and the excluded names, shape-checked; raises otherwise."""
+    path = Path(records) / "inputs.json"
+    if not path.is_file():
+        raise JudgeLoopError(f"inputs.json is missing in {records}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    skills = data.get("skills") if isinstance(data, dict) else None
+    excluded = data.get("excluded", {}) if isinstance(data, dict) else None
+    if not isinstance(skills, dict) or not isinstance(excluded, dict):
+        raise JudgeLoopError("inputs.json: skills and excluded must be objects")
+    for name in sorted(skills):
+        problem = _entry_error(name, skills[name])
+        if problem:
+            raise JudgeLoopError(f"inputs.json: {problem}")
+    for name in sorted(excluded):
+        if not isinstance(excluded[name], str) or not excluded[name]:
+            raise JudgeLoopError(f"inputs.json: excluded {name} needs a reason")
+    both = sorted(set(skills) & set(excluded))
+    if both:
+        raise JudgeLoopError(f"inputs.json: {both[0]} is in both skills and excluded")
+    return {"skills": skills, "excluded": excluded}
+
+
+def _chosen_skills(inputs, requested):
+    """The skills to count: the requested ones (each must be a skill), else all, in batch order."""
+    names = list(requested) or list(inputs["skills"])
+    for name in names:
+        if name not in inputs["skills"]:
+            raise JudgeLoopError(f"inputs.json: no skill {name}")
+    return sorted(set(names), key=lambda n: (_loop_key(inputs["skills"][n]["batch"]), n))
+
+
+def _ask_for(client):
+    """The ask callable for count_skill: the jev client, or a refusal when none was found."""
+    if client is None:
+        def unavailable(_item):
+            raise JevUnavailable("no jev client found")
+        return unavailable
+    return lambda item: ask_jev(item, client)
+
+
+def _cmd_count(args, root):
+    records = _abs(root, args.records)
+    inputs = load_inputs(records)
+    names = _chosen_skills(inputs, args.skill)
+    ask = None
+    if not args.no_jev:
+        override = _abs(root, args.client) if args.client else None
+        ask = _ask_for(find_jev_client(root, os.environ, override))
+    counts = dict(read_loop_file(records, args.loop).get("counts", {}))
+    for name in names:
+        counts[name] = count_skill(root, name, inputs["skills"][name], ask)
+    update_loop_file(records, args.loop, "counts", counts)
+    for name in names:
+        reasons = "; ".join(counts[name]["reasons"])
+        print(f"{PREFIX} count {name}: {counts[name]['count']} ({reasons})")
+    return 0
+
+
 # ─── command line ─────────────────────────────────────────────────────────────
 
 def _abs(root, value):
@@ -720,10 +1098,23 @@ def build_parser():
     check_p.add_argument("--judges", nargs="*", default=[])
     check_p.add_argument("--gate", action="store_true")
     check_p.add_argument("--require-current", action="store_true")
+    pool_p = sub.add_parser("pool", help="choose the judge pool from the probe results")
+    pool_p.add_argument("--loop", required=True)
+    pool_p.add_argument("--judges", nargs="*", default=[])
+    pool_p.add_argument("--native", required=True, help="the native judge id, the fallback")
+    pool_p.add_argument("--probe-dir", required=True)
+    pool_p.add_argument("--records", required=True)
+    count_p = sub.add_parser("count", help="the judge count per skill: triggers, then jev")
+    count_p.add_argument("--loop", required=True)
+    count_p.add_argument("--records", required=True)
+    count_p.add_argument("--skill", action="append", default=[])
+    count_p.add_argument("--no-jev", action="store_true", help="keep the deterministic count")
+    count_p.add_argument("--client", help="the jev client (default: the installed one)")
     return parser
 
 
-COMMANDS = {"prompt": _cmd_prompt, "ingest": _cmd_ingest, "check": _cmd_check}
+COMMANDS = {"prompt": _cmd_prompt, "ingest": _cmd_ingest, "check": _cmd_check,
+            "pool": _cmd_pool, "count": _cmd_count}
 
 
 def _check_args(parser, args):
@@ -741,7 +1132,7 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
-        parser.error("a subcommand is required: prompt, ingest or check")
+        parser.error("a subcommand is required: prompt, ingest, check, pool or count")
     _check_args(parser, args)
     try:
         root = find_root(Path(args.root) if args.root else None)

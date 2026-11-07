@@ -140,6 +140,23 @@ def run_main(argv):
     return code, out.getvalue()
 
 
+ANSWER = "AIKIT-SENTINEL-0a1b2c3d-4e5f6a7b-8c9d0e1f"
+NATIVE = "native:fixture"
+
+
+def _status(status="ok", exit_code=0, tree="clean"):
+    return (f"AIKIT-XAI status={status} cli=cli-a model=m exit={exit_code} cli_rc=0 elapsed=1s "
+            f"out=1 tree={tree}")
+
+
+def write_probe(probe_dir, judge, token, out_text, status_line):
+    """A probe lane folder: the expected answer, then the lane's stdout and stderr."""
+    lane = Path(probe_dir) / judge_loop.judge_slug(judge)
+    lane.mkdir(parents=True, exist_ok=True)
+    (lane / "token").write_text(token + "\n", encoding="utf-8")
+    return write_lane(lane, status_line, out_text)
+
+
 @unittest.skipUnless(HAS_GIT, "git not installed")
 class TestTracer(unittest.TestCase):
     """One skill, one judge, end to end: prompt, fixture lane, ingest, check."""
@@ -563,6 +580,469 @@ class TestVerdictValidation(unittest.TestCase):
                 self.assertTrue(any(message in error for error in errors), errors)
         self.assertEqual(judge_loop.validate_verdict(extra_key, self.pin),
                          ["keys are not exactly the schema's"])
+
+
+class TestPool(unittest.TestCase):
+    """The judge pool from probe results (SPEC R3): order, substitutes, the loop record."""
+
+    JUDGES = ["cli-a:m", "cli-b:m", "cli-c:m"]
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="judge-pool-test-")
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name)
+        self.probes = self.base / "probes"
+        self.records = self.base / "rec"
+
+    def _lanes(self, judges, usable):
+        """A probe lane per judge: the usable ones echo the answer, the rest exit 75 (quota)."""
+        for judge in judges:
+            if judge in usable:
+                write_probe(self.probes, judge, ANSWER, ANSWER + "\n", _status())
+            else:
+                write_probe(self.probes, judge, ANSWER, ANSWER + "\n",
+                            _status(status="quota", exit_code=75))
+
+    def _pool(self, judges, usable):
+        self._lanes(judges, usable)
+        results = [judge_loop.probe_result(self.probes, judge) for judge in judges]
+        return judge_loop.choose_pool(judges, NATIVE, results)
+
+    def _cli(self, judges, native=NATIVE):
+        return run_main(["--root", str(self.base), "pool", "--loop", "32", "--judges", *judges,
+                         "--native", native, "--probe-dir", str(self.probes),
+                         "--records", str(self.records)])
+
+    def test_two_usable_judges_form_the_pool_in_order(self):
+        pool = self._pool(self.JUDGES, usable=self.JUDGES)
+        self.assertEqual(pool["members"], ["cli-a:m", "cli-b:m"])
+        self.assertEqual(pool["substitutes"], [])
+        self.assertEqual([probe["judge"] for probe in pool["probes"]], self.JUDGES)
+
+    def test_first_two_usable_judges_win_when_an_earlier_one_fails(self):
+        pool = self._pool(self.JUDGES, usable=["cli-b:m", "cli-c:m"])
+        self.assertEqual(pool["members"], ["cli-b:m", "cli-c:m"])
+        self.assertEqual(pool["substitutes"], [])
+        self.assertFalse(pool["probes"][0]["usable"])
+
+    def test_one_usable_judge_gets_the_native_id_as_a_substitute(self):
+        pool = self._pool(self.JUDGES, usable=["cli-b:m"])
+        self.assertEqual(pool["members"], ["cli-b:m", NATIVE])
+        self.assertEqual(pool["substitutes"], [{
+            "judge": NATIVE, "reason": "only one configured judge passed its probe"}])
+
+    def test_no_usable_judge_leaves_the_native_id_alone(self):
+        pool = self._pool(self.JUDGES, usable=[])
+        self.assertEqual(pool["members"], [NATIVE])
+        self.assertEqual(pool["substitutes"], [{
+            "judge": NATIVE, "reason": "no configured judge passed its probe"}])
+
+    def test_empty_judge_list_leaves_the_native_id_alone(self):
+        pool = judge_loop.choose_pool([], NATIVE, [])
+        self.assertEqual(pool["members"], [NATIVE])
+        self.assertEqual(pool["substitutes"], [{"judge": NATIVE, "reason": "judge list empty"}])
+
+    def test_native_id_in_the_judge_list_is_refused(self):
+        with self.assertRaisesRegex(judge_loop.JudgeLoopError, "must not be in the judge list"):
+            judge_loop.choose_pool([NATIVE], NATIVE, [])
+
+    def test_usable_probe_reports_its_status_line_and_no_reason(self):
+        write_probe(self.probes, "cli-a:m", ANSWER, ANSWER + "\n", _status())
+        self.assertEqual(judge_loop.probe_result(self.probes, "cli-a:m"),
+                         {"judge": "cli-a:m", "usable": True, "status_line": _status(),
+                          "reason": ""})
+
+    def test_unusable_probe_reasons(self):
+        cases = [
+            ("preamble before the answer", "I think it is " + ANSWER + "\n", _status(),
+             "answer is not the sentinel"),
+            ("only the last code", "AIKIT-SENTINEL-8c9d0e1f\n", _status(),
+             "answer is not the sentinel"),
+            ("codes out of order", "AIKIT-SENTINEL-4e5f6a7b-0a1b2c3d-8c9d0e1f\n", _status(),
+             "answer is not the sentinel"),
+            ("timed out", ANSWER + "\n", _status(status="timeout", exit_code=124),
+             "status timeout exit 124 tree clean"),
+            ("dirty tree", ANSWER + "\n", _status(tree="dirty"), "status ok exit 0 tree dirty"),
+            ("no status line", ANSWER + "\n", "boot noise", "no AIKIT-XAI line"),
+        ]
+        for number, (name, out_text, status, reason) in enumerate(cases):
+            with self.subTest(case=name):
+                probes = self.base / f"case{number}"
+                write_probe(probes, "cli-a:m", ANSWER, out_text, status)
+                result = judge_loop.probe_result(probes, "cli-a:m")
+                self.assertFalse(result["usable"])
+                self.assertEqual(result["reason"], reason)
+
+    def test_missing_lane_err_is_no_probe_output(self):
+        write_probe(self.probes, "cli-a:m", ANSWER, ANSWER + "\n", _status())
+        (self.probes / "cli-a_m" / "lane.err").unlink()
+        self.assertEqual(judge_loop.probe_result(self.probes, "cli-a:m"),
+                         {"judge": "cli-a:m", "usable": False, "status_line": None,
+                          "reason": "no probe output"})
+
+    def test_cli_pool_writes_the_loop_record_and_keeps_other_keys(self):
+        self._lanes(["cli-a:m", "cli-b:m"], usable=["cli-a:m", "cli-b:m"])
+        code, out = self._cli(["cli-a:m", "cli-b:m"])
+        self.assertEqual(code, 0)
+        self.assertIn("judge-loop: probe cli-a:m: usable", out)
+        self.assertIn("judge-loop: pool 32: cli-a:m, cli-b:m", out)
+        loop_file = self.records / "loops" / "32.json"
+        loop = json.loads(loop_file.read_text(encoding="utf-8"))
+        self.assertEqual(loop["loop"], "32")
+        self.assertEqual(loop["pool"]["members"], ["cli-a:m", "cli-b:m"])
+        judge_loop.update_loop_file(self.records, "32", "counts", {})
+        loop = json.loads(loop_file.read_text(encoding="utf-8"))
+        self.assertEqual(loop["pool"]["members"], ["cli-a:m", "cli-b:m"])
+        self.assertIn("counts", loop)
+
+    def test_cli_pool_prints_unusable_probes_and_the_substitute(self):
+        self._lanes(["cli-a:m"], usable=[])
+        code, out = self._cli(["cli-a:m"])
+        self.assertEqual(code, 0)
+        self.assertIn("judge-loop: probe cli-a:m: unusable (status quota exit 75 tree clean)", out)
+        self.assertIn(f"judge-loop: substitute {NATIVE}: no configured judge passed its probe",
+                      out)
+        self.assertIn(f"judge-loop: pool 32: {NATIVE}", out)
+
+    def test_cli_native_equal_to_a_judge_exits_1_without_writing(self):
+        code, out = self._cli(["cli-a:m"], native="cli-a:m")
+        self.assertEqual(code, 1)
+        self.assertIn("judge-loop: the native id must not be in the judge list", out)
+        self.assertFalse((self.records / "loops" / "32.json").exists())
+
+    def test_bad_loop_id_is_refused_before_any_path_is_built(self):
+        with self.assertRaises(judge_loop.JudgeLoopError):
+            judge_loop.update_loop_file(self.records, "../x", "pool", {})
+        self.assertFalse(self.records.exists())
+
+
+def _last(percent, critical=0, high=0, judged_at: str | None = "abc1234"):
+    return {"percent": percent, "critical": critical, "high": high, "judged_at": judged_at,
+            "source": "fixture"}
+
+
+def ladder_answer(item_id, level_text, backend="laya"):
+    """A ladder document that answers one score item with `level_text` from one backend."""
+    column = {"choice": level_text, "top": 0.9, "fallback": False, "forced": False,
+              "model": "m"}
+    return {"items": {item_id: {"decided_by": backend, backend: column}}}
+
+
+class FakeAsk:
+    """A stand-in for the jev call: records each item and answers or raises."""
+
+    def __init__(self, answer=None, error=None):
+        self.answer = answer
+        self.error = error
+        self.items = []
+
+    def __call__(self, item):
+        self.items.append(item)
+        if self.error is not None:
+            raise self.error
+        return self.answer
+
+
+class TestCount(unittest.TestCase):
+    """The judge count (SPEC R4): deterministic triggers, fixed word bands, the jev item."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="judge-count-test-")
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name)
+
+    def test_no_verdict_gives_two(self):
+        self.assertEqual(judge_loop.deterministic_count(None), (2, ["no rubric-v4 verdict"]))
+
+    def test_band_boundaries_decide_one_or_two(self):
+        for percent, expected in [(72.9, 1), (73.0, 2), (80.0, 2), (87.0, 2), (87.1, 1)]:
+            with self.subTest(percent=percent):
+                self.assertEqual(judge_loop.deterministic_count(_last(percent))[0], expected)
+        self.assertEqual(judge_loop.deterministic_count(_last(73.0))[1],
+                         ["last percent 73.0 is within 7.0 points of 80"])
+
+    def test_high_or_critical_finding_gives_two(self):
+        self.assertEqual(judge_loop.deterministic_count(_last(88.0, high=1)),
+                         (2, ["last verdict had a critical or high finding"]))
+        count, reasons = judge_loop.deterministic_count(_last(84.0, high=1))
+        self.assertEqual(count, 2)
+        self.assertEqual(len(reasons), 2)
+
+    def test_out_of_band_without_findings_gives_one(self):
+        self.assertEqual(judge_loop.deterministic_count(_last(88.0)),
+                         (1, ["no deterministic trigger"]))
+
+    def test_percent_words_name_side_and_distance(self):
+        self.assertEqual(judge_loop.percent_words(88.0),
+                         "the last score sat just outside judge variation, above the pass mark")
+        self.assertIn("far above", judge_loop.percent_words(96.0))
+        self.assertIn("moderately far below", judge_loop.percent_words(68.0))
+
+    def test_change_words_use_fixed_bands(self):
+        def words(rows):
+            return judge_loop.change_words(rows)
+        self.assertEqual(words([])["skill_md"], "SKILL.md unchanged")
+        self.assertEqual(words([(5, 0, "skills/x/SKILL.md")])["skill_md"],
+                         "a few SKILL.md lines changed")
+        self.assertEqual(words([(30, 0, "skills/x/SKILL.md")])["skill_md"],
+                         "a moderate SKILL.md change")
+        self.assertEqual(words([(60, 0, "skills/x/SKILL.md")])["skill_md"],
+                         "a large SKILL.md change")
+        self.assertEqual(words([(None, None, "skills/x/scripts/a.bin")])["scripts"], "none")
+        self.assertEqual(words([(1, 0, "skills/x/references/a.md"),
+                                (1, 0, "skills/x/evals/e.json")])["references"], "one or two files")
+        self.assertEqual(words([(1, 0, "skills/x/references/a.md"),
+                                (1, 0, "skills/x/references/b.md"),
+                                (1, 0, "skills/x/references/c.md")])["references"],
+                         "several files")
+
+    def test_jev_item_is_pinned_to_fixed_words(self):
+        rows = [(3, 1, "skills/x/SKILL.md"), (10, 0, "skills/x/references/a.md"),
+                (5, 5, "skills/x/scripts/a.py"), (2, 0, "skills/x/evals/evals.json")]
+        item = judge_loop.jev_item(judge_loop.percent_words(88.0), judge_loop.change_words(rows))
+        self.assertEqual(item, {
+            "id": "judge-count", "type": "score", "instructions": judge_loop.JEV_INSTRUCTIONS,
+            "context": ("the last score sat just outside judge variation, above the pass mark; "
+                        "no critical or high findings; a few SKILL.md lines changed; reference "
+                        "files: one or two files; script files: one or two files; eval files: "
+                        "one or two files."),
+            "criteria": list(judge_loop.JEV_LEVELS)})
+        text = json.dumps(item)
+        self.assertNotIn("skills/", text)
+        self.assertNotIn("x/", text)
+
+    def test_jev_level_reads_the_decided_column(self):
+        item = {"id": "judge-count", "criteria": list(judge_loop.JEV_LEVELS)}
+        answer = ladder_answer("judge-count", judge_loop.JEV_LEVELS[2])
+        self.assertEqual(judge_loop.jev_level(answer, item),
+                         (2, f"jev level 2 ({judge_loop.JEV_LEVELS[2]}) from laya"))
+        self.assertEqual(judge_loop.jev_level({"items": {}}, item),
+                         (None, "jev gave no answer"))
+        own = {"items": {"judge-count": {"decided_by": "own_reasoning"}}}
+        self.assertEqual(judge_loop.jev_level(own, item),
+                         (None, "jev needs_fallback (own reasoning)"))
+        off_list = ladder_answer("judge-count", "a made-up level")
+        self.assertEqual(judge_loop.jev_level(off_list, item),
+                         (None, "jev answer is not one of the levels"))
+
+    def test_final_count_composes_the_reasons(self):
+        det = (1, ["no deterministic trigger"])
+        self.assertEqual(judge_loop.final_count(det, 2, "note"),
+                         (2, ["no deterministic trigger", "note: asks for two"]))
+        self.assertEqual(judge_loop.final_count(det, 1, "note"),
+                         (1, ["no deterministic trigger", "note: keeps one"]))
+        self.assertEqual(judge_loop.final_count(det, None, "note"),
+                         (1, ["no deterministic trigger", "note"]))
+        self.assertEqual(judge_loop.final_count((2, ["r"]), None, "ignored"), (2, ["r"]))
+
+    def test_ask_jev_sends_one_item_with_the_fixed_environment(self):
+        seen = {}
+
+        def fake_run(argv, **kwargs):
+            seen["argv"], seen["kwargs"] = argv, kwargs
+            return subprocess.CompletedProcess(argv, 0, stdout='{"items": {}}', stderr="")
+
+        item = {"id": "judge-count", "type": "score"}
+        self.assertEqual(judge_loop.ask_jev(item, "/fixture/jev_review.py", run=fake_run),
+                         {"items": {}})
+        self.assertEqual(seen["argv"][-2:], ["/fixture/jev_review.py", "ladder"])
+        self.assertEqual(json.loads(seen["kwargs"]["input"]), {"items": [item]})
+        self.assertEqual(seen["kwargs"]["env"]["GSD_PATH_JEV"], "1")
+        self.assertEqual(seen["kwargs"]["env"]["GSD_PATH_JEV_TIMEOUT_SECONDS"], "30")
+        self.assertEqual(seen["kwargs"]["env"]["JEV_CALLER"], "judge_loop")
+
+    def test_ask_jev_raises_jev_unavailable_on_a_failed_client(self):
+        def failed_run(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 2, stdout="", stderr="no backend")
+        with self.assertRaises(judge_loop.JevUnavailable):
+            judge_loop.ask_jev({"id": "judge-count"}, "/fixture/jev_review.py", run=failed_run)
+
+    def test_find_jev_client_prefers_the_repo_and_finds_nothing_in_an_empty_home(self):
+        repo = self.base / "repo"
+        client = repo / "skills" / "jev-fast-decision" / "scripts" / "jev_review.py"
+        client.parent.mkdir(parents=True)
+        client.write_text("# fixture client\n", encoding="utf-8")
+        home = {"HOME": str(self.base / "home")}
+        self.assertEqual(judge_loop.find_jev_client(repo, {"HOME": home["HOME"]}, None),
+                         str(client))
+        self.assertIsNone(judge_loop.find_jev_client(self.base / "empty", home, None))
+        override = self.base / "given.py"
+        override.write_text("# fixture\n", encoding="utf-8")
+        self.assertEqual(judge_loop.find_jev_client(self.base / "empty", home, override),
+                         str(override))
+
+    def test_load_inputs_names_the_skill_with_a_bad_batch(self):
+        records = self.base / "rec"
+        records.mkdir()
+        (records / "inputs.json").write_text(json.dumps({
+            "schema": 1, "skills": {"demo-gamma": {"last_v4": None}}, "excluded": {}}),
+            encoding="utf-8")
+        with self.assertRaisesRegex(judge_loop.JudgeLoopError, "demo-gamma has no valid batch"):
+            judge_loop.load_inputs(records)
+
+    def test_load_inputs_refuses_a_name_in_both_maps(self):
+        records = self.base / "rec"
+        records.mkdir()
+        (records / "inputs.json").write_text(json.dumps({
+            "schema": 1, "skills": {"demo-alpha": {"batch": "32.1", "last_v4": None}},
+            "excluded": {"demo-alpha": "reason"}}), encoding="utf-8")
+        with self.assertRaises(judge_loop.JudgeLoopError) as caught:
+            judge_loop.load_inputs(records)
+        self.assertEqual(str(caught.exception),
+                         "inputs.json: demo-alpha is in both skills and excluded")
+
+
+@unittest.skipUnless(HAS_GIT, "git not installed")
+class TestCountGit(unittest.TestCase):
+    """The count against a fixture repository: the base commit, jev asked or not, the CLI."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="judge-count-git-test-")
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name)
+        self.repo = make_repo(self.base, SKILL_REPO_FILES)
+        self.base_sha = _git(self.repo, _git_env(self.base), "rev-parse", "HEAD").strip()
+        self.records = self.base / "rec"
+
+    def _write_inputs(self, skills, excluded=None):
+        self.records.mkdir(parents=True, exist_ok=True)
+        (self.records / "inputs.json").write_text(json.dumps(
+            {"schema": 1, "skills": skills, "excluded": excluded or {}}), encoding="utf-8")
+
+    def _count(self, extra):
+        return run_main(["--root", str(self.repo), "count", "--loop", "32",
+                         "--records", str(self.records), *extra])
+
+    def test_numstat_is_none_for_an_unresolvable_base_and_refuses_bad_input(self):
+        self.assertIsNone(judge_loop.numstat(self.repo, "deadbee", "demo-alpha"))
+        self.assertIsNone(judge_loop.numstat(self.repo, "HEAD; rm", "demo-alpha"))
+        with self.assertRaises(judge_loop.JudgeLoopError):
+            judge_loop.numstat(self.repo, self.base_sha, "../demo-alpha")
+
+    def test_numstat_lists_the_skill_rows_since_the_base(self):
+        commit_change(self.repo, "skills/demo-alpha/SKILL.md", "# demo-alpha\nmore\n")
+        self.assertEqual(judge_loop.numstat(self.repo, self.base_sha, "demo-alpha"),
+                         [(1, 0, "skills/demo-alpha/SKILL.md")])
+
+    def test_count_records_an_unresolvable_base_without_asking(self):
+        ask = FakeAsk(error=AssertionError("must not be asked"))
+        entry = {"last_v4": _last(88.0, judged_at="deadbee")}
+        record = judge_loop.count_skill(self.repo, "demo-alpha", entry, ask)
+        self.assertEqual(ask.items, [])
+        self.assertEqual(record["count"], 1)
+        self.assertEqual(record["jev"]["note"], "jev input absent: base commit deadbee not found")
+        self.assertFalse(record["jev"]["asked"])
+
+    def test_count_records_a_missing_base_commit_without_asking(self):
+        ask = FakeAsk()
+        record = judge_loop.count_skill(self.repo, "demo-alpha",
+                                        {"last_v4": _last(88.0, judged_at=None)}, ask)
+        self.assertEqual(record["jev"]["note"], "jev input absent: no base commit recorded")
+        self.assertEqual(ask.items, [])
+
+    def test_deterministic_two_is_never_asked(self):
+        ask = FakeAsk(error=AssertionError("must not be asked"))
+        record = judge_loop.count_skill(self.repo, "demo-alpha",
+                                        {"last_v4": _last(73.0, judged_at=self.base_sha)}, ask)
+        self.assertEqual(record["count"], 2)
+        self.assertEqual(record["jev"], {"asked": False, "item": None, "level": None,
+                                         "note": "not asked (deterministic two)"})
+
+    def test_no_jev_flag_records_its_note(self):
+        record = judge_loop.count_skill(self.repo, "demo-alpha",
+                                        {"last_v4": _last(88.0, judged_at=self.base_sha)}, None)
+        self.assertEqual(record["jev"]["note"], "jev not asked (--no-jev)")
+        self.assertFalse(record["jev"]["asked"])
+        self.assertEqual(record["count"], 1)
+
+    def test_jev_level_two_raises_one_to_two_and_round_trips(self):
+        ask = FakeAsk(ladder_answer("judge-count", judge_loop.JEV_LEVELS[2]))
+        record = judge_loop.count_skill(self.repo, "demo-alpha",
+                                        {"last_v4": _last(88.0, judged_at=self.base_sha)}, ask)
+        note = f"jev level 2 ({judge_loop.JEV_LEVELS[2]}) from laya"
+        self.assertEqual(len(ask.items), 1)
+        self.assertEqual(record["count"], 2)
+        self.assertEqual(record["reasons"], ["no deterministic trigger", f"{note}: asks for two"])
+        self.assertEqual(record["jev"]["level"], 2)
+        self.assertEqual(record["jev"]["note"], note)
+        self.assertTrue(record["jev"]["asked"])
+        self.assertEqual(record["jev"]["item"]["id"], "judge-count")
+        det = judge_loop.deterministic_count(record["last_v4"])
+        self.assertEqual(judge_loop.final_count(det, record["jev"]["level"], record["jev"]["note"]),
+                         (record["count"], record["reasons"]))
+
+    def test_jev_level_one_keeps_one(self):
+        ask = FakeAsk(ladder_answer("judge-count", judge_loop.JEV_LEVELS[1]))
+        record = judge_loop.count_skill(self.repo, "demo-alpha",
+                                        {"last_v4": _last(88.0, judged_at=self.base_sha)}, ask)
+        self.assertEqual(record["count"], 1)
+        self.assertTrue(record["reasons"][-1].endswith(": keeps one"))
+
+    def test_own_reasoning_and_unavailable_jev_keep_one(self):
+        own = FakeAsk({"items": {"judge-count": {"decided_by": "own_reasoning"}}})
+        record = judge_loop.count_skill(self.repo, "demo-alpha",
+                                        {"last_v4": _last(88.0, judged_at=self.base_sha)}, own)
+        self.assertEqual((record["count"], record["jev"]["note"]),
+                         (1, "jev needs_fallback (own reasoning)"))
+        down = FakeAsk(error=judge_loop.JevUnavailable("no backend"))
+        record = judge_loop.count_skill(self.repo, "demo-alpha",
+                                        {"last_v4": _last(88.0, judged_at=self.base_sha)}, down)
+        self.assertEqual((record["count"], record["jev"]["note"], record["jev"]["asked"]),
+                         (1, "jev unavailable: no backend", True))
+        self.assertIsNone(record["jev"]["level"])
+
+    def test_cli_count_writes_counts_for_each_skill_and_keeps_the_pool(self):
+        self._write_inputs({
+            "demo-alpha": {"batch": "32.1", "last_v4": _last(88.0, judged_at=self.base_sha),
+                           "old_score": None},
+            "demo-beta": {"batch": "32.2", "last_v4": _last(73.0, judged_at=self.base_sha),
+                          "old_score": None}},
+            excluded={"zz-out": "out of scope for this fixture"})
+        judge_loop.update_loop_file(self.records, "32", "pool", {"members": ["cli-a:m"]})
+        answer = ladder_answer("judge-count", judge_loop.JEV_LEVELS[1])
+        client = self.base / "fake_client.py"
+        (self.base / "answer.json").write_text(json.dumps(answer), encoding="utf-8")
+        client.write_text("import sys\nfrom pathlib import Path\n"
+                          "sys.stdin.read()\n"
+                          "print(Path(__file__).with_name('answer.json').read_text())\n",
+                          encoding="utf-8")
+        code, out = self._count(["--client", str(client)])
+        self.assertEqual(code, 0)
+        level = judge_loop.JEV_LEVELS[1]
+        self.assertIn(f"judge-loop: count demo-alpha: 1 (no deterministic trigger; "
+                      f"jev level 1 ({level}) from laya: keeps one)", out)
+        self.assertIn("judge-loop: count demo-beta: 2 (last percent 73.0 is within 7.0 points "
+                      "of 80)", out)
+        loop = judge_loop.read_loop_file(self.records, "32")
+        self.assertEqual(sorted(loop["counts"]), ["demo-alpha", "demo-beta"])
+        self.assertEqual(loop["pool"], {"members": ["cli-a:m"]})
+        self.assertTrue(loop["counts"]["demo-alpha"]["jev"]["asked"])
+
+    def test_cli_count_names_a_malformed_skill(self):
+        self._write_inputs({"demo-gamma": {"last_v4": None}})
+        code, out = self._count(["--no-jev"])
+        self.assertEqual(code, 1)
+        self.assertIn("demo-gamma", out)
+
+    def test_cli_count_refuses_a_skill_in_both_maps_and_an_unknown_skill(self):
+        self._write_inputs({"demo-alpha": {"batch": "32.1", "last_v4": None}},
+                           excluded={"demo-alpha": "reason"})
+        code, out = self._count(["--no-jev"])
+        self.assertEqual(code, 1)
+        self.assertIn("judge-loop: inputs.json: demo-alpha is in both skills and excluded", out)
+        self._write_inputs({"demo-alpha": {"batch": "32.1", "last_v4": None}})
+        code, out = self._count(["--no-jev", "--skill", "demo-zeta"])
+        self.assertEqual(code, 1)
+        self.assertIn("judge-loop: inputs.json: no skill demo-zeta", out)
+
+    def test_cli_count_without_a_client_records_it_as_unavailable(self):
+        self._write_inputs({"demo-alpha": {"batch": "32.1",
+                                           "last_v4": _last(88.0, judged_at=self.base_sha)}})
+        code, _out = self._count(["--client", str(self.base / "no-such-client.py")])
+        self.assertEqual(code, 0)
+        loop = judge_loop.read_loop_file(self.records, "32")
+        self.assertEqual(loop["counts"]["demo-alpha"]["jev"]["note"],
+                         "jev unavailable: no jev client found")
 
 
 if __name__ == "__main__":
