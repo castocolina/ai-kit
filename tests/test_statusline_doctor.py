@@ -266,16 +266,12 @@ class TestCursorDoctorStatements(unittest.TestCase):
             "extra-spend alert: at $20.00 (Cursor spend limit, inferred — undocumented Cursor API)",
         )
         self.assertEqual(
-            doctor.cursor_alert_line(cq.ExtraAlert(False, 5.0, "config"), "ok"),
-            "extra-spend alert: at $5.00 (config override)",
-        )
-        self.assertEqual(
             doctor.cursor_alert_line(cq.ExtraAlert(False, None, "off"), "ok"),
             "extra-spend alert: off",
         )
         self.assertEqual(
             doctor.cursor_alert_line(cq.ExtraAlert(False, None, "none"), "absent"),
-            "extra-spend alert: none (no Cursor spend limit in the quota cache and no override)"
+            "extra-spend alert: none (no Cursor spend limit in the quota cache)"
             "; quota cache absent",
         )
 
@@ -291,10 +287,11 @@ class TestCursorDoctorStatements(unittest.TestCase):
 
 
 class TestHostKnobs(unittest.TestCase):
-    """The [cursor] extra-alert keys bind from TOML and env into Config.host_knobs
-    with generic validation; the doctor reports a bad value (30.2-02 D-03, R12)."""
+    """The [cursor] extra-alert switch binds from TOML and env into Config.host_knobs
+    with generic validation; the doctor reports a bad value (30.2-02 D-03, R12). The
+    retired extra_alert_usd override is ignored on load and accepted by the doctor."""
 
-    DEFAULTS = {"extra_alert": True, "extra_alert_usd": None}
+    DEFAULTS = {"extra_alert": True}
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -325,23 +322,17 @@ class TestHostKnobs(unittest.TestCase):
         self.assertEqual(common_config.cfg_scalar_kind(None), "number")
         self.assertEqual(common_config.cfg_scalar_kind(True), "bool")
 
-    def test_toml_values_bind_and_integers_become_floats(self):
-        self._toml("[cursor]\nextra_alert = false\nextra_alert_usd = 5.5\n")
-        self.assertEqual(self._knobs(), ({"extra_alert": False, "extra_alert_usd": 5.5}, []))
-        for body, want in (("5", 5.0), ("0", 0.0), ("1e9", 1e9)):
-            self._toml(f"[cursor]\nextra_alert_usd = {body}\n")
-            self.assertEqual(self._knobs(), ({"extra_alert": True, "extra_alert_usd": want}, []))
+    def test_toml_switch_binds(self):
+        self._toml("[cursor]\nextra_alert = false\n")
+        self.assertEqual(self._knobs(), ({"extra_alert": False}, []))
 
-    def test_invalid_toml_threshold_keeps_default_and_is_reported(self):
-        cases = (("-1", "-1"), ('"x"', "'x'"), ("true", "True"), ("nan", "nan"), ("inf", "inf"))
-        for raw, shown in cases:
-            self._toml(f"[cursor]\nextra_alert_usd = {raw}\n")
-            knobs, problems = self._knobs()
-            self.assertIsNone(knobs["extra_alert_usd"])
-            self.assertEqual(
-                problems,
-                [f"[cursor] extra_alert_usd must be a non-negative number, got {shown} — ignored"],
-            )
+    def test_a_stored_override_is_ignored_silently(self):
+        for raw in ("5.5", "0", "-1", '"x"'):
+            with self.subTest(raw=raw):
+                self._toml(f"[cursor]\nextra_alert = false\nextra_alert_usd = {raw}\n")
+                self.assertEqual(self._knobs(), ({"extra_alert": False}, []))
+        env = dict(self.env, AI_KIT_CURSOR_EXTRA_ALERT_USD="2.5")
+        self.assertEqual(self._knobs(env), ({"extra_alert": False}, []))
 
     def test_invalid_toml_bool_keeps_default_and_is_reported(self):
         self._toml('[cursor]\nextra_alert = "yes"\n')
@@ -356,17 +347,9 @@ class TestHostKnobs(unittest.TestCase):
         self.assertEqual(self._knobs()[1], ["unknown [cursor] key 'foo'"])
 
     def test_env_overrides_toml(self):
-        self._toml("[cursor]\nextra_alert = true\nextra_alert_usd = 5.5\n")
-        env = dict(self.env, AI_KIT_CURSOR_EXTRA_ALERT="false", AI_KIT_CURSOR_EXTRA_ALERT_USD="2.5")
-        self.assertEqual(self._knobs(env), ({"extra_alert": False, "extra_alert_usd": 2.5}, []))
-
-    def test_bad_env_threshold_keeps_default_and_names_the_variable(self):
-        for raw in ("abc", "-1", "inf"):
-            env = dict(self.env, AI_KIT_CURSOR_EXTRA_ALERT_USD=raw)
-            knobs, problems = self._knobs(env)
-            self.assertIsNone(knobs["extra_alert_usd"])
-            self.assertEqual(len(problems), 1)
-            self.assertIn("AI_KIT_CURSOR_EXTRA_ALERT_USD", problems[0])
+        self._toml("[cursor]\nextra_alert = true\n")
+        env = dict(self.env, AI_KIT_CURSOR_EXTRA_ALERT="false")
+        self.assertEqual(self._knobs(env), ({"extra_alert": False}, []))
 
     def test_unrecognized_env_bool_is_silent_and_nested_name_binds_nothing(self):
         env = dict(
@@ -374,15 +357,20 @@ class TestHostKnobs(unittest.TestCase):
         )
         self.assertEqual(self._knobs(env), (self.DEFAULTS, []))
 
-    def test_doctor_check_reports_bad_threshold_and_unknown_key(self):
-        self._toml("[cursor]\nextra_alert_usd = -1\n")
+    def test_doctor_check_reports_bad_switch_and_unknown_key(self):
+        self._toml('[cursor]\nextra_alert = "yes"\n')
         errors = doctor.validate_config_file(self.path, self.env, cursor_host.HOST)
-        self.assertIn("[cursor] extra_alert_usd must be a non-negative number, got -1", errors)
+        self.assertIn("[cursor] extra_alert must be true/false, got 'yes'", errors)
         with redirect_stderr(io.StringIO()):
             self.assertEqual(doctor.cmd_check(self.path, self.env, cursor_host.HOST), 1)
         self._toml("[cursor]\nfoo = 1\n")
         errors = doctor.validate_config_file(self.path, self.env, cursor_host.HOST)
         self.assertIn("unknown [cursor] key: foo", errors)
+
+    def test_doctor_check_accepts_a_stored_override(self):
+        # A config from an older ai-kit must not fail --check (that would reset the whole file).
+        self._toml("[cursor]\nextra_alert = true\nextra_alert_usd = 5.5\n")
+        self.assertEqual(doctor.validate_config_file(self.path, self.env, cursor_host.HOST), [])
 
     def test_doctor_check_reports_a_non_table_cursor_without_raising(self):
         self._toml("cursor = 5\n")
@@ -390,7 +378,7 @@ class TestHostKnobs(unittest.TestCase):
         self.assertIn("[cursor] must be a table", " ".join(errors))
 
     def test_claude_config_with_cursor_table_gives_no_cursor_error(self):
-        self._toml("[cursor]\nextra_alert_usd = -1\n")
+        self._toml('[cursor]\nextra_alert = "yes"\n')
         errors = doctor.validate_config_file(self.path, self.env)
         self.assertFalse([e for e in errors if "[cursor]" in e], errors)
 
@@ -606,12 +594,13 @@ class TestCursorDoctor(unittest.TestCase):
         self.assertTrue(lines[start + 4].startswith("extra-spend alert: at $20.00 (Cursor spend"))
         self.assertNotIn("\x1b[", out)
 
-    def test_doctor_bad_env_threshold_warns_and_fails(self):
+    def test_doctor_ignores_the_retired_threshold_env(self):
         self.env["AI_KIT_CURSOR_EXTRA_ALERT_USD"] = "abc"
         self._seed_fresh_synthetic()
-        _out, err, rc = self._run(self._fetch((None, None, "")))
-        self.assertEqual(rc, 1)
-        self.assertIn("AI_KIT_CURSOR_EXTRA_ALERT_USD", err)
+        out, err, rc = self._run(self._fetch((None, None, "")))
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("AI_KIT_CURSOR_EXTRA_ALERT_USD", err)
+        self.assertIn("extra-spend alert: at $20.00 (Cursor spend", out)
 
 
 if __name__ == "__main__":

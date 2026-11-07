@@ -6834,7 +6834,8 @@ class TestWizardCommitPerHost(unittest.TestCase):
         self.assertNotIn("cost = true", published)
 
 
-_KEYS_ON = {"extra_alert": True, "extra_alert_usd": 5.0}
+# patch_host_keys is generic over bool and number scalars; `budget_usd` is a synthetic number key.
+_KEYS_ON = {"extra_alert": True, "budget_usd": 5.0}
 
 
 class TestPatchHostKeys(unittest.TestCase):
@@ -6843,21 +6844,20 @@ class TestPatchHostKeys(unittest.TestCase):
     def test_missing_table_is_appended_once_and_stable(self):
         text = "[segments]\nalt_cost = true\n"
         out = setup.patch_host_keys(text, "cursor", _KEYS_ON)
-        self.assertEqual(out, text + "\n[cursor]\nextra_alert = true\nextra_alert_usd = 5.00\n")
+        self.assertEqual(out, text + "\n[cursor]\nextra_alert = true\nbudget_usd = 5.00\n")
         self.assertEqual(setup.patch_host_keys(out, "cursor", _KEYS_ON), out)
 
     def test_live_table_rewrites_key_lines_in_place(self):
         text = ("[cursor]\n# keep me\nextra_alert = false  # note\n"
-                "# extra_alert_usd = 0.0\nother = 1\n")
-        out = setup.patch_host_keys(text, "cursor", {"extra_alert": True, "extra_alert_usd": 5.5})
+                "# budget_usd = 0.0\nother = 1\n")
+        out = setup.patch_host_keys(text, "cursor", {"extra_alert": True, "budget_usd": 5.5})
         self.assertEqual(out, "[cursor]\n# keep me\nextra_alert = true  # note\n"
-                              "extra_alert_usd = 5.50\nother = 1\n")
+                              "budget_usd = 5.50\nother = 1\n")
 
     def test_commented_header_and_sample_keys_are_uncommented_in_place(self):
-        text = "# [cursor]\n# extra_alert = true\n# extra_alert_usd = 20.0\n\n[segments]\n"
-        out = setup.patch_host_keys(text, "cursor",
-                                    {"extra_alert": False, "extra_alert_usd": 5.5})
-        self.assertEqual(out, "[cursor]\nextra_alert = false\nextra_alert_usd = 5.50\n\n"
+        text = "# [cursor]\n# extra_alert = true\n# budget_usd = 20.0\n\n[segments]\n"
+        out = setup.patch_host_keys(text, "cursor", {"extra_alert": False, "budget_usd": 5.5})
+        self.assertEqual(out, "[cursor]\nextra_alert = false\nbudget_usd = 5.50\n\n"
                               "[segments]\n")
 
     def test_a_live_header_wins_over_an_earlier_commented_one(self):
@@ -6869,33 +6869,53 @@ class TestPatchHostKeys(unittest.TestCase):
         self.assertEqual(tomllib.loads(out)["cursor"], {"extra_alert": False})
 
     def test_none_comments_out_a_live_line_and_never_appends(self):
-        text = "[cursor]\nextra_alert = true\nextra_alert_usd = 5.00\n"
-        out = setup.patch_host_keys(text, "cursor", {"extra_alert": True, "extra_alert_usd": None})
-        self.assertEqual(out, "[cursor]\nextra_alert = true\n# extra_alert_usd = 5.00\n")
+        text = "[cursor]\nextra_alert = true\nbudget_usd = 5.00\n"
+        out = setup.patch_host_keys(text, "cursor", {"extra_alert": True, "budget_usd": None})
+        self.assertEqual(out, "[cursor]\nextra_alert = true\n# budget_usd = 5.00\n")
         absent = "[cursor]\nextra_alert = true\n"
         self.assertEqual(
-            setup.patch_host_keys(absent, "cursor", {"extra_alert": True,
-                                                     "extra_alert_usd": None}), absent)
+            setup.patch_host_keys(absent, "cursor", {"extra_alert": True, "budget_usd": None}),
+            absent)
 
     def test_equal_values_return_the_input_unchanged(self):
-        text = "[cursor]\nextra_alert = false\nextra_alert_usd = 5.50\n"
+        text = "[cursor]\nextra_alert = false\nbudget_usd = 5.50\n"
         self.assertEqual(
-            setup.patch_host_keys(text, "cursor", {"extra_alert": False,
-                                                   "extra_alert_usd": 5.5}), text)
+            setup.patch_host_keys(text, "cursor", {"extra_alert": False, "budget_usd": 5.5}),
+            text)
+
+
+class TestDropHostKeys(unittest.TestCase):
+    """A retired host key's live and commented lines go from its own table only."""
+
+    def test_live_and_commented_lines_under_live_or_commented_headers(self):
+        keys = frozenset({"extra_alert_usd"})
+        for head in ("[cursor]", "# [cursor]"):
+            with self.subTest(head=head):
+                text = (f"{head}\nextra_alert = true\n  extra_alert_usd = 5  # cap\n"
+                        "# extra_alert_usd = 20.0\n[segments]\nextra_alert_usd = 1\n")
+                self.assertEqual(setup.drop_host_keys(text, "cursor", keys),
+                                 f"{head}\nextra_alert = true\n[segments]\nextra_alert_usd = 1\n")
+
+    def test_nothing_to_drop_returns_the_input(self):
+        text = "[cursor]\nextra_alert = true\n## extra_alert_usd was removed\n"
+        self.assertEqual(setup.drop_host_keys(text, "cursor", {"extra_alert_usd"}), text)
 
 
 class TestCurrentHostKeys(unittest.TestCase):
 
-    def test_defaults_missing_file_claude_and_invalid_values(self):
+    def test_defaults_missing_file_claude_invalid_values_and_a_stored_override(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "cursor-statusline.toml")
-            defaults = {"cursor": {"extra_alert": True, "extra_alert_usd": None}}
+            defaults = {"cursor": {"extra_alert": True}}
             self.assertEqual(setup.current_host_keys(path, "cursor"), defaults)
             self.assertEqual(setup.current_host_keys(path, "claude"), {})
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write('[cursor]\nextra_alert = "yes"\nextra_alert_usd = 7\n')
+            self.assertEqual(setup.current_host_keys(path, "cursor"), defaults)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write('[cursor]\nextra_alert = false\nextra_alert_usd = 7\n')
             self.assertEqual(setup.current_host_keys(path, "cursor"),
-                             {"cursor": {"extra_alert": True, "extra_alert_usd": 7.0}})
+                             {"cursor": {"extra_alert": False}})
 
 
 class TestCursorLimitText(unittest.TestCase):
@@ -6919,14 +6939,13 @@ class TestCursorLimitText(unittest.TestCase):
             text = setup.cursor_limit_text(self._env(tmp), self.NOW)
             popen.assert_not_called()
         # fmt_ago already ends in "ago" ("2m 0s ago"), so nothing is appended after it.
-        self.assertEqual(text, "Cursor spend limit: $20.00 (ai-kit quota cache, read 2m 0s ago; "
+        self.assertEqual(text, "Cursor spend limit: $20.00 (from Cursor, read 2m 0s ago; "
                                "inferred ≈)")
 
     def test_unlimited_and_disabled_texts(self):
         cq = setup._sibling("cursor_quota")
         for kind, expected in (
-            ("unlimited", "Cursor spend limit: none (unlimited on Cursor) — "
-                          "set an override to alert"),
+            ("unlimited", "Cursor spend limit: none (unlimited on Cursor; no alert)"),
             ("disabled", "Cursor spend limit: none (extra spend is off on Cursor)"),
         ):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
@@ -6935,11 +6954,12 @@ class TestCursorLimitText(unittest.TestCase):
                 self._write_cache(tmp, cache)
                 self.assertEqual(setup.cursor_limit_text(self._env(tmp), self.NOW), expected)
 
-    def test_no_cache_says_not_read_and_creates_nothing(self):
+    def test_no_cache_says_unknown_and_creates_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
             text = setup.cursor_limit_text(self._env(tmp), self.NOW)
-            self.assertEqual(text, "Cursor spend limit: not read yet (no ai-kit Cursor quota "
-                                   "cache) — set an override to alert")
+            self.assertEqual(text, "Cursor spend limit: unknown (not read from Cursor yet; "
+                                   "no ai-kit quota cache)")
+            self.assertNotIn("override", text)
             self.assertFalse(os.path.isdir(os.path.join(tmp, "ai-kit", "cursor")))
 
 
@@ -6950,14 +6970,39 @@ class TestHostKeysPersist(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "cursor-statusline.toml")
             with open(path, "w", encoding="utf-8") as handle:
-                handle.write("# [cursor]\n# extra_alert = true\n# extra_alert_usd = 20.0\n")
+                handle.write("# [cursor]\n# extra_alert = true\n")
             with mock.patch.object(setup, "write_toml_preserving", return_value=True) as write:
                 setup.save_statusline_config(
                     path, {}, None, None, host="cursor",
-                    host_keys={"cursor": {"extra_alert": False, "extra_alert_usd": 5.5}})
+                    host_keys={"cursor": {"extra_alert": False}})
             written_text = write.call_args.args[1]
             self.assertEqual(write.call_count, 1)
-            self.assertIn("[cursor]\nextra_alert = false\nextra_alert_usd = 5.50\n", written_text)
+            self.assertEqual("[cursor]\nextra_alert = false\n", written_text)
+
+    def test_the_next_write_drops_a_stored_override_and_keeps_every_other_byte(self):
+        text = ("[segments]\nalt_cost = true  # mine\n\n[cursor]\n# my note\n"
+                "extra_alert = true\nextra_alert_usd = 20  # my cap\n# extra_alert_usd = 5.0\n"
+                "\n[palette]\nextra_alert_usd = 1\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "cursor-statusline.toml")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            with mock.patch.object(setup, "write_toml_preserving", return_value=True) as write:
+                setup.save_statusline_config(path, {"alt_cost": False}, None, None, host="cursor")
+        # Only the [cursor] table's override lines go; the same name elsewhere is not ours.
+        self.assertEqual(write.call_args.args[1],
+                         "[segments]\nalt_cost = false  # mine\n\n[cursor]\n# my note\n"
+                         "extra_alert = true\n\n[palette]\nextra_alert_usd = 1\n")
+
+    def test_claude_save_drops_nothing(self):
+        text = "[cursor]\nextra_alert_usd = 20\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "claude-statusline.toml")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            with mock.patch.object(setup, "write_toml_preserving", return_value=True) as write:
+                setup.save_statusline_config(path, {}, None, None, host="claude")
+        self.assertEqual(write.call_args.args[1], text)
 
     _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     _CURSOR_SAMPLE = os.path.join(_REPO, "tools", "cursor-statusline.toml.sample")
@@ -7002,16 +7047,31 @@ class TestHostKeysPersist(unittest.TestCase):
             doctor = os.path.join(self._REPO, "tools", "statusline-doctor.py")
             self.assertTrue(setup.save_statusline_config(
                 cfg, {}, None, doctor, host="cursor",
-                host_keys={"cursor": {"extra_alert": True, "extra_alert_usd": 20.0}}))
+                host_keys={"cursor": {"extra_alert": True}}))
             with mock.patch.object(setup.os, "replace", side_effect=spy):
                 self.assertTrue(setup.save_statusline_config(
                     cfg, {}, None, doctor, host="cursor",
-                    host_keys={"cursor": {"extra_alert": False, "extra_alert_usd": 5.5}}))
-        self.assertEqual(seen, [({"extra_alert": True, "extra_alert_usd": 20.0},
-                                 {"extra_alert": False, "extra_alert_usd": 5.5})])
+                    host_keys={"cursor": {"extra_alert": False}}))
+        self.assertEqual(seen, [({"extra_alert": True}, {"extra_alert": False})])
+
+    def test_a_stored_override_passes_the_real_doctor_and_is_dropped(self):
+        """End to end with the real doctor: an older config validates and loses the override."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cursor_seed(tmp)
+            with open(cfg, "a", encoding="utf-8") as handle:
+                handle.write("\n[cursor]\nextra_alert = true\nextra_alert_usd = 20  # my cap\n")
+            doctor = os.path.join(self._REPO, "tools", "statusline-doctor.py")
+            self.assertTrue(setup.save_statusline_config(
+                cfg, {}, None, doctor, host="cursor",
+                host_keys={"cursor": {"extra_alert": False}}))
+            with open(cfg, encoding="utf-8") as handle:
+                published = handle.read()
+            self.assertFalse(os.path.exists(cfg + ".bak"))
+        self.assertNotIn("extra_alert_usd", published)
+        self.assertIn("[cursor]\nextra_alert = false\n", published)
 
     def test_second_save_of_the_same_values_is_byte_identical(self):
-        values = {"cursor": {"extra_alert": False, "extra_alert_usd": 5.5}}
+        values = {"cursor": {"extra_alert": False}}
         with tempfile.TemporaryDirectory() as tmp:
             cfg = self._cursor_seed(tmp)
             doctor = os.path.join(self._REPO, "tools", "statusline-doctor.py")
@@ -7042,12 +7102,13 @@ class TestHostKeysPersist(unittest.TestCase):
         save.assert_not_called()
 
     def test_only_the_changed_key_is_handed_to_the_save(self):
-        """Flipping the toggle alone never rewrites a hand-written override (review WR-02)."""
+        """A stored override is never read back as a wizard key: only the toggle goes."""
         with tempfile.TemporaryDirectory() as tmp:
             cfg = self._cursor_seed(tmp)
             with open(cfg, "a", encoding="utf-8") as handle:
                 handle.write("\n[cursor]\nextra_alert = true\nextra_alert_usd = 20  # my cap\n")
             keys = setup.current_host_keys(cfg, "cursor")
+            self.assertEqual(keys, {"cursor": {"extra_alert": True}})
             keys["cursor"]["extra_alert"] = False
             state = {
                 "segments": setup.current_segments(cfg, "cursor"),

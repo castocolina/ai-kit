@@ -353,14 +353,24 @@ class TestKeyHelp(unittest.IsolatedAsyncioTestCase):
                         with self.subTest(rows=rows, step=step, key=row.keys):
                             self.assertIn(f"{row.keys} {row.short}", sub)
 
+    async def test_sub_line_redraw_without_the_sub_line_is_a_no_op(self):
+        # The resize timer can fire after teardown removed the sub-line (seen in test_wizard_app_3).
+        app = wa.WizardApp(make_ctx())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app.query_one("#step-sub").remove()
+            app._render_sub()  # pylint: disable=protected-access
+
     async def test_arrange_lists_o_tab_r_esc_and_the_cursor_keys_by_host_name(self):
         app = wa.WizardApp(make_ctx(host_ids=("claude", "cursor")))
         async with app.run_test(size=(120, 24)) as pilot:
             sub = await self._show(app, pilot, wa.STEP_ARRANGE, host_index=1)
             for text in ("o status line on/off", "Tab/⇧Tab next/prev chip",
                          "r reset to defaults", "Esc back", "Enter next host or Review",
-                         "x Cursor extra-spend alert on/off", "e Cursor alert override"):
+                         "x Cursor extra-spend alert on/off"):
                 self.assertIn(text, sub)
+            self.assertNotIn("e Cursor", sub)
+            self.assertNotIn("override", sub)
 
     async def test_claude_and_cursor_panes_show_the_same_help(self):
         app = wa.WizardApp(make_ctx(host_ids=("claude", "cursor")))

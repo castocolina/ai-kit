@@ -592,6 +592,21 @@ def patch_host_keys(text, table, values):  # pylint: disable=too-many-locals
     return "".join(lines)
 
 
+def drop_host_keys(text, table, keys):
+    """Remove every live or commented `key = ...` line of `keys` under a live or
+    commented `[table]` header of `text` (a retired host key, dropped on ai-kit's
+    next write). Every other byte is kept."""
+    out, inside = [], False
+    for line in text.splitlines(keepends=True):
+        name = _header_name(line)
+        if name is not None:
+            inside = name == table
+        elif inside and (m := _KEY_RE.match(line)) and m.group("key") in keys:
+            continue
+        out.append(line)
+    return "".join(out)
+
+
 def current_host_keys(path, host="claude"):
     """Each host scalar table's values from the file at `path` (D-03, D-12): the
     defaults for a missing file, table or key, and for an invalid value; a valid
@@ -615,12 +630,12 @@ def current_host_keys(path, host="claude"):
 
 
 def cursor_limit_text(env, now):
-    """The Cursor spend limit as ai-kit's own Cursor quota cache holds it (D-12).
+    """The Cursor spend limit read from Cursor, as ai-kit's own Cursor quota cache
+    holds it (D-12); the extra-spend alert fires at it.
 
     A local read of one file only: no API call, no refresher, no directory is
     created, and never `~/.cursor`."""
-    not_read = ("Cursor spend limit: not read yet (no ai-kit Cursor quota cache) "
-                "— set an override to alert")
+    not_read = "Cursor spend limit: unknown (not read from Cursor yet; no ai-kit quota cache)"
     common, cq = _sibling("common_config"), _sibling("cursor_quota")
     base = common.cfg_cache_base(dict(env))
     if not os.path.isabs(base):
@@ -633,9 +648,9 @@ def cursor_limit_text(env, now):
         fetched = quota.fetched_at if quota.fetched_at is not None else now
         age = _sibling("common_types").fmt_ago(max(0, now - fetched))
         return (f"Cursor spend limit: ${quota.od_ceiling_usd:.2f} "
-                f"(ai-kit quota cache, read {age}; inferred ≈)")
+                f"(from Cursor, read {age}; inferred ≈)")
     if quota.od_kind == "unlimited":
-        return "Cursor spend limit: none (unlimited on Cursor) — set an override to alert"
+        return "Cursor spend limit: none (unlimited on Cursor; no alert)"
     if quota.od_kind == "disabled":
         return "Cursor spend limit: none (extra spend is off on Cursor)"
     return not_read
@@ -3072,7 +3087,7 @@ def save_statusline_config(path, seg_changes, layout, statusline_doctor,  # pyli
     then validate-offline + atomically publish. `seg_changes` is the minimal
     changed {key: bool}; `layout` is None (unchanged) or the full list of line
     dicts; `host_keys` is None or {table: {key: value}} (the host scalars, one
-    patch per table, D-03). Returns True on success."""
+    patch per table, D-03); the host's retired keys are dropped. Returns True on success."""
     with open(path, encoding="utf-8") as f:
         text = f.read()
     if seg_changes:
@@ -3081,6 +3096,8 @@ def save_statusline_config(path, seg_changes, layout, statusline_doctor,  # pyli
         text = patch_layout(text, layout)
     for table, values in (host_keys or {}).items():
         text = patch_host_keys(text, table, values)
+    for table, keys in (host_config(host).retired_host_keys or {}).items():
+        text = drop_host_keys(text, table, keys)
     return write_toml_preserving(path, text, statusline_doctor, host=host)
 
 

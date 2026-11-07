@@ -146,8 +146,7 @@ from Line 1 sends it to the tray; Space on a tray chip brings it back.
 | `space` | Turn the focused segment on / off (off goes to the tray) |
 | `tab` / `shift+tab` | Focus the next / previous chip |
 | `o` | Host status line on / off; another tool's line: keep / remove / customize |
-| `x` | Cursor only: extra-spend alert on / off |
-| `e` | Cursor only: set a dollar override of your Cursor spend limit (empty clears it) |
+| `x` | Cursor only: extra-spend alert on / off (it fires at your Cursor spend limit, shown beside it) |
 | `r` | Reset the layout to defaults |
 | `enter` / `esc` | Continue to the next host or Review / back (the first host's `esc` returns to Choose's last card) |
 | `?` | Help |
@@ -156,7 +155,7 @@ from Line 1 sends it to the tray; Space on a tray chip brings it back.
 The help line under each step's title lists every key that acts on that screen,
 from the same table as the `?` panel, and the footer shows a subset of it. Both
 host panes show the same keys: a key that exists on one host only, such as
-Cursor's `x` and `e`, is named with that host (`x Cursor extra-spend alert
+Cursor's `x`, is named with that host (`x Cursor extra-spend alert
 on/off`) and is listed whenever that host is detected. Below 30 terminal rows
 the help is one wrapped line; from 30 rows it shows one group per line
 (navigation, edit, status line, continue), and a resize switches between the two.
@@ -407,15 +406,15 @@ it alone; see [Headless install](#headless-install-ci--containers--no-tty)).
   refresh failed or never ran, so the number shown is the old one. The quota line
   reads, from the sample render (sample data, not a live Cursor run):
   `⚡️ inc: +42% (↺ Nov 23, 17d) ≈ | 🪙 extra: +$2.50/$20.00 ≈`.
-- **Extra-spend alert:** `[cursor]` keys `extra_alert` (default `true`, env
-  `AI_KIT_CURSOR_EXTRA_ALERT`) and `extra_alert_usd` (env `AI_KIT_CURSOR_EXTRA_ALERT_USD`).
-  The alert fires when extra spend reaches your Cursor spend limit, read from ai-kit's own
-  Cursor quota cache (an inference from undocumented Cursor calls). `extra_alert_usd` is an
-  optional override of that limit. With no limit in the cache and no override there is no
-  alert. In the wizard's Cursor pane, `x` toggles the alert and `e` sets the override (empty
-  clears it); the limit is shown read-only. The doctor's `extra-spend alert:` line names the
-  limit source. `alt_process_memory` and `alt_time_ago` stay labelled unverified on Cursor
-  until a live run confirms them.
+- **Extra-spend alert:** `[cursor]` key `extra_alert` (default `true`, env
+  `AI_KIT_CURSOR_EXTRA_ALERT`). The alert fires when extra spend reaches your Cursor spend
+  limit, read from ai-kit's own Cursor quota cache (an inference from undocumented Cursor
+  calls); there is no dollar override. With no limit in the cache there is no alert. An
+  `extra_alert_usd` line left by an older ai-kit is ignored and removed on ai-kit's next
+  write of the file. In the wizard's Cursor pane, `x` toggles the alert and the limit is
+  shown beside it ("Cursor spend limit: $20.00 (from Cursor, …)", or unknown). The doctor's
+  `extra-spend alert:` line names the limit source. `alt_process_memory` and `alt_time_ago`
+  stay labelled unverified on Cursor until a live run confirms them.
 - **Where its config file lives:** `cli-config.json` under the first Cursor
   directory that applies — a non-blank `CURSOR_CONFIG_DIR`, then
   `$XDG_CONFIG_HOME/cursor`, then `~/.cursor`; a blank or whitespace-only override

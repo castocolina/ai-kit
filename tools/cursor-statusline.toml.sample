@@ -4,7 +4,7 @@
 ## Providers: ~/.config/ai-kit/segments-cursor (AI_KIT_CURSOR_EXTERNAL_DIR).
 ## Cursor config overrides use AI_KIT_CURSOR_CONFIG_FILE, AI_KIT_CURSOR_SEGMENT_<KEY>,
 ## AI_KIT_CURSOR_GIT_CACHE_TTL, AI_KIT_CURSOR_EXTERNAL_DIR, AI_KIT_CURSOR_EXTERNAL_CACHE_TTL,
-## AI_KIT_CURSOR_EXTRA_ALERT and AI_KIT_CURSOR_EXTRA_ALERT_USD. Provider subprocesses receive
+## and AI_KIT_CURSOR_EXTRA_ALERT. Provider subprocesses receive
 ## AI_KIT_CURSOR_PROVIDER_COLS/ID/LINE/POSITION.
 
 # [segments]
@@ -37,7 +37,5 @@
 # segments = ["render_time", "slowest", "alt_time_clock", "alt_term_dimensions", "alt_time_ago", "alt_process_memory"]
 
 ## The extra-spend amount turns bold red when spend reaches your Cursor spend limit (read from Cursor's dashboard data, inferred).
-## Set extra_alert_usd only to alert at another amount; leave it commented to use the Cursor limit.
 # [cursor]
 # extra_alert = true
-# extra_alert_usd = 20.0

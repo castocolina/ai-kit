@@ -289,7 +289,10 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
         if not isinstance(table_raw, dict):
             errors.append(f"[{table}] must be a table")
             continue
+        retired = (spec.retired_host_keys or {}).get(table, frozenset())
         for k, v in cast(dict[str, Any], table_raw).items():
+            if k in retired:   # no longer read; ai-kit's next write drops it
+                continue
             problem = common_config.cfg_host_key_problem(defaults, k, v)
             if problem == "unknown":
                 errors.append(f"unknown [{table}] key: {k}")
@@ -460,15 +463,13 @@ def cursor_alert_line(alert: cursor_quota.ExtraAlert, state: str) -> str:
     sources name a non-ok quota state, so a stale limit never reads as current."""
     if alert.source == "off":
         return "extra-spend alert: off"
-    if alert.source == "config":
-        return f"extra-spend alert: at ${alert.threshold:.2f} (config override)"
     if alert.source == "cursor":
         line = (
             f"extra-spend alert: at ${alert.threshold:.2f} "
             "(Cursor spend limit, inferred — undocumented Cursor API)"
         )
         return line if state == "ok" else f"{line}; quota cache {state}"
-    line = "extra-spend alert: none (no Cursor spend limit in the quota cache and no override)"
+    line = "extra-spend alert: none (no Cursor spend limit in the quota cache)"
     return line if state == "ok" else f"{line}; quota cache {state}"
 
 

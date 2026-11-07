@@ -13,7 +13,7 @@ from tools import wizard_app as wa
 
 if HAVE_TEXTUAL:
     from textual.screen import ModalScreen
-    from textual.widgets import Input, Static
+    from textual.widgets import Static
 
     from tests.wizard_fixtures import make_ctx
 
@@ -579,13 +579,12 @@ def _one_row_catalog():
     return {"sections": [{"runtime": "claude", "config_path": None, "rows": [row]}]}
 
 
-_ALERT_LIMIT = "Cursor spend limit: $20.00 (sample)"
+_ALERT_LIMIT = "Cursor spend limit: $20.00 (from Cursor, sample)"
 
 
 def _alert_app(host_keys=None, limit: str | None = _ALERT_LIMIT):
     """Two hosts, both adopted, Cursor carrying the alert keys (D-03, D-12)."""
-    keys = {"cursor": {"extra_alert": True, "extra_alert_usd": None}} \
-        if host_keys is None else host_keys
+    keys = {"cursor": {"extra_alert": True}} if host_keys is None else host_keys
     ctx = make_ctx(host_ids=("claude", "cursor"),
                    sl_states={"claude": "ours", "cursor": "ours"},
                    host_keys=keys, alert_limit_text=limit)
@@ -594,7 +593,7 @@ def _alert_app(host_keys=None, limit: str | None = _ALERT_LIMIT):
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestExtraSpendAlert(unittest.IsolatedAsyncioTestCase):
-    """The Cursor pane's alert row: toggle, read-only limit, optional override box."""
+    """The Cursor pane's alert row: the `x` toggle and the Cursor limit beside it, no override."""
 
     async def test_row_shows_on_cursor_pane_only_with_the_limit_text(self):
         app = _alert_app()
@@ -614,13 +613,23 @@ class TestExtraSpendAlert(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter", "enter")
             await pilot.pause()
-            for wid in ("#alert-label", "#alert-toggle", "#alert-usd", "#alert-limit",
-                        "#alert-msg"):
+            for wid in ("#alert-label", "#alert-toggle", "#alert-limit"):
                 with self.subTest(widget=wid):
                     region = app.query_one(wid).region
                     self.assertGreater(region.width, 0)
                     self.assertGreater(region.height, 0)
                     self.assertLessEqual(region.right, 80)
+
+    async def test_no_override_box_is_left(self):
+        app = _alert_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter", "enter")
+            self.assertEqual(len(app.query("#alert-usd")), 0)
+            self.assertEqual(len(app.query("#alert-msg")), 0)
+            await pilot.press("e")                      # no longer a key: nothing changes
+            self.assertEqual(app.model.state["host_keys"]["cursor"], {"extra_alert": True})
+            self.assertTrue(app.is_running)
 
     async def test_limit_text_falls_back_to_unknown_without_an_engine_callable(self):
         app = _alert_app(limit=None)
@@ -629,7 +638,7 @@ class TestExtraSpendAlert(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter", "enter")
             self.assertIn(wa.ALERT_LIMIT_UNKNOWN, str(query_static(app, "#alert-limit").content))
 
-    async def test_x_flips_the_toggle_and_e_then_a_valid_enter_stores_the_override(self):
+    async def test_x_flips_the_toggle_both_ways(self):
         app = _alert_app()
         async with app.run_test() as pilot:
             await pilot.pause()
@@ -637,111 +646,26 @@ class TestExtraSpendAlert(unittest.IsolatedAsyncioTestCase):
             await pilot.press("x")
             self.assertFalse(app.model.state["host_keys"]["cursor"]["extra_alert"])
             self.assertIn(wa.TOGGLE_OFF, str(query_static(app, "#alert-toggle").content))
-            await pilot.press("e")
-            box = app.query_one("#alert-usd", Input)
-            self.assertTrue(box.can_focus)
-            self.assertIs(app.focused, box)
-            await pilot.press("5", "full_stop", "5", "enter")
-            self.assertEqual(app.model.state["host_keys"]["cursor"]["extra_alert_usd"], 5.5)
-            self.assertFalse(box.can_focus)
-            self.assertIsNot(app.focused, box)
-
-
-@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
-class TestAlertInputGuard(unittest.IsolatedAsyncioTestCase):
-    """R12 refusals store nothing; a focused box keeps the wizard's keys out (T-30.2-14)."""
-
-    async def test_refused_amounts_store_nothing_and_say_why(self):
-        app = _alert_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("enter", "enter", "e")
-            box = app.query_one("#alert-usd", Input)
-            for raw in ("-1", "abc", "$5", "5,00", "٥", "5.555", "inf", "nan"):
-                with self.subTest(raw=raw):
-                    box.value = raw
-                    await pilot.press("enter")
-                    self.assertIn(wa.ALERT_BAD_INPUT,
-                                  str(query_static(app, "#alert-msg").content))
-                    self.assertIsNone(app.model.state["host_keys"]["cursor"]["extra_alert_usd"])
-                    self.assertIs(app.focused, box)
-
-    async def test_wizard_keys_are_typed_into_the_box_not_run(self):
-        app = _alert_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("enter", "enter", "e")
-            box = app.query_one("#alert-usd", Input)
-            await pilot.press("o", "q", "space")
-            self.assertEqual(box.value, "oq ")
-            self.assertTrue(app.model.state["adopt"])
+            await pilot.press("x")
             self.assertTrue(app.model.state["host_keys"]["cursor"]["extra_alert"])
-            self.assertTrue(app.is_running)
-
-    async def test_esc_restores_the_last_value_and_leaves_the_box(self):
-        app = _alert_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("enter", "enter", "e")
-            box = app.query_one("#alert-usd", Input)
-            box.value = "7"
-            await pilot.press("escape")
-            self.assertEqual(box.value, "")
-            self.assertFalse(box.can_focus)
-            self.assertIsNot(app.focused, box)
-
-    async def test_empty_enter_clears_an_existing_override(self):
-        app = _alert_app({"cursor": {"extra_alert": True, "extra_alert_usd": 7.0}})
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("enter", "enter", "e")
-            box = app.query_one("#alert-usd", Input)
-            box.value = ""
-            await pilot.press("enter")
-            self.assertIsNone(app.model.state["host_keys"]["cursor"]["extra_alert_usd"])
-            self.assertFalse(box.can_focus)
-
-
-@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
-class TestAlertLengthCap(unittest.IsolatedAsyncioTestCase):
-    """The box holds at most ten characters, so an eleven-character amount never reaches Enter."""
-
-    async def test_eleven_characters_cannot_be_typed_into_the_box(self):
-        app = _alert_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("enter", "enter", "e")
-            box = app.query_one("#alert-usd", Input)
-            await pilot.press(*("1" * 11))
-            self.assertEqual(len(box.value), 10)
-            self.assertIsNone(app.model.state["host_keys"]["cursor"]["extra_alert_usd"])
+            self.assertIn(wa.TOGGLE_ON, str(query_static(app, "#alert-toggle").content))
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestAlertReview(unittest.IsolatedAsyncioTestCase):
     """Review names a changed alert setting; Enter on Review commits the alert keys."""
 
-    async def test_review_names_a_changed_override_with_the_off_toggle(self):
-        app = _alert_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("enter", "enter", "x", "e")
-            await pilot.press("5", "full_stop", "5", "enter")
-            await pilot.press("enter")                  # → Review
-            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
-            review = str(query_static(app, "#rev-what").content)
-            self.assertIn("Cursor CLI: extra-spend alert off, threshold $5.50 override "
-                          "(written with its status-line config)", review)
-
-    async def test_review_names_a_cleared_override_as_the_cursor_limit(self):
+    async def test_review_names_the_off_toggle_at_the_cursor_limit(self):
         app = _alert_app()
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter", "enter", "x")
             await pilot.press("enter")                  # → Review
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             review = str(query_static(app, "#rev-what").content)
-            self.assertIn("Cursor CLI: extra-spend alert off, threshold your Cursor spend limit "
+            self.assertIn("Cursor CLI: extra-spend alert off, at your Cursor spend limit "
                           "(written with its status-line config)", review)
+            self.assertNotIn("override", review)
 
     async def test_review_adds_no_alert_line_when_nothing_changed(self):
         app = _alert_app()
@@ -755,46 +679,27 @@ class TestAlertReview(unittest.IsolatedAsyncioTestCase):
         calls = []
         ctx = make_ctx(host_ids=("claude", "cursor"),
                        sl_states={"claude": "ours", "cursor": "ours"},
-                       host_keys={"cursor": {"extra_alert": True, "extra_alert_usd": None}},
+                       host_keys={"cursor": {"extra_alert": True}},
                        alert_limit_text=_ALERT_LIMIT)
         app = wa.WizardApp(_in_sync_ctx(ctx)._replace(commit=_recorder(calls)))
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("enter", "enter", "x", "e")
-            await pilot.press("5", "full_stop", "5", "enter")
+            await pilot.press("enter", "enter", "x")
             await pilot.press("enter")                  # → Review
             await pilot.press("enter")                  # commit
             await app.workers.wait_for_complete()
             await pilot.pause()
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["cursor"]["host_keys"]["cursor"],
-                         {"extra_alert": False, "extra_alert_usd": 5.5})
+        self.assertEqual(calls[0]["cursor"]["host_keys"]["cursor"], {"extra_alert": False})
 
-    def test_help_names_x_and_e_for_the_cursor_pane(self):
+    def test_help_names_x_for_the_cursor_pane_and_no_e(self):
         rows = {row.keys: row for row in wa.HELP[wa.STEP_ARRANGE]}
         self.assertIn("extra-spend alert", rows["x"].help)
-        self.assertIn("override", rows["e"].help)
-        self.assertEqual((rows["x"].host, rows["e"].host), ("cursor", "cursor"))
-
-
-@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
-class TestAlertTabFocus(unittest.IsolatedAsyncioTestCase):
-    """Tab never reaches the alert box (review round 1, HIGH)."""
-
-    async def test_tab_never_focuses_the_box_on_the_cursor_pane(self):
-        app = _alert_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            box = app.query_one("#alert-usd", Input)
-            self.assertFalse(box.can_focus)
-            await pilot.press("enter", "enter")
-            for _ in range(5):
-                await pilot.press("tab")
-                await pilot.pause()
-                self.assertIsNot(app.focused, box)
-            await pilot.press("e", "5", "enter")
-            await pilot.press("tab")
-            self.assertIsNot(app.focused, box)
+        self.assertEqual(rows["x"].host, "cursor")
+        self.assertNotIn("e", rows)
+        self.assertFalse(any("override" in r.help or "override" in r.short
+                             for step in wa.HELP.values() for r in step))
+        self.assertFalse(any(cap == "e" for bar in wa.FOOTERS for _label, cap, *_ in bar))
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")

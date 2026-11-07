@@ -45,8 +45,10 @@ LAYOUT = [
     ),
 ]
 PINNED = {"path", "context"}
-# `extra_alert_usd` None: no override, the alert uses the Cursor spend limit (D-12).
-HOST_SCALARS: dict[str, dict[str, Any]] = {"cursor": {"extra_alert": True, "extra_alert_usd": None}}
+# The alert fires at the Cursor spend limit read from Cursor (D-12); no override.
+HOST_SCALARS: dict[str, dict[str, Any]] = {"cursor": {"extra_alert": True}}
+# The retired dollar override: ignored on load, dropped on ai-kit's next write.
+RETIRED_HOST_KEYS = {"cursor": frozenset({"extra_alert_usd"})}
 
 # ═══ 6. core_ — host spec and renderer contract ═════════════════════════════
 
@@ -60,6 +62,7 @@ SPEC = ConfigSpec(
     "segments-cursor",
     "AI_KIT_CURSOR_PROVIDER_",
     host_scalars=HOST_SCALARS,
+    retired_host_keys=RETIRED_HOST_KEYS,
 )
 BUILDERS = core_discover_builders(common_segments, cursor_segments)
 HOST = Host(

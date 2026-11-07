@@ -47,7 +47,7 @@ class QuotaResult(NamedTuple):
 
 class ExtraAlert(NamedTuple):
     """The extra-spend alert verdict (D-12): whether it fires, its threshold in USD
-    and where the threshold comes from (off, config, cursor or none)."""
+    and where the threshold comes from (off, cursor or none)."""
 
     fires: bool
     threshold: float | None
@@ -281,20 +281,16 @@ def core_quota_state(cache: object, now: float) -> QuotaResult:
 
 def core_extra_alert(knobs: dict[str, object] | None, quota: QuotaResult) -> ExtraAlert:
     """The one extra-spend alert rule for the renderer, the doctor and the wizard
-    (D-12). `knobs` None means the defaults (on, no override). At or above the
-    threshold, because Cursor stops extra usage at its limit. Pure: no I/O."""
-    knobs = knobs or {}
-    if knobs.get("extra_alert", True) is False:
+    (D-12). `knobs` None means the defaults (on). The threshold is always the
+    Cursor spend limit; any other knob is ignored. At or above the threshold,
+    because Cursor stops extra usage at its limit. Pure: no I/O."""
+    if (knobs or {}).get("extra_alert", True) is False:
         return ExtraAlert(False, None, "off")
-    override = knobs.get("extra_alert_usd")
-    if override is not None:
-        threshold, source = float(cast(float, override)), "config"
-    elif quota.od_kind == "fixed" and (quota.od_ceiling_usd or 0) > 0:
-        threshold, source = cast(float, quota.od_ceiling_usd), "cursor"
-    else:
+    if quota.od_kind != "fixed" or (quota.od_ceiling_usd or 0) <= 0:
         return ExtraAlert(False, None, "none")
+    threshold = cast(float, quota.od_ceiling_usd)
     used = round(quota.od_used_usd or 0.0, 2)
-    return ExtraAlert(used > 0 and used >= round(threshold, 2), threshold, source)
+    return ExtraAlert(used > 0 and used >= round(threshold, 2), threshold, "cursor")
 
 
 def core_needs_refresh(cache: object, now: float) -> bool:

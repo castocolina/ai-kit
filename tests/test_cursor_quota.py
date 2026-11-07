@@ -1101,19 +1101,19 @@ class TestExtraAlert(unittest.TestCase):
         self.assertEqual(below, ExtraAlert(False, 20.0, "cursor"))
         self.assertTrue(core_extra_alert(None, self._quota(20.004)).fires)
 
-    def test_override_wins_and_zero_is_valid(self):
-        knobs: dict[str, object] = {"extra_alert": True, "extra_alert_usd": 0.0}
-        self.assertEqual(core_extra_alert(knobs, self._quota(2.5)), ExtraAlert(True, 0.0, "config"))
-        self.assertEqual(
-            core_extra_alert({"extra_alert_usd": 5.0}, self._quota(2.5)),
-            ExtraAlert(False, 5.0, "config"),
-        )
-        self.assertTrue(core_extra_alert({"extra_alert_usd": 2.5}, self._quota(2.5)).fires)
-        self.assertFalse(core_extra_alert({"extra_alert_usd": 0.0}, self._quota(0.0)).fires)
+    def test_a_stored_override_is_ignored(self):
+        # The retired extra_alert_usd override never moves the threshold off the Cursor limit.
+        for usd in (0.0, 2.5, 5.0):
+            stale: dict[str, object] = {"extra_alert": True, "extra_alert_usd": usd}
+            with self.subTest(usd=usd):
+                self.assertEqual(core_extra_alert(stale, self._quota(2.5)),
+                                 ExtraAlert(False, 20.0, "cursor"))
+                self.assertEqual(core_extra_alert(stale, self._quota(2.5, kind="unlimited")),
+                                 ExtraAlert(False, None, "none"))
 
     def test_switch_off_and_no_limit_give_no_alert(self):
-        off = {"extra_alert": False, "extra_alert_usd": 5.0}
-        self.assertEqual(core_extra_alert(off, self._quota(9.0)), ExtraAlert(False, None, "off"))
+        off: dict[str, object] = {"extra_alert": False}
+        self.assertEqual(core_extra_alert(off, self._quota(20.0)), ExtraAlert(False, None, "off"))
         for kind in ("unlimited", "disabled", "unavailable"):
             self.assertEqual(
                 core_extra_alert(None, self._quota(2.5, kind=kind)), ExtraAlert(False, None, "none")
@@ -1123,8 +1123,6 @@ class TestExtraAlert(unittest.TestCase):
                 core_extra_alert(None, self._quota(2.5, ceiling=ceiling)),
                 ExtraAlert(False, None, "none"),
             )
-        unlimited = self._quota(2.5, kind="unlimited")
-        self.assertTrue(core_extra_alert({"extra_alert_usd": 0.0}, unlimited).fires)
 
     def test_synthetic_cache_uses_the_cursor_limit_by_default(self):
         now = 1_762_000_000.0

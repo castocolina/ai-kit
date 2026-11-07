@@ -530,34 +530,30 @@ class TestCursorQuotaShape(unittest.TestCase):
             second = cursor_segments.seg_cursor_included(ctx, 400, theme)
         self.assertEqual(first, second)
 
-    def test_alert_colours_only_the_amount(self):
-        ctx, theme = self._context(core_quota_state(core_synthetic_cache(NOW), NOW))
-        with mock.patch("cursor_segments.time.time", return_value=NOW):
-            ctx.line_conf = ctx.line_conf._replace(
-                host_knobs={"cursor": {"extra_alert": True, "extra_alert_usd": 0.0}}
-            )
-            raw = cast(str, cursor_segments.seg_cursor_extra(ctx, 400, theme))
-            spans = _BOLD_SPAN.findall(raw)
-            self.assertEqual(len(spans), 1)
-            self.assertEqual(self._plain(spans[0]), "$2.50")
-            self.assertEqual(self._plain(raw), "🪙 extra: +$2.50/$20.00 ≈")
-            ctx.line_conf = ctx.line_conf._replace(
-                host_knobs={"cursor": {"extra_alert": True, "extra_alert_usd": 5.0}}
-            )
-            self.assertEqual(self._bold_spans(ctx, theme), [])
-            ctx.line_conf = ctx.line_conf._replace(host_knobs=None)
-            self.assertEqual(self._bold_spans(ctx, theme), [])
-
-    def test_unlimited_extra_bolds_the_amount_on_an_override(self):
-        quota = QuotaResult(state="ok", od_kind="unlimited", od_used_usd=2.5, fetched_at=1000)
+    def test_alert_colours_only_the_amount_at_the_cursor_limit(self):
+        quota = QuotaResult(state="ok", od_kind="fixed", od_used_usd=20.0, od_ceiling_usd=20.0,
+                            fetched_at=1000)
         ctx, theme = self._context(quota)
         with mock.patch("cursor_segments.time.time", return_value=NOW):
-            ctx.line_conf = ctx.line_conf._replace(
-                host_knobs={"cursor": {"extra_alert": True, "extra_alert_usd": 0.0}}
-            )
+            ctx.line_conf = ctx.line_conf._replace(host_knobs={"cursor": {"extra_alert": True}})
             raw = cast(str, cursor_segments.seg_cursor_extra(ctx, 400, theme))
             spans = _BOLD_SPAN.findall(raw)
-            self.assertEqual([self._plain(span) for span in spans], ["$2.50"])
+            self.assertEqual([self._plain(span) for span in spans], ["$20.00"])
+            ctx.line_conf = ctx.line_conf._replace(host_knobs={"cursor": {"extra_alert": False}})
+            self.assertEqual(self._bold_spans(ctx, theme), [])
+            ctx.line_conf = ctx.line_conf._replace(host_knobs=None)
+            self.assertEqual(len(self._bold_spans(ctx, theme)), 1)
+
+    def test_a_stored_override_is_ignored(self):
+        # The retired extra_alert_usd override never moves the threshold off the Cursor limit.
+        stale = {"cursor": {"extra_alert": True, "extra_alert_usd": 0.0}}
+        unlimited = QuotaResult(state="ok", od_kind="unlimited", od_used_usd=2.5, fetched_at=1000)
+        for quota in (core_quota_state(core_synthetic_cache(NOW), NOW), unlimited):
+            with self.subTest(od_kind=quota.od_kind):
+                ctx, theme = self._context(quota)
+                with mock.patch("cursor_segments.time.time", return_value=NOW):
+                    ctx.line_conf = ctx.line_conf._replace(host_knobs=stale)
+                    self.assertEqual(self._bold_spans(ctx, theme), [])
 
 
 class TestCursorModelMaxAndDims(unittest.TestCase):
@@ -1254,16 +1250,16 @@ class TestCursorTomlSample(unittest.TestCase):
             pairs, [(key, str(value).lower()) for key, value in cursor_host.SEGMENTS.items()]
         )
 
-    def test_header_names_the_alert_overrides_and_the_cursor_block_is_commented(self):
+    def test_header_names_the_alert_switch_and_the_cursor_block_is_commented(self):
         text = SAMPLE_TOML_PATH.read_text(encoding="utf-8")
         header = text.split("# [segments]", 1)[0]
         self.assertIn("AI_KIT_CURSOR_EXTRA_ALERT", header)
-        self.assertIn("AI_KIT_CURSOR_EXTRA_ALERT_USD", header)
-        for line in ("# [cursor]", "# extra_alert = true", "# extra_alert_usd = 20.0"):
+        self.assertNotIn("extra_alert_usd", text.lower())
+        for line in ("# [cursor]", "# extra_alert = true"):
             self.assertIn(line, text.splitlines())
         tomllib.loads(text)  # the all-comment sample parses
 
-    def test_uncommenting_the_switch_alone_sets_extra_alert_without_an_override(self):
+    def test_uncommenting_the_switch_sets_extra_alert(self):
         lines = SAMPLE_TOML_PATH.read_text(encoding="utf-8").splitlines()
         uncommented = [
             line[2:] if line in ("# [cursor]", "# extra_alert = true") else line for line in lines

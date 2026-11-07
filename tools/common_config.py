@@ -124,7 +124,10 @@ def cfg_bind_host_table(
     if raw_table is not None and not isinstance(raw_table, dict):
         problems.append(f"[{table}] must be a table — ignored")
     elif isinstance(raw_table, dict):
+        retired = (spec.retired_host_keys or {}).get(table, frozenset())
         for key, value in cast(dict[str, Any], raw_table).items():
+            if key in retired:
+                continue
             if cfg_host_key_problem(defaults, key, value) == "unknown":
                 problems.append(f"unknown [{table}] key '{key}'")
                 continue

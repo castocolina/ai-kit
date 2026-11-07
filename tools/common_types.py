@@ -51,6 +51,8 @@ class ConfigSpec(NamedTuple):
     provider_env: str
     # Host scalar tables (data only): table -> key -> default; a None default is an optional number.
     host_scalars: dict[str, dict[str, Any]] | None = None
+    # Retired host keys: table -> keys no longer read; skipped silently, dropped on next write.
+    retired_host_keys: dict[str, frozenset[str]] | None = None
 
 
 # Meta-segments: they report the whole render, not a single builder, so the
