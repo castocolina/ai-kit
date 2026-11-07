@@ -395,13 +395,14 @@ Plans:
 **Requirements**: JDG-01, JDG-02, JDG-04, JDG-05, JDG-06, JDG-07, JDG-08
 **Code anchors**: every `skills/*/SKILL.md`; judge scripts to promote from `.planning/research/2026-11-02-next-milestone/p27-judge-scripts/` (`gates.sh`, `build_report.py`, `digest.py`); new: tracked verdict checker under `tools/` (name unknown until research), strict frontmatter test, skill-text history test, re-judge report; jev score through the Phase 29 shared client; AGENTS.md skill-judge rule (round cap, refute by running, one-line behaviour-not-history rule); the verdict checker's repo-root resolution and round count; docs: AGENTS.md skill-judge rule
 **Success Criteria** (what must be TRUE):
-  1. A re-judge report scores each of the 15 kept skills with the current judge (two judges chosen from what the environment offers, native opus at xhigh as fallback); old /120 scores appear only as history, and the seven project-rules skills are listed as excluded because they are being replaced; the judge prompt embeds the rubric and its cited spec sources and states one reading of the flat `tests/test_*.py` layout and of skills without `scripts/`, the same for every skill.
+  1. A re-judge report scores each of the 15 kept skills with the current judge (two judges chosen from what the environment offers, native opus at xhigh as fallback); old /120 scores appear only as history, and the seven project-rules skills are listed as excluded because they are being replaced; the judge prompt embeds the rubric and its cited spec sources and states one reading of the flat `tests/test_*.py` layout and of skills without `scripts/`, the same for every skill. *(amended 2026-11-07, owner decision: the 16 non-rules skills are kept, 15 judged; `ai-kit-commit-fold` is listed as excluded beside the seven project-rules skills because it is temporary and Phase 45 absorbs it (RULE-27); the judge prompt states the test layout criterion 8 decides)*
   2. The verdict checker is a tracked tool that takes the skill and judge lists as arguments, and it names no referee, resolves the repository root itself (the same digest from a sub-folder) and reports the round count.
   3. The report shows for each skill why one or two judges ran: deterministic signals plus jev's score, a floor of one, two when the last verdict sat within judge noise of a grade boundary or had a high finding.
   4. A strict frontmatter check (strict YAML, 1,024-character description cap, matching what `npx skills` accepts) passes on every SKILL.md in the tree.
   5. A text check fails on tool versions, dates or observation logs in a skill's main flow, a hardcoded referee name, or shipped text pointing into a planning folder; every kept skill passes it, with provenance in a trailing evidence section; ai-kit's AGENTS.md states the rule in one line.
   6. AGENTS.md's skill-judge rule caps a judge loop at a stated number of rounds and requires a disputed finding to be refuted by running the code; the verdict checker flags a loop past the cap.
   7. The judge bar (JDG-04) is recorded per judged skill, and every later phase that adds or changes a SKILL.md has a success criterion that cites it.
+  8. The phase 32 spec records where tests live (flat `tests/test_*.py` or `tests/skills/<name>/`, as the skill-judge rubric expects), decided by a spike that measures the cost of moving them on the parallel runner, the gate-scope test, the staged mapper and the recorded e2e times; evals stay in each skill's `evals/` folder per the Agent Skills standard, and Phase 52 trims them from the shipped copy (DIST-01). *(added 2026-11-07, owner decision)*
 
 **Plans**: TBD
 
@@ -409,12 +410,15 @@ Plans:
 
 **Goal**: `cst-refactor`, `markdown-to-pdf`, `jev-fast-decision`, `ai-kit-spec-review-fixer` and `ai-kit-usage-metrics` reach the judge bar with new-shape evals and tests.
 **Depends on**: Phase 32
-**Requirements**: JEV-02
-**Code anchors**: `skills/cst-refactor/`, `skills/markdown-to-pdf/`, `skills/jev-fast-decision/` (`SKILL.md`, `reference.md`, `scripts/jev_review.py` Zen rung `ZEN_KEY_FILE`, `backends/`), `skills/ai-kit-spec-review-fixer/`, `skills/ai-kit-usage-metrics/`; new: `evals/evals.json` and trigger queries per skill, unit tests; docs: each SKILL.md
+**Requirements**: JEV-02, JEV-08, JEV-09
+*(JEV-08 and JEV-09 were added 2026-11-07 from the owner's decisions on `.planning/research/2026-11-07-jev-vs-typesafe-ai.md`.)*
+**Code anchors**: `skills/cst-refactor/`, `skills/markdown-to-pdf/`, `skills/jev-fast-decision/` (`SKILL.md`, `reference.md`, `scripts/jev_review.py` Zen rung `ZEN_KEY_FILE`, receipts, `backends/`; the pinned doc links in `tests/test_jev_fast_decision.py`), `skills/ai-kit-spec-review-fixer/`, `skills/ai-kit-usage-metrics/`; new: `evals/evals.json` and trigger queries per skill, unit tests; docs: each SKILL.md
 **Success Criteria** (what must be TRUE):
   1. Each of the five skills has `evals/evals.json`, about 20 trigger queries (half near-misses) and tests that run in the unit tier.
   2. The re-judge report shows each of the five with no critical or high finding, or grade B or better, and no regression beyond judge variation.
   3. `jev-fast-decision`'s skill text, scripts and tests no longer mention OpenCode Zen.
+  4. `jev-fast-decision`'s SKILL.md has "read X when Y" pointers instead of "Required reading": the official `typesafe:typesafe-ai` skill's doc flow when it is installed (docs index, changelog, models page otherwise), for a new item shape, a new TypeSafe feature or a stale-looking capability fact; the Jev 1.14 facts are current, receipts record the versioned model id, nothing installs the official skill, and a doc-contract test pins the pointers (JEV-08). *(added 2026-11-07)*
+  5. `jev-fast-decision`'s reference.md has a "Writing an item" section with the observable-judgment rule, the topics never to ask about (arithmetic, counting, dates, double negatives), the reordered re-ask for a close choice, a no-match option and the cheap yes/no screen before an expensive step, each pinned by a doc-contract test (JEV-09). *(added 2026-11-07)*
 
 **Plans**: TBD
 
@@ -448,16 +452,18 @@ Plans:
 
 **Goal**: `ai-kit-spec-goal-prompt`, `ai-kit-gsd-spec-discuss` and `ai-kit-gsd-curated-config` reach the judge bar with their known fixes, and the refreshed report shows every kept skill with evals and tests.
 **Depends on**: Phase 32.1, Phase 32.2, Phase 32.3
-**Requirements**: FLOW-08, FLOW-09, JDG-03, CUR-06, DEF-03, DEF-04, DEF-06, DEF-07
+**Requirements**: FLOW-08, FLOW-09, JDG-03, CUR-06, DEF-03, DEF-04, DEF-06, DEF-07, DEF-08
+*(DEF-08 was added 2026-11-07 by owner decision.)*
 **Code anchors**: `skills/ai-kit-spec-goal-prompt/scripts/` (`gp_render.py`, `gp_sections.py` refusal of long lines), `skills/ai-kit-gsd-spec-discuss/` (`SKILL.md`, `scripts/decide.py`), `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cli.py` (the `review.effort.opencode` write) and `presets.py`; new: evals for the three skills, closing re-judge report; goal-prompt rails in `skills/ai-kit-spec-goal-prompt/scripts/gp_sections.py` (`rail_sections`, `stop_lines`) with `tests/test_ai_kit_spec_goal_prompt_render.py`; goal-prompt entry `goal_prompt.py` (`build_parser`) for the spec-discuss handoff; spec-discuss analyze-mode and auto-mode text in its `SKILL.md`; docs: each SKILL.md
 **Success Criteria** (what must be TRUE):
   1. goal-prompt wraps long lists and commands over several lines instead of refusing them.
   2. Each of the eight spec-discuss polish items has a fix and a pinned doc-contract test, including analyze-mode trade-offs written as one header per option with pros and cons bullets and interactive questions that first say what each named item is and who uses it.
   3. curated-config no longer writes `review.effort.opencode = "high"`, and a test pins it.
-  4. The refreshed re-judge report shows all 15 kept skills with `evals/evals.json`, trigger queries and tests (JDG-03), each meeting the judge bar (JDG-04).
+  4. The refreshed re-judge report shows all 15 kept skills with `evals/evals.json`, trigger queries and tests (JDG-03), each meeting the judge bar (JDG-04). *(amended 2026-11-07, owner decision: the 15 judged skills; `ai-kit-commit-fold` stays excluded as in Phase 32 criterion 1)*
   5. In auto mode spec-discuss ends by preparing the autonomous-run prompt for the discussed range through goal-prompt, which stops only on a blocker; without goal-prompt it says so and stops.
   6. goal-prompt's rails say when a run may ask the owner, forbid ending a turn with a waiting message while independent work remains, and require the local time, running step and start time in every progress ping, each pinned by a doc-contract test within the prompt's length caps.
   7. spec-discuss lists the recommended run mode first with `(Recommended)`, and its text documents the one-subagent-per-phase interactive relay (questions out in batches, answers back to the same subagent); doc-contract tests pin both.
+  8. Before an auto-mode run starts, spec-discuss shows the owner a short summary of every requested item in the range and how it plans to resolve each one, and waits for the owner's go-ahead; a doc-contract test pins it (DEF-08). *(added 2026-11-07, owner decision)*
 
 **Plans**: TBD
 
@@ -480,13 +486,17 @@ Plans:
 
 **Goal**: jev picks its backend per host from ai-kit's config, with the home-file key strictly last, and Laya's accuracy is measured against its floor.
 **Depends on**: Phase 33
-**Requirements**: JEV-01, JEV-03, JEV-07
-**Code anchors**: `skills/jev-fast-decision/scripts/jev_review.py` (`LAYA_DEFAULT_URL`, `_laya_url`, `_backend_choice`, `_typesafe_key_sources`, `_keyed_remotes`, `probe_report`); `scripts/eval_cases.py` (`calibrate`, `_run_calibration`); the Phase 33 config reader; jev on/off knob read by `skills/ai-kit-gsd-spec-discuss/scripts/decide.py` (`find_client`, `client_ok`) and the Phase 29 shared client; docs: `skills/jev-fast-decision/SKILL.md`, `reference.md`, new: calibration how-to
+**Requirements**: JEV-01, JEV-03, JEV-07, JEV-10, JEV-11
+*(JEV-10 and JEV-11 were added and JEV-03 amended 2026-11-07 from the owner's decisions on `.planning/research/2026-11-07-jev-vs-typesafe-ai.md`.)*
+**Code anchors**: `skills/jev-fast-decision/scripts/jev_review.py` (`LAYA_DEFAULT_URL`, `_laya_url`, `_backend_choice`, `_typesafe_key_sources`, `_keyed_remotes`, `probe_report`, `_laya_probe`, `_get_probe`, the capability `TABLE`); new: Laya known-features list and cache, `--check-updates`; the Laya server version (llm-env, outside ai-kit); `backends/laya.md`; `scripts/eval_cases.py` (`calibrate`, `_run_calibration`); the Phase 33 config reader; jev on/off knob read by `skills/ai-kit-gsd-spec-discuss/scripts/decide.py` (`find_client`, `client_ok`) and the Phase 29 shared client; docs: `skills/jev-fast-decision/SKILL.md`, `reference.md`, new: calibration how-to
 **Success Criteria** (what must be TRUE):
   1. jev's probe shows the backend it picked on each host: Laya first at the URL from ai-kit's config (asked once on the first run when no Laya answers), TypeSafe from the environment, the home-file key fallback last; tests run in a scratch home; the probe names a missing key source and the multiplexer hint without printing a value, and the home-file fallback is removed once agent shells inherit the key (or kept with a recorded reason).
-  2. A calibration run records Laya's accuracy against its floor and the re-judged opencode judge lane, and the calibration script has a documented how-to.
+  2. A calibration run records Laya's accuracy against its floor and the re-judged opencode judge lane, and the calibration script has a documented how-to. *(amended 2026-11-07, owner decision, JEV-03: Laya is upgraded from 0.4.2 to 0.4.27, or the reason to stay is recorded, before the run; the run records confident-answer accuracy with the Laya version and checkpoint revision)*
   3. `jev-fast-decision` keeps its judge result with no regression beyond judge variation.
   4. With the jev knob off every skill behaves as if jev were not installed, and the knob is asked once when absent (scratch-home tests).
+  5. jev's probe reads Laya's `/health` body and `/openapi.json`, caches them for 24 hours or until a checkpoint revision changes, and warns on each difference from the recorded known-features list without upgrading any capability cell to verified, labelling the package version not exposed; an on-demand `--check-updates` with a 7-day cache follows the official skill's doc flow and PyPI with public requests only and never runs on a normal call (fake-server tests, JEV-10). *(added 2026-11-07)*
+  6. The skill text (SKILL.md's result recipe and `backends/laya.md`) states that a confident Laya answer is not proven accurate, citing the 32-case run that measured about half right when confident (JEV-03). *(added 2026-11-07)*
+  7. A recorded decision keeps Laya's official MCP server outside the decision path, with the reason (it would bypass the one-item-per-call rule, size guard, thresholds, receipts and answer log), and a spike records whether several questions over one shared state answer better on TypeSafe than merged contexts (JEV-11). *(added 2026-11-07)*
 
 **Plans**: TBD
 
@@ -671,7 +681,7 @@ Plans:
   4. Bootstrap wires every detected host that does not load AGENTS.md and AGENTS.local.md natively (for example opencode's `instructions`) through the atomic writers, a fixture test per host shows both files loaded, and a recorded owner decision settles AGENTS.local.md precedence on Claude.
   5. On a strong model the skill applies its rules itself or delegates areas to subagents with only the orchestrator writing; without subagents it runs the areas in sequence; on a weak model it writes templates only with pending items labeled (a fixture test per mode).
   6. The new skill has evals, trigger queries and tests and passes the judge bar (JDG-04).
-  7. The commit-fold engine from Phase 29's temporary `ai-kit-commit-fold` skill lives inside `ai-kit-project-rules`; `skills/ai-kit-commit-fold/` is gone, and the GSD wave-end extension and the superpowers adapter reach the engine in its new home with their tests unchanged in what they assert. *(added 2026-11-03, 29 D-01)*
+  7. The commit-fold engine from Phase 29's temporary `ai-kit-commit-fold` skill lives inside `ai-kit-project-rules`; `skills/ai-kit-commit-fold/` is gone, and the GSD wave-end extension and the superpowers adapter reach the engine in its new home with their tests unchanged in what they assert. *(added 2026-11-03, 29 D-01)* *(amended 2026-11-07, owner decision, RULE-27: `ai-kit-commit-fold` is excluded from the Phase 32 re-judge because this phase absorbs it; its folding policy moves with the engine, feeds Phase 47's end-of-unit playbook (RULE-17), and criterion 6's judge run covers the absorbed fold text)*
 
 **Plans**: TBD
 
@@ -805,14 +815,16 @@ Plans:
 
 **Goal**: Every script belongs to the skill or tool that uses it, and a committed `dist/` holds what each skill ships.
 **Depends on**: Phase 47.1 (the seven rules skills are gone and every playbook exists before dist vendors anything)
-**Requirements**: DIST-01, DIST-03, DIST-05, ARCH-01, ARCH-02
+**Requirements**: DIST-01, DIST-03, DIST-05, ARCH-01, ARCH-02, DIST-09
+*(DIST-09 was added and DIST-01 and DIST-03 amended 2026-11-07 from the owner's decisions on `.planning/research/2026-11-07-skill-distribution-today.md`.)*
 **Code anchors**: orphan list in `.planning/research/2026-11-02-next-milestone/13-orphaned-scripts.md` (for example `ai_kit_spec/cross_ai_catalog.py`); stale jev scratchpad `.planning/docs/system-one-decision-skill/scratchpad/`; new: `dist/skills/<name>/`, dist build script and drift check, group or vendor rule for `skills/_shared/`; `tests/test_arch.py` (`TestArchNonVacuity`) extended to whole-tree layering rules; JSONC scanner and atomic writer copies in `tools/config_doctor_readers.py` (`strip_jsonc_comments`, `read_json_checked`), `tools/config_doctor_appliers.py` (`atomic_write_json`, `atomic_write_text`), `tools/setup.py` (`_jsonc_reader`, `_atomic_write_json`), other copies unknown until research; AGENTS.md Architecture and Testing (the 999.3 mentions), PROJECT.md Out of Scope; docs: README
 **Success Criteria** (what must be TRUE):
   1. An orphan check lists no script outside the skill or tool that uses it; the stale jev scratchpad is deleted with its plan and review history kept as research, and dead functions are removed.
-  2. A committed `dist/skills/<name>/` is generated from `skills/` without evals and tests, and a rebuild-and-diff check fails on drift.
-  3. A copy install of each skill into a scratch home works, with code-sharing skills installed as a group or vendored.
+  2. A committed `dist/skills/<name>/` is generated from `skills/` without evals and tests, and a rebuild-and-diff check fails on drift. *(amended 2026-11-07, owner decision, DIST-01: a public `npx skills add castocolina/ai-kit` installs from `dist/skills`, through a README route or a manifest, and a test or recorded dry run shows no `evals/` folder reaches the target)*
+  3. A copy install of each skill into a scratch home works, with code-sharing skills installed as a group or vendored. *(amended 2026-11-07, owner decision, DIST-03: for `ai_kit_spec` the choice follows a spike that copy-installs its callers both ways)*
   4. A whole-tree layering test over `tools/` and `skills/` fails on a cross-layer import, a non-vacuity check proves each rule catches its violation, and AGENTS.md and PROJECT.md point to it instead of backlog 999.3.
   5. The JSONC scanner and the atomic JSON writer each have one shared implementation that survives copy installs, and a test fails on a new copy.
+  6. Every hook script setup links from the clone that reaches into `ai-kit-session-wake` ships with its skill or vendors the shared code, and a test fails on a hook that imports from another skill's folder (DIST-09). *(added 2026-11-07)*
 
 **Plans**: TBD
 
@@ -820,14 +832,16 @@ Plans:
 
 **Goal**: Setup syncs the selected hosts from `dist/` through `npx skills`, and the README documents both install routes.
 **Depends on**: Phase 52
-**Requirements**: DIST-02, DIST-04, DIST-06, DIST-07
+**Requirements**: DIST-02, DIST-04, DIST-06, DIST-07, DIST-08
+*(DIST-08 was added and DIST-02 and DIST-04 amended 2026-11-07 from the owner's decisions on `.planning/research/2026-11-07-skill-distribution-today.md`.)*
 **Code anchors**: `tools/setup.py` install path (`link_one`, `installed_links`, `stale_link_candidates`, `prune_stale`, `_pi_entries`, `cmd_install`, `cmd_install_headless`); `tools/install.sh` (`main`); the wizard commit path (`WizardApp._run_commit`); new: pinned `npx skills add` call with dry run; `tools/setup.py` (`sync_pi_links`, `_headless_link_skills`) for duplicate-free host skill lists; a config-doctor duplicate-skill row; AGENTS.md Architecture (ai-kit installs only its own skills); docs: README install section
 **Success Criteria** (what must be TRUE):
-  1. Setup shows a dry run, then syncs each selected host headless with one pinned `npx skills add ... -a <host> -g --copy -y` call, passes the CLI's output through, and removes only ai-kit's own links (scratch-home test; the install on this machine runs with the owner's consent); existing ai-kit symlinks migrate to copies, and ai-kit copies of removed or renamed skills are removed with other skills untouched.
-  2. The README documents install as a plugin and through `npx skills`.
+  1. Setup shows a dry run, then syncs each selected host headless with one pinned `npx skills add ... -a <host> -g --copy -y` call, passes the CLI's output through, and removes only ai-kit's own links (scratch-home test; the install on this machine runs with the owner's consent); existing ai-kit symlinks migrate to copies, and ai-kit copies of removed or renamed skills are removed with other skills untouched. *(amended 2026-11-07, owner decision, DIST-02: the one-line `curl ... | bash` installer still fetches the repo, then copies each selected host's skills from `<clone>/dist/skills`; the README and the installer's help say so)*
+  2. The README documents install as a plugin and through `npx skills`. *(amended 2026-11-07, owner decision, DIST-04: the same work fixes the README install line that omits pi and `.claude-plugin/plugin.json`'s description that still says the installer symlinks)*
   3. The wizard's skills card commits through the same `npx skills` sync, confirmed by a run of the wizard under `uv run` with a scratch HOME.
   4. After sync, each host lists every skill once and pi keeps its own list beside codex's shared `~/.agents/skills` (scratch-home test; the config doctor reports duplicates on this machine).
   5. AGENTS.md states that ai-kit installs only its own skills, and an installer test fails when setup writes a skill ai-kit does not own.
+  6. Re-running the installer or setup re-syncs every host it installed, and a drift report names each host copy that differs from `dist/skills`, shown in a scratch home with an edited copy (DIST-08). *(added 2026-11-07)*
 
 **Plans**: TBD
 **UI hint**: yes
@@ -842,7 +856,7 @@ Plans:
   1. The pinned Cursor subagents link per file into a project's `.cursor/agents` with a `--skills`-style selection, never overwrite a non-ai-kit file and remove only ai-kit's links; docs say where and why not `~/.cursor/agents`; Cursor's explore-subagent model knob is checked; the owner confirms one run as non-fast in the Cursor usage dashboard.
   2. The agent-run live checks (real wake resume, wake during a GSD prompt, pointer form, native-execution and done-when wording, quota-checked task, chain without a decision backend, pi model-name grammar, background permission mode, launch-and-wait for opencode and pi, large-roadmap detection) run with herdr and a scratch home, and each result is recorded.
   3. With the owner's consent, a short jev marker block reaches the four global instruction files through ai-kit's atomic writers. *(amended 2026-11-03, 30 spec: through the marked-block editor Phase 30 builds for FLOW-12)*
-  4. After a TypeSafe spike with a key and consent, jev answers image and bounding-box questions; a named caller judges a delivered screen against a mockup, the request limits are recorded as live facts, and the Laya cell is re-checked.
+  4. After a TypeSafe spike with a key and consent, jev answers image and bounding-box questions; a named caller judges a delivered screen against a mockup, the request limits are recorded as live facts, and the Laya cell is re-checked. *(amended 2026-11-07, owner decision, JEV-05: the Laya re-check covers laya 0.4.27's image support and whether its server exposes it over HTTP)*
   5. Housekeeping is done: the six delivered v1.3 todos are closed, the two unneeded tags dropped, the stale archived wording decided, Windows ledger entry 7 waived, and the v1.3 tag pushed with the owner's consent; the remaining archive tags are kept or dropped by recorded decision.
   6. The owner-attended live checks are recorded (the next real Claude limit's payload, output channel and resume behaviour; reboot survival of the wake and notices; the Cursor status line after login; the Phase 21.2 PreCompact delivery; the Phase 21.3 hook matrix on opencode; optionally pi steering), each flipping or keeping its unverified label. *(amended 2026-11-03, 30.1 D-20: plus whether `env.PLAYWRIGHT_MCP_EXECUTABLE_PATH` reaches the Playwright plugin's MCP process and whether a headed launch through the flatpak Chrome wrapper works)*
   7. A recorded owner decision ports or drops each of the two June ideas; a port lands on the split status line with tests.
@@ -898,7 +912,8 @@ Plans:
 
 Open entries only. An entry a v2.0 requirement absorbs moves to **Absorbed into v2.0 phases**
 (moved there 2026-11-07: 999.2, 999.5, 999.7 to 999.17 and 999.19), with the requirement and phase
-that track it. 999.6 stays open (secondary runtime). The Playwright MCP Chrome path row in 999.1 is
+that track it. 999.6 stays open (secondary runtime); 999.20 (Claude extra-usage segment) was added
+2026-11-07. The Playwright MCP Chrome path row in 999.1 is
 the FEAT-06 owner decision; the whole-tree layering suite once named 999.3 is ARCH-01 (Phase 52).
 Finished entries move to **Done** at the end of this section, with the date and what delivered them.
 
@@ -911,6 +926,21 @@ session to confirm EVAL-04 (codex session env signal, smoke, snapshot) beyond th
 primary runtimes are claude, opencode and pi; codex and cursor are secondary (their models remain
 usable as reviewers and executors). The headless evidence and the pending label stay as they are.
 **Requirements:** EVAL-04
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.20: Claude extra-usage segment, if Claude Code exposes the data (BACKLOG)
+
+**Goal:** [Captured for future planning] Research whether Claude Code passes extra-usage (paid
+overage) data to a status line command, from its documented status-line input and a captured real
+payload. Only if it does, add a Claude status-line segment that matches Cursor's extra-spend alert
+(WIZ-04: the amount in bold red once spend reaches the limit, with an on/off toggle in the wizard).
+If it does not, record the finding and build nothing. Added 2026-11-07 by owner decision, from the
+open note in `.planning/todos/pending/2026-11-06-low-risk-review-and-judge-notes-from-phases-28-31.md`.
+**Requirements:** TBD
 **Plans:** 0 plans
 
 Plans:
