@@ -114,7 +114,7 @@ None of these is taken. Each shows the options and what happens if nothing chang
   each base to the current percent so only regressions count. Default: old bases stay and those verdicts stay
   unresolved. This also covers the unresolved config-skill verdict and the pass bar of
   `ai-kit-spec-goal-prompt` (94.4% and 87.2% from two judges against a 90.4 base: accept the result, or lower
-  the base). *(folded 2026-11-07 into Phase 32, needs owner confirmation: the baseline verdict becomes each judged
+  the base). *(folded 2026-11-07 into Phase 32 as 32 D-12, confirmed by the owner 2026-11-07: the baseline verdict becomes each judged
   skill's base for the batch phases' regression check; the older bases, such as spec-config's 105 and
   goal-prompt's 90.4, are history (JDG-01))*
 - [ ] Phase 20 open points. (a) How many fix rounds count against the skill-judge cap (two of two rounds plus
