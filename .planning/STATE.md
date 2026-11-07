@@ -6,10 +6,10 @@ current_phase: 32
 current_phase_name: Re-judge baseline
 status: planning
 stopped_at: Phase 31 complete, ready to plan Phase 32
-last_updated: "2026-11-06T18:19:59.959Z"
+last_updated: "2026-11-07T00:22:23.309Z"
 last_activity: 2026-11-06
 last_activity_desc: Phase 31 complete
-state_head: 0fcb4e29653207c08678b0dc4dae652ea7561922
+state_head: 2acf64f9fb8523d9349a6f54cd7f792b97a6cc06
 progress:
   total_phases: 37
   completed_phases: 7
@@ -32,7 +32,7 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 Phase: 32 — Re-judge baseline
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-11-06 — Phase 31 complete
+Last activity: 2026-11-06 - Completed quick task 261106-tdq: wizard Choose one card per kind
 
 Progress: [██░░░░░░░░] 19%
 
@@ -588,6 +588,7 @@ any order, or deferred, without blocking anything else in this milestone.
 | 261104-cxr | split cross-ai runner e2e self-test into logic and runtime shards | 2026-11-04 | 5109f80 | [261104-cxr-split-cross-ai-runner-e2e-self-test-into](./quick/261104-cxr-split-cross-ai-runner-e2e-self-test-into/) |
 | 261104-hzc | Apply test-time audit cuts 1-13 and the data-file mapper change | 2026-11-04 | 429bc0d | [261104-hzc-apply-test-time-audit-cuts-1-13-and-the-](./quick/261104-hzc-apply-test-time-audit-cuts-1-13-and-the-/) |
 | 261106-n8k | close the open items left by the phase 28-31 run | 2026-11-06 | 320aafc..4c68491 | [261106-n8k-close-the-open-items-left-by-the-phase-2](./quick/261106-n8k-close-the-open-items-left-by-the-phase-2/) |
+| 261106-tdq | wizard Choose shows one card per component kind, walked with Enter; header Step i of N | 2026-11-06 | 2acf64f | [261106-tdq-wizard-choose-one-card-per-kind-advanced](./quick/261106-tdq-wizard-choose-one-card-per-kind-advanced/) |
 
 ### Roadmap Evolution
 
