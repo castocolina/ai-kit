@@ -9,7 +9,8 @@ ids and short reasons, never file contents or hashes. When the project has a gsd
 checks the GSD flow config (branch per phase, healthy, the capability and its hook points)
 through read-only gsd-tools calls. It also runs the edge-floor check on every current phase SPEC
 that has an Edge Coverage section. It also checks that every ROADMAP phase after 32 that names a
-SKILL.md cites JDG-04 in its success criteria.
+SKILL.md cites JDG-04 in its success criteria. It also runs tools/judge_loop.py check on the judge
+records.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILL_DIR = REPO_ROOT / "skills" / "ai-kit-gsd-curated-config"
@@ -568,6 +570,37 @@ def check_jdg04_citations(root: Path) -> tuple[list[str], list[str]]:
     return problems, []
 
 
+JUDGE_LOOP_REL = "tools/judge_loop.py"
+JUDGE_RECORDS_REL = ".planning/judge"
+
+
+@functools.cache
+def _judge_loop():
+    """tools/judge_loop.py, loaded by path from this checkout and registered as `judge_loop`."""
+    spec = importlib.util.spec_from_file_location("judge_loop", REPO_ROOT / JUDGE_LOOP_REL)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {JUDGE_LOOP_REL}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["judge_loop"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def check_judge_records(root: Path,
+                        load: Callable[[], Any] = _judge_loop) -> tuple[list[str], list[str]]:
+    """(problems, notes): the judge records under .planning/judge reproduce REJUDGE.md (32 D-07);
+    stale digests are notes."""
+    records = root / JUDGE_RECORDS_REL
+    if not records.is_dir():
+        return [], ["judge records not checked: no .planning/judge"]
+    judge_loop = load()
+    try:
+        _lines, problems, notes = judge_loop.check(root, records, judge_loop.CheckOptions())
+    except judge_loop.JudgeLoopError as exc:
+        return [f"judge records: {exc}"], []
+    return [f"judge records: {p}" for p in problems], [f"judge records: {n}" for n in notes]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--root", type=Path, default=REPO_ROOT,
@@ -583,7 +616,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     # Each check returns (problems, notes); the order here is the printed order.
     results = [check_runner_copy(root, args.template), check_flow_config(root),
-               check_lens_wiring(root), check_edge_floors(root), check_jdg04_citations(root)]
+               check_lens_wiring(root), check_edge_floors(root), check_jdg04_citations(root),
+               check_judge_records(root)]
     if not args.skip_no_write:
         results.append(check_no_write(root))
     problems = [item for found, _notes in results for item in found]

@@ -703,6 +703,50 @@ class TestJdg04Citations(unittest.TestCase):
             "JDG-04 citations not checked: no ## Phase Details section"]))
 
 
+class TestJudgeRecords(unittest.TestCase):
+    """check_judge_records (32 D-07) with a fake check; no real .planning/judge is read."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="check-dogfood-judge-")
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.real = check_dogfood._judge_loop()
+
+    def _fake(self, result=None, error=None):
+        calls = []
+
+        def fake_check(root, records, opts):
+            calls.append((root, records, opts))
+            if error is not None:
+                raise error
+            return result
+
+        module = unittest.mock.Mock(check=fake_check, CheckOptions=self.real.CheckOptions,
+                                    JudgeLoopError=self.real.JudgeLoopError)
+        return module, calls
+
+    def test_a_missing_folder_is_a_note_and_nothing_is_loaded(self):
+        def never_loaded():
+            raise AssertionError("the judge tool was loaded without .planning/judge")
+
+        self.assertEqual(check_dogfood.check_judge_records(self.root, load=never_loaded),
+                         ([], ["judge records not checked: no .planning/judge"]))
+
+    def test_problems_and_notes_are_prefixed_and_the_checker_gets_the_folder(self):
+        (self.root / ".planning" / "judge").mkdir(parents=True)
+        module, calls = self._fake(result=(["line"], ["p1"], ["n1"]))
+        found = check_dogfood.check_judge_records(self.root, load=lambda: module)
+        self.assertEqual(found, (["judge records: p1"], ["judge records: n1"]))
+        self.assertEqual(calls, [(self.root, self.root / ".planning" / "judge",
+                                  self.real.CheckOptions())])
+
+    def test_a_refused_input_is_a_problem_not_a_traceback(self):
+        (self.root / ".planning" / "judge").mkdir(parents=True)
+        module, _calls = self._fake(error=self.real.JudgeLoopError("bad inputs"))
+        self.assertEqual(check_dogfood.check_judge_records(self.root, load=lambda: module),
+                         (["judge records: bad inputs"], []))
+
+
 def _real_edge_engine() -> str | None:
     """The edge-probe.cjs engine that edge_floor.find_engine resolves for this checkout, or None."""
     return edge_floor.find_engine(os.environ, str(REPO_ROOT), None)

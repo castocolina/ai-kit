@@ -762,7 +762,7 @@ make setup-dev  # uv sync, the missing flow tools (pre-commit, gh, gh-stack, cod
 make test       # full suite in parallel, one subprocess per module, through tools/run_unittest_parallel.py (system python3 for the unit group)
 make lint       # shellcheck + py-compile hooks (pre-commit, all files)
 make validate   # the full quality gate (see below)
-make check-dogfood    # live-project check: dogfood runner copy and curated-config guards (also a pre-push hook)
+make check-dogfood    # live-project check: dogfood runner copy, curated-config guards, JDG-04 citations and judge records (also a pre-push hook)
 make test-env-matrix  # six-environment proof, about six make test runs; not part of make test or validate
 ```
 
@@ -794,6 +794,8 @@ vulture (1.9 s), check-dogfood (0.5 s) and deferred-e2e (0.0 s, no push range; n
 e2e module is over the commit budget) are recorded beside that subtotal, and the
 worst-case whole push (`push-worst`, every pre-push hook timed alone) is 42.7 s.
 Tests never call a real host CLI or read `.planning/`.
+
+**Skill judging.** `tools/judge_loop.py` builds skill-judge prompts that embed the installed judge's rubric and spec files (`prompt`, `prompt --probe`), picks the judge pool from probe lanes (`pool`), decides one or two judges per skill from recorded signals plus an advisory jev score (`count`), records each lane's verdict with its status line (`ingest`), and generates and checks the re-judge report in `.planning/judge/` (`report`, `check`; `--gate` also fails an unmet bar or a loop over three rounds, `--require-current` a stale digest).
 
 ## Compatibility notes
 
