@@ -6,10 +6,10 @@ current_phase: 32
 current_phase_name: Re-judge baseline
 status: planning
 stopped_at: Phase 31 complete, ready to plan Phase 32
-last_updated: "2026-11-07T00:48:00.024Z"
+last_updated: "2026-11-07T01:00:38.816Z"
 last_activity: 2026-11-06
 last_activity_desc: Phase 31 complete
-state_head: 8e23e75a1a3e1dae97297261a44534f8195791e6
+state_head: a9f6b67dc41e3188ae9503226cf23ded25372051
 progress:
   total_phases: 37
   completed_phases: 7
@@ -32,7 +32,7 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 Phase: 32 — Re-judge baseline
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-11-06 - Completed quick task 261106-tzg: wizard drops the Cursor spend-limit override
+Last activity: 2026-11-06 - Completed quick task 261106-ua8: wizard component names and descriptions from frontmatter
 
 Progress: [██░░░░░░░░] 19%
 
@@ -591,6 +591,7 @@ any order, or deferred, without blocking anything else in this milestone.
 | 261106-tdq | wizard Choose shows one card per component kind, walked with Enter; header Step i of N | 2026-11-06 | 2acf64f | [261106-tdq-wizard-choose-one-card-per-kind-advanced](./quick/261106-tdq-wizard-choose-one-card-per-kind-advanced/) |
 | 261106-tox | wizard help line lists every key from one table, same on both host panes, grouped when tall | 2026-11-06 | bd44cef | [261106-tox-wizard-help-line-lists-every-key-from-on](./quick/261106-tox-wizard-help-line-lists-every-key-from-on/) |
 | 261106-tzg | wizard drops the Cursor spend-limit override; the alert fires at the limit read from Cursor | 2026-11-06 | 8e23e75 | [261106-tzg-wizard-drops-the-cursor-spend-limit-over](./quick/261106-tzg-wizard-drops-the-cursor-spend-limit-over/) |
+| 261106-ua8 | wizard Choose shows frontmatter names and descriptions; three skills' descriptions made strict YAML | 2026-11-06 | a9f6b67 | [261106-ua8-wizard-component-names-and-descriptions-](./quick/261106-ua8-wizard-component-names-and-descriptions-/) |
 
 ### Roadmap Evolution
 
