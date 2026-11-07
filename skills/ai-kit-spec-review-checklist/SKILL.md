@@ -196,9 +196,8 @@ When you were dispatched via a headless CLI (`codex exec`, `grok`, etc.) rather 
 native subagent, your transcript itself consumes the same limited budget you're reviewing
 against — verbose narration or full-file echoes can burn enough of it that you never reach
 `### Status:`, silently losing the whole review. Two rules, load-bearing for exactly this
-failure mode (confirmed live: an unconstrained run produced ~8000 lines and still hit a
-provider usage-limit wall before synthesizing a report; a budget-unaware run separately ran out
-of turns mid-review with no final report at all):
+failure mode (an unconstrained run can exhaust the budget before it writes a report, and a
+budget-unaware run can run out of turns mid-review with no final report at all):
 
 1. **Minimize output tokens.** A tool `Read`/`codegraph_explore`/`rg` call is enough — don't
    also restate or re-print what it returned. Progress updates are a single short line ("reading
@@ -294,3 +293,7 @@ Approved shape — don't carry "previously flagged, now fixed" forward.
 | Confirming a referenced file exists without reading it | Read its content. Wrong claim → CRITICAL. |
 | Reviewing a `constitution`/`state` doc as if it were a spec | Those are context — read, don't review. |
 | Reviewing in the same context that wrote the doc | Stop. Clean-context reviewer only; dispatch via `/ai-kit-spec-review`. |
+
+## Evidence
+
+- An unconstrained review run produced about 8000 lines and still hit a provider usage-limit wall before it wrote a report; a budget-unaware run separately ran out of turns mid-review with no final report.

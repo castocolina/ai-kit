@@ -203,7 +203,7 @@ it covers the item shape, how the request is sent, the answer format and any app
 - A confident answer that contradicts verified evidence or a locked decision gets one second
   opinion (jev's SKILL.md says how; decision-table row 3; worked cases in
   `references/worked-examples.md`).
-- jev is not deterministic (one real run: the same item scored 0.74, then 0.67). Never treat a
+- jev is not deterministic (the same item can score differently on a re-ask). Never treat a
   single number as stable.
 
 ## 4. Ledger and stop rule
@@ -285,3 +285,7 @@ strictly in sequence (flag that gap in the log).
 
 Do NOT load the references for a phase the automatic proposal skipped because its SPEC
 and CONTEXT are already current. An explicit range or list still runs that phase.
+
+## Evidence
+
+- One real run scored the same item 0.74, then 0.67.
