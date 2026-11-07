@@ -330,12 +330,12 @@ than `ok` comes up.
 
 | Topic | Limit |
 |---|---|
-| pi hosts | **not live-validated** (the interactive run is pending: `22-INTERACTIVE-PI.md`). Verdict **session-steer (static + mock evidence)**: GSD spawns no named agents on pi; only `model_profile_overrides.pi.sonnet`, a bare id the session provider serves, changes the model, for every request of the project's pi session; `pi.opus`, `pi.haiku`, `model_overrides` and `agent_skills` have no effect there |
-| cursor host | validated headless from a cursor-agent session (`21-SMOKE-CURSOR.md`: local install, apply, resolve-model-only chain, 420-check matrix); the user's interactive confirmation (`21-INTERACTIVE-CURSOR.md`) is **pending** |
+| pi hosts | **not live-validated** (the interactive run is pending). Verdict **session-steer (static + mock evidence)**: GSD spawns no named agents on pi; only `model_profile_overrides.pi.sonnet`, a bare id the session provider serves, changes the model, for every request of the project's pi session; `pi.opus`, `pi.haiku`, `model_overrides` and `agent_skills` have no effect there |
+| cursor host | validated headless from a cursor-agent session (local install, apply, resolve-model-only chain, 420-check matrix); the user's interactive confirmation is **pending** |
 | opencode providers | Providers defined only in a project's `opencode.json` are not candidates |
 | effort sync | Skipped for workstream configs; `--config-dir <project>/<host dir>` value **unverified** |
 | agent_skills runtime | gsd-core picks the skills dir and the namespaced-skill rule from the config `runtime` (default `claude`); this skill checks against the inventory `host`. On a host the plan writes no `runtime` for (cursor, pi), whether gsd-core resolves the same dir is **unverified** |
-| host as review lane | v2 never proposes it; v1 `detect-review-candidate` can pick it. A deliberate host-CLI lane with another provider is a manual `review.reviewer_instances` edit you own (20 D-11) |
+| host as review lane | v2 never proposes it; v1 `detect-review-candidate` can pick it. A deliberate host-CLI lane with another provider is a manual `review.reviewer_instances` edit you own |
 
 ## Subcommand reference
 

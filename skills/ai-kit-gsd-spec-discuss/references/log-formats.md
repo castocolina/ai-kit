@@ -48,7 +48,7 @@ The attribution comes last: one `choice 0.NN` or `low 0.NN` for the jev answer t
 ## Updating an existing CONTEXT (never regenerate)
 
 - Header: `**Gathered:** 2026-09-23 (interactive); updated 2026-10-14 (assumptions mode, after
-  20-SPEC.md)`.
+  NN-SPEC.md)`.
 - New decisions continue the numbering under `### Added 2026-10-14 (assumptions mode, after
   NN-SPEC.md)`.
 - A refined locked decision gets an indented `**Refined 2026-10-14:** …` bullet; its text stays.
@@ -57,7 +57,7 @@ The attribution comes last: one `choice 0.NN` or `low 0.NN` for the jev answer t
 ## Cross-phase amendment markup
 
 In the other phase's SPEC/CONTEXT, or in `REQUIREMENTS.md`/`ROADMAP.md`:
-`*(amended 2026-10-14, 20 D-08: <one-line fact and its consequence>)*` — appended to the
+`*(amended 2026-10-14, NN D-xx: <one-line fact and its consequence>)*` — appended to the
 sentence it corrects, or as an `- *Amended 2026-10-14 (NN D-xx):* …` bullet under a SPEC
 requirement. Edge Coverage rows: `~~old resolution~~ *(superseded, D-NN)* new resolution`.
 
@@ -92,8 +92,8 @@ One jev request per step that has open items; each item gets one advisory answer
 
 | Item | jev | Outcome |
 |---|---|---|
-| B10 spike capture | edit_real_file 0.72; second opinion scratch_config_dir 0.98 | **jev overridden**: D-14 |
-| B14 preview | low 0.35 | **Own reasoning:** synthetic cache (D-24, ledger) |
+| B10 spike capture | edit_real_file 0.72; second opinion scratch_config_dir 0.98 | **jev overridden**: D-<n> |
+| B14 preview | low 0.35 | **Own reasoning:** synthetic cache (D-<n>, ledger) |
 
 ## Live facts that changed the plan
 ## Corrections Made
@@ -111,7 +111,7 @@ Append, never rewrite:
 ```markdown
 # Update 2026-10-14 (assumptions mode)
 
-**Input:** `NN-SPEC.md` (committed in `<sha>`) and the <date> CONTEXT (D-01..D-06 kept).
+**Input:** `NN-SPEC.md` (committed in `<sha>`) and the <date> CONTEXT (D-<first>..D-<last> kept).
 ```
 
 followed by the same sections as a new log.

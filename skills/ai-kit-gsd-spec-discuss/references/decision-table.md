@@ -61,10 +61,10 @@ the log why it is deferred.
 
 ```
 | Phase | Item | jev | Provisional decision | Blocks |
-| 23 | D-24 wizard preview | low 0.35 | synthetic fresh cache in a temp XDG_CACHE_HOME; static samples cannot show gauge colors | nothing |
+| 23 | D-<n> wizard preview | low 0.35 | synthetic fresh cache in a temp XDG_CACHE_HOME; static samples cannot show gauge colors | nothing |
 ```
 
 The `jev` column holds the answer in the cell format of `log-formats.md` (`choice 0.NN`,
 `low 0.NN`, `error: <code>`), or `not installed`.
 
-The committed DISCUSSION-LOG marks the same row "**Own reasoning:** … (D-24, ledger)".
+The committed DISCUSSION-LOG marks the same row "**Own reasoning:** … (D-<n>, ledger)".

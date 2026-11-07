@@ -53,9 +53,8 @@ choice/noul/score all `verified-live`; ~12 ms per call on the dGPU; idle unload 
 
 ## Laya eval object (live, 2026-10-23)
 
-32 labelled cases through `screen()` on this machine (results in
-`.planning/phases/21.1-atomic-reusable-decision-system-skills/eval/eval-results.json`, each
-saved case carrying its own `needs_fallback` and `backend`): metrics line
+32 labelled cases through `screen()` on this machine (each saved case carrying its own
+`needs_fallback` and `backend`): metrics line
 `{"accuracy": 0.5555555555555556, "accuracy_when_not_fallback": 0.5, "backend": "laya",
 "fallback_rate": 0.6875, "n": 32}`; `repeat_max_prob_diff` 0.0, `vague_alone_top` 0.4624.
 `--calibrate` proposed **null**: no threshold in 0.50–0.95 keeps >= 0.95 accuracy on

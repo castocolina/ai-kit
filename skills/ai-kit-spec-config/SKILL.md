@@ -327,7 +327,7 @@ reads an absent `purpose` as "matches both review and execute": an assumption th
 deliberate, documented legacy-compat default, never an accident of how a brand-new entry
 happened to get written. Carry the answer into this entry's `purpose` field at Step 3's write,
 exactly like a Step 2.2-sourced entry — never leave it unset for a newly-registered one. Carry
-the captured host into the entry as described above — never silently omitted (D-04).
+the captured host into the entry as described above — never silently omitted.
 
 #### Step 2.8 — Set policy.mode, policy.ladder order, and strategy
 

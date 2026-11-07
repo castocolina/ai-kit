@@ -11,7 +11,7 @@ Phase 17, K08: "Which model pairs form the price-ceiling sample?"
   model several times and skews the percentile.
 - Second opinion: `families 1.00`.
 - Logged: `| K08 ceiling sample | every_pair 0.91; second opinion families 1.00 | **jev
-  overridden:** effort variants repeat one price and would skew the percentile (D-16) |`.
+  overridden:** effort variants repeat one price and would skew the percentile (D-<n>) |`.
 
 ## 2. A near-tie second opinion that still loses to the evidence
 
@@ -21,7 +21,7 @@ Phase 18.1, T2: "Delete the Claude subprocess inventory?"
   so row 3 ends in own reasoning. Evidence decides: Phase 18 R2 fills `review.models.claude` on
   codex/opencode hosts from that inventory.
 - Logged: `| T2 inventory | delete_all 0.75; second opinion keep_for_review low 0.74 |
-  **Own reasoning:** no confident second opinion; R2 fills review.models.claude from it (D-19,
+  **Own reasoning:** no confident second opinion; R2 fills review.models.claude from it (D-<n>,
   ledger) |`.
 
 ## 3. Both low → own reasoning, ledgered, flagged for the user
@@ -44,14 +44,14 @@ CLI reads hooks from a fixed path.
 - jev answered `fix_both 0.97`; the second opinion `separate_resolver 0.99`.
 - Feasibility check: the hooks fix is small but changes Phase 21's gate and is outside the
   phase's requirements.
-- Decided: separate resolver now; the hooks mismatch filed as backlog `999.2` with a goal.
+- Decided: separate resolver now; the hooks mismatch filed as a backlog entry with a goal.
 
 ## 5. A live fact amends earlier phases
 
 Phase 19 (spec): `config-new-project` copies `~/.gsd/defaults.json`, including
 `resolve_model_ids: "omit"`; with it, `resolve-model` returns `model: ""` on claude.
 - No model was asked; it was a scratch-dir experiment.
-- Same commit amended 17-SPEC R5/R13, 18-SPEC R13 and added 17 D-21.
+- Same commit amended two earlier SPECs (`NN-SPEC` R5/R13, `MM-SPEC` R13) and added `NN D-xx`.
 
 ## 6. A low answer (illustrative ids)
 

@@ -39,9 +39,8 @@ Never read or write the operator's real config to "just see real data"
 during development; tests and verification use scratch `XDG_DATA_HOME` /
 `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `CURSOR_CONFIG_DIR` trees.
 
-Scheduling (cron / systemd timer) is out of this milestone. Invocation is
-manual only (D-07). The gap is tracked as Backlog 999.2
-("Cron/scheduling automation for usage-metrics daily ingestion").
+Scheduling (cron / systemd timer) is not supported: invocation is
+manual only.
 
 ## Resolve the entrypoint
 
@@ -309,5 +308,4 @@ Like `family`, it is empty for any row whose `command_shape` is not
 - Never read the operator's real `~/.claude` / `~/.codex` / `~/.cursor`
   trees to "just see real data" during development — use scratch env
   overrides.
-- Never invent a cron/timer for this pipeline this milestone — that is
-  Backlog 999.2.
+- Never invent a cron/timer for this pipeline: scheduling is not supported.

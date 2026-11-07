@@ -15,7 +15,7 @@ leaves the machine.
   live-tested here — pin with `JEV_TYPESAFE_MODEL` if you need a fixed id. Responses fullmatch
   `jev-<version>` (`jev-1.13.0`, `jev-1.14.0-preview`; SPEC R5): the response names the
   versioned id that answered, whatever alias was asked for.
-- Key sources, in order (D-07): `TYPESAFE_API_KEY`, `JEV_API_KEY`, the first line of the file
+- Key sources, in order: `TYPESAFE_API_KEY`, `JEV_API_KEY`, the first line of the file
   `JEV_API_KEY_FILE` names, a `TYPESAFE_API_KEY=` or `JEV_API_KEY=` line in
   `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, then the first line of
   `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key`. Every file must be 0600 — a group- or

@@ -66,6 +66,17 @@ CODE_SPAN_RE = re.compile(r"`[^`\n]*`")
 DOTTED_NUMBER_RE = re.compile(r"\d+(?:\.\d+)+")
 LINK_TARGET_RE = re.compile(r"\]\([^)]*\)")
 URL_RE = re.compile(r"https?://\S+")
+PHASE_DIR_RE = re.compile(r"(?<![\w.-])\d{1,2}(?:\.\d+)?-[a-z][a-z0-9]*(?:-[a-z0-9]+)*/")
+PHASE_FILE_RE = re.compile(r"(?<![\w.-])\d{1,2}(?:\.\d+)?-[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*\.md\b")
+BACKLOG_RE = re.compile(r"(?<![\w.])999\.\d+(?!\d)")
+DECISION_RE = re.compile(r"(?<![A-Za-z0-9-])D-\d+(?!\w)")
+REFEREE_RE = re.compile(r"router-env/|\breferee-[a-z0-9]")
+POINTER_RULES = (
+    (PHASE_DIR_RE, "phase folder"),
+    (PHASE_FILE_RE, "phase file"),
+    (BACKLOG_RE, "backlog id"),
+    (REFEREE_RE, "referee"),
+)
 
 
 def main_flow(lines):
@@ -97,7 +108,44 @@ def history_hits(skill_dir, base):
         for pattern in RUNLOG_RES:
             for match in pattern.finditer(line):
                 hits.append(f"{rel}:{number}: run log {match.group(0)}")
+    for path in shipped_markdown(skill_dir):
+        path_rel = path.relative_to(base).as_posix()
+        hits.extend(pointer_hits(path.read_text(encoding="utf-8"), path_rel))
     return hits + version_hits(flow, rel)
+
+
+def shipped_markdown(skill_dir):
+    """Every .md a skill ships: under its folder, outside evals/ and __pycache__."""
+    found = []
+    for path in sorted(skill_dir.rglob("*.md")):
+        parts = path.relative_to(skill_dir).parts
+        if parts[0] == "evals" or "__pycache__" in parts:
+            continue
+        found.append(path)
+    return found
+
+
+def _bold_example(line, match):
+    """A decision id written as a bold format example, such as `**D-14: ...**`."""
+    before = line[max(0, match.start() - 2) : match.start()]
+    return before == "**" and line[match.end() : match.end() + 1] == ":"
+
+
+def pointer_hits(text, rel):
+    """Planning pointers (phase folders and files, backlog ids, decision ids, referee names).
+
+    Code spans stay in the line, so a pointer in one still points; URLs are removed first.
+    """
+    hits = []
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = URL_RE.sub(" ", raw)
+        for pattern, kind in POINTER_RULES:
+            for match in pattern.finditer(line):
+                hits.append(f"{rel}:{number}: {kind} {match.group(0)}")
+        for match in DECISION_RE.finditer(line):
+            if not _bold_example(line, match):
+                hits.append(f"{rel}:{number}: decision id {match.group(0)}")
+    return hits
 
 
 def _units(lines):
@@ -298,6 +346,85 @@ class TestHistoryRulesNonVacuity(unittest.TestCase):
         self.assertEqual(
             self._hits(row), ["demo-skill/SKILL.md:1: version cursor-agent 2026.10.14"]
         )
+
+    def test_phase_folder_and_file_pointer_fails(self):
+        body = "Evidence: `.planning/phases/18.1-one-runtime-model/18.1-RESEARCH.md:231`.\n"
+        self.assertEqual(
+            self._hits(body),
+            [
+                "demo-skill/SKILL.md:1: phase folder 18.1-one-runtime-model/",
+                "demo-skill/SKILL.md:1: phase file 18.1-RESEARCH.md",
+            ],
+        )
+
+    def test_phase_file_name_fails(self):
+        self.assertEqual(
+            self._hits("Smoke result: see 21-SMOKE-CURSOR.md.\n"),
+            ["demo-skill/SKILL.md:1: phase file 21-SMOKE-CURSOR.md"],
+        )
+
+    def test_backlog_id_fails(self):
+        self.assertEqual(
+            self._hits("Filed under Backlog 999.2.\n"),
+            ["demo-skill/SKILL.md:1: backlog id 999.2"],
+        )
+
+    def test_referee_name_fails(self):
+        hits = self._hits("Judged by router-env/my-referee-two.\n")
+        self.assertEqual(len(hits), 2)
+        self.assertTrue(all(hit.startswith("demo-skill/SKILL.md:1: referee ") for hit in hits))
+
+    def test_decision_ids_fail(self):
+        self.assertEqual(
+            self._hits("Kept by (D-07), 20 D-11 and D-14.\n"),
+            [
+                "demo-skill/SKILL.md:1: decision id D-07",
+                "demo-skill/SKILL.md:1: decision id D-11",
+                "demo-skill/SKILL.md:1: decision id D-14",
+            ],
+        )
+
+    def test_generic_pointers_pass(self):
+        body = "\n".join(
+            [
+                "Read `.planning/config.json` and `.planning/scripts/cross-ai.mjs`.",
+                "Phase files live in `.planning/phases/<phase>/`.",
+                "Find `.planning/phases/**/*-CONTEXT.md` and write `NN-SPEC.md`.",
+                "Cite `D-<n>` or `NN D-xx`.",
+                "- **D-14: The spike captures the payload** (SPEC R5)",
+                "Ids `JDG-04` and `ID-07` are not decisions.",
+                "See https://example.com/999.2/21-SMOKE-CURSOR.md for the page.",
+            ]
+        )
+        self.assertEqual(self._hits(body + "\n"), [])
+
+    def _tree_hits(self, files):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            skill = base / "demo-skill"
+            for rel, body in {"SKILL.md": "# Demo\n", **files}.items():
+                (skill / rel).parent.mkdir(parents=True, exist_ok=True)
+                (skill / rel).write_text(body, encoding="utf-8")
+            return history_hits(skill, base)
+
+    def test_pointer_in_a_reference_file_fails(self):
+        self.assertEqual(
+            self._tree_hits({"references/notes.md": "Kept by (D-07).\n"}),
+            ["demo-skill/references/notes.md:1: decision id D-07"],
+        )
+
+    def test_pointer_in_a_root_readme_fails(self):
+        self.assertEqual(
+            self._tree_hits({"README.md": "See 21-SMOKE-CURSOR.md.\n"}),
+            ["demo-skill/README.md:1: phase file 21-SMOKE-CURSOR.md"],
+        )
+
+    def test_evals_markdown_is_never_read(self):
+        files = {
+            "evals/cases.md": "Backlog 999.2 and (D-07).\n",
+            "evals/files/deep/x.md": "router-env/my-referee-two\n",
+        }
+        self.assertEqual(self._tree_hits(files), [])
 
 
 if __name__ == "__main__":
