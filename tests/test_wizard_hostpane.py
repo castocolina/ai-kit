@@ -286,8 +286,9 @@ class TestLockedBoard(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")
             self.assertTrue(app.query_one("#board").has_class("locked"))
-            self.assertIn("Off: Review leaves Claude Code unchanged",
-                          str(query_static(app, "#band-note").content))
+            note = str(query_static(app, "#band-note").content)
+            self.assertIn("Off: no status line is set for Claude Code", note)
+            self.assertIn("Press o to turn ai-kit's status line on", note)
             await pilot.press("o")
             self.assertFalse(app.query_one("#board").has_class("locked"))
             self.assertFalse(query_static(app, "#band-note").display)
@@ -332,8 +333,10 @@ class TestLockedBoard(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await pilot.press("enter")
             self.assertTrue(app.query_one("#board").has_class("locked"))
-            self.assertIn("Keep: Review leaves Claude Code's current status line",
-                          str(query_static(app, "#band-note").content))
+            note = str(query_static(app, "#band-note").content)
+            # The old adoption gate's warning: the pane names the line it would remove.
+            self.assertIn("⚠ Claude Code already has another status line: my-line.sh", note)
+            self.assertIn("Keep: Review leaves Claude Code's current status line", note)
             await pilot.press("space")
             self.assertIn(wa.FOREIGN_LOCKED_NOTICE, _notices(app))
             await pilot.press("o")                      # remove: still locked

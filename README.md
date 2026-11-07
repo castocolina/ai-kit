@@ -150,9 +150,9 @@ from Line 1 sends it to the tray; Space on a tray chip brings it back.
 - **ai-kit's own line, or no line yet.** `o` turns the host on or off. Off locks
   the board, and Review removes ai-kit's entry from a host that has one (an
   unset host stays unchanged). The pane says so: `Off: Review removes ai-kit's
-  entry; …` or `Off: Review leaves … unchanged; …`.
-- **Another tool's status line (foreign).** The pane starts in *keep* and `o`
-  cycles three states:
+  entry; …` or `Off: no status line is set for …`.
+- **Another tool's status line (foreign).** The pane warns `⚠ … already has
+  another status line: <command>`, starts in *keep*, and `o` cycles three states:
   - **keep current** (the start state): Review leaves the file as it is and
     writes nothing to that host.
   - **remove**: Review backs up the file, then removes the foreign entry. The
@@ -180,8 +180,11 @@ and writes the config, `esc` goes back to Arrange. A host you left off and
 unset is not written.
 
 **✓ ai-kit is installed** shows one outcome line per host, for example
-`Cursor CLI: status line removed`. `d` opens the config doctor (`esc` returns
-to Done), and `enter` finishes and exits.
+`Cursor CLI: status line removed`. After each status-line write the wizard
+re-reads the host file; when the line is not what Review promised (still there
+after a removal, not ai-kit's after a write), Done shows `install incomplete`
+with that host's reason instead of success. `d` opens the config doctor (`esc`
+returns to Done), and `enter` finishes and exits.
 
 **Per-host status-line files.** Each host has its own config file:
 `~/.config/ai-kit/claude-statusline.toml` and

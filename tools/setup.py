@@ -2301,6 +2301,24 @@ def _command_is_ours(command, entry):
     return _command_ownership().rewrite_owned_command(command, entry, entry) is not None
 
 
+def _claude_statusline_is_ours(value, status_line):
+    """Whether a settings.json statusLine runs ai-kit's Claude entry `status_line`
+    or the pre-rename legacy entry beside it: the ONE rule detection, wiring and
+    unwiring share, so the wizard never offers Off for a line the unwire would skip.
+
+    Reads both shapes Claude allows (a bare string, an object with "command")
+    through _statusline_command, then decides with the shared exact-argv parser
+    — never a substring of the install dir, so a `.backup`/`.bak` copy of our
+    script and a foreign script that merely receives our path as an argument
+    stay foreign here too (D-23).
+    """
+    command = _statusline_command(value)
+    if not command:
+        return False
+    legacy = os.path.join(os.path.dirname(status_line), _LEGACY_ENTRY)
+    return any(_command_is_ours(command, entry) for entry in (status_line, legacy))
+
+
 def _statusline_display(value):
     """Short, honest text for a statusLine value ai-kit cannot classify.
 
@@ -2381,9 +2399,7 @@ def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
         return False
     # The pre-rename entry of this same install is ours too: a dry run reads it before the
     # migration has rewritten it, and a failed migration is still ours to replace.
-    legacy = os.path.join(os.path.dirname(status_line), _LEGACY_ENTRY)
-    owned = cur_cmd and (_command_is_ours(cur_cmd, status_line)
-                         or _command_is_ours(cur_cmd, legacy))
+    owned = _claude_statusline_is_ours(cur_cmd, status_line)
     if cur_cmd and not owned and not assume_overwrite:
         # a foreign status line (dict or bare-string form) — guard it
         if not is_interactive(tty):
@@ -2411,8 +2427,9 @@ def detect_statusline(paths):
 
     Returns {"state": "unset"|"ours"|"foreign", "current_command": str|None}.
       - "ours"    iff the command's argv runs the resolved paths.status_line
-                  EXACTLY (the shared _command_is_ours parser — no substring,
-                  XDG-aware path, never a hard-coded string).
+                  (or the legacy entry beside it) EXACTLY — the same
+                  _claude_statusline_is_ours rule wire and unwire use (no
+                  substring, XDG-aware path, never a hard-coded string).
       - "foreign" iff a statusLine is configured but does not run our script.
       - "unset"   iff absent, empty, file is missing/malformed, or the statusLine
                   holds an UNSUPPORTED shape (a list/number/bool, or an object
@@ -2434,7 +2451,7 @@ def detect_statusline(paths):
     cur_cmd = _statusline_command(data.get("statusLine"))
     if not cur_cmd:
         return {"state": "unset", "current_command": None}
-    if _command_is_ours(cur_cmd, paths.status_line):
+    if _claude_statusline_is_ours(cur_cmd, paths.status_line):
         return {"state": "ours", "current_command": cur_cmd}
     return {"state": "foreign", "current_command": cur_cmd}
 
@@ -2819,30 +2836,6 @@ def copy_recipe_if_absent(sample, config_toml, dry):
         print(f"warn: failed to copy {sample} -> {config_toml}: {exc}", file=sys.stderr)
 
 
-def _claude_owned_entries(install_dir):
-    """The Claude status-line entry paths ai-kit owns in an install: the current
-    entry and the pre-rename legacy one, so a machine that was never
-    re-installed still gets unwired."""
-    tools = os.path.join(install_dir, "tools")
-    return (os.path.join(tools, _CLAUDE_ENTRY), os.path.join(tools, _LEGACY_ENTRY))
-
-
-def _claude_statusline_is_ours(value, install_dir):
-    """Whether a settings.json statusLine runs one of ai-kit's own entries.
-
-    Reads both shapes Claude allows (a bare string, an object with "command")
-    through _statusline_command, then decides with the shared exact-argv parser
-    — never a substring of the install dir, so a `.backup`/`.bak` copy of our
-    script and a foreign script that merely receives our path as an argument
-    stay foreign here too (D-23).
-    """
-    command = _statusline_command(value)
-    if not command:
-        return False
-    return any(_command_is_ours(command, entry)
-               for entry in _claude_owned_entries(install_dir))
-
-
 def unwire_statusline(settings, install_dir, dry):
     """Uninstall: remove the statusLine ONLY if it runs ai-kit's own entry (never
     clobber a foreign one). Preserves all other settings keys.
@@ -2858,7 +2851,8 @@ def unwire_statusline(settings, install_dir, dry):
         return False
     if state != JSON_STATE_OK or data is None:
         return True
-    if not _claude_statusline_is_ours(data.get("statusLine"), install_dir):
+    entry = os.path.join(install_dir, "tools", _CLAUDE_ENTRY)
+    if not _claude_statusline_is_ours(data.get("statusLine"), entry):
         return True
     data.pop("statusLine", None)
     return _commit_unwire(settings, data, dry, "would clear ai-kit statusLine")
@@ -4074,7 +4068,23 @@ def _commit_host_statusline(paths, host, host_state, dry, examples_flag):
         # and must not abort the loop — the other hosts still commit (D-22).
         host_ok = False
         hbuf.write(f"error: {host} status-line commit failed: {exc}\n")
+    if host_ok and not dry:
+        host_ok = _verify_host_statusline(paths, host, action, hbuf)
     return {"ok": bool(host_ok), "adopt": adopt, "log": hbuf.getvalue(), "action": action}
+
+
+def _verify_host_statusline(paths, host, action, log):
+    """Re-read the host config after a status-line write and fail when the line is
+    not what `action` promised (gone after a removal, ai-kit's after a write), so a
+    writer that skipped the file is never reported as success on Done."""
+    want = "unset" if action in ("remove_ours", "remove_foreign") else "ours"
+    found = _detect_for(paths, host)
+    if found["state"] == want:
+        return True
+    log.write(f"error: {host} status line is still {found['state']} after the commit "
+              f"({found['current_command']!r}); expected {want} — nothing else was "
+              "changed for it; re-run the wizard to review it\n")
+    return False
 
 
 def _commit_global_rules(rules_env, rules_review, selection, dry):
@@ -4095,9 +4105,9 @@ def _make_wizard_commit(  # pylint: disable=too-many-arguments
         paths, entries, dry, counts, examples_flag=None, *, rules_env=None, rules_review=None):
     """Build the ``commit`` callable the wizard runs IN-UI on Review-confirm.
 
-    It performs the real install — component symlinks, then, per host the user
-    adopted at that host's gate, that host's offline-validated config write plus
-    that host's wiring — honoring the adopt decision already made in the UI
+    It performs the real install — per host, that host's status-line action (its
+    offline-validated config write plus wiring, or its removal), then the
+    component symlinks and hook rows — honoring the adopt decision already made in the UI
     (``assume_overwrite`` so a foreign command isn't re-prompted on the
     terminal). Hosts are committed in detection order (Claude first) and one
     host's failure never skips the others (D-11).
@@ -4120,12 +4130,15 @@ def _make_wizard_commit(  # pylint: disable=too-many-arguments
     ``remove_foreign``, ``replace_foreign``); a host the toggle leaves alone is
     never written, whatever its action."""
     def commit(selection, states):
-        component_log, hooks_ok = _commit_components(
-            paths, entries, selection, dry, counts)
+        # Status lines first: a confirmed foreign removal or replacement is bound to the
+        # bytes of the backup taken on Review, and the hook rows below rewrite Claude's
+        # settings.json, which would break that binding.
         hosts_out = {}
         for host, host_state in (states or {}).items():
             hosts_out[host] = _commit_host_statusline(
                 paths, host, host_state, dry, examples_flag)
+        component_log, hooks_ok = _commit_components(
+            paths, entries, selection, dry, counts)
         adopt_any = any(o["adopt"] for o in hosts_out.values())
         rules_ok, rules_log = _commit_global_rules(rules_env, rules_review, selection, dry)
         ok = bool(hooks_ok) and all(o["ok"] for o in hosts_out.values()) and rules_ok

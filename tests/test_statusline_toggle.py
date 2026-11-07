@@ -553,5 +553,105 @@ class TestToggleEdges(ToggleCase):
         self.assertEqual(read_bytes(path), before)
 
 
+ENTRIES = {"claude": "claude-status-line.py", "cursor": "cursor-status-line.py"}
+
+
+class TestOffEveryStartState(ToggleCase):
+    """Off (or remove, on a foreign line) through the wizard's whole commit, for every
+    start state on both hosts: the wizard's start state, the commit's action and the
+    file afterwards agree, and a write that leaves the line in place is a failure."""
+
+    def setUp(self):
+        super().setUp()
+        root = os.path.dirname(os.path.dirname(self.env["AI_KIT_DIR"]))
+        self.alias = os.path.join(root, "alias-kit")   # a symlinked spelling of the install
+        os.symlink(self.env["AI_KIT_DIR"], self.alias)
+        self.other = os.path.join(root, "other-install")
+
+    def line(self, base, host, script=None):
+        path = os.path.join(base, "tools", script or ENTRIES[host])
+        return {"type": "command", "command": "python3 -S " + shlex.quote(path)}
+
+    def start_lines(self, host):
+        kit = self.env["AI_KIT_DIR"]
+        lines = {"ours": self.line(kit, host), "alias": self.line(self.alias, host),
+                 "other_install": self.line(self.other, host), "foreign": FOREIGN}
+        if host == "claude":
+            lines["legacy"] = self.line(kit, host, "status-line.py")
+        return lines
+
+    def wizard_off(self, host):
+        """The state the wizard serializes after one `o` on the pane and Review's Yes."""
+        found = setup._detect_for(self.paths, host)
+        state = {"adopt": False, "start_state": found["state"],
+                 "adopt_command": found["current_command"], "segments": {}, "layout": [],
+                 "dirty": False, "foreign_ok": False}
+        if found["state"] == "foreign":
+            backup = setup._prepare_foreign(self.paths, host)["backup"]
+            state.update(foreign_choice="remove", foreign_ok=True, foreign_backup=backup)
+        return state
+
+    def hook_rows_write(self, paths, *_args):
+        """Stands in for the component step: the hook rows rewrite settings.json."""
+        if os.path.isfile(paths.settings):
+            data = read_json(paths.settings)
+            data["hooks"] = {"SessionStart": []}
+            write_json(paths.settings, data)
+        return "", True
+
+    def wizard_commit(self, host, state):
+        commit = setup._make_wizard_commit(
+            self.paths, {cat: [] for cat in setup.CATEGORIES}, False, setup.new_counts())
+        with mock.patch.object(setup, "_commit_components", side_effect=self.hook_rows_write):
+            return commit(setup.Selection([]), {host: state})
+
+    def test_off_removes_the_line_for_every_start_state(self):
+        expected = {"ours": ("ours", "remove_ours"), "alias": ("ours", "remove_ours"),
+                    "legacy": ("ours", "remove_ours"),
+                    "other_install": ("foreign", "remove_foreign"),
+                    "foreign": ("foreign", "remove_foreign")}
+        for host in ("claude", "cursor"):
+            for name, line in self.start_lines(host).items():
+                with self.subTest(host=host, start=name):
+                    path = self.seed(host, {"keep": 1, "statusLine": line})
+                    state = self.wizard_off(host)
+                    self.assertEqual(state["start_state"], expected[name][0])
+                    outcome = self.wizard_commit(host, state)
+                    row = outcome["hosts"][host]
+                    self.assertTrue(outcome["ok"], row["log"])
+                    self.assertEqual(row["action"], expected[name][1])
+                    data = read_json(path)
+                    self.assertNotIn("statusLine", data)
+                    self.assertEqual(data["keep"], 1)
+
+    def test_off_on_an_unset_host_leaves_it_unset(self):
+        for host in ("claude", "cursor"):
+            with self.subTest(host=host):
+                path = self.seed(host, {"keep": 1})
+                state = self.wizard_off(host)
+                self.assertEqual(state["start_state"], "unset")
+                outcome = self.wizard_commit(host, state)
+                self.assertTrue(outcome["ok"])
+                self.assertEqual(outcome["hosts"][host]["action"], "unchanged")
+                self.assertNotIn("statusLine", read_json(path))
+
+    def test_a_removal_that_leaves_the_line_is_reported(self):
+        for host in ("claude", "cursor"):
+            with self.subTest(host=host):
+                path = self.seed(host, {"statusLine": self.line(self.env["AI_KIT_DIR"], host)})
+                with mock.patch.object(setup, "_unwire_host", return_value=True):
+                    result = self.commit(host, self.wizard_off(host))
+                self.assertFalse(result["ok"])
+                self.assertIn("still ours after the commit", result["log"])
+                self.assertIn("statusLine", read_json(path))
+
+    def test_a_write_that_does_not_land_is_reported(self):
+        self.seed("claude", {"keep": 1})
+        with mock.patch.object(setup, "persist_statusline", return_value=True):
+            result = self.commit("claude", adopt_state(self.paths, "claude"))
+        self.assertFalse(result["ok"])
+        self.assertIn("still unset after the commit", result["log"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -77,9 +77,11 @@ PREVIEW_REMOVE_TEXT = "host default (foreign status line removed)"
 OFF_NOTE = {
     "ours": "Off: Review removes ai-kit's entry; {label} shows its default status line. "
             "Press o to turn it on.",
-    "unset": "Off: Review leaves {label} unchanged; it shows its default status line. "
-             "Press o to turn it on.",
+    "unset": "Off: no status line is set for {label}, so it shows its default one; Review "
+             "leaves it unchanged. Press o to turn ai-kit's status line on.",
 }
+# The pre-30.1 adoption gate's warning, kept on the pane: what the foreign line runs.
+FOREIGN_WARNING = "⚠ {label} already has another status line: "
 FOREIGN_NOTE = {
     "keep": "Keep: Review leaves {label}'s current status line as it is and writes nothing "
             "to it. Press o to remove it.",
@@ -1028,13 +1030,15 @@ class WizardApp(App):
         start = state.get("start_state", "unset")
         adopt = bool(state.get("adopt"))
         if start == "foreign":
-            note = FOREIGN_NOTE[state.get("foreign_choice", "keep")]
+            note = (FOREIGN_WARNING.format(label=host.label)
+                    + (state.get("adopt_command") or "(unknown)") + "\n"
+                    + FOREIGN_NOTE[state.get("foreign_choice", "keep")].format(label=host.label))
         elif not adopt:
-            note = OFF_NOTE[start]
+            note = OFF_NOTE[start].format(label=host.label)
         else:
             note = ""
         band_note = self.query_one("#band-note", Static)
-        band_note.update(escape(note.format(label=host.label)) if note else "")
+        band_note.update(escape(note))
         band_note.display = bool(note)
         for wid in ("#board", "#focchip", "#tray"):
             self.query_one(wid).set_class(not adopt, "locked")
