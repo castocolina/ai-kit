@@ -397,14 +397,33 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. A re-judge report scores each of the 15 kept skills with the current judge (two judges chosen from what the environment offers, native opus at xhigh as fallback); old /120 scores appear only as history, and the seven project-rules skills are listed as excluded because they are being replaced; the judge prompt embeds the rubric and its cited spec sources and states one reading of the flat `tests/test_*.py` layout and of skills without `scripts/`, the same for every skill. *(amended 2026-11-07, owner decision: the 16 non-rules skills are kept, 15 judged; `ai-kit-commit-fold` is listed as excluded beside the seven project-rules skills because it is temporary and Phase 45 absorbs it (RULE-27); the judge prompt states the test layout criterion 8 decides)*
   2. The verdict checker is a tracked tool that takes the skill and judge lists as arguments, and it names no referee, resolves the repository root itself (the same digest from a sub-folder) and reports the round count.
-  3. The report shows for each skill why one or two judges ran: deterministic signals plus jev's score, a floor of one, two when the last verdict sat within judge noise of a grade boundary or had a high finding.
+  3. The report shows for each skill why one or two judges ran: deterministic signals plus jev's score, a floor of one, two when the last verdict sat within judge noise of a grade boundary or had a high finding. *(amended 2026-11-07, 32 spec and owner confirmation: the boundary is the bar's pass boundary at 80, within the recorded 7-point judge variation, 73.0 to 87.0 inclusive (SPEC R4, JDG-06))*
   4. A strict frontmatter check (strict YAML, 1,024-character description cap, matching what `npx skills` accepts) passes on every SKILL.md in the tree.
   5. A text check fails on tool versions, dates or observation logs in a skill's main flow, a hardcoded referee name, or shipped text pointing into a planning folder; every kept skill passes it, with provenance in a trailing evidence section; ai-kit's AGENTS.md states the rule in one line.
   6. AGENTS.md's skill-judge rule caps a judge loop at a stated number of rounds and requires a disputed finding to be refuted by running the code; the verdict checker flags a loop past the cap.
   7. The judge bar (JDG-04) is recorded per judged skill, and every later phase that adds or changes a SKILL.md has a success criterion that cites it.
   8. The phase 32 spec records where tests live (flat `tests/test_*.py` or `tests/skills/<name>/`, as the skill-judge rubric expects), decided by a spike that measures the cost of moving them on the parallel runner, the gate-scope test, the staged mapper and the recorded e2e times; evals stay in each skill's `evals/` folder per the Agent Skills standard, and Phase 52 trims them from the shipped copy (DIST-01). *(added 2026-11-07, owner decision)* *(amended 2026-11-07, 32 spec: the spike chose the flat layout (32-SPEC Background and R1); a guard test fails on a test module in a `tests/` subfolder, where the runner never discovers it)*
 
-**Plans**: TBD
+**Plans**: 9 plans in 5 waves
+Plans:
+**Wave 1**
+- [ ] 32-01-PLAN.md — `tools/judge_loop.py` `prompt`, `ingest`, `check` for one lane end to end; the judge prompt embeds the skill-judge package; the native judge at xhigh effort (R2, R5 part)
+- [ ] 32-02-PLAN.md — check-dogfood JDG-04 citation guard; stray test-module guard in the gate-scope test (R10, R1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 32-03-PLAN.md — history-text test (dates, versions, run logs) with the kept skills' text moved into evidence sections; AGENTS.md round cap, refute-by-running and behaviour-not-history lines (R9 part, R6 doc)
+- [ ] 32-04-PLAN.md — `pool` from sentinel probes and `count` from deterministic triggers plus an advisory jev score (R3, R4)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 32-05-PLAN.md — history-text pointer rules over every shipped skill Markdown file, with the pointers removed (R9 pointer part)
+- [ ] 32-06-PLAN.md — strict frontmatter gate with a PyYAML cross-check and a one-time npm `yaml` comparison (R8)
+- [ ] 32-07-PLAN.md — `report` and the full `check` (round cap, refutations, worst-judge bar, count recomputation); check-dogfood runs it; docs (R5, R6, R7 tooling)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 32-08-PLAN.md — the baseline judge run: probes, pool, counts, external lanes and orchestrator-run native lanes into staging records under `tmp/` (R3, R4, R7 run)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 32-09-PLAN.md — publish the records to `.planning/judge/`, generate `REJUDGE.md`, check with every skill current, one commit (R7)
 
 ### Phase 32.1: Batch 1, general small skills
 
