@@ -896,46 +896,11 @@ Plans:
 
 ## Backlog
 
-v2.0 requirements cover these entries (kept here until `/gsd-review-backlog` removes them):
-999.2 (HOOK-04), 999.5 (RUN-03), 999.7 (FEAT-02), 999.8 (JEV-05), 999.9 and 999.10 (JEV-01), 999.11 (DEF-04),
-999.12 (RUN-04), 999.14 (DIST-02), 999.15 (RUN-01, RUN-07, RUN-08, EXE-07; no new skill), 999.16 (RULE-01), 999.17 (EXE-03, JEV-06). The Playwright MCP Chrome path row in 999.1 is the FEAT-06 owner decision. The whole-tree layering suite once named 999.3 is ARCH-01 (Phase 52).
-999.13 is dropped as written (see REQUIREMENTS.md Out of Scope). 999.6 stays open (secondary runtime).
+Open entries only. An entry a v2.0 requirement absorbs moves to **Absorbed into v2.0 phases**
+(moved there 2026-11-07: 999.2, 999.5, 999.7 to 999.17 and 999.19), with the requirement and phase
+that track it. 999.6 stays open (secondary runtime). The Playwright MCP Chrome path row in 999.1 is
+the FEAT-06 owner decision; the whole-tree layering suite once named 999.3 is ARCH-01 (Phase 52).
 Finished entries move to **Done** at the end of this section, with the date and what delivered them.
-
-### Phase 999.2: Cursor hooks path ignores CURSOR_CONFIG_DIR (BACKLOG)
-
-**Goal:** [Captured for future planning] `tools/setup.py`'s single `Paths.cursor_dir`
-(`CURSOR_CONFIG_DIR` or `~/.cursor`) is used for Cursor hook wiring, but the Cursor CLI
-(2026.10.01 bundle) always reads user hooks from `~/.cursor/hooks.json` and ignores both
-`CURSOR_CONFIG_DIR` and `XDG_CONFIG_HOME`. When `CURSOR_CONFIG_DIR` is set, ai-kit writes hooks
-where the CLI never looks. Resolve the hooks path separately from the config dir (Phase 23 D-21
-adds the config-dir resolver for the status line), re-verify against current Cursor docs, and
-check Phase 21's `cursor-agents` destination against the same split. Found by the Phase 23
-assumptions analysis, 2026-10-14.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-
-### Phase 999.5: Idle watchdog for the cross-AI runner (BACKLOG)
-
-**Goal:** [Captured for future planning] The Phase 18 cross-AI runner
-(`.planning/scripts/cross-ai.mjs`, rendered from the ai-kit-spec-review template) kills the
-child's process group only at the overall deadline (outer `workflow.cross_ai_timeout` minus the
-D-29 margin). A child that hangs without output burns the whole window. Add an opt-in idle
-watchdog: kill the process group after N seconds with no stdout/stderr growth, then exit with the
-existing status vocabulary (a `retry-later` or `fallback` action, never a new exit class). It needs
-a self-test case and a default that is safe for slow, quiet models. Deferred by 18 D-43
-(RUN-46, 2026-10-15): not required by SPEC R5/D-27, and the runner is the largest new code in
-Phase 18.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
 
 ### Phase 999.6: Codex interactive TUI confirmation (secondary runtime) (BACKLOG)
 
@@ -952,7 +917,48 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
-### Phase 999.7: Cursor project-level subagent linking (BACKLOG)
+### Absorbed into v2.0 phases
+
+Each entry below is now a v2.0 requirement of a planned phase, which tracks it from here; it is not delivered yet. It moves to Done when its phase ships.
+
+#### Phase 999.2: Cursor hooks path ignores CURSOR_CONFIG_DIR (ABSORBED 2026-11-07)
+
+**Goal:** [Captured for future planning] `tools/setup.py`'s single `Paths.cursor_dir`
+(`CURSOR_CONFIG_DIR` or `~/.cursor`) is used for Cursor hook wiring, but the Cursor CLI
+(2026.10.01 bundle) always reads user hooks from `~/.cursor/hooks.json` and ignores both
+`CURSOR_CONFIG_DIR` and `XDG_CONFIG_HOME`. When `CURSOR_CONFIG_DIR` is set, ai-kit writes hooks
+where the CLI never looks. Resolve the hooks path separately from the config dir (Phase 23 D-21
+adds the config-dir resolver for the status line), re-verify against current Cursor docs, and
+check Phase 21's `cursor-agents` destination against the same split. Found by the Phase 23
+assumptions analysis, 2026-10-14.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** HOOK-04 (Phase 48).
+
+#### Phase 999.5: Idle watchdog for the cross-AI runner (ABSORBED 2026-11-07)
+
+**Goal:** [Captured for future planning] The Phase 18 cross-AI runner
+(`.planning/scripts/cross-ai.mjs`, rendered from the ai-kit-spec-review template) kills the
+child's process group only at the overall deadline (outer `workflow.cross_ai_timeout` minus the
+D-29 margin). A child that hangs without output burns the whole window. Add an opt-in idle
+watchdog: kill the process group after N seconds with no stdout/stderr growth, then exit with the
+existing status vocabulary (a `retry-later` or `fallback` action, never a new exit class). It needs
+a self-test case and a default that is safe for slow, quiet models. Deferred by 18 D-43
+(RUN-46, 2026-10-15): not required by SPEC R5/D-27, and the runner is the largest new code in
+Phase 18.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** RUN-03 (Phase 38).
+
+#### Phase 999.7: Cursor project-level subagent linking (ABSORBED 2026-11-07)
 
 **Goal:** [Captured for future planning] ai-kit's pinned Cursor subagents (`cursor-agents/`,
 shipped by Phase 21) reach the cursor CLI: they are linked per file into a project's
@@ -971,8 +977,9 @@ Inputs: `21-SPIKE-D01.md`, 21-CONTEXT D-02..D-05. Moved out of the inserted Phas
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** FEAT-02 (Phase 54).
 
-### Phase 999.8: Jev image and box questions (BACKLOG)
+#### Phase 999.8: Jev image and box questions (ABSORBED 2026-11-07)
 
 **Goal:** [Captured for future planning] The `jev-fast-decision` client builds image questions
 (one image, and several compared) and `box` questions on every backend whose 21.1 capability
@@ -989,8 +996,9 @@ or consent was available to verify the shapes live.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** JEV-05 (Phase 54).
 
-### Phase 999.9: jev-fast-decision backend detection and selection by host (BACKLOG)
+#### Phase 999.9: jev-fast-decision backend detection and selection by host (ABSORBED 2026-11-07)
 
 **Goal:** [Captured for future planning; rewritten 2026-10-24 from "drop the OpenCode Zen backend"
 after the owner's follow-up] The client picks a backend through explicit, host-aware detection
@@ -1022,8 +1030,9 @@ the owner's judge set.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** JEV-01 (Phase 34).
 
-### Phase 999.10: TypeSafe key sources, the transitional ~/.mycreds fallback and env inheritance (BACKLOG)
+#### Phase 999.10: TypeSafe key sources, the transitional ~/.mycreds fallback and env inheritance (ABSORBED 2026-11-07)
 
 **Goal:** [Captured for future planning; updated 2026-10-24] The TypeSafe key normally comes from
 the environment (`TYPESAFE_API_KEY`, sourced by the owner's shell from `~/.mycreds`, 0600).
@@ -1049,8 +1058,9 @@ missing source and the inheritance hint without printing any value.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** JEV-01 (Phase 34); the v1.3 part was delivered in v1.3.
 
-### Phase 999.11: ai-kit-gsd-spec-discuss polish after the Phase 24 close-out (BACKLOG)
+#### Phase 999.11: ai-kit-gsd-spec-discuss polish after the Phase 24 close-out (ABSORBED 2026-11-07)
 
 **Goal:** [Captured for future planning] Resolve the Important findings left at the Phase 24
 skill-judge r3 PASS (`24-SKILL-JUDGE.md`, digest 7fc3f03ffb2fb714): a forced local answer that
@@ -1065,8 +1075,9 @@ set (native Opus + my-referee-one + my-referee-two) scores no Important.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** DEF-04 (Phase 32.4).
 
-### Phase 999.12: Runner and adapter cleanup after the Phase 25 reviews (BACKLOG)
+#### Phase 999.12: Runner and adapter cleanup after the Phase 25 reviews (ABSORBED 2026-11-07)
 
 **Goal:** [Captured for future planning] Cut what the Phase 25 code and ponytail reviews
 (`25-REVIEW.md`) found unneeded or duplicated, with no behavior change:
@@ -1089,8 +1100,9 @@ Success criteria when promoted: each change keeps the runner self-test, `make te
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** RUN-04 (Phase 38).
 
-### Phase 999.13: Register workflow.cross_ai_retry with gsd-core so config-set accepts it (BACKLOG)
+#### Phase 999.13: Register workflow.cross_ai_retry with gsd-core so config-set accepts it (ABSORBED 2026-11-07)
 
 **Goal:** [Captured for future planning] Ship a gsd-core capability manifest that registers
 `workflow.cross_ai_retry.*`, so `config-set workflow.cross_ai_retry.<key>` validates and writes the
@@ -1107,8 +1119,9 @@ global versus project scope choice and the consent gate.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** superseded by CFG-03 (Phase 33): gsd-core rejects non-GSD keys, so the retry settings move into ai-kit's own config (REQUIREMENTS.md Out of Scope).
 
-### Phase 999.14: Install ai-kit skills as real copies through the skills CLI, synced across hosts (BACKLOG)
+#### Phase 999.14: Install ai-kit skills as real copies through the skills CLI, synced across hosts (ABSORBED 2026-11-07)
 
 **Priority:** major. This is the next feature to implement after v1.3.
 **Goal:** [Captured for future planning] The setup installs each ai-kit skill into a host as a
@@ -1126,8 +1139,9 @@ atomic writes and backups, the dry-run-first rule, and the scratch-HOME rule for
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** DIST-02 (Phase 53).
 
-### Phase 999.15: A cross-AI chain skill for execute and review runs (BACKLOG)
+#### Phase 999.15: A cross-AI chain skill for execute and review runs (ABSORBED 2026-11-07)
 
 **Priority:** major. It builds on the todo "Unify the review/execute lane TOML".
 **Goal:** [Captured for future planning] Turn the xai execute/review scripts used in v1.3 into a
@@ -1150,8 +1164,9 @@ the ten ranked recommendations: `.planning/phases/999.15-cross-ai-chain-skill-fo
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** RUN-01 (Phase 37), RUN-07 and RUN-08 (Phase 38), EXE-07 (Phase 42); no new skill.
 
-### Phase 999.16: Evaluate one event-keyed playbook skill for the ai-kit-project-rules-* family (BACKLOG)
+#### Phase 999.16: Evaluate one event-keyed playbook skill for the ai-kit-project-rules-* family (ABSORBED 2026-11-07)
 
 **Priority:** major. Decide it together with the todo "Refactor execute-gsd and rules-agents (SJ-1, SJ-3)".
 **Goal:** [Captured for future planning] Owner request (2026-10-30): evaluate whether the rules should
@@ -1177,8 +1192,9 @@ siblings.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** RULE-01 (Phase 45).
 
-### Phase 999.17: Lite or strong executor choice through jev-fast-decision (BACKLOG)
+#### Phase 999.17: Lite or strong executor choice through jev-fast-decision (ABSORBED 2026-11-07)
 
 **Priority:** major. Depends on the todo "Refactor execute-gsd and rules-agents (SJ-1, SJ-3)" (same skills, resume paths).
 **Goal:** [Captured for future planning] Let the executor of a plan be chosen between a lighter
@@ -1206,8 +1222,9 @@ each changed skill), arch and unit tests, and a GSD-first waiver note recorded b
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** JEV-06 (Phase 29, delivered: the shared ladder) and EXE-03 (Phase 42, the executor choice).
 
-### Phase 999.19: Remove the frozen cross-skill reference allowlist (BACKLOG)
+#### Phase 999.19: Remove the frozen cross-skill reference allowlist (ABSORBED 2026-11-07)
 
 **Goal:** [Captured for future planning] Remove every reference in `tests/test_arch.py`
 `CROSS_SKILL_ALLOWLIST` until both that dict and its frozen set `_CROSS_SKILL_FROZEN` are empty. The
@@ -1223,6 +1240,7 @@ its key is deleted from both sets. Found by Phase 29's structural rule (ruling 2
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+**Absorbed by:** DIST-03 (Phase 52); RMV-01 (Phase 31) already shrank the allowlist.
 
 ### Done
 
