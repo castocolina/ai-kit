@@ -41,7 +41,7 @@
     {
       "number": "32",
       "name": "Re-judge baseline",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "32.1",
@@ -191,8 +191,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step",
-    "reason": "Phase 8 of 37 · 19% · executing"
+    "label": "Advance to the next step (plan phase 32.1)",
+    "reason": "Phase 9 of 37 — needs a plan"
   },
-  "updated_at": "2026-11-07T16:37:50.670Z"
+  "updated_at": "2026-11-07T19:51:40.603Z"
 }
