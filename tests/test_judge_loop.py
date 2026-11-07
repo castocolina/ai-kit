@@ -368,6 +368,8 @@ class TestReport(ReportFixture):
                       "| 0 | not judged | - | - |", text)
         self.assertLess(text.index("| demo-a | 32.1"), text.index("| demo-c | 32.1"))
         self.assertLess(text.index("| demo-c | 32.1"), text.index("| demo-b | 32.2"))
+        self.assertIn("| demo-c | 32 | 1 | cli-a:model-a | " + QUOTA_LINE
+                      + "; error: lane is not usable | - | not judged |", text)
         self.assertGreater(text.index("106/120 (88.3%)"),
                            text.index("## History: last 120-point results"))
         self.assertIn("Rubric: loop 32: version 4, spec_sha " + SHA_A, text)

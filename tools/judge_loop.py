@@ -850,9 +850,12 @@ def _verdict_row(state, record):
     attempts = record.get("attempts") or []
     last = attempts[-1] if attempts else {}
     status = last.get("status_line") or last.get("note")
+    verdict = record.get("verdict")
+    if verdict is None and last.get("error"):
+        # a clean lane whose verdict failed ingest shows status=ok; the error is the failure
+        status = f"{status or '-'}; error: {last['error']}"
     sub = record.get("substitute")
     substitute = f"replaces {sub.get('replaces')}: {sub.get('reason')}" if sub else None
-    verdict = record.get("verdict")
     score = "not judged" if verdict is None else f"{verdict['total']}/{verdict['max_total']}"
     pct = grade = crit = high = None
     if verdict is not None:
