@@ -404,11 +404,11 @@ Plans:
   7. The judge bar (JDG-04) is recorded per judged skill, and every later phase that adds or changes a SKILL.md has a success criterion that cites it.
   8. The phase 32 spec records where tests live (flat `tests/test_*.py` or `tests/skills/<name>/`, as the skill-judge rubric expects), decided by a spike that measures the cost of moving them on the parallel runner, the gate-scope test, the staged mapper and the recorded e2e times; evals stay in each skill's `evals/` folder per the Agent Skills standard, and Phase 52 trims them from the shipped copy (DIST-01). *(added 2026-11-07, owner decision)* *(amended 2026-11-07, 32 spec: the spike chose the flat layout (32-SPEC Background and R1); a guard test fails on a test module in a `tests/` subfolder, where the runner never discovers it)*
 
-**Plans**: 9 plans in 5 waves
+**Plans**: 2/9 plans executed in 5 waves
 Plans:
 **Wave 1**
-- [ ] 32-01-PLAN.md — `tools/judge_loop.py` `prompt`, `ingest`, `check` for one lane end to end; the judge prompt embeds the skill-judge package; the native judge at xhigh effort (R2, R5 part)
-- [ ] 32-02-PLAN.md — check-dogfood JDG-04 citation guard; stray test-module guard in the gate-scope test (R10, R1)
+- [x] 32-01-PLAN.md — `tools/judge_loop.py` `prompt`, `ingest`, `check` for one lane end to end; the judge prompt embeds the skill-judge package; the native judge at xhigh effort (R2, R5 part)
+- [x] 32-02-PLAN.md — check-dogfood JDG-04 citation guard; stray test-module guard in the gate-scope test (R10, R1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 32-03-PLAN.md — history-text test (dates, versions, run logs) with the kept skills' text moved into evidence sections; AGENTS.md round cap, refute-by-running and behaviour-not-history lines (R9 part, R6 doc)
@@ -896,7 +896,7 @@ Plans:
 | 30.1. Setup wizard, component cards and host status-line panes | 6/6 | Complete    | 2026-11-06 |
 | 30.2. Cursor status-line parity | 5/5 | Complete    | 2026-11-06 |
 | 31. Removals and small defects | 6/6 | Complete    | 2026-11-06 |
-| 32. Re-judge baseline | 0/TBD | Not started | - |
+| 32. Re-judge baseline | 2/9 | In Progress | - |
 | 32.1. Batch 1, general small skills | 0/TBD | Not started | - |
 | 32.2. Batch 2, spec review family | 0/TBD | Not started | - |
 | 32.3. Batch 3, execution and session skills | 0/TBD | Not started | - |
