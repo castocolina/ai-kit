@@ -73,6 +73,9 @@ Live checks on 2026-11-07 (read-only; scripts in `tmp/p32-spec/`; unit branch `g
   Generic project-layout paths are legitimate and common (`.planning/config.json`, `.planning/scripts/cross-ai.mjs`,
   `.planning/phases/**/*-CONTEXT.md`, `.planning/quick/<id>/`, `.planning/milestones/`). No shipped Markdown names a
   referee or a local router alias. Reference files carry dated capability cells on purpose (the certainty rule).
+  *(amended 2026-11-07, 32 D-18: a scan of every `.md` outside `evals/` adds jev's `backends/laya.md`, which names a
+  Phase 21.1 results file under `.planning/phases/`, and bare decision ids in `backends/typesafe.md`,
+  `ai-kit-spec-config` and `ai-kit-gsd-curated-config`)*
 - **JDG-04 citations.** 32.4 and every phase from 33 to 54 that changes a SKILL.md cite JDG-04, except 32.1-32.3
   (criterion 2 describes the bar without the id) and 34 (criterion 3 covers regression only, while criterion 6
   changes jev's SKILL.md).
@@ -124,6 +127,7 @@ Live checks on 2026-11-07 (read-only; scripts in `tmp/p32-spec/`; unit branch `g
    - Current: the history text listed in Background; nothing checks it; AGENTS.md has no such rule.
    - Target: for each of the 16 kept skills, SKILL.md above its trailing evidence section holds no date, no tool version outside a conditional or constraint and no run log; every Markdown file the skill ships (SKILL.md, its references and README; evals excluded) names no concrete planning artifact of this repository (a numbered phase folder or phase file such as `21-SMOKE-CURSOR.md`, or a backlog id such as `999.2`) and no referee name or local router alias; generic project-layout paths pass; provenance lives in the trailing evidence section or a reference; the seven rules skills are exempt by name with the reason; AGENTS.md says in one line that SKILL.md describes behaviour, provenance and version history live in a trailing section or a reference, and version-specific text appears only as a conditional.
    - Acceptance: the test passes on the tree and fails on fixtures holding an ISO date, `gsd-core 1.17.0`, "one real run: the same item scored 0.74, then 0.67", `.planning/phases/18.1-one-runtime-model/18.1-RESEARCH.md:231`, `21-SMOKE-CURSOR.md`, `Backlog 999.2` or `router-env/my-referee-two` in a main flow; it passes on the same date under the evidence heading and on `.planning/config.json`, `.planning/scripts/cross-ai.mjs`, `.planning/phases/<phase>/`, `.planning/phases/**/*-CONTEXT.md`, `NN-SPEC.md` and "gsd-core 1.20 or later"; a doc-contract test pins AGENTS.md's line.
+   - *Amended 2026-11-07 (32 D-18):* the shipped Markdown is every `.md` file in the skill folder outside `evals/`, so jev's `backends/` notes count (one names a Phase 21.1 results file under `.planning/phases/`); a bare or phase-prefixed planning decision id such as `(D-07)` or `20 D-11` also fails, while placeholders such as `D-<n>` and `NN D-xx` pass.
 
 10. **Every later phase that changes a SKILL.md cites JDG-04**: each ROADMAP phase of the current milestone after 32 whose text names a SKILL.md has a success criterion citing JDG-04, and `make check-dogfood` fails when one does not.
     - Current: 32.1, 32.2 and 32.3 describe the bar without the id; 34 changes jev's SKILL.md and covers regression only.
@@ -176,7 +180,7 @@ Live checks on 2026-11-07 (read-only; scripts in `tmp/p32-spec/`; unit branch `g
 
 ## Edge Coverage
 
-**Coverage:** 56/56 applicable edges resolved · 0 unresolved (56 engine rows, 0 added)
+**Coverage:** 58/58 applicable edges resolved · 0 unresolved (58 engine rows, 0 added; 2 rows from the 2026-11-07 R9 amendment)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -227,6 +231,8 @@ Live checks on 2026-11-07 (read-only; scripts in `tmp/p32-spec/`; unit branch `g
 | ordering | R8 | ✅ covered | Every failing entry is reported, not only the first; key order inside the frontmatter does not matter |
 | precision | R8 | ✅ covered | Folded and literal block scalars are measured after YAML folding, as the parser returns them; the cap is an exact integer comparison |
 | concurrency | R8 | ✅ covered | The check only reads the tree; no shared state |
+| boundary | R9 | ✅ covered | *(row from the 2026-11-07 R9 amendment, 32 D-18)* `(D-07)` and `20 D-11` fail; `D-<n>`, `NN D-xx` and a bold format example such as `**D-14: …**` pass; a `.md` file directly under `evals/` or deeper is never read |
+| precision | R9 | ✅ covered | *(row from the 2026-11-07 R9 amendment, 32 D-18)* A decision id matches only as a whole token (`D-` and digits, not glued to a letter or digit), so `JDG-04` or `ID-07` never counts as a decision id |
 | adjacency | R9 | ✅ covered | A version inside a URL or a code span is a literal identifier and passes; the same version written in prose beside a tool name fails; a date fails anywhere in the main flow, code spans included |
 | empty | R9 | ✅ covered | A SKILL.md with no trailing evidence section is checked in full; an empty evidence section is allowed |
 | encoding | R9 | ✅ covered | The check reads decoded UTF-8 text; the date form checked is ISO `YYYY-MM-DD` plus "as of" phrases |

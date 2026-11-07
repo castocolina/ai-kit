@@ -129,7 +129,9 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   live (flat `tests/test_*.py` or `tests/skills/<name>/`, as the skill-judge rubric expects) is decided in the phase
   32 spec after a spike that measures the cost of moving them (parallel runner, gate-scope test, staged mapper,
   recorded e2e times); the judge prompt states the chosen layout. Evals stay in each skill's `evals/` folder, as the
-  Agent Skills standard says, and DIST-01 trims them from the shipped copy)*
+  Agent Skills standard says, and DIST-01 trims them from the shipped copy)* *(amended 2026-11-07, 32 spec: the
+  spike chose the flat layout; the judge prompt lists each skill's test modules by one rule, and a skill that ships
+  runnable code is judged with the 5/5/5 split on them, one with no runnable code with the 8/7 split)*
 - [ ] **JDG-02**: The verdict checker is a tracked tool that takes the skill and judge lists as arguments and names
   no referee, resolves the repository root itself (the same digest when run from a sub-folder, proven by a test) and
   reports how many judge rounds ran.
@@ -148,6 +150,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   version history live in a trailing section or a reference; version-specific text appears only as a conditional).
 - [ ] **JDG-06**: The number of judges per round (one or two) comes from deterministic signals plus jev's score, with
   a floor of one (two when the last verdict sits within judge noise of a grade boundary or had a high finding).
+  *(amended 2026-11-07, 32 spec, needs owner confirmation: "a grade boundary" is read as the bar's pass boundary at
+  80 percent and judge noise as the recorded 7 points, so two judges run from 73.0 to 87.0 inclusive, and a skill
+  with no rubric-v4 verdict also gets two; with 10-point grade bands every percent from 53 to 97 lies within 7
+  points of some band edge, so the literal reading would never leave room for one judge or for jev's score)*
 - [ ] **JDG-07**: Every SKILL.md passes a strict frontmatter check (strict YAML, 1,024-character description cap) that
   matches what `npx skills` accepts.
 - [ ] **JDG-08**: AGENTS.md's skill-judge rule caps a judge loop at a stated number of rounds and requires a
@@ -967,3 +973,4 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *Amended 2026-11-04 by the owner rules audit (the owner's local memory compared with the requirements): RULE-14 (jev first) and RULE-18 (jev-first block with time rules, codegraph instruction and real-home guard in every brief) amended; RULE-30 (agent closes push and host-session verification items, through herdr for host sessions), RULE-31 (failed external runs: no silent harness switch, foreground probe) and RULE-32 (GSD-only settings rules) added.*
 *Amended 2026-11-06 by the owner's decision on Phase 30.1's cycle-2 review: WIZ-03 amended (a foreign status line is kept, removed so the host shows its own default, or replaced by a customized ai-kit line).*
 *Amended 2026-11-07 by the owner's decisions on the jev and typesafe-ai research and the skill-distribution fact sheet (`.planning/research/2026-11-07-*.md`): DEF-08 (Phase 32.4), JEV-08 and JEV-09 (Phase 32.1), JEV-10 and JEV-11 (Phase 34), DIST-08 (Phase 53) and DIST-09 (Phase 52) added; JDG-01, JDG-03, RULE-27, JEV-03, JEV-05, DIST-01, DIST-02, DIST-03 and DIST-04 amended.*
+*Amended 2026-11-07 by Phase 32's spec and discuss: JDG-01 (the flat test layout and the scripts reading) and JDG-06 (the bar-boundary reading, needs owner confirmation) amended; ROADMAP 32 criterion 8, 32.1-32.3 criterion 2 and 34 criterion 3 cite JDG-04; the stale `decide.py` anchors of 32.4 and 34 corrected.*
