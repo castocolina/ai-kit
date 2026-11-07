@@ -42,7 +42,7 @@
     "security_enforcement": true,
     "security_asvs_level": 1,
     "security_block_on": "high",
-    "cross_ai_execution": false,
+    "cross_ai_execution": true,
     "cross_ai_command": "node .planning/scripts/cross-ai.mjs",
     "cross_ai_timeout": 1800,
     "plan_review_convergence": true,
@@ -65,9 +65,7 @@
       }
     },
     "default_reviewers": [
-      "referee-one",
-      "referee-two",
-      "referee-three"
+      "referee-two"
     ],
     "timeouts": {
       "opencode": 1800
