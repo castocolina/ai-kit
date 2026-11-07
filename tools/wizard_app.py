@@ -136,44 +136,72 @@ FOOTERS = [
 ]
 QUIT_KEY = ("Quit", "q")
 
+class KeyRow(NamedTuple):
+    """One key of a step, the single source of the `?` help panel and the sub-line under the
+    title: `keys` as the footer spells its cap, the panel's `help`, the sub-line's `short`, its
+    `group` on a tall screen, and `host`, the one host it exists on ("" = every host)."""
+    keys: str
+    help: str
+    short: str
+    group: str
+    host: str = ""
+
+
+KEY_GROUPS = ("navigation", "edit", "status line", "continue")
+_HELP_KEY = KeyRow("?", "Open / close this help", "help", "continue")
+_QUIT_ROW = KeyRow("q", "Quit the installer", "quit", "continue")
 HELP = {
-    STEP_CHOOSE: [("↑ ↓", "Move the highlight inside this kind's card"),
-                  ("Space", "Install / skip the highlighted component"),
-                  ("a / n", "Select all / none of this kind"),
-                  ("A / N", "Select all / none of every kind"),
-                  ("Enter", "Next kind's card; the last card continues to Arrange"),
-                  ("Esc", "Back to the previous kind's card"), ("q", "Quit the installer")],
-    STEP_ARRANGE: [("← →", "Reorder the focused chip within its line"),
-                   ("↑ ↓", "Move the chip across lines (↑ off Line 1 → OFF tray)"),
-                   ("Space", "Turn the focused segment on/off (off → tray)"),
-                   ("Tab / ⇧Tab", "Focus the next / previous chip"),
-                   ("o", "Status line on/off; another tool's line: keep / remove / customize"),
-                   ("x / e", "Cursor: extra-spend alert on/off / set a dollar override of your "
-                             "Cursor spend limit (empty clears it)"),
-                   ("r", "Reset the layout to defaults"),
-                   ("Enter / Esc", "Continue to the next host or Review / back"),
-                   ("q", "Quit the installer")],
-    STEP_REVIEW: [("Enter", "Install / write the config"),
-                  ("Esc", "Back to Arrange"), ("g", "Toggle the global rules rewrite"),
-                  ("q", "Quit")],
-    STEP_DONE: [("Enter", "Finish and exit"),
-                ("d", "Check your AI-CLI configs (config doctor); Esc returns here"),
-                ("q", "Quit")],
+    STEP_CHOOSE: [
+        KeyRow("↑↓", "Move the highlight inside this kind's card", "move", "navigation"),
+        KeyRow("Space", "Install / skip the highlighted component", "toggle", "edit"),
+        KeyRow("a/n", "Select all / none of this kind", "this kind", "edit"),
+        KeyRow("A/N", "Select all / none of every kind", "every kind", "edit"),
+        KeyRow("Enter", "Next kind's card; the last card continues to Arrange", "next card",
+               "continue"),
+        KeyRow("Esc", "Back to the previous kind's card", "previous card", "continue"),
+        _HELP_KEY, _QUIT_ROW],
+    STEP_ARRANGE: [
+        KeyRow("←→", "Reorder the focused chip within its line", "move within a line",
+               "navigation"),
+        KeyRow("↑↓", "Move the chip across lines (↑ off Line 1 → OFF tray)",
+               "across lines (↑ off Line 1 → OFF tray)", "navigation"),
+        KeyRow("Tab/⇧Tab", "Focus the next / previous chip", "next/prev chip", "navigation"),
+        KeyRow("Space", "Turn the focused segment on/off (off → tray)", "turns on/off", "edit"),
+        KeyRow("r", "Reset the layout to defaults", "reset to defaults", "edit"),
+        KeyRow("o", "Status line on/off; another tool's line: keep / remove / customize",
+               "status line on/off; another tool's line: keep/remove/customize",
+               "status line"),
+        KeyRow("x", "Cursor: extra-spend alert on/off", "Cursor extra-spend alert on/off",
+               "status line", host="cursor"),
+        KeyRow("e", "Cursor: set a dollar override of your Cursor spend limit (empty clears it)",
+               "Cursor alert override", "status line", host="cursor"),
+        KeyRow("Enter", "Continue to the next host or Review", "next host or Review",
+               "continue"),
+        KeyRow("Esc", "Back to the previous host, or Choose's last card", "back", "continue"),
+        _HELP_KEY, _QUIT_ROW],
+    STEP_REVIEW: [
+        KeyRow("g", "Toggle the global rules rewrite", "global rules", "edit"),
+        KeyRow("Enter", "Install / write the config", "install", "continue"),
+        KeyRow("Esc", "Back to Arrange", "back", "continue"),
+        _HELP_KEY, _QUIT_ROW],
+    STEP_DONE: [
+        KeyRow("Enter", "Finish and exit", "finish", "continue"),
+        KeyRow("d", "Check your AI-CLI configs (config doctor); Esc returns here", "doctor",
+               "continue"),
+        _QUIT_ROW],
 }
+# The sub-line's lead text before the keys; Done's sub is built with the run counts instead.
+SUB_LEAD = {
+    STEP_CHOOSE: "",
+    STEP_ARRANGE: f"Focus is the [{PINK}]\\[>chip<][/] brackets; the preview at the bottom "
+                  "updates live.",
+    STEP_REVIEW: "Nothing has been written yet. Confirm to apply.",
+}
+TALL_HELP_ROWS = LANE_GATE[2]   # from this height the keys show one group per line
 
 
 TITLES = ["Choose what to install", "Arrange your status line",
           "Review & confirm", "✓ ai-kit is installed"]
-SUBS = [
-    "↑↓ move · Space toggle · a/n this kind · A/N every kind · Enter next card · "
-    "Esc previous card · ? help",
-    f"Focus is the [{PINK}]\\[>chip<][/] brackets. ←→ move within a line · "
-    "↑↓ across lines (↑ off Line 1 → OFF tray) · Space turns on/off · "
-    "Tab/⇧Tab next/prev chip · r reset to defaults · ? help. "
-    "The preview at the bottom updates live.",
-    "Nothing has been written yet. Confirm to apply.",
-    "",  # Done's sub is built dynamically with the run counts
-]
 
 
 def _pad(s: str, n: int) -> str:
@@ -815,7 +843,7 @@ class WizardApp(App):
         if self.flow.step == STEP_DONE:
             self._render_done_subtitle(sub_w, done_failed)
         else:
-            sub_w.update(SUBS[self.flow.step])
+            sub_w.update(self._sub_text())
         self.query_one(f"#{self._STEP_PANEL[self.flow.step]}").display = True
         (self._render_choose, self._render_arrange,
          self._render_review, self._render_done)[self.flow.step]()
@@ -865,10 +893,45 @@ class WizardApp(App):
         self.query_one("#footer-left", Static).update(left)
         self.query_one("#footer-q", Static).update(self._cap(*QUIT_KEY, False))
 
+    def _key_rows(self, step: int) -> list[KeyRow]:
+        """The step's keys that act here: a host-only key when its host is detected (on every
+        host's pane, named by host), `g` with the global-rules item, `d` with a doctor."""
+        present = {h.id for h in self.hosts}
+        absent = set()
+        if self._global_rules_on() is None:
+            absent.add((STEP_REVIEW, "g"))
+        if self.ctx.doctor is None:
+            absent.add((STEP_DONE, "d"))
+        return [r for r in HELP[step]
+                if (not r.host or r.host in present) and (step, r.keys) not in absent]
+
+    def _sub_text(self) -> str:
+        """The sub-line under the title, from the step's key rows: one wrapped line, or the
+        lead then one key group per line once the terminal has TALL_HELP_ROWS rows."""
+        rows = self._key_rows(self.flow.step)
+        lead = SUB_LEAD[self.flow.step]
+
+        def keys(group: list[KeyRow]) -> str:
+            return " · ".join(f"{escape(r.keys)} {escape(r.short)}" for r in group)
+
+        if self.size.height < TALL_HELP_ROWS:
+            return " ".join(part for part in (lead, keys(rows)) if part)
+        lines = [lead] if lead else []
+        for name in KEY_GROUPS:
+            group = [r for r in rows if r.group == name]
+            if group:
+                lines.append(f"[{ACCENT}]{_pad(name, 12)}[/]{keys(group)}")
+        return "\n".join(lines)
+
+    def _render_sub(self) -> None:
+        """Re-draw only the sub-line (a resize can cross TALL_HELP_ROWS)."""
+        if self.flow.step != STEP_DONE and not self.flow.help_open:
+            self.query_one("#step-sub", Static).update(self._sub_text())
+
     def _render_help(self) -> None:
         title = ["Choose", "Arrange", "Review", "Done"][self.flow.step]
-        rows = "\n".join(f"[#e6edf3 on {KEYCAP}] {_pad(k, 12)}[/]  {d}"
-                         for k, d in HELP[self.flow.step])
+        rows = "\n".join(f"[#e6edf3 on {KEYCAP}] {_pad(r.keys, 12)}[/]  {r.help}"
+                         for r in self._key_rows(self.flow.step))
         self.query_one("#help-box", Static).update(
             f"[bold {ACCENT}]{title} — keys[/]\n\n{rows}\n\n[{DIM}]? or Esc to close[/]")
 
@@ -1139,9 +1202,11 @@ class WizardApp(App):
 
     # ---- arrange preview: a real render through the host's renderer (D-10..D-12) ----
     async def _on_resize(self, event: events.Resize) -> None:
-        """A new terminal width re-renders the preview with no key press (D-11). Textual's
+        """A new terminal size re-draws the key help (one line or grouped, by height) and a new
+        width re-renders the preview, with no key press (D-11). Textual's
         own App resize handler stops the event, so the hook runs after it, not as on_resize."""
         await super()._on_resize(event)
+        self.set_timer(0.05, self._render_sub)            # the help may change layout on height
         if self.flow.step == STEP_ARRANGE:
             self.set_timer(0.05, self._schedule_preview)  # after the screen takes the new size
         elif self.flow.step == STEP_REVIEW:

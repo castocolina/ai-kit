@@ -146,9 +146,20 @@ from Line 1 sends it to the tray; Space on a tray chip brings it back.
 | `space` | Turn the focused segment on / off (off goes to the tray) |
 | `tab` / `shift+tab` | Focus the next / previous chip |
 | `o` | Host status line on / off; another tool's line: keep / remove / customize |
+| `x` | Cursor only: extra-spend alert on / off |
+| `e` | Cursor only: set a dollar override of your Cursor spend limit (empty clears it) |
 | `r` | Reset the layout to defaults |
-| `enter` / `esc` | Continue to the next host or Review / back |
+| `enter` / `esc` | Continue to the next host or Review / back (the first host's `esc` returns to Choose's last card) |
+| `?` | Help |
 | `q` | Quit the installer |
+
+The help line under each step's title lists every key that acts on that screen,
+from the same table as the `?` panel, and the footer shows a subset of it. Both
+host panes show the same keys: a key that exists on one host only, such as
+Cursor's `x` and `e`, is named with that host (`x Cursor extra-spend alert
+on/off`) and is listed whenever that host is detected. Below 30 terminal rows
+the help is one wrapped line; from 30 rows it shows one group per line
+(navigation, edit, status line, continue), and a resize switches between the two.
 
 #### The host toggle `o`
 

@@ -771,9 +771,10 @@ class TestAlertReview(unittest.IsolatedAsyncioTestCase):
                          {"extra_alert": False, "extra_alert_usd": 5.5})
 
     def test_help_names_x_and_e_for_the_cursor_pane(self):
-        keys = dict(wa.HELP[wa.STEP_ARRANGE])
-        self.assertIn("x / e", keys)
-        self.assertIn("extra-spend alert", keys["x / e"])
+        rows = {row.keys: row for row in wa.HELP[wa.STEP_ARRANGE]}
+        self.assertIn("extra-spend alert", rows["x"].help)
+        self.assertIn("override", rows["e"].help)
+        self.assertEqual((rows["x"].host, rows["e"].host), ("cursor", "cursor"))
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")

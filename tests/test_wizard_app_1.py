@@ -1,6 +1,6 @@
 """Install wizard view tests (tools/wizard_app.py), part 1 of 3.
 
-Covers structural fidelity, Choose, the adoption gate and Arrange moves.
+Covers structural fidelity, Choose, the key help line, the adoption gate and Arrange moves.
 
 The wizard is a faithful port of docs/wizard-redesign/prototypes/mockup-textual.py. The three
 parts run in parallel; the Textual guard and the Static helper live in
@@ -17,6 +17,8 @@ from tests.wizard_app_common import HAVE_TEXTUAL, query_static
 from tools import wizard_app as wa
 
 if HAVE_TEXTUAL:
+    from rich.text import Text
+
     from tests.wizard_fixtures import make_ctx, make_ctx_kinds
 
 
@@ -313,6 +315,96 @@ class TestChooseCards(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
             self.assertEqual(query_static(app, "#picksbox").content_size.height, 25)
+
+
+def _plain(app, wid):
+    return Text.from_markup(str(query_static(app, wid).content)).plain
+
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestKeyHelp(unittest.IsolatedAsyncioTestCase):
+    """The sub-line under each title is built from HELP, so it lists every key the footer and
+    the `?` panel name; both host panes show the same keys; tall screens group them."""
+
+    async def _show(self, app, pilot, step, host_index=0):
+        app.flow.step, app.flow.host_index = step, host_index
+        if step == wa.STEP_ARRANGE:
+            app.pane = app._pane(host_index)
+        app._render()
+        await pilot.pause()
+        return _plain(app, "#step-sub")
+
+    async def test_every_footer_and_help_key_is_in_the_sub_line(self):
+        ctx = make_ctx_kinds(host_ids=("claude", "cursor"), global_rules=True)
+        for rows in (24, 40):
+            app = wa.WizardApp(ctx)
+            async with app.run_test(size=(120, rows)) as pilot:
+                await pilot.pause()
+                for step in (wa.STEP_CHOOSE, wa.STEP_ARRANGE, wa.STEP_REVIEW):
+                    sub = await self._show(app, pilot, step)
+                    # With both hosts and the global-rules item, no key of the step is dropped.
+                    self.assertEqual(app._key_rows(step), wa.HELP[step])
+                    help_keys = {row.keys for row in wa.HELP[step]}
+                    for _label, cap, _primary in [*wa.FOOTERS[step], (*wa.QUIT_KEY, False)]:
+                        with self.subTest(rows=rows, step=step, footer=cap):
+                            self.assertIn(cap, help_keys)
+                            self.assertIn(f"{cap} ", sub)
+                    for row in wa.HELP[step]:
+                        with self.subTest(rows=rows, step=step, key=row.keys):
+                            self.assertIn(f"{row.keys} {row.short}", sub)
+
+    async def test_arrange_lists_o_tab_r_esc_and_the_cursor_keys_by_host_name(self):
+        app = wa.WizardApp(make_ctx(host_ids=("claude", "cursor")))
+        async with app.run_test(size=(120, 24)) as pilot:
+            sub = await self._show(app, pilot, wa.STEP_ARRANGE, host_index=1)
+            for text in ("o status line on/off", "Tab/⇧Tab next/prev chip",
+                         "r reset to defaults", "Esc back", "Enter next host or Review",
+                         "x Cursor extra-spend alert on/off", "e Cursor alert override"):
+                self.assertIn(text, sub)
+
+    async def test_claude_and_cursor_panes_show_the_same_help(self):
+        app = wa.WizardApp(make_ctx(host_ids=("claude", "cursor")))
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            seen = []
+            for index in (0, 1):
+                sub = await self._show(app, pilot, wa.STEP_ARRANGE, host_index=index)
+                await pilot.press("question_mark")
+                seen.append((sub, _plain(app, "#help-box")))
+                await pilot.press("question_mark")
+            self.assertEqual(seen[0], seen[1])
+            self.assertIn("Cursor: extra-spend alert", seen[0][1])
+
+    async def test_a_claude_only_install_shows_no_cursor_key(self):
+        app = wa.WizardApp(make_ctx())
+        async with app.run_test(size=(120, 24)) as pilot:
+            sub = await self._show(app, pilot, wa.STEP_ARRANGE)
+            self.assertNotIn("Cursor", sub)
+
+    async def test_review_shows_g_only_with_the_global_rules_item(self):
+        app = wa.WizardApp(make_ctx_kinds())
+        async with app.run_test(size=(120, 24)) as pilot:
+            self.assertNotIn("g global rules", await self._show(app, pilot, wa.STEP_REVIEW))
+        app = wa.WizardApp(make_ctx_kinds(global_rules=True))
+        async with app.run_test(size=(120, 24)) as pilot:
+            self.assertIn("g global rules", await self._show(app, pilot, wa.STEP_REVIEW))
+
+    async def test_tall_screen_groups_the_keys_and_resize_switches_back(self):
+        app = wa.WizardApp(make_ctx(host_ids=("claude", "cursor")))
+        async with app.run_test(size=(120, wa.TALL_HELP_ROWS - 1)) as pilot:
+            short = await self._show(app, pilot, wa.STEP_ARRANGE)
+            self.assertNotIn("\n", short)
+            self.assertNotIn("navigation", short)
+            await pilot.resize_terminal(120, wa.TALL_HELP_ROWS)
+            await pilot.pause(0.2)
+            tall = _plain(app, "#step-sub").splitlines()
+            self.assertTrue(tall[0].startswith("Focus is the [>chip<] brackets"))
+            self.assertEqual([line.split()[0] for line in tall[1:]],
+                             ["navigation", "edit", "status", "continue"])
+            self.assertIn("o status line on/off", tall[3])
+            await pilot.resize_terminal(120, wa.TALL_HELP_ROWS - 1)
+            await pilot.pause(0.2)
+            self.assertEqual(_plain(app, "#step-sub"), short)
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")

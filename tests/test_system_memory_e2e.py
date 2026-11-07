@@ -161,7 +161,8 @@ def _run_wizard_install(argv, env, timeout=45):
         header = re.compile(r"Step 1 of (\d+)")
         _pty_read_until(master_fd, header, buf, timeout)
         # One Choose card per component kind: N = cards + Arrange + Review.
-        total = int(header.search(_CSI.sub("", buf[0].decode("utf-8", "replace"))).group(1))
+        counts = header.findall(_CSI.sub("", buf[0].decode("utf-8", "replace")))
+        total = int(counts[-1])                         # _pty_read_until saw at least one
         for step in range(2, total):                    # each card, then Arrange's step
             os.write(master_fd, b"\r")
             _pty_read_until(master_fd, re.compile(rf"Step {step} of {total}"), buf, timeout)
