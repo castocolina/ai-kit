@@ -5,11 +5,11 @@ milestone_name: Skill Refactor
 current_phase: 32
 current_phase_name: Re-judge baseline
 status: planning
-stopped_at: Phase 31 complete, ready to plan Phase 32
-last_updated: "2026-11-07T01:00:38.816Z"
+stopped_at: Phase 32 spec and context gathered (assumptions mode); ready to plan Phase 32
+last_updated: "2026-11-07T12:51:31.438Z"
 last_activity: 2026-11-06
 last_activity_desc: Phase 31 complete
-state_head: a9f6b67dc41e3188ae9503226cf23ded25372051
+state_head: b791672f5611554b6abc0db513780b181f8112b1
 progress:
   total_phases: 37
   completed_phases: 7
@@ -682,9 +682,9 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-03T19:08:45.122Z
-Stopped at: Phase 31 complete, ready to plan Phase 32
-Resume file: .planning/phases/31-removals-and-small-defects/31-CONTEXT.md
+Last session: 2026-11-07T12:51:31.350Z
+Stopped at: Phase 32 spec and context gathered (assumptions mode); ready to plan Phase 32
+Resume file: .planning/phases/32-re-judge-baseline/32-CONTEXT.md
 
 ## Operator Next Steps
 
