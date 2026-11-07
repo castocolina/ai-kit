@@ -4,16 +4,16 @@ milestone: v2.0
 milestone_name: Skill Refactor
 current_phase: 32
 current_phase_name: Re-judge baseline
-status: planning
-stopped_at: Phase 31 complete, ready to plan Phase 32
-last_updated: "2026-11-07T01:00:38.816Z"
-last_activity: 2026-11-06
-last_activity_desc: Phase 31 complete
-state_head: a9f6b67dc41e3188ae9503226cf23ded25372051
+status: executing
+stopped_at: Phase 32 spec and context gathered (assumptions mode); ready to plan Phase 32
+last_updated: "2026-11-07T16:41:32.292Z"
+last_activity: 2026-11-07
+last_activity_desc: Phase 32 execution started
+state_head: 537178ab4e0c171ceb70e1c03fe155de82d94796
 progress:
   total_phases: 37
   completed_phases: 7
-  total_plans: 55
+  total_plans: 64
   completed_plans: 55
   percent: 19
 ---
@@ -25,14 +25,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 31 — Removals and small defects
+**Current focus:** Phase 32 — Re-judge baseline
 
 ## Current Position
 
-Phase: 32 — Re-judge baseline
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-11-06 - Completed quick task 261106-ua8: wizard component names and descriptions from frontmatter
+Phase: 32 (Re-judge baseline) — EXECUTING
+Plan: 1 of 9
+Status: Executing Phase 32
+Last activity: 2026-11-07 — Phase 32 execution started
 
 Progress: [██░░░░░░░░] 19%
 
@@ -682,9 +682,9 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-03T19:08:45.122Z
-Stopped at: Phase 31 complete, ready to plan Phase 32
-Resume file: .planning/phases/31-removals-and-small-defects/31-CONTEXT.md
+Last session: 2026-11-07T12:51:31.350Z
+Stopped at: Phase 32 spec and context gathered (assumptions mode); ready to plan Phase 32
+Resume file: .planning/phases/32-re-judge-baseline/32-CONTEXT.md
 
 ## Operator Next Steps
 
