@@ -5472,6 +5472,85 @@ class TestReadComponentDesc(unittest.TestCase):
         self.assertNotIn("\n", out)
         self.assertLessEqual(len(out), setup._DESC_MAX)
 
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+class TestReadFrontmatter(unittest.TestCase):
+    """_read_frontmatter: name + description in every scalar shape components use, and the
+    real skills/ and agents/ entries all carry a name and a non-empty description."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _front(self, body):
+        path = os.path.join(self.tmp, "c.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(f"---\n{body}---\n# body\n")
+        return setup._read_frontmatter(path)
+
+    def test_each_scalar_shape(self):
+        cases = (
+            ("description: plain text\n", "plain text"),
+            ('description: "say \\"hi\\": now \\u00e9"\n', 'say "hi": now é'),
+            ("description: 'it''s: fine'\n", "it's: fine"),
+            ('description: "first line\n  second line"\n', "first line second line"),
+            ("description: plain start\n  and more\n", "plain start and more"),
+            ("description: >-\n  folded one\n  folded two\n", "folded one folded two"),
+            ("description: |\n  literal one\n\n  literal two\n", "literal one literal two"),
+            ("description: >2\n    indented marker\n", "indented marker"),
+            ("description:\n  value on the next line\n", "value on the next line"),
+        )
+        for body, want in cases:
+            with self.subTest(body=body):
+                front = self._front(f"name: shown-name\n{body}tools: Read\n")
+                self.assertEqual(front["description"], want)
+                self.assertEqual(front["name"], "shown-name")
+                self.assertEqual(front["tools"], "Read")
+
+    def test_comments_and_a_missing_name(self):
+        front = self._front("# a comment\ndescription: d\n")
+        self.assertEqual(front, {"description": "d"})
+
+    def test_no_frontmatter_or_unreadable_gives_empty(self):
+        path = os.path.join(self.tmp, "bare.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("# no frontmatter\n")
+        self.assertEqual(setup._read_frontmatter(path), {})
+        self.assertEqual(setup._read_frontmatter(os.path.join(self.tmp, "absent.md")), {})
+        self.assertEqual(setup._read_frontmatter(""), {})
+
+    def test_real_entries_have_a_name_and_a_description(self):
+        entries = setup.enumerate_entries(_REPO_ROOT)
+        seen = 0
+        for cat in ("skills", "agents", "commands"):
+            for entry, path in entries.get(cat, []):
+                with self.subTest(entry=f"{cat}/{entry}"):
+                    front = setup._read_frontmatter(path)
+                    self.assertTrue(front.get("description"), "empty description")
+                    self.assertTrue(front.get("name"), "no frontmatter name")
+                    seen += 1
+        self.assertGreater(seen, 10)
+
+    def test_real_inline_descriptions_are_strict_yaml(self):
+        # A host's YAML parser rejects a plain (unquoted) value holding ': ' or ' #', and the
+        # skill then shows no description there (the project-rules agents/cicd/docker bug).
+        entries = setup.enumerate_entries(_REPO_ROOT)
+        for cat in ("skills", "agents", "commands"):
+            for entry, path in entries.get(cat, []):
+                md = os.path.join(path, "SKILL.md") if os.path.isdir(path) else path
+                with open(md, encoding="utf-8") as f:
+                    lines = f.read().splitlines()
+                for line in lines[1:lines.index("---", 1)]:
+                    value = line.removeprefix("description:").strip()
+                    plain = value[:1] not in ("", '"', "'", ">", "|")
+                    if line.startswith("description:") and plain:
+                        with self.subTest(entry=f"{cat}/{entry}"):
+                            self.assertNotIn(": ", value)
+                            self.assertNotIn(" #", value)
+
+
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestComponentMetaInContext(unittest.TestCase):
     """_build_wizard_context populates component_meta from real frontmatter."""
@@ -5504,6 +5583,12 @@ class TestComponentMetaInContext(unittest.TestCase):
         for name, desc in ctx.component_meta.items():
             self.assertIsInstance(desc, str,
                                   f"component_meta[{name!r}] must be str, got {type(desc)}")
+
+    def test_component_titles_come_from_frontmatter_names(self):
+        ctx = self._ctx()
+        self.assertEqual(ctx.component_titles.get("ai-kit-judge.md"), "ai-kit-judge")
+        self.assertEqual(ctx.component_titles.get("cst-refactor"), "cst-refactor")
+        self.assertTrue(ctx.component_meta["ai-kit-project-rules-agents"])
 
 
 CURSOR_PAYLOAD = os.path.join(FIXTURE_DIR, "cursor", "payload_synthetic.json")

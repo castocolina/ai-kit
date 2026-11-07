@@ -1,6 +1,7 @@
 ---
 name: ai-kit-project-rules-cicd
-description: Use when a target repo's CI config (`.github/workflows/*.yml` or `.gitlab-ci.yml`) needs checking for direct tool invocations that duplicate a command already defined in a Makefile target, a pre-commit hook, a `package.json` script, or a Gradle build task -- or when asked "does my CI call ruff directly instead of make ruff", "is my pipeline duplicating a pre-commit hook", or "why is this CI step flagged for reuse". Routes apart from `ai-kit-project-rules-makefile`, which judges a Makefile's own target shape, and `ai-kit-project-rules-precommit`, which judges Makefile-versus-pre-commit-hook parity: this skill reads both files too, but only as a command-vocabulary of what already exists, and never reports on either file's own quality. Detects and reports only; never edits the target repo.
+description: >-
+  Use when a target repo's CI config (`.github/workflows/*.yml` or `.gitlab-ci.yml`) needs checking for direct tool invocations that duplicate a command already defined in a Makefile target, a pre-commit hook, a `package.json` script, or a Gradle build task -- or when asked "does my CI call ruff directly instead of make ruff", "is my pipeline duplicating a pre-commit hook", or "why is this CI step flagged for reuse". Routes apart from `ai-kit-project-rules-makefile`, which judges a Makefile's own target shape, and `ai-kit-project-rules-precommit`, which judges Makefile-versus-pre-commit-hook parity: this skill reads both files too, but only as a command-vocabulary of what already exists, and never reports on either file's own quality. Detects and reports only; never edits the target repo.
 ---
 
 # ai-kit-project-rules-cicd

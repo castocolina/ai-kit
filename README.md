@@ -120,6 +120,12 @@ where N is the number of cards, plus one for Arrange when a status-line host is
 detected (all host panes share it), plus one for Review. With skills, agents
 and hooks and a host, that is `Step 1 of 5` to `Step 5 of 5`.
 
+The cards list what is in this checkout: every folder under `skills/` with a
+`SKILL.md`, and every `.md` file with frontmatter under `agents/` and `commands/`.
+Each row shows the frontmatter `name:` (the folder or file name when there is
+none) and its `description:`; when the name is not the folder or file name, that
+name follows, dimmed, because it is what gets linked.
+
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Move the highlight inside this kind's card |
@@ -791,7 +797,7 @@ Tests never call a real host CLI or read `.planning/`.
 
 ## Compatibility notes
 
-- All `SKILL.md` files use the base [Agent Skills](https://agentskills.io/specification) frontmatter (`name`, `description`). No Claude-only fields, so the skills run unmodified on every conformant tool.
+- All `SKILL.md` files use the base [Agent Skills](https://agentskills.io/specification) frontmatter (`name`, `description`). No Claude-only fields, so the skills run unmodified on every conformant tool. A plain (unquoted) `description:` never holds `: ` or ` #`, which a strict YAML parser rejects (the host then shows no description); such a value is quoted or written as a `>-` block, and a test pins it.
 - The `cst-refactor` skill ships its template as `codemod_template.py.txt`; `SKILL.md`
   copies it into the project as `tools/codemod_template.py` from the skill's own directory
   on any host (Claude Code: `${CLAUDE_PLUGIN_ROOT}/skills/cst-refactor`).

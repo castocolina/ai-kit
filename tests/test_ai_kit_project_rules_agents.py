@@ -1128,7 +1128,8 @@ class TestRefactorSafetyPreflight(unittest.TestCase):
 
     def test_description_and_unattended_branch(self):
         text = self._text()
-        desc_match = re.search(r"^description: (.*)$", text, re.MULTILINE)
+        # A one-line `>-` folded block (strict YAML: the text holds ': ').
+        desc_match = re.search(r"^description: >-\n  (.*)$", text, re.MULTILINE)
         assert desc_match
         desc = desc_match.group(1)
         self.assertLessEqual(len(desc), 1024)

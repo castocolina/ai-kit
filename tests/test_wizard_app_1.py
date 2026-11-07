@@ -126,6 +126,22 @@ class TestChooseNameColumn(unittest.TestCase):
         self.assertIn("superpow… [/]", row)
         self.assertNotIn("superpowersRuns", row)
 
+    def test_row_shows_the_frontmatter_name_and_the_linked_name_when_they_differ(self):
+        ctx = make_ctx()._replace(component_titles={"cst-refactor": "CST refactor",
+                                                    "ai-kit-judge.md": "ai-kit-judge"})
+        ctx.component_meta["cst-refactor"] = "Codemods [b] that keep comments"
+        app = wa.WizardApp(ctx)
+        row = app._choose_component_row("skills", "cst-refactor", True, False)
+        self.assertIn("CST refactor", row)
+        # The folder that gets linked follows, dimmed; markup in a description is escaped.
+        self.assertIn(f"[{wa.DIM}](cst-refactor) Codemods \\[b] that keep comments[/]", row)
+        same = app._choose_component_row("agents", "ai-kit-judge.md", True, False)
+        self.assertIn("ai-kit-judge ", same)
+        self.assertNotIn("(ai-kit-judge.md)", same)
+        fallback = app._choose_component_row("skills", "no-title-skill", True, False)
+        self.assertIn("no-title-skill", fallback)
+        self.assertNotIn("(no-title-skill)", fallback)
+
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestChooseCards(unittest.IsolatedAsyncioTestCase):

@@ -287,6 +287,8 @@ class WizardContext(NamedTuple):
     # status line before the remove / customize confirmation (never called for keep).
     doctor:DoctorFactoryFn | None = None
     prepare_foreign: PrepareForeignFn | None = None
+    # {name: frontmatter `name:`}; Choose shows it, the folder/file name is still what links.
+    component_titles: dict = {}  # noqa: RUF012 -- read-only
 
 
 @dataclass
@@ -625,7 +627,7 @@ class WizardApp(App):
 
     def _component_desc(self, cat: str, name: str) -> str:  # pylint: disable=unused-argument
         # `cat` keeps the prototype's (cat, name) accessor shape; lookup is by name.
-        return self.ctx.component_meta.get(name, "")  # populated by Task 1's _read_component_desc
+        return self.ctx.component_meta.get(name, "")  # the frontmatter description
 
     # ---- layout state ----------------------------------------------------
     def _reset_layout(self) -> None:
@@ -990,9 +992,12 @@ class WizardApp(App):
     def _choose_component_row(self, cat: str, name: str, selected: bool, focused: bool) -> str:
         glyph = f"[{GREEN}]◉[/]" if selected else f"[{DIM}]◯[/]"
         gut = f"[{PINK}]▌[/]" if focused else " "
-        nm = escape(_name_cell(name, 30))
+        title = self.ctx.component_titles.get(name) or name
+        nm = escape(_name_cell(title, 30))
+        # A title that is not the folder/file name also names what gets linked.
+        linked = "" if title == name.removesuffix(".md") else f"({name}) "
         row = (f"{gut} {glyph} [{'#f0f6fc' if focused else FG}]{nm}[/]"
-               f"[{DIM}]{self._component_desc(cat, name)}[/]")
+               f"[{DIM}]{escape(linked + self._component_desc(cat, name))}[/]")
         return f"[on #161b22]{row}[/]" if focused else row
 
     def _render_choose(self) -> None:

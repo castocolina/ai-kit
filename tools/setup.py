@@ -883,56 +883,66 @@ def _cap_desc(desc: str) -> str:
     return cut.rstrip() + "…"
 
 
-def _read_component_desc(abspath: str) -> str:
-    """Return the ``description:`` value from a component's YAML frontmatter.
+_FRONT_KEY_RE = re.compile(r"^([A-Za-z_][\w-]*):(?:\s+(.*))?$")
+
+
+def _front_scalar(first: str, more: list[str]) -> str:
+    """One frontmatter scalar as one line: `first` is the text after `key:`, `more` its
+    indented continuation lines. Block scalars (`|`, `>`, with chomping/indent marks),
+    double quotes (YAML escapes, a superset of JSON's), single quotes (`''` is a quote)
+    and plain values may span lines; every line break folds to one space."""
+    body = " ".join(part.strip() for part in more if part.strip())
+    if first[:1] in ("|", ">"):
+        return body
+    text = f"{first} {body}".strip()
+    if text[:1] == '"' and text.endswith('"') and len(text) > 1:
+        try:
+            return str(json.loads(text))
+        except ValueError:
+            return text[1:-1]
+    if text[:1] == "'" and text.endswith("'") and len(text) > 1:
+        return text[1:-1].replace("''", "'")
+    return text
+
+
+def _read_frontmatter(abspath: str) -> dict[str, str]:
+    """The top-level scalar keys of a component's YAML frontmatter, each folded to one
+    line (see `_front_scalar`); `{}` when the file is absent, unreadable or has none.
 
     For skills ``abspath`` is a directory — the frontmatter lives in
-    ``{abspath}/SKILL.md``.  For commands and agents it is the ``.md`` file
-    directly.  Handles both inline values (``description: text``) and YAML
-    block scalars (``description: >-`` or ``|`` with the text on the
-    following indented lines), folding multi-line values into a single
-    space-joined string.  The result is collapsed to one line and capped at
-    ``_DESC_MAX`` characters (an ellipsis marks truncation).  Returns ``""``
-    if the file is absent, unreadable, or has no ``description`` in its
-    frontmatter.
-    """
+    ``{abspath}/SKILL.md``. For commands and agents it is the ``.md`` file.
+    Stdlib-only: a hand-rolled reader for the scalar shapes components use, not a
+    YAML parser (lists and nested maps come back as their raw first line)."""
     if not abspath:
-        return ""
+        return {}
     candidate = os.path.join(abspath, "SKILL.md") if os.path.isdir(abspath) else abspath
     try:
         with open(candidate, encoding="utf-8") as fh:
-            lines = fh.readlines()
-    except OSError:
-        return ""
+            lines = fh.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return {}
     if not lines or lines[0].rstrip() != "---":
-        return ""
-
-    desc = ""
-    i = 1
-    while i < len(lines):
-        line = lines[i]
-        if line.rstrip() == "---":  # frontmatter ended without a description
-            return ""
-        if line.startswith("description:"):
-            rest = line[len("description:"):].strip()
-            if rest[:1] in ("|", ">"):  # YAML block scalar — gather the body
-                parts = []
-                i += 1
-                while i < len(lines):
-                    nxt = lines[i]
-                    if nxt.rstrip() == "---":
-                        break
-                    if nxt.strip() and not nxt[:1].isspace():
-                        break  # a new, less-indented top-level key
-                    parts.append(nxt.strip())
-                    i += 1
-                desc = " ".join(p for p in parts if p)
-            else:  # inline value (optionally quoted)
-                desc = rest.strip("'\"")
+        return {}
+    keys: dict[str, tuple[str, list[str]]] = {}
+    current = None
+    for line in lines[1:]:
+        if line.rstrip() == "---":
             break
-        i += 1
+        if line.startswith("#"):              # a YAML comment line
+            continue
+        m = None if line[:1].isspace() else _FRONT_KEY_RE.match(line.rstrip())
+        if m:
+            current = m.group(1)
+            keys[current] = ((m.group(2) or "").strip(), [])
+        elif current is not None:
+            keys[current][1].append(line)
+    return {k: _front_scalar(first, more) for k, (first, more) in keys.items()}
 
-    return _cap_desc(desc)
+
+def _read_component_desc(abspath: str) -> str:
+    """The frontmatter ``description:`` as one line capped at ``_DESC_MAX`` characters
+    (an ellipsis marks truncation); ``""`` when absent."""
+    return _cap_desc(_read_frontmatter(abspath).get("description", ""))
 
 
 def validate_entry(cat, path):
@@ -3794,12 +3804,14 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
         for host in hosts
     )
 
-    component_meta = {
-        name: _read_component_desc(abspath)
-        for cat in CATEGORIES
-        for name, abspath in entries[cat]
-    }
+    fronts = {name: _read_frontmatter(abspath)
+              for cat in CATEGORIES for name, abspath in entries[cat]}
+    component_meta = {name: _cap_desc(front.get("description", ""))
+                      for name, front in fronts.items()}
     component_meta.update({hook_id: hook_description(hook_id) for hook_id in HOOK_IDS})
+    # The frontmatter `name:` is what Choose shows; the folder/file name stays the link target.
+    component_titles = {name: front["name"] for name, front in fronts.items()
+                        if front.get("name")}
 
     housekeeping = {
         "stale": stale + [f"{item} (pi)" for item in pi_stale],
@@ -3820,6 +3832,7 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
         component_meta=component_meta,
         housekeeping=housekeeping,
         hosts=host_views,
+        component_titles=component_titles,
     )
 
 

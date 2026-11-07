@@ -1,6 +1,7 @@
 ---
 name: ai-kit-project-rules-agents
-description: Use when an AGENTS.md or CLAUDE.md-style agent-instruction file needs checking against ai-kit's own 19-rule house ruleset (a CLAUDE.md audit, missing workflow rules, broken relative links), or to fix it: insert missing house rules, repair broken links, via one /agent-md-refactor pass; also for "is my AGENTS.md missing any workflow rules". Triggers: "house rules", "agent instructions", "workflow-rule audit". Route a whole-repo "check everything" request to `ai-kit-project-rules-all` instead.
+description: >-
+  Use when an AGENTS.md or CLAUDE.md-style agent-instruction file needs checking against ai-kit's own 19-rule house ruleset (a CLAUDE.md audit, missing workflow rules, broken relative links), or to fix it: insert missing house rules, repair broken links, via one /agent-md-refactor pass; also for "is my AGENTS.md missing any workflow rules". Triggers: "house rules", "agent instructions", "workflow-rule audit". Route a whole-repo "check everything" request to `ai-kit-project-rules-all` instead.
 ---
 
 # ai-kit-project-rules-agents
