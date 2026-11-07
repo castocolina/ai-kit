@@ -173,6 +173,18 @@ class TestTracer(unittest.TestCase):
         })
         self.lanes = self.base / "lanes"
         self.records = self.base / "rec"
+        inputs = {"schema": 1, "skills": {"demo-alpha": {
+            "batch": "32.1", "last_v4": None, "old_score": None}}, "excluded": {}}
+        pool = judge_loop.choose_pool(["cli-a:model-a"], NATIVE, [
+            {"judge": "cli-a:model-a", "usable": True, "status_line": STATUS_OK, "reason": ""}])
+        count = judge_loop.count_skill(self.repo, "demo-alpha", inputs["skills"]["demo-alpha"],
+                                       None)
+        write_records(self.records, inputs, {"32": {"pool": pool,
+                                                    "counts": {"demo-alpha": count}}}, [])
+
+    def _report(self):
+        code, _out = run_main(["--root", str(self.repo), "report", str(self.records)])
+        self.assertEqual(code, 0)
 
     def _prompt(self, judge="cli-a:model-a"):
         return run_main(["--root", str(self.repo), "prompt", "--loop", "32", "--round", "1",
@@ -205,11 +217,13 @@ class TestTracer(unittest.TestCase):
         self.assertEqual(record["verdict"], make_verdict("demo-alpha", "cli-a:model-a"))
         self.assertEqual(len(record["attempts"]), 1)
         self.assertEqual(record["attempts"][0]["status_line"], STATUS_OK)
+        self._report()
         code, out = run_main(["--root", str(self.repo), "check", str(self.records),
                               "--skills", "demo-alpha", "--judges", "cli-a:model-a"])
         self.assertEqual(code, 0)
         self.assertIn("judge-loop: demo-alpha: loop 32 round 1 (rounds 1); judges cli-a:model-a; "
-                      "worst 100.0 A; critical 0; high 0; digest current", out)
+                      "worst 100.0 A; critical 0; high 0; bar met: no critical or high finding; "
+                      "digest current", out)
 
     def test_check_reports_stale_digest_after_a_skill_edit(self):
         self._prompt()
@@ -217,6 +231,7 @@ class TestTracer(unittest.TestCase):
         run_main(["--root", str(self.repo), "ingest", "--lane-dir", str(self._lane()),
                   "--records", str(self.records)])
         commit_change(self.repo, "skills/demo-alpha/SKILL.md", "# demo-alpha changed\n")
+        self._report()
         code, out = run_main(["--root", str(self.repo), "check", str(self.records),
                               "--skills", "demo-alpha", "--judges", "cli-a:model-a"])
         self.assertEqual(code, 0)
@@ -227,10 +242,462 @@ class TestTracer(unittest.TestCase):
         write_lane(self._lane(), STATUS_OK, self._verdict_line() + "\n")
         run_main(["--root", str(self.repo), "ingest", "--lane-dir", str(self._lane()),
                   "--records", str(self.records)])
+        self._report()
         code, out = run_main(["--root", str(self.repo), "check", str(self.records),
                               "--skills", "demo-alpha", "--judges", "cli-b:model-b"])
         self.assertEqual(code, 1)
         self.assertIn("judge cli-a:model-a is not in the judge list", out)
+
+
+BIG = {dim: 125 for dim in DIMS}
+DET_TWO = {"count": 2, "reasons": ["no rubric-v4 verdict"], "last_v4": None,
+           "jev": {"asked": False, "item": None, "level": None,
+                   "note": "not asked (deterministic two)"}}
+DEMO_SKILLS = ("demo-a", "demo-b", "demo-c")
+QUOTA_LINE = ("AIKIT-XAI status=quota cli=cli-a model=model-a exit=75 cli_rc=1 elapsed=1s "
+              "out=0 tree=clean")
+
+
+def full_verdict(skill, judge):
+    """A rubric-v4 verdict with every score at its maximum and no findings (grade A)."""
+    return make_verdict(skill, judge)
+
+
+def make_record(loop, skill, rnd, judge, verdict, digest="0" * 64, status_line=STATUS_OK,
+                note=None, substitute=None):
+    """A record as ingest writes it; a None verdict is one failed attempt and no verdict."""
+    ok = verdict is not None
+    attempt = {"status_line": status_line, "note": note, "lane_ok": ok,
+               "verdict_line": json.dumps(verdict) if ok else None,
+               "error": None if ok else "lane is not usable"}
+    return {"schema": 1, "loop": loop, "skill": skill, "round": rnd, "judge": judge,
+            "digest": digest, "rubric_version": 4, "spec_sha": SHA_A, "embedded": [],
+            "modules": ["tests/test_alpha.py"], "ships_code": False,
+            "prompt_sha256": "0" * 64, "substitute": substitute, "attempts": [attempt],
+            "verdict": verdict}
+
+
+def write_records(records, inputs, loops, recs, refutations=None):
+    """Write inputs.json, loops/<loop>.json, each record at its path and the refutation files."""
+    records = Path(records)
+    judge_loop.atomic_write_json(records / "inputs.json", inputs)
+    for loop, data in loops.items():
+        judge_loop.atomic_write_json(records / "loops" / f"{loop}.json", data)
+    for record in recs:
+        judge_loop.atomic_write_json(judge_loop.record_path(
+            records, record["loop"], record["skill"], record["round"], record["judge"]), record)
+    for loop, entries in (refutations or {}).items():
+        judge_loop.atomic_write_json(records / "refutations" / f"{loop}.json", entries)
+
+
+def demo_inputs():
+    return {"schema": 1, "skills": {
+        "demo-a": {"batch": "32.1", "last_v4": None,
+                   "old_score": {"value": "106/120 (88.3%)", "source": "fixture"}},
+        "demo-c": {"batch": "32.1", "last_v4": None, "old_score": None},
+        "demo-b": {"batch": "32.2", "last_v4": None, "old_score": None}},
+        "excluded": {"zz-rules": "fixture reason", "aa-fold": "fixture reason"}}
+
+
+def demo_pool(judges=("cli-a:model-a", "cli-b:model-b")):
+    probes = [{"judge": j, "usable": True, "status_line": STATUS_OK, "reason": ""}
+              for j in judges]
+    return judge_loop.choose_pool(list(judges), NATIVE, probes)
+
+
+@unittest.skipUnless(HAS_GIT, "git not installed")
+class ReportFixture(unittest.TestCase):
+    """Three demo skills in a git repo and the loop 32 records: demo-a (84.0 and 80.0 with a
+    high), demo-b (one full verdict), demo-c (one failed attempt, no verdict)."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="judge-loop-report-")
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name)
+        self.repo = make_repo(self.base, {f"skills/{n}/SKILL.md": "demo\n" for n in DEMO_SKILLS})
+        self.records = self.base / "rec"
+        recs = [
+            make_record("32", "demo-a", 1, "cli-a:model-a",
+                        make_verdict("demo-a", "cli-a:model-a", drops={"D1": (20, "medium")})),
+            make_record("32", "demo-a", 1, "cli-b:model-b",
+                        make_verdict("demo-a", "cli-b:model-b",
+                                     drops={"D1": (20, "high"), "D2": (5, "medium")})),
+            make_record("32", "demo-b", 1, "cli-a:model-a",
+                        full_verdict("demo-b", "cli-a:model-a")),
+            make_record("32", "demo-c", 1, "cli-a:model-a", None, status_line=QUOTA_LINE),
+        ]
+        loops = {"32": {"pool": demo_pool(), "counts": {n: DET_TWO for n in DEMO_SKILLS}}}
+        write_records(self.records, demo_inputs(), loops, recs)
+
+    def _render(self):
+        return judge_loop.render_report(self.records)
+
+    def _report(self):
+        return run_main(["--root", str(self.repo), "report", str(self.records)])
+
+    def _check(self, *args):
+        return run_main(["--root", str(self.repo), "check", str(self.records), *args])
+
+    def _put(self, record):
+        judge_loop.atomic_write_json(judge_loop.record_path(
+            self.records, record["loop"], record["skill"], record["round"], record["judge"]),
+            record)
+
+    def _drop(self, skill, judge, rnd=1):
+        os.remove(judge_loop.record_path(self.records, "32", skill, rnd, judge))
+
+    def _loop_file(self, loop="32"):
+        return self.records / "loops" / f"{loop}.json"
+
+    def _edit_loop(self, edit, loop="32"):
+        path = self._loop_file(loop)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        edit(data)
+        judge_loop.atomic_write_json(path, data)
+
+
+class TestReport(ReportFixture):
+    def test_judged_rows_bar_cells_history_and_pin(self):
+        text = self._render()
+        self.assertIn("| demo-a | 32.1 | 32 | 1 | 1 | 2 | 2: no rubric-v4 verdict | 80.0 | B | 0 | "
+                      "1 | 0 | met: grade B or better | 4.0 | 000000000000 |", text)
+        self.assertIn("| demo-b | 32.2 | 32 | 1 | 1 | 1 (second judge unavailable) | "
+                      "2: no rubric-v4 verdict | 100.0 | A | 0 | 0 | 0 | "
+                      "met: no critical or high finding | - | 000000000000 |", text)
+        self.assertIn("| demo-c | 32.1 | 32 | 1 | 1 | 0 | 2: no rubric-v4 verdict | - | - | - | - "
+                      "| 0 | not judged | - | - |", text)
+        self.assertLess(text.index("| demo-a | 32.1"), text.index("| demo-c | 32.1"))
+        self.assertLess(text.index("| demo-c | 32.1"), text.index("| demo-b | 32.2"))
+        self.assertGreater(text.index("106/120 (88.3%)"),
+                           text.index("## History: last 120-point results"))
+        self.assertIn("Rubric: loop 32: version 4, spec_sha " + SHA_A, text)
+        self.assertIn("is its base for the batch phases' regression check", text)
+        self.assertLess(text.index("| aa-fold |"), text.index("| zz-rules |"))
+        self.assertIn("Members: cli-a:model-a, cli-b:model-b", text)
+        self.assertIn("| 105/125 | 84.0 | B | 0 | 0 |", text)
+
+    def test_rendering_twice_gives_identical_bytes(self):
+        self.assertEqual(self._render(), self._render())
+
+    def test_a_worst_judge_at_79_9_with_a_high_finding_is_not_met(self):
+        self._put(make_record("32", "demo-a", 1, "cli-b:model-b",
+                              make_verdict("demo-a", "cli-b:model-b",
+                                           drops={"D1": (125, "high"), "D2": (76, "medium")},
+                                           maxima=BIG)))
+        self.assertIn("| demo-a | 32.1 | 32 | 1 | 1 | 2 | 2: no rubric-v4 verdict | 79.9 | C | 0 | "
+                      "1 | 0 | not met | 4.1 | 000000000000 |", self._render())
+
+    def test_a_native_substitute_has_its_row_and_wins_no_tie(self):
+        self._drop("demo-a", "cli-b:model-b")
+        self._put(make_record("32", "demo-a", 1, "cli-a:model-a",
+                              full_verdict("demo-a", "cli-a:model-a")))
+        self._put(make_record("32", "demo-a", 1, "native:fixture",
+                              full_verdict("demo-a", "native:fixture"), digest="1" * 64,
+                              substitute={"replaces": "cli-b:model-b",
+                                          "reason": "cli-b lane hit its quota"}))
+        text = self._render()
+        self.assertIn("replaces cli-b:model-b: cli-b lane hit its quota", text)
+        self.assertLess(text.index("| demo-a | 32 | 1 | cli-a:model-a |"),
+                        text.index("| demo-a | 32 | 1 | native:fixture |"))
+        self.assertIn("| demo-a | 32.1 | 32 | 1 | 1 | 2 | 2: no rubric-v4 verdict | 100.0 | A | 0 "
+                      "| 0 | 0 | met: no critical or high finding | 0.0 | 000000000000 |", text)
+        order = judge_loop.judge_order
+        self.assertEqual(order(demo_pool(), ["native:fixture", "cli-a:model-a"]),
+                         ["cli-a:model-a", "cli-b:model-b", "native:fixture"])
+        self.assertEqual(order({}, ["z:m", "a:m"]), ["a:m", "z:m"])
+        self._report()
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a",
+                                "cli-b:model-b", "native:fixture")
+        self.assertEqual(code, 0, out)
+
+    def test_a_missing_count_record_raises_the_named_error(self):
+        self._edit_loop(lambda data: data["counts"].pop("demo-a"))
+        with self.assertRaises(judge_loop.JudgeLoopError) as caught:
+            self._render()
+        self.assertEqual(str(caught.exception), "demo-a: no count record in loops/32.json")
+
+    def test_an_input_skill_with_no_verdict_folder_raises_the_named_error(self):
+        inputs = demo_inputs()
+        inputs["skills"]["demo-d"] = {"batch": "32.3", "last_v4": None, "old_score": None}
+        judge_loop.atomic_write_json(self.records / "inputs.json", inputs)
+        with self.assertRaises(judge_loop.JudgeLoopError) as caught:
+            self._render()
+        self.assertEqual(str(caught.exception), "demo-d: no verdict records")
+
+
+class TestCheck(ReportFixture):
+    def test_defaults_take_the_pool_judges_and_the_native_id(self):
+        self._drop("demo-a", "cli-b:model-b")
+        self._put(make_record("32", "demo-a", 1, "cli-a:model-a",
+                              full_verdict("demo-a", "cli-a:model-a")))
+        self._put(make_record("32", "demo-a", 1, "native:fixture",
+                              full_verdict("demo-a", "native:fixture"), digest="1" * 64,
+                              substitute={"replaces": "cli-b:model-b",
+                                          "reason": "cli-b lane hit its quota"}))
+        self._report()
+        code, out = self._check("--skills", "demo-a")
+        self.assertEqual(code, 0, out)
+        self.assertIn("judges cli-a:model-a, native:fixture", out)
+
+    def test_a_record_without_a_verdict_key_names_its_file(self):
+        self._report()
+        path = judge_loop.record_path(self.records, "32", "demo-a", 1, "cli-b:model-b")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        del record["verdict"]
+        judge_loop.atomic_write_json(path, record)
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 1)
+        self.assertIn("cli-b_model-b.json: not a judge record (missing verdict)", out)
+        self.assertNotIn("KeyError", out)
+
+    def test_judge_strings_match_exactly_and_the_file_name_is_the_slug(self):
+        self._put(make_record("32", "demo-a", 1, "Cli-A:model-a",
+                              full_verdict("demo-a", "Cli-A:model-a")))
+        self._report()
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 1)
+        self.assertIn("judge Cli-A:model-a is not in the judge list", out)
+        path = judge_loop.record_path(self.records, "32", "demo-b", 1, "cli-a:model-a")
+        judge_loop.atomic_write_json(path.with_name("wrong.json"),
+                                     make_record("32", "demo-b", 1, "cli-a:model-a",
+                                                 full_verdict("demo-b", "cli-a:model-a")))
+        code, out = self._check("--skills", "demo-b", "--judges", "cli-a:model-a")
+        self.assertEqual(code, 1)
+        self.assertIn("file wrong.json is not cli-a_model-a.json", out)
+
+    def test_a_malformed_verdict_in_round_one_fails_a_three_round_skill(self):
+        bad = make_verdict("demo-a", "cli-a:model-a", drops={"D1": (20, "medium")})
+        bad["percent"] = 99.0
+        self._put(make_record("32", "demo-a", 1, "cli-a:model-a", bad))
+        for number in (2, 3):
+            self._put(make_record("32", "demo-a", number, "cli-a:model-a",
+                                  full_verdict("demo-a", "cli-a:model-a")))
+        self._report()
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a")
+        self.assertEqual(code, 1)
+        self.assertIn("demo-a r1 cli-a:model-a: percent 99.0 != 84.0", out)
+
+    def test_four_rounds_are_noted_then_fail_with_gate(self):
+        for number in (2, 3, 4):
+            self._put(make_record("32", "demo-a", number, "cli-a:model-a",
+                                  full_verdict("demo-a", "cli-a:model-a")))
+        self._report()
+        judges = ("--judges", "cli-a:model-a", "cli-b:model-b")
+        code, out = self._check("--skills", "demo-a", *judges)
+        self.assertEqual(code, 0, out)
+        self.assertIn("demo-a: loop 32 ran 4 rounds, over the cap of 3", out)
+        self.assertIn("over the cap", out)
+        code, out = self._check("--skills", "demo-a", *judges, "--gate")
+        self.assertEqual(code, 1)
+
+    def test_rounds_must_run_one_to_n_and_loops_count_apart(self):
+        self._put(make_record("32", "demo-b", 3, "cli-a:model-a",
+                              full_verdict("demo-b", "cli-a:model-a")))
+        self._report()
+        code, out = self._check("--skills", "demo-b", "--judges", "cli-a:model-a")
+        self.assertEqual(code, 1)
+        self.assertIn("demo-b: loop 32 rounds are not r1..r3", out)
+        loop_32_1 = {"pool": demo_pool(), "counts": {"demo-a": DET_TWO}}
+        judge_loop.atomic_write_json(self._loop_file("32.1"), loop_32_1)
+        for number in (1, 2, 3):
+            self._put(make_record("32.1", "demo-a", number, "cli-a:model-a",
+                                  full_verdict("demo-a", "cli-a:model-a")))
+        self._report()
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 0, out)
+        self.assertIn("demo-a: loop 32.1 round 3 (rounds 3)", out)
+        self.assertNotIn("over the cap", out)
+
+    def test_worst_judge_decides_the_bar_and_gate_fails_it(self):
+        self._put(make_record("32", "demo-a", 1, "cli-a:model-a",
+                              make_verdict("demo-a", "cli-a:model-a",
+                                           drops={"D1": (100, "medium")}, maxima=BIG)))
+        self._put(make_record("32", "demo-a", 1, "cli-b:model-b",
+                              make_verdict("demo-a", "cli-b:model-b",
+                                           drops={"D1": (20, "high"), "D2": (7, "medium")})))
+        self._report()
+        judges = ("--judges", "cli-a:model-a", "cli-b:model-b")
+        code, out = self._check("--skills", "demo-a", *judges)
+        self.assertEqual(code, 0, out)
+        self.assertIn("worst 78.4 C", out)
+        self.assertIn("bar not met", out)
+        code, out = self._check("--skills", "demo-a", *judges, "--gate")
+        self.assertEqual(code, 1)
+        self.assertIn("demo-a: bar not met", out)
+
+    def test_a_refutation_counts_only_when_complete(self):
+        self._put(make_record("32", "demo-a", 1, "cli-b:model-b",
+                              make_verdict("demo-a", "cli-b:model-b",
+                                           drops={"D1": (125, "high"), "D2": (76, "medium")},
+                                           maxima=BIG)))
+        entry = {"skill": "demo-a", "round": 1, "judge": "cli-b:model-b", "finding": "F1",
+                 "location": "skills/demo-a/SKILL.md:1", "command": "python3 -c pass",
+                 "output": "ok"}
+        judges = ("--judges", "cli-a:model-a", "cli-b:model-b")
+        self._report()
+        code, out = self._check("--skills", "demo-a", *judges)
+        self.assertIn("bar not met", out)
+        incomplete = dict(entry)
+        del incomplete["command"]
+        judge_loop.atomic_write_json(self.records / "refutations" / "32.json", [incomplete])
+        self._report()
+        code, out = self._check("--skills", "demo-a", *judges)
+        self.assertIn("bar not met", out)
+        judge_loop.atomic_write_json(self.records / "refutations" / "32.json", [entry])
+        self._report()
+        code, out = self._check("--skills", "demo-a", *judges, "--gate")
+        self.assertEqual(code, 0, out)
+        self.assertIn("bar met: no critical or high finding", out)
+
+    def test_a_refutation_needs_its_output_and_the_named_judges_own_finding(self):
+        # cli-a holds F1 high and F2 medium (79.9); cli-b holds F1, F2, F3, all low (88.0).
+        self._put(make_record("32", "demo-a", 1, "cli-a:model-a",
+                              make_verdict("demo-a", "cli-a:model-a",
+                                           drops={"D1": (125, "high"), "D2": (76, "medium")},
+                                           maxima=BIG)))
+        self._put(make_record("32", "demo-a", 1, "cli-b:model-b",
+                              make_verdict("demo-a", "cli-b:model-b",
+                                           drops={"D2": (5, "low"), "D3": (5, "low"),
+                                                  "D4": (5, "low")})))
+        entry = {"skill": "demo-a", "round": 1, "judge": "cli-a:model-a", "finding": "F1",
+                 "location": "skills/demo-a/SKILL.md:1", "command": "python3 -c pass",
+                 "output": "ok"}
+        judges = ("--judges", "cli-a:model-a", "cli-b:model-b")
+        no_output = {key: value for key, value in entry.items() if key != "output"}
+        other_judges_id = dict(entry, finding="F3")
+        same_id_other_judge = dict(entry, judge="cli-b:model-b")
+        for entries in ([no_output], [other_judges_id], [same_id_other_judge]):
+            judge_loop.atomic_write_json(self.records / "refutations" / "32.json", entries)
+            self._report()
+            code, out = self._check("--skills", "demo-a", *judges)
+            self.assertEqual(code, 0, out)
+            self.assertIn("bar not met", out, entries)
+        judge_loop.atomic_write_json(self.records / "refutations" / "32.json", [entry])
+        self._report()
+        code, out = self._check("--skills", "demo-a", *judges)
+        self.assertIn("bar met: no critical or high finding", out)
+
+    def test_a_record_that_is_not_a_json_object_names_its_file(self):
+        self._report()
+        path = judge_loop.record_path(self.records, "32", "demo-a", 1, "cli-b:model-b")
+        path.write_text("[1, 2]\n", encoding="utf-8")
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 1)
+        self.assertIn("cli-b_model-b.json: not a judge record (missing ", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_a_loop_file_without_a_pool_orders_judges_by_name(self):
+        self.assertEqual(judge_loop.judge_order({}, ["cli-b:model-b", "cli-a:model-a"]),
+                         ["cli-a:model-a", "cli-b:model-b"])
+        self._edit_loop(lambda data: data.pop("pool"))
+        self._report()
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 0, out)
+        self.assertIn("judges cli-a:model-a, cli-b:model-b", out)
+
+    def test_recorded_count_must_match_the_rule_and_its_inputs(self):
+        self._edit_loop(lambda data: data["counts"]["demo-a"].update(count=1))
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a")
+        self.assertEqual(code, 1)
+        self.assertIn("demo-a: recorded count differs from the rule's output", out)
+        self._edit_loop(lambda data: data["counts"]["demo-a"].update(
+            count=2, last_v4={"percent": 88.0, "critical": 0, "high": 0, "judged_at": None,
+                              "source": "fixture"}))
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a")
+        self.assertIn("demo-a: count inputs differ from inputs.json", out)
+
+    def test_a_missing_count_record_is_reported_as_not_checked(self):
+        self._report()
+        self._edit_loop(lambda data: data["counts"].pop("demo-a"))
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a")
+        self.assertEqual(code, 1)
+        self.assertIn("REJUDGE.md not checked: demo-a: no count record in loops/32.json", out)
+
+    def test_jev_level_two_count_round_trips(self):
+        base = _git(self.repo, _git_env(self.base), "rev-parse", "HEAD").strip()
+        commit_change(self.repo, "skills/demo-a/SKILL.md", "demo changed\n")
+        entry = {"batch": "32.1", "old_score": None,
+                 "last_v4": {"percent": 88.0, "critical": 0, "high": 0, "judged_at": base,
+                             "source": "fixture"}}
+        choice = judge_loop.JEV_LEVELS[2]
+
+        def fake_ask(item):
+            return {"items": {"judge-count": {"decided_by": "laya", "laya": {
+                "choice": choice, "top": 0.9, "fallback": False, "forced": False,
+                "model": "m"}}}}
+
+        count = judge_loop.count_skill(self.repo, "demo-a", entry, fake_ask)
+        self.assertEqual(count["count"], 2)
+        inputs = demo_inputs()
+        inputs["skills"]["demo-a"] = entry
+        judge_loop.atomic_write_json(self.records / "inputs.json", inputs)
+        self._edit_loop(lambda data: data["counts"].update({"demo-a": count}))
+        self._put(make_record("32", "demo-a", 1, "cli-a:model-a",
+                              full_verdict("demo-a", "cli-a:model-a")))
+        self._put(make_record("32", "demo-a", 1, "cli-b:model-b",
+                              full_verdict("demo-a", "cli-b:model-b")))
+        self._report()
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("recorded count differs", out)
+
+    def test_not_judged_fails_until_a_verdict_exists(self):
+        self._report()
+        code, out = self._check("--skills", "demo-c", "--judges", "cli-a:model-a")
+        self.assertEqual(code, 1)
+        self.assertIn("demo-c: not judged (no verdict in loop 32 round 1)", out)
+        self._put(make_record("32", "demo-c", 1, "cli-a:model-a",
+                              full_verdict("demo-c", "cli-a:model-a")))
+        self._report()
+        code, out = self._check("--skills", "demo-c", "--judges", "cli-a:model-a")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("not judged", out)
+
+    def test_digest_state_notes_stale_and_require_current_fails(self):
+        judges = ("--judges", "cli-a:model-a", "cli-b:model-b")
+        self._report()
+        code, first = self._check("--skills", "demo-a", *judges)
+        self.assertEqual(code, 0, first)
+        self.assertIn("stale digest", first)
+        _code, second = self._check("--skills", "demo-a", *judges)
+        self.assertEqual(first, second)
+        code, out = self._check("--skills", "demo-a", *judges, "--require-current")
+        self.assertEqual(code, 1)
+        self.assertIn("demo-a: stale digest", out)
+        digest = judge_loop.skill_digest(self.repo, "demo-a")
+        self._put(make_record("32", "demo-a", 1, "cli-a:model-a",
+                              make_verdict("demo-a", "cli-a:model-a",
+                                           drops={"D1": (20, "medium")}), digest=digest))
+        self._put(make_record("32", "demo-a", 1, "cli-b:model-b",
+                              make_verdict("demo-a", "cli-b:model-b",
+                                           drops={"D1": (20, "high"), "D2": (5, "medium")}),
+                              digest=digest))
+        self._report()
+        code, out = self._check("--skills", "demo-a", *judges, "--require-current")
+        self.assertEqual(code, 0, out)
+        self.assertIn("digest current", out)
+
+    def test_a_listed_skill_without_tracked_files_is_a_problem(self):
+        inputs = demo_inputs()
+        inputs["skills"]["demo-x"] = {"batch": "32.1", "last_v4": None, "old_score": None}
+        judge_loop.atomic_write_json(self.records / "inputs.json", inputs)
+        self._edit_loop(lambda data: data["counts"].update({"demo-x": DET_TWO}))
+        self._put(make_record("32", "demo-x", 1, "cli-a:model-a",
+                              full_verdict("demo-x", "cli-a:model-a")))
+        self._report()
+        code, out = self._check("--skills", "demo-x", "--judges", "cli-a:model-a")
+        self.assertEqual(code, 1)
+        self.assertIn("no tracked files for skill demo-x", out)
+
+    def test_the_checker_names_no_reviewer_instance(self):
+        source = (REPO_ROOT / "tools" / "judge_loop.py").read_text(encoding="utf-8")
+        self.assertNotIn("referee", source.lower())
 
 
 class TestUsage(unittest.TestCase):
