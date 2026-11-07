@@ -598,6 +598,9 @@ def check_judge_records(root: Path,
         _lines, problems, notes = judge_loop.check(root, records, judge_loop.CheckOptions())
     except judge_loop.JudgeLoopError as exc:
         return [f"judge records: {exc}"], []
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        # a record the checker did not expect must be a problem line, not a traceback
+        return [f"judge records: {type(exc).__name__}: {exc}"], []
     return [f"judge records: {p}" for p in problems], [f"judge records: {n}" for n in notes]
 
 

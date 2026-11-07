@@ -204,14 +204,6 @@ def skill_problems(text, folder):
     return field_problems(data, folder)
 
 
-def agent_problems(text):
-    try:
-        data = parse_strict(text)
-    except FrontmatterError as exc:
-        return [str(exc)]
-    return field_problems(data, None)
-
-
 def entry_files(install_dir):
     """(category, name, markdown path) for every entry the installer lists, skills first."""
     entries = _setup.enumerate_entries(str(install_dir))
@@ -229,7 +221,7 @@ def entry_problems(install_dir):
     for cat, name, md in entry_files(base):
         rel = md.relative_to(base).as_posix()
         text = md.read_text(encoding="utf-8")
-        found = skill_problems(text, name) if cat == "skills" else agent_problems(text)
+        found = skill_problems(text, name if cat == "skills" else None)
         problems.extend(f"{rel}: {problem}" for problem in found)
     return problems
 
@@ -395,13 +387,6 @@ class TestStrictFixtures(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(bool(skill_problems(text, folder)), not accepted)
 
-    def test_designed_stricter_cases_are_rejected(self):
-        self.assertEqual(
-            DESIGNED_STRICTER,
-            frozenset({"plain continuation without colon", "inline comment"}),
-        )
-        by_label = {label: (text, folder) for label, text, folder, _ in FIXTURES}
-        for label in sorted(DESIGNED_STRICTER):
-            with self.subTest(label=label):
-                text, folder = by_label[label]
-                self.assertTrue(skill_problems(text, folder))
+    def test_designed_stricter_labels_name_rejected_fixtures(self):
+        # a misspelled label would silently drop a row from the PyYAML cross-check
+        self.assertLessEqual(DESIGNED_STRICTER, {row[0] for row in FIXTURES if not row[3]})

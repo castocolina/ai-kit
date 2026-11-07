@@ -360,8 +360,21 @@ def lane_ok(fields):
 
 
 def verdict_lines(text):
-    """The stripped lines of a lane's stdout that start a verdict object."""
-    return [line.strip() for line in text.splitlines() if line.strip().startswith('{"skill"')]
+    """The stripped lines of a lane's stdout that hold a verdict object, in any key order.
+
+    A line that starts with {"skill" but does not parse still counts, so ingest reports it as
+    "not JSON" instead of "no verdict line".
+    """
+    found = []
+    for line in (raw.strip() for raw in text.splitlines()):
+        if line.startswith('{"skill"'):
+            found.append(line)
+        elif line.startswith("{"):
+            with contextlib.suppress(ValueError):
+                obj = json.loads(line)
+                if isinstance(obj, dict) and "skill" in obj and "judge" in obj:
+                    found.append(line)
+    return found
 
 
 def grade_of(pct):
@@ -449,15 +462,20 @@ def validate_verdict(v, pin):
 
 def atomic_write_json(path, data):
     """Write `data` as JSON through a temp file and os.replace; the temp file goes on failure."""
+    atomic_write_text(path, json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
+
+
+def atomic_write_text(path, text):
+    """Write `text` through a temp file and os.replace; the temp file goes on failure."""
     path = Path(path)
-    text = json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
         os.replace(tmp, path)
-    except OSError:
+    except BaseException:
+        # any failure (an unencodable character, an interrupt) must not leave the temp file
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
@@ -538,13 +556,17 @@ def _load_record(path, manifest):
     """The record to extend, or a new one; a record with a verdict or another judge is refused."""
     if not path.is_file():
         return _new_record(manifest)
-    record = json.loads(path.read_text(encoding="utf-8"))
+    record = _load_record_file(path)
     if record.get("verdict") is not None:
         raise JudgeLoopError("a verdict is already recorded for this round; "
                              "a re-judge adds a round")
     if record.get("judge") != manifest["judge"]:
         raise JudgeLoopError(f"record {path.name} belongs to judge {record.get('judge')!r}, "
                              f"not {manifest['judge']!r}")
+    if (record.get("digest"), record.get("prompt_sha256")) != (manifest["digest"],
+                                                               manifest["prompt_sha256"]):
+        raise JudgeLoopError("the lane's prompt or skill digest differs from the recorded round; "
+                             "a changed skill is judged in a new round")
     return record
 
 
@@ -588,6 +610,9 @@ ROUND_CAP = 3
 RECORD_KEYS = frozenset({"schema", "loop", "skill", "round", "judge", "digest", "rubric_version",
                          "spec_sha", "embedded", "modules", "ships_code", "prompt_sha256",
                          "substitute", "attempts", "verdict"})
+# the record fields check, report and ingest read as these types
+RECORD_TYPES = (("skill", str), ("judge", str), ("digest", str), ("round", int),
+                ("prompt_sha256", str), ("attempts", list))
 REFUTATION_FIELDS = ("finding", "location", "command", "output")
 SERIOUS = ("critical", "high")
 REPORT_NAME = "REJUDGE.md"
@@ -680,6 +705,15 @@ def _load_record_file(path):
     if missing:
         raise JudgeLoopError(f"{path}: not a judge record "
                              f"(missing {', '.join(sorted(missing))})")
+    wrong = [key for key, kind in RECORD_TYPES
+             if not isinstance(record[key], kind) or isinstance(record[key], bool)]
+    wrong += [key for key in ("verdict", "substitute")
+              if record[key] is not None and not isinstance(record[key], dict)]
+    if isinstance(record["attempts"], list) and not all(
+            isinstance(item, dict) for item in record["attempts"]):
+        wrong.append("attempts item")
+    if wrong:
+        raise JudgeLoopError(f"{path}: not a judge record (wrong type: {', '.join(wrong)})")
     return record
 
 
@@ -803,27 +837,41 @@ def _report_order(inputs):
     return sorted(inputs["skills"], key=lambda n: (loop_key(inputs["skills"][n]["batch"]), n))
 
 
-def _judged_state(records, name, inputs):
-    """One judged skill's latest loop, last round, count record and worst record."""
-    loop = latest_loop(records, name)
-    if loop is None:
-        raise JudgeLoopError(f"{name}: no verdict records")
-    numbers = round_numbers(records, loop, name)
+def _last_round(records, skill):
+    """The skill's latest loop and last round, shared by report and check; None without one.
+
+    Only verdicts that validate are ranked (`valid`, `worst`); `scored` holds every verdict.
+    """
+    loop = latest_loop(records, skill)
+    numbers = round_numbers(records, loop, skill) if loop is not None else []
     if not numbers:
-        raise JudgeLoopError(f"{name}: no verdict records")
+        return None
     data = read_loop_file(records, loop)
-    counts = data.get("counts") or {}
-    if name not in counts:
-        raise JudgeLoopError(f"{name}: no count record in loops/{loop}.json")
-    recs = load_round(records, loop, name, numbers[-1])
+    recs = load_round(records, loop, skill, numbers[-1])
     order = judge_order(data.get("pool") or {}, [r["judge"] for r in recs])
     recs.sort(key=lambda r: order.index(r["judge"]))
     refutations = load_refutations(records, loop)
     scored = [r for r in recs if r.get("verdict") is not None]
-    return {"name": name, "batch": inputs["skills"][name]["batch"], "loop": loop,
-            "rounds": len(numbers), "number": numbers[-1], "recs": recs, "order": order,
-            "scored": scored, "refutations": refutations, "count": counts[name],
-            "worst": worst_record(scored, refutations, order)}
+    valid = [r for r in scored if not _verdict_errors(r)]
+    return {"loop": loop, "numbers": numbers, "data": data, "recs": recs, "order": order,
+            "refutations": refutations, "scored": scored, "valid": valid,
+            "worst": worst_record(valid, refutations, order)}
+
+
+def _judged_state(records, name, inputs):
+    """One judged skill's latest loop, last round, count record and worst record."""
+    last = _last_round(records, name)
+    if last is None:
+        raise JudgeLoopError(f"{name}: no verdict records")
+    if len(last["valid"]) != len(last["scored"]):
+        raise JudgeLoopError(f"{name}: an invalid verdict in loop {last['loop']}; run check")
+    counts = last["data"].get("counts") or {}
+    if name not in counts:
+        raise JudgeLoopError(f"{name}: no count record in loops/{last['loop']}.json")
+    return {"name": name, "batch": inputs["skills"][name]["batch"], "loop": last["loop"],
+            "rounds": len(last["numbers"]), "number": last["numbers"][-1], "recs": last["recs"],
+            "scored": last["valid"], "refutations": last["refutations"],
+            "count": counts[name], "worst": last["worst"]}
 
 
 def _judged_row(state):
@@ -896,9 +944,12 @@ def _pool_lines(records):
         pool = data.get("pool")
         if not isinstance(pool, dict):
             continue
-        probes = [[p["judge"], "usable" if p["usable"] else "unusable", p.get("status_line"),
+        entries = [*pool.get("probes", []), *pool.get("substitutes", [])]
+        if not all(isinstance(e, dict) and "judge" in e for e in entries):
+            raise JudgeLoopError(f"loops/{loop}.json: a pool probe or substitute has no judge")
+        probes = [[p["judge"], "usable" if p.get("usable") else "unusable", p.get("status_line"),
                    p.get("reason")] for p in pool.get("probes", [])]
-        subs = [f"{s['judge']}: {s['reason']}" for s in pool.get("substitutes", [])]
+        subs = [f"{s['judge']}: {s.get('reason')}" for s in pool.get("substitutes", [])]
         members = ", ".join(pool.get("members", []))
         lines += ["", f"### Loop {loop}", "", *_table(PROBE_HEADER, probes), "",
                   f"Members: {members}", f"Substitutes: {'; '.join(subs) or 'none'}"]
@@ -937,7 +988,8 @@ def _counted(records, loop, entry):
             and isinstance(judge, str)):
         return False
     for record in load_round(records, loop, skill, number):
-        if record["judge"] == judge and record.get("verdict") is not None:
+        if (record["judge"] == judge and record.get("verdict") is not None
+                and not _verdict_errors(record)):
             return bool(refuted_ids([entry], skill, number, judge, record["verdict"]))
     return False
 
@@ -1019,6 +1071,8 @@ def _round_problems(records, loop, skill, number, judges):
     problems = []
     for path, record in zip(paths, recs, strict=True):
         problems += _record_problems(path, record, skill, number, judges)
+    if len({r["digest"] for r in recs}) > 1:
+        problems.append(f"{skill}: loop {loop} round {number} records judged different skill text")
     return problems
 
 
@@ -1052,26 +1106,19 @@ def _count_problems(records, loop, skill, inputs):
 
 def _check_latest(records, inputs, skill):
     """(latest, problems): the latest loop's last round, or None when it gives no line."""
-    loop = latest_loop(records, skill)
-    numbers = round_numbers(records, loop, skill) if loop is not None else []
-    if loop is None or not numbers:
+    last = _last_round(records, skill)
+    if last is None:
         return None, [f"{skill}: no verdict records"]
-    number = numbers[-1]
-    recs = load_round(records, loop, skill, number)
+    loop, numbers = last["loop"], last["numbers"]
     problems = _count_problems(records, loop, skill, inputs)
-    scored = [r for r in recs if r.get("verdict") is not None]
-    if not scored:
-        problems.append(f"{skill}: not judged (no verdict in loop {loop} round {number})")
+    if not last["scored"]:
+        problems.append(f"{skill}: not judged (no verdict in loop {loop} round {numbers[-1]})")
         return None, problems
-    order = judge_order(read_loop_file(records, loop).get("pool") or {},
-                        [r["judge"] for r in recs])
-    refutations = load_refutations(records, loop)
-    valid = [r for r in scored if not _verdict_errors(r)]
-    worst = worst_record(valid, refutations, order)
+    worst = last["worst"]
     if worst is None:
         return None, problems
-    latest = _Latest(loop, number, len(numbers), valid, order, worst,
-                     _record_bar(worst, refutations))
+    latest = _Latest(loop, numbers[-1], len(numbers), last["valid"], last["order"], worst,
+                     _record_bar(worst, last["refutations"]))
     return latest, problems
 
 
@@ -1132,6 +1179,10 @@ def _report_problems(records, problems):
         fresh = render_report(records)
     except JudgeLoopError as exc:
         problems.append(f"REJUDGE.md not checked: {exc}")
+        return
+    except (KeyError, TypeError, ValueError) as exc:
+        # a last guard: a field shape no loader check covers is still a problem line
+        problems.append(f"REJUDGE.md not checked: {type(exc).__name__}: {exc}")
         return
     if path.read_bytes() != fresh.encode("utf-8"):
         problems.append(f"REJUDGE.md differs from the records; {REPORT_HINT}")
@@ -1197,6 +1248,8 @@ def choose_pool(judges, native, results):
     """The pool: the first two usable judges; else one usable judge plus native; else native."""
     if native in judges:
         raise JudgeLoopError("the native id must not be in the judge list")
+    if len(set(judges)) != len(judges):
+        raise JudgeLoopError("a judge appears twice in the judge list")
     usable = [result["judge"] for result in results if result["usable"]]
     pool = {"judges": list(judges), "native": native, "probes": list(results),
             "members": [], "substitutes": []}
@@ -1213,6 +1266,14 @@ def choose_pool(judges, native, results):
     return pool
 
 
+def _load_json(path):
+    """The JSON value in a file; unreadable or invalid JSON raises JudgeLoopError."""
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise JudgeLoopError(f"{path}: not valid JSON ({exc})") from exc
+
+
 def read_loop_file(records, loop):
     """The loop record <records>/loops/<loop>.json as a dict ({"loop": loop} when absent)."""
     if not LOOP_RE.fullmatch(loop):
@@ -1220,7 +1281,7 @@ def read_loop_file(records, loop):
     path = Path(records) / "loops" / f"{loop}.json"
     if not path.is_file():
         return {"loop": loop}
-    return json.loads(path.read_text(encoding="utf-8"))
+    return _load_json(path)
 
 
 def update_loop_file(records, loop, key, value):
@@ -1263,7 +1324,9 @@ class JevUnavailable(Exception):
 
 
 JEV_ITEM_ID = "judge-count"
-JEV_CALL_TIMEOUT = 120
+# Must exceed jev_ladder's wait for its client, CALL_TIMEOUT_SECONDS * (items + 3) + 10 = 130 s for
+# one item, or a late valid answer is dropped and the client it started is orphaned.
+JEV_CALL_TIMEOUT = 30 * (1 + 3) + 10 + 20
 BASE_RE = re.compile(r"[0-9a-f]{7,40}")
 
 
@@ -1362,8 +1425,8 @@ def final_count(det, level, note):
 
 def ask_jev(item, client, run=subprocess.run):
     """Send one score item to the jev client's ladder; JevUnavailable when it cannot answer."""
-    env = {**os.environ, "GSD_PATH_JEV": "1", "GSD_PATH_JEV_TIMEOUT_SECONDS": "30",
-           "JEV_CALLER": "judge_loop"}
+    # The ladder sets the per-call timeout and JEV_CALLER for its client itself.
+    env = {**os.environ, "GSD_PATH_JEV": "1"}
     try:
         proc = run([sys.executable, "-B", str(client), "ladder"],
                    input=json.dumps({"items": [item]}), capture_output=True, text=True,
@@ -1390,7 +1453,8 @@ def find_jev_client(root, env, override):
 
 
 def numstat(root, base, skill):
-    """(added, deleted, path) rows of the skill since `base`; None when `base` is no commit."""
+    """(added, deleted, path) rows of the skill's working tree since `base` (the digest hashes
+    the working tree, so uncommitted edits count); None when `base` is no commit."""
     if not SAFE_SKILL.fullmatch(skill):
         raise JudgeLoopError(f"bad skill name {skill!r}")
     if not BASE_RE.fullmatch(base):
@@ -1399,7 +1463,7 @@ def numstat(root, base, skill):
                             f"{base}^{{commit}}"], capture_output=True, text=True, check=False)
     if probe.returncode != 0:
         return None
-    diff = subprocess.run(["git", "-C", str(root), "diff", "--numstat", base, "HEAD", "--",
+    diff = subprocess.run(["git", "-C", str(root), "diff", "--numstat", base, "--",
                            f"skills/{skill}/"], capture_output=True, text=True, check=False)
     rows = []
     for line in diff.stdout.splitlines():
@@ -1464,6 +1528,9 @@ def _entry_error(name, entry):
     batch = entry.get("batch") if isinstance(entry, dict) else None
     if not isinstance(batch, str) or not LOOP_RE.fullmatch(batch):
         return f"skill {name} has no valid batch"
+    missing = {"last_v4", "old_score"} - set(entry)
+    if missing:
+        return f"skill {name} lacks {', '.join(sorted(missing))}"
     if entry.get("last_v4") is not None and not _last_ok(entry["last_v4"]):
         return f"skill {name} has a malformed last_v4"
     if entry.get("old_score") is not None and not _old_ok(entry["old_score"]):
@@ -1476,7 +1543,7 @@ def load_inputs(records):
     path = Path(records) / "inputs.json"
     if not path.is_file():
         raise JudgeLoopError(f"inputs.json is missing in {records}")
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = _load_json(path)
     skills = data.get("skills") if isinstance(data, dict) else None
     excluded = data.get("excluded", {}) if isinstance(data, dict) else None
     if not isinstance(skills, dict) or not isinstance(excluded, dict):
@@ -1569,7 +1636,7 @@ def _cmd_check(args, root):
 def _cmd_report(args, root):
     records = _abs(root, args.records)
     path = records / REPORT_NAME
-    path.write_bytes(render_report(records).encode("utf-8"))
+    atomic_write_text(path, render_report(records))
     print(f"{PREFIX} report written: {path}")
     return 0
 

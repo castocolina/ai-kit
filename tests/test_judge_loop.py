@@ -394,10 +394,12 @@ class TestReport(ReportFixture):
         self._put(make_record("32", "demo-a", 1, "cli-a:model-a",
                               full_verdict("demo-a", "cli-a:model-a")))
         self._put(make_record("32", "demo-a", 1, "native:fixture",
-                              full_verdict("demo-a", "native:fixture"), digest="1" * 64,
+                              full_verdict("demo-a", "native:fixture"),
                               substitute={"replaces": "cli-b:model-b",
                                           "reason": "cli-b lane hit its quota"}))
         text = self._render()
+        self.assertEqual(judge_loop._last_round(self.records, "demo-a")["worst"]["judge"],
+                         "cli-a:model-a")
         self.assertIn("replaces cli-b:model-b: cli-b lane hit its quota", text)
         self.assertLess(text.index("| demo-a | 32 | 1 | cli-a:model-a |"),
                         text.index("| demo-a | 32 | 1 | native:fixture |"))
@@ -433,7 +435,7 @@ class TestCheck(ReportFixture):
         self._put(make_record("32", "demo-a", 1, "cli-a:model-a",
                               full_verdict("demo-a", "cli-a:model-a")))
         self._put(make_record("32", "demo-a", 1, "native:fixture",
-                              full_verdict("demo-a", "native:fixture"), digest="1" * 64,
+                              full_verdict("demo-a", "native:fixture"),
                               substitute={"replaces": "cli-b:model-b",
                                           "reason": "cli-b lane hit its quota"}))
         self._report()
@@ -592,6 +594,102 @@ class TestCheck(ReportFixture):
         self.assertIn("cli-b_model-b.json: not a judge record (missing ", out)
         self.assertNotIn("Traceback", out)
 
+    def test_a_record_field_of_the_wrong_type_names_its_file(self):
+        self._report()
+        path = judge_loop.record_path(self.records, "32", "demo-a", 1, "cli-b:model-b")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["judge"], record["digest"] = 5, ["x"]
+        judge_loop.atomic_write_json(path, record)
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 1)
+        self.assertIn("cli-b_model-b.json: not a judge record (wrong type: judge, digest)", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_a_non_object_attempt_and_a_pool_probe_without_judge_are_named(self):
+        self._report()
+        path = judge_loop.record_path(self.records, "32", "demo-a", 1, "cli-b:model-b")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["attempts"] = ["x"]
+        judge_loop.atomic_write_json(path, record)
+        self._edit_loop(lambda data: data["pool"]["probes"][0].pop("judge"))
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 1)
+        self.assertIn("not a judge record (wrong type: attempts item)", out)
+        self.assertNotIn("Traceback", out)
+        code, out = self._report()
+        self.assertEqual(code, 1)
+        self.assertIn("wrong type: attempts item", out)
+        judge_loop.atomic_write_json(path, dict(record, attempts=[{"status_line": STATUS_OK}]))
+        code, out = self._report()
+        self.assertEqual(code, 1)
+        self.assertIn("loops/32.json: a pool probe or substitute has no judge", out)
+
+    def test_a_gate_failure_still_compares_the_report(self):
+        self._report()
+        (self.records / judge_loop.REPORT_NAME).write_text("edited\n", encoding="utf-8")
+        code, out = self._check("--skills", "demo-c", "--judges", "cli-a:model-a", "--gate")
+        self.assertEqual(code, 1)
+        self.assertIn("REJUDGE.md differs from the records", out)
+
+    def test_a_failed_write_leaves_no_temp_file(self):
+        target = self.base / "out" / "x.json"
+        with self.assertRaises(UnicodeEncodeError):
+            judge_loop.atomic_write_text(target, "lone \udc80 surrogate")
+        self.assertEqual(list(target.parent.iterdir()), [])
+
+    def _check_edited_verdict(self, edit):
+        self._report()
+        path = judge_loop.record_path(self.records, "32", "demo-a", 1, "cli-b:model-b")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        edit(record["verdict"])
+        judge_loop.atomic_write_json(path, record)
+        return self._check("--skills", "demo-a", "--judges", "cli-a:model-a", "cli-b:model-b")
+
+    def test_a_verdict_without_findings_is_a_problem_not_an_exception(self):
+        code, out = self._check_edited_verdict(lambda verdict: verdict.pop("findings"))
+        self.assertEqual(code, 1)
+        self.assertIn("demo-a r1 cli-b:model-b:", out)
+        self.assertIn("REJUDGE.md not checked: demo-a: an invalid verdict in loop 32", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_a_finding_without_severity_is_a_problem_not_an_exception(self):
+        code, out = self._check_edited_verdict(
+            lambda verdict: verdict["findings"][0].pop("severity"))
+        self.assertEqual(code, 1)
+        self.assertIn("demo-a r1 cli-b:model-b:", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_report_refuses_an_invalid_verdict_without_a_traceback(self):
+        path = judge_loop.record_path(self.records, "32", "demo-a", 1, "cli-b:model-b")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["verdict"].pop("total")
+        judge_loop.atomic_write_json(path, record)
+        code, out = self._report()
+        self.assertEqual(code, 1)
+        self.assertIn("demo-a: an invalid verdict in loop 32; run check", out)
+        self.assertFalse((self.records / judge_loop.REPORT_NAME).exists())
+
+    def test_one_round_judging_two_skill_texts_is_a_problem(self):
+        self._report()
+        path = judge_loop.record_path(self.records, "32", "demo-a", 1, "cli-b:model-b")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["digest"] = "1" * 64
+        judge_loop.atomic_write_json(path, record)
+        code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 1)
+        self.assertIn("demo-a: loop 32 round 1 records judged different skill text", out)
+
+    def test_a_corrupt_loop_file_is_a_named_problem(self):
+        self._report()
+        self._loop_file().write_text("{not json", encoding="utf-8")
+        code, out = self._check("--skills", "demo-a")
+        self.assertEqual(code, 1)
+        self.assertIn("32.json: not valid JSON", out)
+        self.assertNotIn("Traceback", out)
+
     def test_a_loop_file_without_a_pool_orders_judges_by_name(self):
         self.assertEqual(judge_loop.judge_order({}, ["cli-b:model-b", "cli-a:model-a"]),
                          ["cli-a:model-a", "cli-b:model-b"])
@@ -618,6 +716,7 @@ class TestCheck(ReportFixture):
         self._edit_loop(lambda data: data["counts"].pop("demo-a"))
         code, out = self._check("--skills", "demo-a", "--judges", "cli-a:model-a")
         self.assertEqual(code, 1)
+        self.assertIn("demo-a: no count record in loops/32.json", out)
         self.assertIn("REJUDGE.md not checked: demo-a: no count record in loops/32.json", out)
 
     def test_jev_level_two_count_round_trips(self):
@@ -909,8 +1008,8 @@ class TestIngest(unittest.TestCase):
 
     def test_refuses_a_record_of_another_judge_with_the_same_slug(self):
         path = self.records / "verdicts" / "32" / "demo-alpha" / "r1" / "cli-a_model-a.json"
-        judge_loop.atomic_write_json(path, {"judge": "cli-a_model-a", "verdict": None,
-                                            "attempts": []})
+        judge_loop.atomic_write_json(path, make_record("32", "demo-alpha", 1, "cli-a_model-a",
+                                                       None))
         write_lane(self.lane, STATUS_OK, self._good_verdict() + "\n")
         code, out = self._ingest()
         self.assertEqual(code, 1)
@@ -960,6 +1059,34 @@ class TestIngest(unittest.TestCase):
         self.assertIsNotNone(record["attempts"][0]["error"])
         self.assertIsNone(record["attempts"][1]["error"])
         self.assertEqual(record["verdict"], make_verdict("demo-alpha", "cli-a:model-a"))
+
+    def test_a_verdict_line_is_found_in_any_key_order(self):
+        verdict = make_verdict("demo-alpha", "cli-a:model-a")
+        reordered = {"judge": verdict["judge"], **verdict}
+        for index, line in enumerate((json.dumps(reordered), json.dumps(verdict).replace(
+                '{"skill"', '{ "skill"', 1))):
+            with self.subTest(line=line[:20]):
+                records = self.base / f"order-{index}"
+                write_lane(self.lane, STATUS_OK, line + "\n")
+                code, out = self._ingest(records=records)
+                self.assertEqual(code, 0, out)
+                self.assertIn("verdict recorded", out)
+
+    def test_a_retry_with_another_digest_is_refused_and_the_record_is_kept(self):
+        quota = "AIKIT-XAI status=quota cli=cli-a model=model-a exit=75 cli_rc=75 tree=clean"
+        write_lane(self.lane, quota, "")
+        self.assertEqual(self._ingest()[0], 0)
+        manifest_path = self.lane / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["digest"] = "f" * 64
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        write_lane(self.lane, STATUS_OK, self._good_verdict() + "\n")
+        code, out = self._ingest()
+        self.assertEqual(code, 1)
+        self.assertIn("digest differs from the recorded round", out)
+        record = self._record()
+        self.assertIsNone(record["verdict"])
+        self.assertEqual(len(record["attempts"]), 1)
 
     def test_native_lane_records_the_note_and_no_status_line(self):
         note = "native, xhigh (frontmatter, documented; not observed)"
@@ -1114,6 +1241,10 @@ class TestPool(unittest.TestCase):
     def test_native_id_in_the_judge_list_is_refused(self):
         with self.assertRaisesRegex(judge_loop.JudgeLoopError, "must not be in the judge list"):
             judge_loop.choose_pool([NATIVE], NATIVE, [])
+
+    def test_a_judge_listed_twice_is_refused(self):
+        with self.assertRaisesRegex(judge_loop.JudgeLoopError, "appears twice"):
+            self._pool(["cli-a:m", "cli-a:m"], usable=["cli-a:m"])
 
     def test_usable_probe_reports_its_status_line_and_no_reason(self):
         write_probe(self.probes, "cli-a:m", ANSWER, ANSWER + "\n", _status())
@@ -1317,8 +1448,8 @@ class TestCount(unittest.TestCase):
         self.assertEqual(seen["argv"][-2:], ["/fixture/jev_review.py", "ladder"])
         self.assertEqual(json.loads(seen["kwargs"]["input"]), {"items": [item]})
         self.assertEqual(seen["kwargs"]["env"]["GSD_PATH_JEV"], "1")
-        self.assertEqual(seen["kwargs"]["env"]["GSD_PATH_JEV_TIMEOUT_SECONDS"], "30")
-        self.assertEqual(seen["kwargs"]["env"]["JEV_CALLER"], "judge_loop")
+        # jev_ladder waits 30 * (1 + 3) + 10 = 130 s for its client; the outer call outlasts it
+        self.assertGreater(seen["kwargs"]["timeout"], 130)
 
     def test_ask_jev_raises_jev_unavailable_on_a_failed_client(self):
         def failed_run(argv, **kwargs):
@@ -1349,11 +1480,23 @@ class TestCount(unittest.TestCase):
         with self.assertRaisesRegex(judge_loop.JudgeLoopError, "demo-gamma has no valid batch"):
             judge_loop.load_inputs(records)
 
+    def test_load_inputs_names_the_keys_a_skill_lacks(self):
+        records = self.base / "rec"
+        records.mkdir()
+        (records / "inputs.json").write_text(json.dumps({
+            "schema": 1, "skills": {"demo-gamma": {"batch": "32.1"}}, "excluded": {}}),
+            encoding="utf-8")
+        with self.assertRaises(judge_loop.JudgeLoopError) as caught:
+            judge_loop.load_inputs(records)
+        self.assertEqual(str(caught.exception),
+                         "inputs.json: skill demo-gamma lacks last_v4, old_score")
+
     def test_load_inputs_refuses_a_name_in_both_maps(self):
         records = self.base / "rec"
         records.mkdir()
         (records / "inputs.json").write_text(json.dumps({
-            "schema": 1, "skills": {"demo-alpha": {"batch": "32.1", "last_v4": None}},
+            "schema": 1, "skills": {"demo-alpha": {"batch": "32.1", "last_v4": None,
+                                                   "old_score": None}},
             "excluded": {"demo-alpha": "reason"}}), encoding="utf-8")
         with self.assertRaises(judge_loop.JudgeLoopError) as caught:
             judge_loop.load_inputs(records)
@@ -1390,6 +1533,12 @@ class TestCountGit(unittest.TestCase):
 
     def test_numstat_lists_the_skill_rows_since_the_base(self):
         commit_change(self.repo, "skills/demo-alpha/SKILL.md", "# demo-alpha\nmore\n")
+        self.assertEqual(judge_loop.numstat(self.repo, self.base_sha, "demo-alpha"),
+                         [(1, 0, "skills/demo-alpha/SKILL.md")])
+
+    def test_numstat_counts_an_uncommitted_edit_as_the_digest_does(self):
+        (self.repo / "skills" / "demo-alpha" / "SKILL.md").write_text(
+            "# demo-alpha\nmore\n", encoding="utf-8")
         self.assertEqual(judge_loop.numstat(self.repo, self.base_sha, "demo-alpha"),
                          [(1, 0, "skills/demo-alpha/SKILL.md")])
 
@@ -1494,19 +1643,20 @@ class TestCountGit(unittest.TestCase):
         self.assertIn("demo-gamma", out)
 
     def test_cli_count_refuses_a_skill_in_both_maps_and_an_unknown_skill(self):
-        self._write_inputs({"demo-alpha": {"batch": "32.1", "last_v4": None}},
+        self._write_inputs({"demo-alpha": {"batch": "32.1", "last_v4": None, "old_score": None}},
                            excluded={"demo-alpha": "reason"})
         code, out = self._count(["--no-jev"])
         self.assertEqual(code, 1)
         self.assertIn("judge-loop: inputs.json: demo-alpha is in both skills and excluded", out)
-        self._write_inputs({"demo-alpha": {"batch": "32.1", "last_v4": None}})
+        self._write_inputs({"demo-alpha": {"batch": "32.1", "last_v4": None, "old_score": None}})
         code, out = self._count(["--no-jev", "--skill", "demo-zeta"])
         self.assertEqual(code, 1)
         self.assertIn("judge-loop: inputs.json: no skill demo-zeta", out)
 
     def test_cli_count_without_a_client_records_it_as_unavailable(self):
         self._write_inputs({"demo-alpha": {"batch": "32.1",
-                                           "last_v4": _last(88.0, judged_at=self.base_sha)}})
+                                           "last_v4": _last(88.0, judged_at=self.base_sha),
+                                           "old_score": None}})
         code, _out = self._count(["--client", str(self.base / "no-such-client.py")])
         self.assertEqual(code, 0)
         loop = judge_loop.read_loop_file(self.records, "32")

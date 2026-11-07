@@ -746,6 +746,12 @@ class TestJudgeRecords(unittest.TestCase):
         self.assertEqual(check_dogfood.check_judge_records(self.root, load=lambda: module),
                          (["judge records: bad inputs"], []))
 
+    def test_an_unexpected_record_error_is_a_problem_not_a_traceback(self):
+        (self.root / ".planning" / "judge").mkdir(parents=True)
+        module, _calls = self._fake(error=KeyError("findings"))
+        self.assertEqual(check_dogfood.check_judge_records(self.root, load=lambda: module),
+                         (["judge records: KeyError: 'findings'"], []))
+
 
 def _real_edge_engine() -> str | None:
     """The edge-probe.cjs engine that edge_floor.find_engine resolves for this checkout, or None."""
