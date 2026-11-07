@@ -1,3 +1,18 @@
+---
+phase: 31-removals-and-small-defects
+plan: 01
+subsystem: spec-execute
+tags: [removal, ai-kit-spec-execute-gsd, execute-router, runner-guidance]
+requires: []
+provides:
+  - "execute router hands GSD phases to /gsd-execute-phase"
+  - "ai-kit-spec-execute-gsd adapter, its tests and the runner guidance prepend removed"
+affects: [ai-kit-spec-execute, ai-kit-gsd-curated-config, ai-kit-spec-review]
+requirements-completed: [RMV-01]
+completed: 2026-11-06
+status: complete
+---
+
 # Phase 31 Plan 01: Remove ai-kit-spec-execute-gsd and the runner guidance prepend Summary
 
 **The execute router hands GSD phases to `/gsd-execute-phase`; the `ai-kit-spec-execute-gsd` adapter, its test module, its list entries and the runner guidance prepend (`--prepend-file` guidance, `prior_value`) are gone.**

@@ -31,7 +31,7 @@ metrics:
   commits: 3
   duration: "about 20 min"
 status: complete
-requirements: [RMV-02, JDG-04]
+requirements-completed: [RMV-02, JDG-04]
 actuals:
   tokens: 35815
   tasks: 3

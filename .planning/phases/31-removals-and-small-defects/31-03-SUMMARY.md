@@ -38,6 +38,7 @@ actuals:
   tokens: 7790
   tasks: 3
   commits: 3
+requirements-completed: [DEF-01]
 ---
 
 # Phase 31 Plan 03: Resolved kit paths, checkout default, headless dead-link prune Summary

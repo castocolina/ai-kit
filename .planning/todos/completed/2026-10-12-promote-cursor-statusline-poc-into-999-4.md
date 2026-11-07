@@ -8,6 +8,8 @@ files:
   - .planning/ROADMAP.md
   - .claude/worktrees/poc-cursor-statusline/
   - .claude/worktrees/host-split-statusline-spec/.planning/specs/
+completed: 2026-11-07
+status: completed
 ---
 
 > *Re-pointed 2026-11-03 (Phase 30.1 discuss): the `resolves_phase: 54` tag ("delivered by v1.3") was wrong — the owner
@@ -16,6 +18,11 @@ files:
 >
 > *Amended 2026-11-03 (30.2 D-11): folded into Phase 30.2; this todo, the branch and its archive tag close after
 > 30.2's verification, with owner confirmation for the deletion.*
+
+**Resolved 2026-11-07 (phases 28-31 audit):** delivered by Phase 30.2: WIZ-04 satisfied with a live Cursor run
+(30.2-VERIFICATION), the proof of concept archived as tag `archive/cursor-poc` (old ref deleted), and the live
+config points at `tools/cursor-status-line.py`, not the proof-of-concept script. The acceptance boxes below are
+superseded by that delivery.
 
 ## Problem
 

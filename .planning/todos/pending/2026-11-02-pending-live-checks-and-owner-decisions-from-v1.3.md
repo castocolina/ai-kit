@@ -45,7 +45,7 @@ spawned for a check once it is done. Each item says what it is, why it is open, 
   user journal for the fire, and note whether a notice appears when no graphical login exists yet.
 - [ ] A real resume of a session by the wake. Open because only a throwaway "session not found" give-up was
   seen. Next step: arm from a throwaway real session, let it fire, and check that the session continues.
-- [ ] Cursor status line once logged in to Cursor. Open because the check stopped at the login screen on
+- [x] *(done in Phase 30.2: the live Cursor run in 30.2-VERIFICATION)* Cursor status line once logged in to Cursor. Open because the check stopped at the login screen on
   2026-11-02. Next step: log in, then capture one status-line payload, one quota response and the wired status
   line in a live `agent` session, and flip the matching unverified flags. *(amended 2026-11-03, 30.2 D-08: the
   live status-line check is Phase 30.2's verification, from its branch tip; closes with it)*
@@ -91,7 +91,8 @@ spawned for a check once it is done. Each item says what it is, why it is open, 
   from the Phase 22 interactive kit and record each.
 - [ ] Goal-prompt detection output on a large roadmap (`--gsd-cmd` reading `@file:` indirection). Tracked as a
   defect in the tooling defects todo; the live check is to run the roadmap query on a large roadmap and see
-  whether the output arrives inline.
+  whether the output arrives inline. *(code half done in Phase 31, 31-SPEC R11: the `@file:` reader; only the
+  live check is left)*
 
 ### Group 2: decisions the owner still has to take
 
@@ -149,10 +150,12 @@ None of these is taken. Each shows the options and what happens if nothing chang
   Phase 23 split) and the one named loop polish (1 commit of June 2026: a branch icon and an install flag for the
   branch). Decide for each: port the idea onto the current split status line, or drop it. Default: both stay on
   the remote untouched, and each is also preserved locally by an archive tag.
-- [ ] Optional idea left by the old Cursor proof of concept: a status line segment that shows the memory used by the
+- [x] *(done in Phase 30.2, D-02: the segment is built; its live value is still unverified)* Optional idea left by
+  the old Cursor proof of concept: a status line segment that shows the memory used by the
   cursor-agent process (today only the external system-memory example exists for both hosts). Cursor is a
   secondary runtime. Default: not built. *(amended 2026-11-03, 30.2 D-02: decided, built in Phase 30.2)*
-- [ ] The todo about promoting the Cursor status line proof of concept (dated 2026-10-12) looks obsolete because
+- [x] *(done 2026-11-07: Phase 30.2 delivered it, D-11; the todo moved to completed/)* The todo about promoting the
+  Cursor status line proof of concept (dated 2026-10-12) looks obsolete because
   Phase 23 delivered the real Cursor status line. It was left open on purpose; decide whether to close it.
   *(amended 2026-11-03, 30.2 D-11: not obsolete — Phase 30.2 resolves it; it closes, and the proof-of-concept
   branch and tag are deleted after owner confirmation, when 30.2's verification closes)*
@@ -172,7 +175,8 @@ None of these is taken. Each shows the options and what happens if nothing chang
   last judged round because the audit fixed a dead link in one of its references (a link depth, no behaviour).
   The checker therefore reports a stale verdict for that skill (the Phase 27 checker is fine). The verdict is
   already deferred to the skill refactor; re-judge it there and the evidence becomes current again.
-- [ ] The end-to-end test that checks a checkout without git fails when the temporary directory sits inside a git
+- [x] *(done in Phase 28-03, GATE-03: the no-git e2e case passes with TMPDIR inside a git work tree)* The
+  end-to-end test that checks a checkout without git fails when the temporary directory sits inside a git
   repository (it only passes with the system temporary directory). Make the test build its temporary folder
   outside any repository, or have the code under test tolerate it.
 - [ ] The local tag for v1.3 exists, but the GitHub remote has no tags. Decide whether to push the tag

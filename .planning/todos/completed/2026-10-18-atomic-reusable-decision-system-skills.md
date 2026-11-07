@@ -9,6 +9,8 @@ files:
   - .planning/todos/pending/2026-10-11-execute-system-one-decision-skill-plan.md (main checkout)
   - .planning/todos/pending/2026-10-14-wire-jev-fast-decision-cross-host-discovery-scaffolding.md (main checkout)
   - skills/ai-kit-gsd-spec-discuss/scripts/decide.py
+completed: 2026-11-07
+status: completed
 ---
 
 ## Problem
@@ -67,3 +69,6 @@ scarce planner quota (the planner model ran close to exhaustion on 2026-10-18).
 ## Promoted
 
 Promoted to Phase 21.1 on 2026-10-18 (ROADMAP and REQUIREMENTS updated). Owner-approved order: 21.1 -> 21.2 -> 21.3, all before Phases 22 and 23.
+
+**Resolved 2026-11-07 (phases 28-31 audit):** delivered by v1.3 Phase 21.1 as `skills/jev-fast-decision`;
+Phase 29 (JEV-06) gave the decision ladder its shared home (`jev_ladder.py`, 29-VERIFICATION R8).

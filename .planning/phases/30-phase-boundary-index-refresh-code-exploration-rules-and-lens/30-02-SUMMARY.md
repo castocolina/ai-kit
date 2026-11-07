@@ -36,6 +36,7 @@ actuals:
 commits: 2
 plan_head_before: 9cf58016578c7435caef6d00ca6f67185bcf3cce
 plan_head_after: fea5967a77f1066c0951a6658be38c2e51111f10
+requirements-completed: [FLOW-06, DESIGN-01, FLOW-13]
 ---
 
 # Phase 30 Plan 02: One code-exploration rule, graphify runbook, design rule Summary

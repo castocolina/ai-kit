@@ -42,6 +42,7 @@ actuals:
   tasks: 3
   commits: 3
   tokens: "not measured (chars/4 over the realized diff was not computed within the window)"
+requirements-completed: [DEF-01]
 ---
 
 # Phase 31 Plan 04: Edge-floor guard, @file: replies, routing docstring, runtime-list drift test Summary

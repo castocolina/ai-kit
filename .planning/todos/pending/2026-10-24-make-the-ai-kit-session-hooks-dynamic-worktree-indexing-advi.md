@@ -75,3 +75,7 @@ Phase 30 now indexes automatically: a new worktree gets `codegraph init -y` or `
 `graphify update .` through ai-kit's `post-checkout` hook, and every unit boundary refreshes both. Item 1
 here shrinks to advice: the session-start line reports what was indexed (or which CLI is missing), and no
 longer tells the agent how to index. Not folded into Phase 30.
+
+Done: worktree indexing, by Phase 30 (FLOW-04, FLOW-13, 30-VERIFICATION): the `post-checkout` hook and the unit
+boundary index new worktrees. Still open (HOOK-03, Phase 49): the session-start report of what was indexed,
+install-relative doc paths and compact metrics.

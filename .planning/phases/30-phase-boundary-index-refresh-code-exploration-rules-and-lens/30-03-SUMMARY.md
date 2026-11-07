@@ -49,6 +49,7 @@ actuals:
 plan_head_before: 9cf58016578c7435caef6d00ca6f67185bcf3cce
 plan_head_after: 1f4a35a
 commits: 8
+requirements-completed: [FLOW-12]
 ---
 
 # Phase 30 Plan 03: Global rules rewrite (headless, doctor, wizard) Summary

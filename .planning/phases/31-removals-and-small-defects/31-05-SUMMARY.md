@@ -1,3 +1,18 @@
+---
+phase: 31-removals-and-small-defects
+plan: 05
+subsystem: skills
+tags: [removal, ai-kit-opencode-providers, mermaid-audit, pi, readme]
+requires: ["31-01", "31-02", "31-03", "31-04"]
+provides:
+  - "ai-kit-opencode-providers and mermaid-audit removed end to end"
+  - "docstrings name no removed skill; curated-config describes pi's session variables as pi sets them"
+affects: [README.md, ai-kit-gsd-curated-config, markdown-to-pdf]
+requirements-completed: [RMV-02, RMV-03, DEF-01]
+completed: 2026-11-06
+status: complete
+---
+
 # Phase 31 Plan 05: Removals, README and pi wording Summary
 
 **Removed `ai-kit-opencode-providers` and `mermaid-audit` end to end, reworded every origin and docstring reference to them and to the removed GSD adapter, and made curated-config describe pi's session variables as pi 1.3.0 really sets them.**

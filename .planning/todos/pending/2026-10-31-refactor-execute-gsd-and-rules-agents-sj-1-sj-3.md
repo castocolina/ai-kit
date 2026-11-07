@@ -37,6 +37,8 @@ owner captures SJ-1 and SJ-3 in `26-OWNER-CAPTURES.md` in the same phase directo
 
 *Status 2026-11-03 (Phase 31 discuss): SJ-1 closed by the removal; SJ-3 stays open and moves with the project-rules merge (Phase 45, 31 D-01); SJ-2 stays open.*
 
+Done: SJ-1, by RMV-01 in Phase 31 (d1f0f9f, 31-VERIFICATION): `ai-kit-spec-execute-gsd` is removed. SJ-3 (Phase 45) and SJ-2 (Phase 41) stay open.
+
 ## SJ-2: ai-kit-spec-execute-superpowers (deferred by the owner, 2026-10-31)
 
 Round 24 scored 86/120 (72%, grade C), 1 Critical and 2 Important, under the original skill-judge

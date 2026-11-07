@@ -86,7 +86,8 @@ Checklist:
   is only tested as a superset. Add one drift test (found by the v1.3 audit).
 - [x] *(folded into Phase 31, 2026-11-03; closed 2026-11-06, 31-SPEC R14)* The project `AGENTS.md` links `.claude/cli-environment.md`, but that file is gitignored, so the link
   dangles in a clean checkout. Either track the file or remove the link (found by the v1.3 audit).
-- [ ] One goal-prompt test depends on the length of the checkout path because of a separate test of the
+- [x] *(closed 2026-11-06 by Phase 28-03, GATE-03: the tool-substitution compose tests no longer depend on checkout
+  path length, proven from a 224-character clone path)* One goal-prompt test depends on the length of the checkout path because of a separate test of the
   tool-substitution hook; it passes only from a short path. Make the pair independent of path length
   (noted in the v1.3 close handoff).
 

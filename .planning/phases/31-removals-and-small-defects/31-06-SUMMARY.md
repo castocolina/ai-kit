@@ -1,3 +1,18 @@
+---
+phase: 31-removals-and-small-defects
+plan: 06
+subsystem: tooling
+tags: [removal, rtk, house-rules, config-doctor, agents-md]
+requires: ["31-05"]
+provides:
+  - "tracked-file rtk ban test; house rule R05 retired; config doctor rtk row removed"
+  - "AGENTS.md link test: links resolve and none points into a gitignored path"
+affects: [ai-kit-project-rules-agents, tools/config_doctor_checks.py, AGENTS.md]
+requirements-completed: [RMV-04, DEF-01]
+completed: 2026-11-06
+status: complete
+---
+
 # Phase 31 Plan 06: rtk removal, R05 retirement, config doctor row and AGENTS.md link test Summary
 
 **Nothing tracked names rtk outside history and the usage-metrics files that read stored rtk data (a tracked-file test enforces it); house rule R05 is retired with its id unused; the config doctor's rtk row goes; AGENTS.md links resolve and none points into a gitignored path (a test enforces it).**

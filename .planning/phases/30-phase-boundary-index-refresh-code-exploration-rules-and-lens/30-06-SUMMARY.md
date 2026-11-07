@@ -40,7 +40,7 @@ key-decisions:
 patterns-established:
   - "a plan:pre contribution carries a command the planner runs; GSD dispatches no command at plan:pre"
   - "every config-set array keeps skills/jev-fast-decision; the lens comes first, the lens brief right after it, the brief entry last"
-requirements-completed: []
+requirements-completed: [LENS-01, DESIGN-01]
 actuals:
   tokens: 12777
   tasks: 3

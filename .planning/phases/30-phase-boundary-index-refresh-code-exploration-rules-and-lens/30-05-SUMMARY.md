@@ -48,6 +48,7 @@ actuals:
   tokens: 14103
   tasks: 2
   commits: 3
+requirements-completed: [FLOW-06, FLOW-13]
 ---
 
 # Phase 30 Plan 05: Codegraph search advice and `make setup-dev` Summary
