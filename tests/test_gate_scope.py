@@ -1,4 +1,5 @@
 """Every test module is gated exactly once, through the parallel runner."""
+import fnmatch
 import importlib.util
 import os
 import pathlib
@@ -411,6 +412,21 @@ def path_under_roots(rel_path: str, roots: list[str]) -> bool:
     )
 
 
+def stray_test_modules(tests_dir: pathlib.Path) -> list[str]:
+    """Every test_*.py below a subfolder of tests/, which the runner's flat glob never discovers
+    (32 SPEC R1). One walk; __pycache__ is skipped; paths are repo-relative and sorted."""
+    found: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(tests_dir):
+        dirnames[:] = [name for name in dirnames if name != "__pycache__"]
+        if pathlib.Path(dirpath) == tests_dir:
+            continue
+        for name in filenames:
+            if fnmatch.fnmatchcase(name, "test_*.py"):
+                path = pathlib.Path(dirpath) / name
+                found.append(path.relative_to(tests_dir.parent).as_posix())
+    return sorted(found)
+
+
 def lint_config_drift(tool: dict) -> list[str]:
     """Drift in pinned ruff, vulture, pylint basic and pyright settings."""
     errors: list[str] = []
@@ -461,6 +477,9 @@ class TestGateScope(unittest.TestCase):
         self.assertEqual(modules_in_multiple_groups(self.groups), [])
         assigned = [name for names in self.groups.values() for name in names]
         self.assertCountEqual(assigned, self.runner.discover_modules())
+
+    def test_no_test_module_in_a_tests_subfolder(self) -> None:
+        self.assertEqual(stray_test_modules(REPO_ROOT / "tests"), [])
 
     def test_tiers_run_through_the_runner(self) -> None:
         for target in TIER_TARGETS:
@@ -653,6 +672,33 @@ class TestGateScopeNonVacuity(unittest.TestCase):
     def test_path_under_roots_rejects_a_sibling_prefix(self) -> None:
         self.assertFalse(path_under_roots("toolsx/a.py", ["tools"]))
         self.assertTrue(path_under_roots("tools/a.py", ["tools"]))
+
+    def test_a_nested_test_module_is_named(self) -> None:
+        files = {
+            "tests/test_top.py": "",
+            "tests/skills/demo/test_x.py": "",
+            "tests/a/test_b.py": "",
+            "tests/fixtures/archived/26/skill-judge/check_verdicts.py.txt": "",
+            "tests/fixtures/y/helper.py": "",
+            "tests/c/Test_upper.py": "",
+            "tests/d/__pycache__/test_cached.py": "",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            for rel, text in files.items():
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(text, encoding="utf-8")
+            self.assertEqual(stray_test_modules(root / "tests"),
+                             ["tests/a/test_b.py", "tests/skills/demo/test_x.py"])
+
+    def test_an_empty_tests_tree_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tests_dir = pathlib.Path(tmp) / "tests"
+            tests_dir.mkdir()
+            self.assertEqual(stray_test_modules(tests_dir), [])
+            (tests_dir / "sub").mkdir()
+            (tests_dir / "sub" / "helper.py").write_text("", encoding="utf-8")
+            self.assertEqual(stray_test_modules(tests_dir), [])
 
     def test_stale_generated_listing_is_detected(self) -> None:
         generator = load_tool(GENERATOR)
