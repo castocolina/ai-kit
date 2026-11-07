@@ -8,7 +8,8 @@ process under the test runner's baseline env and tripwire). It prints only relat
 ids and short reasons, never file contents or hashes. When the project has a gsd-core, it also
 checks the GSD flow config (branch per phase, healthy, the capability and its hook points)
 through read-only gsd-tools calls. It also runs the edge-floor check on every current phase SPEC
-that has an Edge Coverage section.
+that has an Edge Coverage section. It also checks that every ROADMAP phase after 32 that names a
+SKILL.md cites JDG-04 in its success criteria.
 """
 from __future__ import annotations
 
@@ -508,6 +509,65 @@ def check_edge_floors(root: Path, run: FlowRun = _run_floor,
     return problems, notes
 
 
+_PHASE_DETAILS = re.compile(r"^## Phase Details$", re.MULTILINE)
+_SECTION_HEAD = re.compile(r"^## ", re.MULTILINE)
+_PHASE_HEAD = re.compile(r"^### Phase (\d+(?:\.\d+)*):", re.MULTILINE)
+_JDG04 = re.compile(r"(?<![A-Za-z0-9-])JDG-04(?![A-Za-z0-9])")
+_CRITERIA = "**Success Criteria**"
+_PLANS = "**Plans**"
+_JDG04_FLOOR = (32,)
+
+
+def _phase_key(number: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in number.split("."))
+
+
+def _phase_blocks(text: str) -> list[tuple[str, str]]:
+    """(number, block) for each `### Phase N:` under `## Phase Details`, in roadmap order."""
+    head = _PHASE_DETAILS.search(text)
+    if head is None:
+        return []
+    rest = text[head.end():]
+    next_section = _SECTION_HEAD.search(rest)
+    section = rest if next_section is None else rest[:next_section.start()]
+    heads = list(_PHASE_HEAD.finditer(section))
+    blocks = []
+    for index, phase in enumerate(heads):
+        stop = heads[index + 1].start() if index + 1 < len(heads) else len(section)
+        blocks.append((phase.group(1), section[phase.start():stop]))
+    return blocks
+
+
+def _criteria(block: str) -> str | None:
+    """The success-criteria text of one phase block, or None when the marker is absent."""
+    start = block.find(_CRITERIA)
+    if start < 0:
+        return None
+    body = block[start + len(_CRITERIA):]
+    stop = body.find(_PLANS)
+    return body if stop < 0 else body[:stop]
+
+
+def check_jdg04_citations(root: Path) -> tuple[list[str], list[str]]:
+    """(problems, notes): every ROADMAP phase after 32 that names a SKILL.md cites JDG-04 in its
+    success criteria (32 D-21). Backlog entries sit after `## Backlog` and are not scanned."""
+    roadmap = root / ".planning" / "ROADMAP.md"
+    if not roadmap.is_file():
+        return [], ["JDG-04 citations not checked: no .planning/ROADMAP.md"]
+    text = roadmap.read_text(encoding="utf-8", errors="replace")
+    if _PHASE_DETAILS.search(text) is None:
+        return [], ["JDG-04 citations not checked: no ## Phase Details section"]
+    problems = []
+    for number, block in _phase_blocks(text):
+        if _phase_key(number) <= _JDG04_FLOOR or "SKILL.md" not in block:
+            continue
+        criteria = _criteria(block)
+        if criteria is None or _JDG04.search(criteria) is None:
+            problems.append(
+                f"Phase {number} names a SKILL.md but no success criterion cites JDG-04")
+    return problems, []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--root", type=Path, default=REPO_ROOT,
@@ -521,16 +581,13 @@ def main(argv: list[str] | None = None) -> int:
         # The guard child always runs in this checkout, so it can only bracket this checkout.
         print(f"{PREFIX} --root applies to the runner-copy check only; add --skip-no-write")
         return 2
-    problems, notes = check_runner_copy(root, args.template)
-    flow_problems, flow_notes = check_flow_config(root)
-    problems, notes = problems + flow_problems, notes + flow_notes
-    lens_problems, lens_notes = check_lens_wiring(root)
-    problems, notes = problems + lens_problems, notes + lens_notes
-    edge_problems, edge_notes = check_edge_floors(root)
-    problems, notes = problems + edge_problems, notes + edge_notes
+    # Each check returns (problems, notes); the order here is the printed order.
+    results = [check_runner_copy(root, args.template), check_flow_config(root),
+               check_lens_wiring(root), check_edge_floors(root), check_jdg04_citations(root)]
     if not args.skip_no_write:
-        write_problems, write_notes = check_no_write(root)
-        problems, notes = problems + write_problems, notes + write_notes
+        results.append(check_no_write(root))
+    problems = [item for found, _notes in results for item in found]
+    notes = [item for _problems, found in results for item in found]
     for line in [*notes, *problems]:
         print(f"{PREFIX} {line}")
     if problems:
