@@ -1,7 +1,7 @@
 ---
 name: ai-kit-project-rules-docker
 description: >-
-  Use when a target repo's local-dev Docker Compose conventions need auditing -- whether the eight-member docker-* Makefile target family exists, whether docker/local/README.md documents the local-dev runbook, whether a docker-compose.yml service's healthcheck timeout/start_period/interval stay within 2s/10s/5s, whether depends_on entries use condition: service_healthy rather than bare ordering, and whether a local-dev service definition uses a bind mount plus a hot-reload-capable command override rather than the production image baked at build time -- or when asked "does my compose file wait for a dependency to become healthy", "is my local-dev container actually hot-reloading", or "why is my depends_on flagged". Routes apart from the ai-kit-project-rules-makefile sibling, which also has an opinion about docker-* targets: that sibling checks that a docker-up-shaped target builds its image before it runs; this skill checks that the eight-target local-dev family exists at all and that the compose file's own conventions hold. Detects and reports only; never edits the target repo.
+  Use when a repo's local-dev Docker Compose setup needs auditing: the eight docker-* Makefile targets (docker-up, docker-health, docker-stop, docker-clean and the rest), the docker/local/README.md runbook, healthcheck timeout/start_period/interval within 2s/10s/5s, depends_on using condition: service_healthy instead of bare ordering, and local-dev services using a bind mount plus a hot-reload command override. Also for "does my compose file wait for the database to be healthy", "is my dev container hot-reloading" or "why is my depends_on flagged". Not for a docker-up target's build-before-up order (ai-kit-project-rules-makefile) or for building, running or debugging containers. Detects and reports only; never edits the repo.
 ---
 
 # ai-kit-project-rules-docker
@@ -219,7 +219,11 @@ guard against.
 ## What a user does with the output
 
 Read the `remediate` list in criticality order. Apply the non-advisory entries -- their
-`auto_apply` is `true`, but this skill never applies them itself; the caller decides. Confirm
+`auto_apply` is `true`, but this skill never applies them itself; the caller decides. Before
+applying a `depends_on` fix (`condition: service_healthy`), check that the dependency service has
+a `healthcheck:` block: Compose refuses to start a service whose `service_healthy` dependency has
+no healthcheck, and this skill does not flag a missing one (Limits 3). Add the healthcheck first,
+within the bounds above, or leave that entry as it is. Confirm
 every advisory entry by hand: each one exists because this skill could not read a value or could
 not match a hardcoded baseline confidently enough to assert a defect, not because nothing is
 there to check.

@@ -5530,6 +5530,8 @@ class TestReadFrontmatter(unittest.TestCase):
                     front = setup._read_frontmatter(path)
                     self.assertTrue(front.get("description"), "empty description")
                     self.assertTrue(front.get("name"), "no frontmatter name")
+                    # Agent Skills spec cap; a longer description is rejected or cut by hosts.
+                    self.assertLessEqual(len(front["description"]), 1024, "description > 1024")
                     seen += 1
         self.assertGreater(seen, 10)
 
