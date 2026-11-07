@@ -131,7 +131,7 @@ code is written, never which design wins. jev answers are advisory; the attribut
   holds unmet bars by design. Own reasoning, corrects the analyzer's `check --gate`.
 - **D-12: The baseline verdict becomes each judged skill's base for the batch phases' regression check**; older
   bases (spec-config's 105 on the old scale, goal-prompt's 90.4) are history, with JDG-01 and PROJECT.md ("only the
-  current judge's verdicts count"). This closes an open owner item in the live-checks todo. **needs confirmation**.
+  current judge's verdicts count"). This closes an open owner item in the live-checks todo. **confirmed by the owner 2026-11-07**.
   Own reasoning (not asked). Ledger.
 
 ### The judge prompt (SPEC R2)
@@ -235,7 +235,7 @@ code is written, never which design wins. jev answers are advisory; the attribut
   main-flow, provenance, audit, AGENTS.md-line and unverified-tag items are folded (SPEC R9, D-17 to D-20); the
   tool-specific-facts and rare-cases items stay with the batch phases' judge rounds.
 - **Base-score re-baseline** (`2026-11-02-pending-live-checks-and-owner-decisions-from-v1.3.md`): folded as D-12,
-  needs confirmation.
+  confirmed by the owner 2026-11-07.
 - **Moved planning paths in shipped skill text** (same todo): folded (D-19, jev `backends/laya.md` and
   execute-superpowers).
 - **Stale execute-superpowers judge evidence** (same todo): folded; the baseline re-judges it.

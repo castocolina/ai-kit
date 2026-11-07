@@ -63,7 +63,7 @@ consented TypeSafe row answered the items Laya left low.
 
 Not asked (evidence or a Confident analyzer item settled them): D-07 (check-dogfood runs the checker), D-09 (frozen
 tree during lanes), D-11 (plan order; corrects the analyzer's `check --gate`, since a baseline holds unmet bars),
-D-12 (baseline as the new base; needs confirmation), D-13, D-15, D-16, D-19, D-21, D-22.
+D-12 (baseline as the new base; confirmed by the owner 2026-11-07), D-13, D-15, D-16, D-19, D-21, D-22.
 
 ## Corrections Made
 
