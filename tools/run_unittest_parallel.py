@@ -91,7 +91,10 @@ TESTS_DIR = REPO_ROOT / "tests"
 # arch-test tier: the AST architecture-fitness module.
 ARCH_MODULES = frozenset({"tests.test_arch"})
 # Needs PyYAML, which only the uv env provides.
-UNIT_UV_MODULES = frozenset({"tests.test_framework_profiles"})
+UNIT_UV_MODULES = frozenset({
+    "tests.test_framework_profiles",
+    "tests.test_skill_frontmatter_pyyaml",
+})
 # Textual app and PTY-driven suites; they run under uv (the wizard hook).
 INTEGRATION_MODULES = frozenset({
     "tests.test_config_doctor",
