@@ -1,0 +1,223 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": "native, xhigh (frontmatter, documented; not observed)",
+   "status_line": null,
+   "verdict_line": "{\"skill\":\"markdown-to-pdf\",\"judge\":\"native:opus-xhigh\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":15,\"D2\":12,\"D3\":11,\"D4\":12,\"D5\":14,\"D6\":13,\"D7\":4,\"D8\":8},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":89,\"max_total\":125,\"percent\":71.2,\"grade\":\"C\",\"findings\":[{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/markdown-to-pdf/scripts/markdown_to_pdf.py\",\"line\":79,\"evidence\":\"The document is rewritten to a temp copy (line 104 'copy_md = os.path.join(work, \\\"doc.md\\\")') and pandoc runs through 'run(cmd, capture_output=True, text=True, check=False)' with no cwd and no --resource-path. Pandoc looks for images in the working directory only, and SKILL.md line 36 runs 'python3 scripts/markdown_to_pdf.py <source.md>' from the skill root. So every relative image in the user's document ('![](img/x.png)') is not found: pandoc warns 'replacing image with description', exits 0, and the script throws away the captured stderr. The images silently disappear from the PDF.\",\"fix\":\"Pass '--resource-path=<dirname(src)>' to every pandoc backend and '--basedir <dirname(src)>' to md-to-pdf (or run with cwd set to the source directory), surface pandoc warnings in the result, add a unit test with a relative image, and add a table row: 'Local images missing from the PDF: they resolve against the source directory; report any fetch warning'.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/markdown-to-pdf/scripts/markdown_to_pdf.py\",\"line\":142,\"evidence\":\"The deck path runs '[\\\"marp\\\", copy_md, \\\"-o\\\", tmp_out]' without '--allow-local-files'. marp-cli blocks local image files when it exports PDF or PPTX, so the rendered mermaid diagrams (absolute temp paths) do not appear in the slides. With '--to html', the image links point into the work directory that line 152 deletes with 'shutil.rmtree(work, ignore_errors=True)', so the HTML deck ships broken diagrams.\",\"fix\":\"Add '--allow-local-files' to the marp call. For '--to html', render the diagrams into a persistent '<out>-assets/' folder next to the output (the way render_only already does). Add a test that asserts the marp command has the flag and that the HTML deck's image links still resolve after the call returns.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":54,\"evidence\":\"'It's already `-s 3` (high-DPI PNG). For vector sharpness use `--format svg` — but ONLY if the backend is `typst` or `chromium`.' detect_backends.py already defaults typst and chromium to svg, so on those backends this remedy changes nothing. On pandoc-latex the row forbids svg, which contradicts the Never item at line 83 ('unless `rsvg-convert` is on PATH'). Followed branch by branch, the row never produces an effective fix.\",\"fix\":\"Replace the row with: 'Diagram looks low-res: read the diagrams format in the result line. png on pandoc-latex: re-run with --format svg only if rsvg-convert is on PATH. png on weasyprint: keep png, its SVG support is patchy. Already svg (typst, chromium): the problem is not resolution; check the diagram source.'\"},{\"id\":\"D8-4\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/scripts/markdown_to_pdf.py\",\"line\":81,\"evidence\":\"'raise RuntimeError(f\\\"{chosen.name} failed: ...\\\")' is not caught in main(), which handles only MermaidRenderError (exit 2) and BackendUnavailable (exit 3). A backend that runs and then fails (a LaTeX package or Unicode error, a typst image error) prints a traceback with exit 1, and the SKILL.md decision table has no row for that outcome.\",\"fix\":\"Catch RuntimeError in main(), print the backend's stderr, return a documented exit code 4, and add a table row: 'Exit 4 (backend failed): show the error; if it is a LaTeX font or package error, offer a re-run with --backend typst when typst is installed.'\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":null,\"evidence\":\"No evals/ directory exists under skills/markdown-to-pdf/ (the folder holds only SKILL.md, references/, scripts/ and examples/), so the output-evals sub-check scores 0 of 5\",\"fix\":\"Add evals/evals.json with at least 4 realistic prompts and input files in evals/files/: a casual 'turn my notes.md into a pdf' with one mermaid block; a document with a relative image and two diagrams; a deck request with --to pptx; and an edge case with a broken mermaid block. Use verifiable assertions: the source bytes are unchanged, the result line names the backend and diagram format, the PDF holds the expected number of images, and the broken block exits 2 with the correct source line.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":null,\"evidence\":\"No evals/trigger-queries.json, so the trigger-query sub-check scores 0 of 5\",\"fix\":\"Add evals/trigger-queries.json with about 20 queries: 8-10 should-trigger, including ones that do not name markdown ('need this README as a printable doc for Friday's review', 'make slides from talk.md'), and 8-10 near-miss negatives ('merge these two PDFs', 'convert report.docx to pdf', 'polish the theme of my marp deck', 'fill out this PDF form', 'export this mermaid diagram as a PNG for the wiki').\"},{\"id\":\"D7-3\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"tests/test_markdown_to_pdf.py\",\"line\":null,\"evidence\":\"The unit tests cover detection, convert, deck, render-only and exit codes 2 and 3, and the e2e test covers a real mmdc render. Nothing tests a backend command that fails (the uncaught RuntimeError path) or relative-image resolution, and the script's result is a prose line, not structured output.\",\"fix\":\"Add a test where the stub run returns returncode 1 and assert that main() returns the documented backend-failure code with the stderr shown. Offer a '--json' option that prints {\\\"out\\\",\\\"backend\\\",\\\"diagrams\\\"} so agents can parse the result.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":3,\"evidence\":\"The description gives WHAT, WHEN and keywords but no boundary against near-miss neighbours (marp-slide theming, editing or merging existing PDFs, DOCX or HTML to PDF). It spends words on implementation details ('auto-rendered with mmdc') and misses intent phrasings that never say 'markdown'.\",\"fix\":\"Convert a Markdown file into a PDF or a marp slide deck in one non-destructive command, rendering every ```mermaid block to an image first. Use this skill when the user wants a .md, README, notes or design doc as a PDF, printable or shareable document, or as slides (PDF, PPTX, HTML), even if they don't say 'markdown' or 'pandoc', and when mermaid diagrams in a markdown file must appear in the output. Picks the best installed pipeline (Pandoc+LaTeX, Typst, WeasyPrint, headless Chromium) and never auto-installs. Keywords: markdown to pdf, md to pdf, mermaid, marp, slide deck, pptx, export pdf, pandoc, typst. Not for editing, merging, filling or extracting text from existing PDFs, not for DOCX or HTML to PDF, and not for slide theming or design polish (use marp-slide).\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":53,\"evidence\":\"'Exit code 2 (mermaid failed) | Show mmdc's error; user fixes the source block at the named line.' Neither the Never list nor any Gotchas section says that mmdc launches a Puppeteer-managed headless Chrome. When that browser is missing, exit 2 fires on a valid diagram ('Could not find Chrome', a failure the repo's own e2e test pins), and the agent would tell the user to fix correct source.\",\"fix\":\"Add a Gotchas bullet: 'Exit 2 is not always a diagram bug: mmdc needs a headless Chrome. If stderr says Could not find Chrome or Tried to find the browser at the configured path, the source is fine; print `pnpm dlx puppeteer browsers install chrome-headless-shell` (or set PUPPETEER_EXECUTABLE_PATH) for the user to run.'\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":24,\"evidence\":\"'**Draft or final?** Iterating → any installed backend is fine. Final → let the quality-ranked auto-selection pick'. Both answers lead to the same command, because line 42 reserves --backend for when the user names one, so the fork spends tokens on a decision that changes nothing.\",\"fix\":\"Delete the 'Draft or final?' bullet.\"},{\"id\":\"D1-2\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":16,\"evidence\":\"The intro paragraph (lines 16-19) restates the description, and 'NEVER edit the source .md' (line 81) restates a guarantee the script already enforces\",\"fix\":\"Cut the intro to one line ('One command; the source .md is never touched') and drop the 'NEVER edit the source' item, or fold it into that line.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":23,\"evidence\":\"'**Doc or deck?** A paginated PDF → primary flow. Slides → the marp deck path.' This relies on the user's wording only; there is no heuristic for a source that is already a marp deck when the user just says 'make a PDF'. Pandoc would flatten its slide breaks into horizontal rules.\",\"fix\":\"Add: 'If the source has `marp: true` in its frontmatter or uses `---` slide separators throughout, treat it as a deck even when the user only asks for a PDF; ask only when the file and the request disagree.'\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/examples/sample-with-mermaid.md\",\"line\":null,\"evidence\":\"examples/sample-with-mermaid.md is never referenced from SKILL.md, and no test reads it, so nothing ever loads it\",\"fix\":\"Reference it with a trigger in the primary flow ('To check the toolchain before a real document, run the script on examples/sample-with-mermaid.md'), or move it to evals/files/ as an eval input.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":56,\"evidence\":\"'Headless Chrome needs `--no-sandbox`; use an environment that allows it or pick another backend.' This offers two equal options with no default and no command, and the script gives no way to pass --no-sandbox to md-to-pdf (only mmdc gets it through its puppeteer config).\",\"fix\":\"Replace with a default and an escape hatch: 'Re-run with --backend <next installed backend, e.g. typst>; the script cannot pass --no-sandbox to md-to-pdf, so changing environments is the last resort.'\"}]}"
+  }
+ ],
+ "digest": "90393e2bac916a6b5086f23c2bd581a6290899e381904070e25e8b34ea36f13f",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "native:opus-xhigh",
+ "loop": "32",
+ "modules": [
+  "tests/test_markdown_to_pdf.py",
+  "tests/test_markdown_to_pdf_e2e.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "e452c877cf0834a8963235df214cc098adc01fe3ed1a0d0d39258a358b9c5a67",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "markdown-to-pdf",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": {
+  "reason": "failed: ingest refused: judge-loop: verdict judge 'o\\u200dpencode:router-env/my-referee-three' is not the lane's judge 'opencode:router-env/my-referee-three'",
+  "replaces": "opencode:router-env/my-referee-three"
+ },
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D8",
+    "evidence": "The document is rewritten to a temp copy (line 104 'copy_md = os.path.join(work, \"doc.md\")') and pandoc runs through 'run(cmd, capture_output=True, text=True, check=False)' with no cwd and no --resource-path. Pandoc looks for images in the working directory only, and SKILL.md line 36 runs 'python3 scripts/markdown_to_pdf.py <source.md>' from the skill root. So every relative image in the user's document ('![](img/x.png)') is not found: pandoc warns 'replacing image with description', exits 0, and the script throws away the captured stderr. The images silently disappear from the PDF.",
+    "file": "skills/markdown-to-pdf/scripts/markdown_to_pdf.py",
+    "fix": "Pass '--resource-path=<dirname(src)>' to every pandoc backend and '--basedir <dirname(src)>' to md-to-pdf (or run with cwd set to the source directory), surface pandoc warnings in the result, add a unit test with a relative image, and add a table row: 'Local images missing from the PDF: they resolve against the source directory; report any fetch warning'.",
+    "id": "D8-1",
+    "line": 79,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The deck path runs '[\"marp\", copy_md, \"-o\", tmp_out]' without '--allow-local-files'. marp-cli blocks local image files when it exports PDF or PPTX, so the rendered mermaid diagrams (absolute temp paths) do not appear in the slides. With '--to html', the image links point into the work directory that line 152 deletes with 'shutil.rmtree(work, ignore_errors=True)', so the HTML deck ships broken diagrams.",
+    "file": "skills/markdown-to-pdf/scripts/markdown_to_pdf.py",
+    "fix": "Add '--allow-local-files' to the marp call. For '--to html', render the diagrams into a persistent '<out>-assets/' folder next to the output (the way render_only already does). Add a test that asserts the marp command has the flag and that the HTML deck's image links still resolve after the call returns.",
+    "id": "D8-2",
+    "line": 142,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'It's already `-s 3` (high-DPI PNG). For vector sharpness use `--format svg` — but ONLY if the backend is `typst` or `chromium`.' detect_backends.py already defaults typst and chromium to svg, so on those backends this remedy changes nothing. On pandoc-latex the row forbids svg, which contradicts the Never item at line 83 ('unless `rsvg-convert` is on PATH'). Followed branch by branch, the row never produces an effective fix.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Replace the row with: 'Diagram looks low-res: read the diagrams format in the result line. png on pandoc-latex: re-run with --format svg only if rsvg-convert is on PATH. png on weasyprint: keep png, its SVG support is patchy. Already svg (typst, chromium): the problem is not resolution; check the diagram source.'",
+    "id": "D8-3",
+    "line": 54,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'raise RuntimeError(f\"{chosen.name} failed: ...\")' is not caught in main(), which handles only MermaidRenderError (exit 2) and BackendUnavailable (exit 3). A backend that runs and then fails (a LaTeX package or Unicode error, a typst image error) prints a traceback with exit 1, and the SKILL.md decision table has no row for that outcome.",
+    "file": "skills/markdown-to-pdf/scripts/markdown_to_pdf.py",
+    "fix": "Catch RuntimeError in main(), print the backend's stderr, return a documented exit code 4, and add a table row: 'Exit 4 (backend failed): show the error; if it is a LaTeX font or package error, offer a re-run with --backend typst when typst is installed.'",
+    "id": "D8-4",
+    "line": 81,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "No evals/ directory exists under skills/markdown-to-pdf/ (the folder holds only SKILL.md, references/, scripts/ and examples/), so the output-evals sub-check scores 0 of 5",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add evals/evals.json with at least 4 realistic prompts and input files in evals/files/: a casual 'turn my notes.md into a pdf' with one mermaid block; a document with a relative image and two diagrams; a deck request with --to pptx; and an edge case with a broken mermaid block. Use verifiable assertions: the source bytes are unchanged, the result line names the backend and diagram format, the PDF holds the expected number of images, and the broken block exits 2 with the correct source line.",
+    "id": "D7-1",
+    "line": null,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "No evals/trigger-queries.json, so the trigger-query sub-check scores 0 of 5",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add evals/trigger-queries.json with about 20 queries: 8-10 should-trigger, including ones that do not name markdown ('need this README as a printable doc for Friday's review', 'make slides from talk.md'), and 8-10 near-miss negatives ('merge these two PDFs', 'convert report.docx to pdf', 'polish the theme of my marp deck', 'fill out this PDF form', 'export this mermaid diagram as a PNG for the wiki').",
+    "id": "D7-2",
+    "line": null,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The unit tests cover detection, convert, deck, render-only and exit codes 2 and 3, and the e2e test covers a real mmdc render. Nothing tests a backend command that fails (the uncaught RuntimeError path) or relative-image resolution, and the script's result is a prose line, not structured output.",
+    "file": "tests/test_markdown_to_pdf.py",
+    "fix": "Add a test where the stub run returns returncode 1 and assert that main() returns the documented backend-failure code with the stderr shown. Offer a '--json' option that prints {\"out\",\"backend\",\"diagrams\"} so agents can parse the result.",
+    "id": "D7-3",
+    "line": null,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description gives WHAT, WHEN and keywords but no boundary against near-miss neighbours (marp-slide theming, editing or merging existing PDFs, DOCX or HTML to PDF). It spends words on implementation details ('auto-rendered with mmdc') and misses intent phrasings that never say 'markdown'.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Convert a Markdown file into a PDF or a marp slide deck in one non-destructive command, rendering every ```mermaid block to an image first. Use this skill when the user wants a .md, README, notes or design doc as a PDF, printable or shareable document, or as slides (PDF, PPTX, HTML), even if they don't say 'markdown' or 'pandoc', and when mermaid diagrams in a markdown file must appear in the output. Picks the best installed pipeline (Pandoc+LaTeX, Typst, WeasyPrint, headless Chromium) and never auto-installs. Keywords: markdown to pdf, md to pdf, mermaid, marp, slide deck, pptx, export pdf, pandoc, typst. Not for editing, merging, filling or extracting text from existing PDFs, not for DOCX or HTML to PDF, and not for slide theming or design polish (use marp-slide).",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "'Exit code 2 (mermaid failed) | Show mmdc's error; user fixes the source block at the named line.' Neither the Never list nor any Gotchas section says that mmdc launches a Puppeteer-managed headless Chrome. When that browser is missing, exit 2 fires on a valid diagram ('Could not find Chrome', a failure the repo's own e2e test pins), and the agent would tell the user to fix correct source.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add a Gotchas bullet: 'Exit 2 is not always a diagram bug: mmdc needs a headless Chrome. If stderr says Could not find Chrome or Tried to find the browser at the configured path, the source is fine; print `pnpm dlx puppeteer browsers install chrome-headless-shell` (or set PUPPETEER_EXECUTABLE_PATH) for the user to run.'",
+    "id": "D3-1",
+    "line": 53,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "'**Draft or final?** Iterating → any installed backend is fine. Final → let the quality-ranked auto-selection pick'. Both answers lead to the same command, because line 42 reserves --backend for when the user names one, so the fork spends tokens on a decision that changes nothing.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Delete the 'Draft or final?' bullet.",
+    "id": "D1-1",
+    "line": 24,
+    "severity": "low"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "The intro paragraph (lines 16-19) restates the description, and 'NEVER edit the source .md' (line 81) restates a guarantee the script already enforces",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Cut the intro to one line ('One command; the source .md is never touched') and drop the 'NEVER edit the source' item, or fold it into that line.",
+    "id": "D1-2",
+    "line": 16,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "'**Doc or deck?** A paginated PDF → primary flow. Slides → the marp deck path.' This relies on the user's wording only; there is no heuristic for a source that is already a marp deck when the user just says 'make a PDF'. Pandoc would flatten its slide breaks into horizontal rules.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add: 'If the source has `marp: true` in its frontmatter or uses `---` slide separators throughout, treat it as a deck even when the user only asks for a PDF; ask only when the file and the request disagree.'",
+    "id": "D2-1",
+    "line": 23,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "examples/sample-with-mermaid.md is never referenced from SKILL.md, and no test reads it, so nothing ever loads it",
+    "file": "skills/markdown-to-pdf/examples/sample-with-mermaid.md",
+    "fix": "Reference it with a trigger in the primary flow ('To check the toolchain before a real document, run the script on examples/sample-with-mermaid.md'), or move it to evals/files/ as an eval input.",
+    "id": "D5-1",
+    "line": null,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "'Headless Chrome needs `--no-sandbox`; use an environment that allows it or pick another backend.' This offers two equal options with no default and no command, and the script gives no way to pass --no-sandbox to md-to-pdf (only mmdc gets it through its puppeteer config).",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Replace with a default and an escape hatch: 'Re-run with --backend <next installed backend, e.g. typst>; the script cannot pass --no-sandbox to md-to-pdf, so changing environments is the last resort.'",
+    "id": "D6-1",
+    "line": 56,
+    "severity": "low"
+   }
+  ],
+  "grade": "C",
+  "judge": "native:opus-xhigh",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 71.2,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 15,
+   "D2": 12,
+   "D3": 11,
+   "D4": 12,
+   "D5": 14,
+   "D6": 13,
+   "D7": 4,
+   "D8": 8
+  },
+  "skill": "markdown-to-pdf",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 89
+ }
+}

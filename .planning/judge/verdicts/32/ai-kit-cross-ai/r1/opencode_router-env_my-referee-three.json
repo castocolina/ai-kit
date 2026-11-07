@@ -1,0 +1,180 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=39s out=46887 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"opencode:router-env/my-referee-three\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":17,\"D2\":13,\"D3\":13,\"D4\":14,\"D5\":14,\"D6\":14,\"D7\":0,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":98,\"max_total\":125,\"percent\":78.4,\"grade\":\"C\",\"findings\":[{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":null,\"evidence\":\"The skill's tracked files are SKILL.md, references/launch-and-wait.md and references/subprocess-quota-policy.md. It has no evals/evals.json and no evals/trigger-queries.json. It ships no runnable code, so D7 uses the 8/7 split and both parts are missing.\",\"fix\":\"Add evals/evals.json with at least 3 realistic prompts and checkable assertions. Cover a plain exec launch and read, an exit 75 with retry_after_s=600 (assert one wait, then the same lane is re-invoked), and a GSD retry/skip/abort prompt after exit 69 (assert the answer is abort, never skip, and no model or harness switch). Add evals/trigger-queries.json with about 20 queries: 8-10 that should trigger and 8-10 near-misses that should not, such as reviewer setup (ai-kit-spec-config) and GSD config edits (ai-kit-gsd-curated-config).\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":24,\"evidence\":\"'## When to use' / 'When a run, a review or an execution step calls an external AI CLI and acts on the result.' The agent cannot see this body text before the skill triggers, and it only repeats the description.\",\"fix\":\"Delete the 'When to use' section. The description already carries the trigger.\"},{\"id\":\"D1-2\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":16,\"evidence\":\"'The canonical guide for calling ai-kit's cross-AI runner from any host.' This is self-description and adds no knowledge.\",\"fix\":\"Remove the self-description and start with the ownership split: the runner owns flags and model grammar; this skill owns the call, the wait, the reading and the answer.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":103,\"evidence\":\"The exit table and sections 6-7 spread the stop decision over several places: 'answer retry only after an exit 75 that carries retry_after_s=' sits in section 7, away from the table. The skill gives no single 'before acting, ask' checkpoint.\",\"fix\":\"Add a short decision list right after the exit table: exit 0 means read stdout; exit 75 with retry_after_s means one wait, then re-invoke the same lane; any other non-zero exit means notice, then abort. End with: never skip, never switch.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":181,\"evidence\":\"'Executor guards: never stash, and check a \\\"pre-existing\\\" claim against a clean run before writing it down.' This item gives no reason. 'Atomic rewrites keep the file mode' says what goes wrong but not when it matters.\",\"fix\":\"Give each pitfall its non-obvious reason. Example: 'Never stash: a stash changes the tree fingerprint, so the lane stops with contract_violation tree=dirty and the next run loses the stashed work.' Do the same for the file-mode item.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":3,\"evidence\":\"The description covers WHAT, WHEN, keywords and boundaries. It has no trigger for prompts that don't name the runner or the CLIs, for example 'get a second opinion from another model' or 'my review lane hung'.\",\"fix\":\"Use when you run, wait for, read, retry or chain an external AI CLI (pi, opencode, codex, cursor, copilot) through ai-kit's cross-AI runner (cross-ai.mjs), even when the user only asks for a second-model review, a cross-AI lane or a subprocess executor: pick one runtime and model, launch the runner, read its exit code and last AIKIT-XAI stderr line, and answer a stop. Also use when a lane hits quota, a rate limit or a 429, exits 75 or 69, prints retry_after_s=, or seems stalled. Covers the hard-tier wait, the user notice, GSD's retry/skip/abort answer and the rule to never switch harness, provider or model. Not for reviewer setup or GSD config (those are ai-kit-spec-config and ai-kit-gsd-curated-config).\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":191,\"evidence\":\"'skills/ai-kit-spec-review/references/cross-ai.mjs — the runner template and its --self-test.' This points outside the skill root, and references/subprocess-quota-policy.md links it again two levels away (../../ai-kit-spec-review/...). The skill gives no condition for when to open it.\",\"fix\":\"Gate the template: 'Read the runner template only when a status or rule in AIKIT-XAI is not covered by section 4 or the policy reference; do NOT load it for a plain launch and read.'\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":154,\"evidence\":\"'every other host (none is known to have a one-shot scheduler; unverified) schedule nothing ... Whether the owner runs it is unverified.' Stacked hedges make the fragile retry path less prescriptive than its consequences need.\",\"fix\":\"State the default as an exact command block: print retry_after_s, the state file path and the literal re-invoke command for the same --runtime/--model, then stop. Keep a single 'unverified' flag on scheduler availability.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":111,\"evidence\":\"Following exit 75 with retry_after_s and no stopped=hard-waits/cap leads to one wait and a re-invoke. Section 6 does not say how a no-scheduler host waits, beyond 'print ... and stop' (line 156), so the hard-tier re-invoke never happens on non-Claude hosts. Section 7 also says 'Without a scheduler, print the section 6 handoff', which leaves the 'wait once, for exactly retry_after_s' instruction (line 137) without a means to carry it out.\",\"fix\":\"Make section 6 state the no-scheduler branch explicitly: either a foreground sleep for retry_after_s followed by the same command (when the host allows a long foreground wait), or the print-and-stop handoff. Name which one is the default and point to the host section in references/launch-and-wait.md.\"}]}"
+  }
+ ],
+ "digest": "7fee6ff03ba17d6984795632590c68a2e9489aa37edc2a2d4acce7fbd56748e3",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-three",
+ "loop": "32",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py"
+ ],
+ "prompt_sha256": "3bd4f5a76046825d95103e25d9b803794a0713757ca36d31d0823ca295640768",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D7",
+    "evidence": "The skill's tracked files are SKILL.md, references/launch-and-wait.md and references/subprocess-quota-policy.md. It has no evals/evals.json and no evals/trigger-queries.json. It ships no runnable code, so D7 uses the 8/7 split and both parts are missing.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Add evals/evals.json with at least 3 realistic prompts and checkable assertions. Cover a plain exec launch and read, an exit 75 with retry_after_s=600 (assert one wait, then the same lane is re-invoked), and a GSD retry/skip/abort prompt after exit 69 (assert the answer is abort, never skip, and no model or harness switch). Add evals/trigger-queries.json with about 20 queries: 8-10 that should trigger and 8-10 near-misses that should not, such as reviewer setup (ai-kit-spec-config) and GSD config edits (ai-kit-gsd-curated-config).",
+    "id": "D7-1",
+    "line": null,
+    "severity": "high"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "'## When to use' / 'When a run, a review or an execution step calls an external AI CLI and acts on the result.' The agent cannot see this body text before the skill triggers, and it only repeats the description.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Delete the 'When to use' section. The description already carries the trigger.",
+    "id": "D1-1",
+    "line": 24,
+    "severity": "low"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "'The canonical guide for calling ai-kit's cross-AI runner from any host.' This is self-description and adds no knowledge.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Remove the self-description and start with the ownership split: the runner owns flags and model grammar; this skill owns the call, the wait, the reading and the answer.",
+    "id": "D1-2",
+    "line": 16,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "The exit table and sections 6-7 spread the stop decision over several places: 'answer retry only after an exit 75 that carries retry_after_s=' sits in section 7, away from the table. The skill gives no single 'before acting, ask' checkpoint.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Add a short decision list right after the exit table: exit 0 means read stdout; exit 75 with retry_after_s means one wait, then re-invoke the same lane; any other non-zero exit means notice, then abort. End with: never skip, never switch.",
+    "id": "D2-1",
+    "line": 103,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "'Executor guards: never stash, and check a \"pre-existing\" claim against a clean run before writing it down.' This item gives no reason. 'Atomic rewrites keep the file mode' says what goes wrong but not when it matters.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Give each pitfall its non-obvious reason. Example: 'Never stash: a stash changes the tree fingerprint, so the lane stops with contract_violation tree=dirty and the next run loses the stashed work.' Do the same for the file-mode item.",
+    "id": "D3-1",
+    "line": 181,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description covers WHAT, WHEN, keywords and boundaries. It has no trigger for prompts that don't name the runner or the CLIs, for example 'get a second opinion from another model' or 'my review lane hung'.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use when you run, wait for, read, retry or chain an external AI CLI (pi, opencode, codex, cursor, copilot) through ai-kit's cross-AI runner (cross-ai.mjs), even when the user only asks for a second-model review, a cross-AI lane or a subprocess executor: pick one runtime and model, launch the runner, read its exit code and last AIKIT-XAI stderr line, and answer a stop. Also use when a lane hits quota, a rate limit or a 429, exits 75 or 69, prints retry_after_s=, or seems stalled. Covers the hard-tier wait, the user notice, GSD's retry/skip/abort answer and the rule to never switch harness, provider or model. Not for reviewer setup or GSD config (those are ai-kit-spec-config and ai-kit-gsd-curated-config).",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "'skills/ai-kit-spec-review/references/cross-ai.mjs — the runner template and its --self-test.' This points outside the skill root, and references/subprocess-quota-policy.md links it again two levels away (../../ai-kit-spec-review/...). The skill gives no condition for when to open it.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Gate the template: 'Read the runner template only when a status or rule in AIKIT-XAI is not covered by section 4 or the policy reference; do NOT load it for a plain launch and read.'",
+    "id": "D5-1",
+    "line": 191,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "'every other host (none is known to have a one-shot scheduler; unverified) schedule nothing ... Whether the owner runs it is unverified.' Stacked hedges make the fragile retry path less prescriptive than its consequences need.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "State the default as an exact command block: print retry_after_s, the state file path and the literal re-invoke command for the same --runtime/--model, then stop. Keep a single 'unverified' flag on scheduler availability.",
+    "id": "D6-1",
+    "line": 154,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "Following exit 75 with retry_after_s and no stopped=hard-waits/cap leads to one wait and a re-invoke. Section 6 does not say how a no-scheduler host waits, beyond 'print ... and stop' (line 156), so the hard-tier re-invoke never happens on non-Claude hosts. Section 7 also says 'Without a scheduler, print the section 6 handoff', which leaves the 'wait once, for exactly retry_after_s' instruction (line 137) without a means to carry it out.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Make section 6 state the no-scheduler branch explicitly: either a foreground sleep for retry_after_s followed by the same command (when the host allows a long foreground wait), or the print-and-stop handoff. Name which one is the default and point to the host section in references/launch-and-wait.md.",
+    "id": "D8-1",
+    "line": 111,
+    "severity": "medium"
+   }
+  ],
+  "grade": "C",
+  "judge": "opencode:router-env/my-referee-three",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 78.4,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 17,
+   "D2": 13,
+   "D3": 13,
+   "D4": 14,
+   "D5": 14,
+   "D6": 14,
+   "D7": 0,
+   "D8": 13
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 98
+ }
+}

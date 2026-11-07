@@ -1,0 +1,165 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=48s out=44337 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"cst-refactor\",\"judge\":\"opencode:router-env/my-referee-three\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":14,\"D2\":11,\"D3\":13,\"D4\":13,\"D5\":14,\"D6\":13,\"D7\":1,\"D8\":12},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":91,\"max_total\":125,\"percent\":72.8,\"grade\":\"C\",\"findings\":[{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"high\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":null,\"evidence\":\"The skill directory tracks only SKILL.md and codemod_template.py.txt. It has no evals/evals.json and no evals/trigger-queries.json. It ships no runnable code (the template is .txt), so the 8/7 split applies. tests/test_gate_scope.py, tests/test_setup.py and tests/test_wizard_app_1.py only check paths and titles, not codemod behaviour.\",\"fix\":\"Add evals/evals.json with 3 or more prompts. Include a casual multi-file class rename, a parameter rename across call sites, and an edge case where the name collides with a stdlib attribute such as `connect` or `run`. Put sample .py inputs in evals/files/. Use verifiable assertions, such as 'comments and strings that contain the old name are unchanged' and 'sqlite3.connect is untouched or flagged'. Add evals/trigger-queries.json with about 20 queries, 8-10 positive and 8-10 near-miss negatives, such as a one-line rename, a JS rename, or a ruff autofix.\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":8,\"evidence\":\"\\\"LibCST parses source into a Concrete Syntax Tree, matches syntax nodes (not raw text), transforms them, and serializes back\\\". Notes also say \\\"Validate changes with tests after codemod runs.\\\" and \\\"Prefer `uv run python` unless your venv is already active.\\\"\",\"fix\":\"Delete the Overview paragraph and the generic Notes bullets (validate with tests, run from project root, prefer uv run, and the line that repeats the string/comment rule). Keep only the note that codemods touch only .py files.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":24,\"evidence\":\"Preconditions and Examples are listed, but no ordered workflow runs from the clean tree through a pilot run, diff audit and widening --paths to the tests and a grep for leftover dynamic references.\",\"fix\":\"Add a short numbered procedure. 1) Check for a clean tree. 2) Grep the old name to list dynamic, string and config hits. 3) Run on one module. 4) Review `git diff`, including collateral matches on other libraries' attributes. 5) Widen --paths. 6) Run the tests. 7) Grep the old name again and fix the remaining dynamic references by hand.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":31,\"evidence\":\"The NEVER list is strong, but no Gotchas cover the template's own surprises. For example, `--include-tests` appends `tests` even when it is not a directory, and `rename-symbol` also renames import aliases and keyword arguments with the same name.\",\"fix\":\"Add a Gotchas section of 2-4 verified template behaviours: what happens to `from x import Old` and to `Old` as a keyword argument name, and what happens when tests/ is missing with --include-tests.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":3,\"evidence\":\"The description has WHAT and WHEN but no 'not for' boundary against near misses (single-line edits, non-Python code, lint autofixes). It also does not say that it applies even when the user never names LibCST.\",\"fix\":\"Use when renaming or changing signatures across many Python files where comments, formatting and string contents must survive: rename a class, method, constant or function parameter, add or remove a parameter and update call sites, or rewrite a scoped docstring. Applies even when the user never mentions LibCST or codemods and just asks to 'rename X everywhere' in a Python repo. Bundles codemod_template.py.txt (copy to tools/codemod_template.py) with the subcommands rename-symbol, rename-parameter, add-parameter, remove-parameter and rewrite-docstring. Matching is by name only, with no scope or type resolution. Not for single-line or single-file edits, non-Python code, or lint and format autofixes.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":46,\"evidence\":\"Bootstrapping always describes copying the 478-line template. Nothing says not to read the template file into context, and nothing points the agent to the template's `--help` to learn its interface.\",\"fix\":\"Add: 'Do not read codemod_template.py.txt into context; copy it, then run `uv run python tools/codemod_template.py <subcommand> --help` for flags. Read it only when writing a custom transformer (for example one using QualifiedNameProvider).'\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":97,\"evidence\":\"\\\"Use the `context7:query-docs` skill (or `mcp__context7__query-docs`) to confirm LibCST APIs when needed.\\\" and line 28 \\\"`uv add --dev \\\\\\\"libcst>=1.5,<2\\\\\\\"` or whatever the project lock requires\\\"\",\"fix\":\"Give one default: read the version in the project's lockfile, and use the uv command only when LibCST is missing. Make context7 conditional ('only when you write a custom transformer'), with a fallback when it is not installed.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":26,\"evidence\":\"\\\"There is no `--dry-run` flag: run on one file or module first, inspect `git diff`, then expand `--paths`.\\\" The skill has no validation loop with an exit criterion, does not say how to recognise and fix a parse failure on a file, and gives no rollback command for a bad partial run.\",\"fix\":\"Add a validation loop: after each run, review `git diff --stat` and the full diff, and run the tests. If unrelated matches appear, run `git restore <paths>` and narrow --paths or switch to a QualifiedNameProvider codemod. Repeat until the diff contains only intended changes and the tests pass. Also state what the script does when a file fails to parse.\"}]}"
+  }
+ ],
+ "digest": "bc8b95097d3ac02612740212105085bbdea367e24eb5f91e6fa7fcb67d7594fe",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-three",
+ "loop": "32",
+ "modules": [
+  "tests/test_gate_scope.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_app_1.py"
+ ],
+ "prompt_sha256": "e95445614b30460930288ddfbc2dfc75f3aca4a1525c0b59401f338b6db4be26",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "cst-refactor",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D7",
+    "evidence": "The skill directory tracks only SKILL.md and codemod_template.py.txt. It has no evals/evals.json and no evals/trigger-queries.json. It ships no runnable code (the template is .txt), so the 8/7 split applies. tests/test_gate_scope.py, tests/test_setup.py and tests/test_wizard_app_1.py only check paths and titles, not codemod behaviour.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Add evals/evals.json with 3 or more prompts. Include a casual multi-file class rename, a parameter rename across call sites, and an edge case where the name collides with a stdlib attribute such as `connect` or `run`. Put sample .py inputs in evals/files/. Use verifiable assertions, such as 'comments and strings that contain the old name are unchanged' and 'sqlite3.connect is untouched or flagged'. Add evals/trigger-queries.json with about 20 queries, 8-10 positive and 8-10 near-miss negatives, such as a one-line rename, a JS rename, or a ruff autofix.",
+    "id": "D7-1",
+    "line": null,
+    "severity": "high"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "\"LibCST parses source into a Concrete Syntax Tree, matches syntax nodes (not raw text), transforms them, and serializes back\". Notes also say \"Validate changes with tests after codemod runs.\" and \"Prefer `uv run python` unless your venv is already active.\"",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Delete the Overview paragraph and the generic Notes bullets (validate with tests, run from project root, prefer uv run, and the line that repeats the string/comment rule). Keep only the note that codemods touch only .py files.",
+    "id": "D1-1",
+    "line": 8,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "Preconditions and Examples are listed, but no ordered workflow runs from the clean tree through a pilot run, diff audit and widening --paths to the tests and a grep for leftover dynamic references.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Add a short numbered procedure. 1) Check for a clean tree. 2) Grep the old name to list dynamic, string and config hits. 3) Run on one module. 4) Review `git diff`, including collateral matches on other libraries' attributes. 5) Widen --paths. 6) Run the tests. 7) Grep the old name again and fix the remaining dynamic references by hand.",
+    "id": "D2-1",
+    "line": 24,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "The NEVER list is strong, but no Gotchas cover the template's own surprises. For example, `--include-tests` appends `tests` even when it is not a directory, and `rename-symbol` also renames import aliases and keyword arguments with the same name.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Add a Gotchas section of 2-4 verified template behaviours: what happens to `from x import Old` and to `Old` as a keyword argument name, and what happens when tests/ is missing with --include-tests.",
+    "id": "D3-1",
+    "line": 31,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description has WHAT and WHEN but no 'not for' boundary against near misses (single-line edits, non-Python code, lint autofixes). It also does not say that it applies even when the user never names LibCST.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Use when renaming or changing signatures across many Python files where comments, formatting and string contents must survive: rename a class, method, constant or function parameter, add or remove a parameter and update call sites, or rewrite a scoped docstring. Applies even when the user never mentions LibCST or codemods and just asks to 'rename X everywhere' in a Python repo. Bundles codemod_template.py.txt (copy to tools/codemod_template.py) with the subcommands rename-symbol, rename-parameter, add-parameter, remove-parameter and rewrite-docstring. Matching is by name only, with no scope or type resolution. Not for single-line or single-file edits, non-Python code, or lint and format autofixes.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "Bootstrapping always describes copying the 478-line template. Nothing says not to read the template file into context, and nothing points the agent to the template's `--help` to learn its interface.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Add: 'Do not read codemod_template.py.txt into context; copy it, then run `uv run python tools/codemod_template.py <subcommand> --help` for flags. Read it only when writing a custom transformer (for example one using QualifiedNameProvider).'",
+    "id": "D5-1",
+    "line": 46,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "\"Use the `context7:query-docs` skill (or `mcp__context7__query-docs`) to confirm LibCST APIs when needed.\" and line 28 \"`uv add --dev \\\"libcst>=1.5,<2\\\"` or whatever the project lock requires\"",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Give one default: read the version in the project's lockfile, and use the uv command only when LibCST is missing. Make context7 conditional ('only when you write a custom transformer'), with a fallback when it is not installed.",
+    "id": "D6-1",
+    "line": 97,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "\"There is no `--dry-run` flag: run on one file or module first, inspect `git diff`, then expand `--paths`.\" The skill has no validation loop with an exit criterion, does not say how to recognise and fix a parse failure on a file, and gives no rollback command for a bad partial run.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Add a validation loop: after each run, review `git diff --stat` and the full diff, and run the tests. If unrelated matches appear, run `git restore <paths>` and narrow --paths or switch to a QualifiedNameProvider codemod. Repeat until the diff contains only intended changes and the tests pass. Also state what the script does when a file fails to parse.",
+    "id": "D8-1",
+    "line": 26,
+    "severity": "medium"
+   }
+  ],
+  "grade": "C",
+  "judge": "opencode:router-env/my-referee-three",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 72.8,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 14,
+   "D2": 11,
+   "D3": 13,
+   "D4": 13,
+   "D5": 14,
+   "D6": 13,
+   "D7": 1,
+   "D8": 12
+  },
+  "skill": "cst-refactor",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 91
+ }
+}
