@@ -1,8 +1,8 @@
 ---
 phase: 32
-cycle: 2
+cycle: 3
 reviewers: [referee-two]
-reviewed_at: 2026-11-07T12:52:07-03:00
+reviewed_at: 2026-11-07T13:35:11-03:00
 plans_reviewed: [32-01-PLAN.md, 32-02-PLAN.md, 32-03-PLAN.md, 32-04-PLAN.md, 32-05-PLAN.md, 32-06-PLAN.md, 32-07-PLAN.md, 32-08-PLAN.md, 32-09-PLAN.md]
 models:
   referee-two: "router-env/my-referee-two"
@@ -16,7 +16,809 @@ model_sources:
 ## Plan-Revision Conflicts
 <!-- gsd:plan-revision-conflicts:end -->
 
-## Review conditions (cycle 2)
+## Review conditions (cycle 3)
+
+Cycle 3, the last cycle, reviewed the nine plans at `057586c`. Cycle 2 had reviewed them at `96d73cc` and cycle 1 at
+`d9117a4`; both are kept below as history ("Cycle 2 (history)", then "Cycle 1 (history)"). The revision at `057586c`
+rewrote parts of 32-07 only (`judge_order`, `RECORD_KEYS`, a substitute-row test and a missing-key test); every other
+plan only gained a "Round 2" block in its Review Dispositions Ledger.
+
+The only reviewer was referee-two: it is `review.default_reviewers`, uses the opencode lane, and has the model
+`router-env/my-referee-two` pinned through `review.reviewer_instances`. No other reviewer, harness, provider or model
+was used. The probe at 13:06:45 was a one-word prompt; it came back `OK`, exit 0, in 4 s.
+
+The batches were the same as in cycles 1 and 2, each with its own run dir under the gitignored `tmp/p32-review-c3/`:
+
+- A: 32-01, 32-02 (173 KB)
+- B: 32-03, 32-05 (147 KB)
+- C: 32-04, 32-07 (199 KB)
+- D: 32-08, 32-09 (149 KB)
+- E: 32-06 (123 KB)
+
+C is the largest prompt referee-two has taken so far. The opencode lane declares no prompt cap (`review-lane plan`
+reports `promptBudget` null), and C finished in 428 s.
+
+Each prompt inlined what cycle 2's did:
+
+- PROJECT.md (first 80 lines), the ROADMAP Phase 32 section, the JDG-01..JDG-08 rows, 32-SPEC.md and 32-CONTEXT.md;
+- a pointer to 32-RESEARCH.md and 32-PATTERNS.md;
+- a wave map of all nine plans;
+- the batch's plans in full;
+- the source-grounding instructions, the owner's ponytail lens verbatim, the haiku-executor note, the same-wave
+  overlap check and the batch's plan coverage manifest.
+
+New in cycle 3, each prompt inlined both earlier cycles' triage for the batch's plans, read from the committed
+`73b4d4f` and `df3319f` versions:
+
+- cycle 2's confirmed findings (C2-7 and A2-1, fixed at `057586c`), the cycle-1 fixes cycle 2 verified, and cycle 2's
+  refuted findings with their evidence;
+- cycle 1's confirmed findings and refuted findings; for A and C, cycle 1's roadmap drift note (resolved).
+
+The instructions asked the reviewer to:
+
+- give each confirmed cycle-2 item a FIXED, PARTIALLY FIXED or NOT FIXED verdict under `##### Earlier fixes`, and to
+  report only a regression for the cycle-1 items;
+- re-raise a refuted finding of either cycle only with new `file:line` or command evidence;
+- focus on problems the latest revision introduced and on anything that would block a haiku executor.
+
+The read-only rule also forbade scratch files outside the repository.
+
+Each batch ran through `review-lane invoke --slug opencode --as referee-two --model router-env/my-referee-two`. At
+most two batches ran at a time, each in its own process group, under a 15-minute no-I/O-growth stall watch. There
+was no stall, retry, quota stop or auth stop, so the ai-kit-cross-ai retry ladder was never entered: one attempt per
+batch, five in all.
+
+- **referee-two** (`router-env/my-referee-two`): A 336 s, B 224 s, C 428 s, D 432 s, E 139 s (13:09:22 to 13:23:44).
+  Every lane returned `ok`, not stubbed, model source `pinned`. The plan coverage check found every plan id of each
+  batch in its review (9/9).
+- One more call reached referee-two during triage, not as a review lane: at 13:26:43 the orchestrator sent one probe
+  through 32-08's exact lane command to test finding D3-1 (exit 0, 7 s; see the Triage).
+
+Each batch's leading progress narration (the lines before its first heading) is left out below. In A those lines also
+restate two findings that the body repeats. The raw outputs are preserved under
+`.review-diagnostics/20261107T163103Z-gsd-review-RqXJqt/`. Nothing appeared under `/tmp/opencode/`, and no tracked
+file changed (`git status` was clean afterwards).
+
+Triage ran in two steps, as in the earlier cycles. First jev-fast-decision gave an advisory answer from a value-free
+summary of each finding and its verification. Then the orchestrator checked each finding against the plan text and
+the source: codegraph for code, rg for Markdown. Where a finding was about behaviour, the orchestrator ran it, with
+scripts under `tmp/p32-review-c3/`:
+
+- the real staged mapper on 32-01's module-list fixture (`sim_module_list.py`);
+- the 79.9 fixture through the real phase 27 validator, cycle 2's eight-fixture simulation again, and the new
+  substitute fixture's judge order, worst record, Digest and Spread cells (`sim_c3.py`);
+- every 32-03 edit applied in memory, then the Evidence heading position, the Limits count, 32-05's `PHASE_DIR_RE`
+  and the `D-<n>` baseline (`sim_batch_b.py`, which re-runs cycle 2's `sim_postedit.py`);
+- 32-06's `parse_strict` and field rules over all 24 tree entries (`sim_strict_tree.py`), and the strict values against
+  PyYAML through the plan's `frontmatter_body` (`fold_tree.py`, under `uv run`);
+- one probe built as 32-01's `build_probe` describes, sent through 32-08's lane command with the runner's review
+  preamble on (`probe_preamble.py`).
+
+A finding counts as real only when that check confirms it. All 24 findings went to jev.
+
+### jev log (cycle 3; advisory; Laya, then TypeSafe; "fallback" means `needs_fallback`)
+
+Triage was five calls at 13:30 with 24 items. Each item stayed under Laya's 2,000-character guard and each call under
+TypeSafe's 8,000.
+
+- A3-1: laya not_real 0.52 (fallback), typesafe not_real 0.91; typesafe; refuted (run).
+- A3-2: laya not_real 0.60 (fallback), typesafe not_real 0.99; typesafe; refuted.
+- A3-3: laya lower 0.51 (fallback), typesafe not_real 0.86; typesafe; not actionable.
+- A3-4: laya lower 0.61 (fallback), typesafe not_real 0.99; typesafe; not actionable.
+- B3-1: laya not_real 0.48 (fallback), typesafe not_real 0.93; typesafe; refuted (run).
+- B3-2: laya lower 0.65 (fallback), typesafe not_real 0.76 (fallback); own reasoning; not actionable.
+- B3-3: laya lower 0.60 (fallback), typesafe not_real 0.73 (fallback); own reasoning; not actionable.
+- B3-4: laya lower 0.57 (fallback), typesafe not_real 0.92; typesafe; refuted (run).
+- B3-5: laya lower 0.58 (fallback), typesafe not_real 1.00; typesafe; refuted (run).
+- B3-6: laya lower 0.56 (fallback), typesafe not_real 1.00; typesafe; refuted (run).
+- B3-7: laya lower 0.71; laya ("lower" here means a note needing no plan change); not actionable.
+- C3-1: laya lower 0.60 (fallback), typesafe not_real 0.68 (fallback); own reasoning; refuted (repeats C2-2).
+- C3-2: laya not_real 0.78; laya; refuted (run).
+- C3-3: laya real 0.43 (fallback), typesafe not_real 0.58 (fallback); own reasoning; refuted.
+- C3-4: laya lower 0.47 (fallback), typesafe lower 0.72 (fallback); own reasoning; not actionable.
+- C3-5: laya lower 0.68 (fallback), typesafe lower 0.45 (fallback); own reasoning; not actionable.
+- D3-1: laya not_real 0.57 (fallback), typesafe not_real 0.83; typesafe; refuted (run).
+- D3-2: laya lower 0.42 (fallback), typesafe not_real 0.94; typesafe; refuted.
+- D3-3: laya lower 0.40 (fallback), typesafe lower 0.71 (fallback); own reasoning; not actionable.
+- D3-4: laya lower 0.45 (fallback), typesafe not_real 0.95; typesafe; not actionable.
+- E3-1: laya not_real 0.50 (fallback), typesafe not_real 0.99; typesafe; refuted (run).
+- E3-2: laya not_real 0.40 (fallback), typesafe not_real 0.90; typesafe; refuted (run).
+- E3-3: laya lower 0.51 (fallback), typesafe not_real 0.84; typesafe; refuted (run) and not actionable.
+- E3-4: laya lower 0.48 (fallback), typesafe not_real 0.93; typesafe; refuted.
+
+## OpenCode Review (referee-two), cycle 3
+
+### Batch A (32-01, 32-02)
+
+#### Review: 32-01-PLAN.md, 32-02-PLAN.md
+##### Document Type
+GSD · plan
+
+##### Files Read
+- `.planning/phases/32-re-judge-baseline/32-01-PLAN.md`, `32-02-PLAN.md` (in prompt; current on disk)
+- `tools/staged_mapper.py` (token rules 38-63, 124-132, 218)
+- `tools/run_unittest_parallel.py` (246-248, 587-595)
+- `tools/check_dogfood.py` (1-12, 478-543)
+- `tests/test_arch.py` (1687-1694, 1728-1735, 2240-2251)
+- `tests/test_check_dogfood.py` (518-531)
+- `tests/test_gate_scope.py` (1-15, 452, 633)
+- `tests/test_staged_mapper.py` (60, 283-291)
+- `.planning/ROADMAP.md` (147, 391-411, 886-930)
+- `agents/ai-kit-judge.md` (1-6), `README.md` (51)
+- phase 27 `check_verdicts.py` (17-79)
+- `32-RESEARCH.md` (274), `32-07-PLAN.md` (28, 234)
+
+##### MEDIUM
+- **Fixture test text never selects a module** — Location: `32-01-PLAN.md` Task 1 behavior (`SKILL = "demo-alpha"`) and Task 2 behavior (rule 4 must list `tests/test_alpha.py`). Required: the fixture source must be a form `covering_modules` matches, or the expected list must be what that function returns. Why: `_skill_forms` uses a whole-token regex (`tools/staged_mapper.py:61-63`, `:124-132`); `demo-alpha` glued to `"` does not match, so the list is empty while Task 2 requires `tests/test_alpha.py`. The mapper's own fixture uses `SKILL = 'skills/my-skill'` (`tests/test_staged_mapper.py:60`). The rails say an impossible step stops the executor.
+- **Citation scan window names the wrong stop** — Location: `32-02-PLAN.md` Task 1 step 1 and its first behavior fixture. Required: the slice from `## Phase Details` stops at the next `## ` heading, which is `## Progress` (`.planning/ROADMAP.md:886`), and the fixture includes that heading between the phase block and `## Backlog`. Why: the plan says the slice ends at the next `## ` and then calls `## Backlog` (`:930`) that boundary. Progress today has no `### Phase` line, so the live tree still passes, but a later `### Phase` under Progress would be checked, and the fixture never proves the stop.
+
+##### LOW
+- **Phase 27 pin message is not copied as written** — Location: `32-01-PLAN.md` Task 1, `validate_verdict`. The source message is `rubric_version/spec_sha differ from the Rubric: line` (`check_verdicts.py:56`); the plan requires `...differ from the manifest`. The change is right for records; the "copy" wording is not. Predates this revision.
+- **`check` line format is specified only by example** — Location: `32-01-PLAN.md:176` ("the line is the format in the behavior block"). One example exists (`:138`), so a haiku executor can copy it. No second format is defined. Predates this revision.
+
+##### Status: Issues Found — fix and re-invoke
+
+---
+
+#### 32-01
+
+`tools/judge_loop.py` is specified tightly enough for a haiku executor: one module, three subcommands, copied validators, exact prompt lines, exact record keys, and tests that pin each edge. The one blocker is the fixture that feeds `covering_modules`: as written, Task 1's test text and Task 2's expected module list cannot both pass.
+
+##### Strengths
+- Reuses the phase 27 checker (`check_verdicts.py:30-79`), `staged_mapper.covering_modules` (`tools/staged_mapper.py:218`), and the runner's path-load of that mapper (`tools/run_unittest_parallel.py:587-595`).
+- Prompt rules, manifest keys, digest formula, probe token shape, and ingest refusal order are written as exact strings.
+- `LOOKUP_COPIES` is the right place to register the new copy: the automatic scan only walks `skills/` and `tools/hooks/` (`tests/test_arch.py:2244`), so `tools/judge_loop.py` would otherwise escape it.
+- Wave 1 shares no file with 32-02. `depends_on: []` is correct. Listings are regenerated only here.
+
+##### Earlier fixes
+- **L1 FIXED.** A null verdict is skipped for validation and for the summary line; only a round with no verdict is "not judged" (`32-01-PLAN.md:176`).
+- **M2 FIXED.** The 80.0 and 79.9 fixtures name maxima of 125, drops on D1 and D2, totals 800 and 799, and findings F1/F2 (Task 2 Validator behavior).
+- **L5 FIXED.** One 8-hex code after each END marker; the answer is `AIKIT-SENTINEL` plus every code, still one word (Task 2 step 1).
+- **A2-1** does not belong in this plan. The ledger correctly leaves the record-shape check to 32-07.
+- No cycle-1 fix was undone. The roadmap amendment at `.planning/ROADMAP.md:400` is still present.
+
+##### Concerns
+- **MEDIUM — fixture module list cannot be produced.** `32-01-PLAN.md` Task 1 behavior sets `tests/test_alpha.py` to `SKILL = "demo-alpha"`. Task 2 requires rule 4 to list `tests/test_alpha.py`. `covering_modules` selects a skill through `_token` (`tools/staged_mapper.py:61-63`), which refuses a name glued to `"` or `-`. The quoted name does not match, so the list is empty and the Task 2 assertion fails. The rails tell the executor to stop rather than invent a different fixture.
+- **LOW — pin error text contradicts "copy".** `32-01-PLAN.md` Task 1 says copy `validate_verdict` and also says the pin message is `rubric_version/spec_sha differ from the manifest`. The source says `differ from the Rubric: line` (`check_verdicts.py:56`). An executor that copies first, then patches, is fine; one that treats both sentences as already true is not. Predates this revision.
+- **LOW — summary line is specified by one example.** `32-01-PLAN.md:176` points at the behavior block for the line format, and only `:138` gives one. Copyable, but a second judge or a missing count field is not spelled out. Predates this revision.
+
+##### Suggestions
+- Change the fixture text to a form the mapper matches, the same shape as `tests/test_staged_mapper.py:60` (`skills/demo-alpha` as a path token), and keep the expected list `tests/test_alpha.py`.
+- Say the pin message replaces the phase 27 wording, rather than calling the function a copy and a rewrite at once.
+
+##### Risk Assessment
+**MEDIUM.** The tool's contracts match SPEC R2 and R5 and the locked decisions D-01, D-02, D-10, D-13, D-14, D-15. Execution stops on the first prompt test unless the fixture text is fixed. Nothing else in this plan needs a design choice.
+
+##### Ponytail findings
+- The module, the six subcommands split across 01/04/07, and the probe are required by D-01, D-02, D-08 and SPEC R2. Not extra.
+- `skills_roots` is a required lookup copy (D-13, 29 D-13), compared through `LOOKUP_COPIES` (`tests/test_arch.py:1687`). Reuse, not a new finder.
+- Rule 6 (attribution) is required by `32-RESEARCH.md:274`. Not an unsourced addition (A2-7 stands).
+- `JEV_ENTRY_REL` is declared in this plan and unused until 32-04's `count`. That is the shared module D-01 asked for, not a stray option.
+- Callers reached: `tests/test_arch.py`, `Makefile`, `.pre-commit-config.yaml` via `gen_test_groups.py`, `agents/ai-kit-judge.md`, `README.md:51`. `tests/test_setup.py` and `tests/test_wizard_app_1.py` check the agent title only, so the frontmatter line does not break them.
+
+#### 32-02
+
+The stray-module guard is a small, exact addition to the test that already owns discovery, and the citation guard follows `check_edge_floors` (`tools/check_dogfood.py:478-508`, composed at `:529-530`). One instruction contradicts the live roadmap: the scan's end heading.
+
+##### Strengths
+- `stray_test_modules` sits beside `discover_modules`'s flat glob (`tools/run_unittest_parallel.py:246-248`) and uses `fnmatchcase`, matching SPEC R1's case rule. Non-vacuity goes in `TestGateScopeNonVacuity` (`tests/test_gate_scope.py:633`).
+- The JDG-04 regex is a whole token, phase numbers compare as tuples above `(32,)`, and backlog stays out. That matches D-21 and SPEC R10.
+- No new test module, so this plan correctly leaves `Makefile` and `.pre-commit-config.yaml` to 32-01. No shared file with 32-01. `depends_on: []` is correct. 32-07 only adds another `main()` call after this one (`32-07-PLAN.md:234`).
+- D-22 is already in the tree: criterion 3 carries the bar-boundary note (`.planning/ROADMAP.md:400`).
+
+##### Earlier fixes
+none for this plan. A6, A7, A8, A9, A2-8 and A2-9 were refuted or not actionable. Not re-raised. The scan-window note below is a different claim: the plan's own "next `## `" rule versus the heading it names, not a claim that backlog is inside the slice.
+
+##### Concerns
+- **MEDIUM — the scan's end heading is misnamed.** `32-02-PLAN.md` Task 1 says the text runs from `## Phase Details` to the next line starting with `## `, and the must-have says `## Backlog` is outside that slice. On the live file the next `## ` is `## Progress` (`.planning/ROADMAP.md:886`); `## Backlog` is at `:930`. The behavior fixture jumps from `## Phase Details` to `## Backlog`, so it never shows that a `## Progress` section is excluded. Progress has no `### Phase` line today (`:886-928`), so `make check-dogfood` still passes. A later phase-shaped heading there would be flagged, which D-21 does not ask for.
+
+##### Suggestions
+- Name `## Progress` as the stop, and put that heading in the fixture between the phase block and the backlog block.
+- Keep `_criteria` as "up to the first `**Plans**`". That reading is already what the plan says (A2-8).
+
+##### Risk Assessment
+**LOW.** The guard's regex, the phase cutoff and the stray-module walk are executable as written. The heading mistake does not fail the current tree; it fails the next time Progress gains a `### Phase` block, and the fixture would not catch it.
+
+##### Ponytail findings
+- Both checks are required: SPEC R1 / D-16 and SPEC R10 / D-21. No extra option or wrapper.
+- `check_jdg04_citations` copies the `(problems, notes)` shape and `main()` composition of `check_edge_floors` (`tools/check_dogfood.py:478`, `:529-530`). The test helper copies `TestEdgeFloors._root` (`tests/test_check_dogfood.py:519`).
+- The guard walks `tests/` and does not import the runner. That is the right reuse: `discover_modules` globs only the top directory, so it cannot report what it never sees.
+- Docs are correctly left to 32-07 (`32-07-PLAN.md:236-237`). This plan writes none.
+- Same-wave overlap: none. 32-01 edits `tools/judge_loop.py`, `tests/test_judge_loop.py`, `tests/test_arch.py`, `agents/ai-kit-judge.md`, `README.md`, `Makefile`, `.pre-commit-config.yaml`. 32-02 edits `tools/check_dogfood.py`, `tests/test_check_dogfood.py`, `tests/test_gate_scope.py`.
+
+Skipped: I did not re-run the cycle-1 JDG-04 simulation, and I did not execute either plan's tests. Risk: a `### Phase` line added under Progress later is unchecked by the fixture.
+
+### Batch B (32-03, 32-05)
+
+#### 32-03
+
+##### Summary
+
+The plan is executable as written. I simulated its exact date, version and run-log rules over all 16 kept `SKILL.md` files: they produce exactly the hits the plan lists (`ai-kit-cross-ai/SKILL.md:91`, curated-config `:329` and `:334`, spec-config `:221` and `:314`, spec-review `:164`, spec-discuss `:206`, review-checklist `:199`, jev `:62`), and every replacement string matches the current source once. The three AGENTS.md sentences fit the existing skill-judge bullet and the `_design_bullet` pin pattern in `tests/test_rules_docs.py:137-172`.
+
+##### Strengths
+
+- The fence-aware `main_flow` is specified, not left to the executor: toggle on `^\s*(```|~~~)`, record only non-fenced `## ` lines, cut only when the last one equals `## Evidence`. That is what `ai-kit-spec-review-checklist/SKILL.md:254` and `:268` need, since both are fenced `## Review:` samples.
+- The `confirmed live` narrowing is pinned both ways in one named test, so spec-config's coverage sentence at `skills/ai-kit-spec-config/SKILL.md:194` stays a pass while `:199` of review-checklist stays a fail.
+- Every edit target is unique and current: `## Limits (as of 2026-10-23)` at curated-config `:329`, the two spec-config spans at `:221` and `:314-316`, spec-review `:164`, cross-ai `:91`, execute-superpowers `:280-281`, spec-discuss `:206`, review-checklist `:199-201`, jev `:62`.
+- Task 1 regenerates the listings through `tools/gen_test_groups.py:96` and verifies against `tests/test_gate_scope.py:536`, which is the only way a new `tests/test_*.py` reaches a gate (`tools/run_unittest_parallel.py:246-248` globs `tests/` directly).
+- The Node floor sentence the plan keeps still satisfies `tests/test_ai_kit_spec_runtimes_table.py:890`, which pins spec-review, not execute-superpowers. `tests/test_curated_config_followups.py:532` pins Python source, not the skill text.
+
+##### Earlier fixes
+
+none for this plan. No confirmed cycle-1 or cycle-2 item names it, and the latest revision only appended its Round 2 ledger. I re-checked the refuted items against source rather than re-raising them: `history_hits` reads only `SKILL.md` (`32-03-PLAN.md:123`), `version_hits` runs on its main flow (`:159`), and the cursor Evidence bullet (`:169`) sits after a last `## Evidence` heading, so the version rule never sees it.
+
+##### Concerns
+
+- **MEDIUM — the six "append Evidence" steps land after a later `##` heading, so the dates they move stay in the checked flow.** The Rails say to add the heading "at the very end of the file (after the last line of the current last `##` section)" (`32-03-PLAN.md:103`), and the action repeats "append Evidence" for curated-config, spec-config and spec-review (`:140-142`) and for execute-superpowers, spec-discuss and review-checklist (`:170-173`). In all six files the edited section is not the last one. Current last headings: curated-config `## Reporting rule` (`skills/ai-kit-gsd-curated-config/SKILL.md:394`), spec-config `## NEVER` (`skills/ai-kit-spec-config/SKILL.md:59`), spec-review `## Cleanup` (`skills/ai-kit-spec-review/SKILL.md:484`), execute-superpowers `## Close the session wake` (`skills/ai-kit-spec-execute-superpowers/SKILL.md:295`), spec-discuss `## References — load only at the trigger` (`skills/ai-kit-gsd-spec-discuss/SKILL.md:276`), review-checklist `## Common Mistakes` (`skills/ai-kit-spec-review-checklist/SKILL.md:284`). `main_flow` keeps a date when `## Evidence` is not the last `##` heading (`32-03-PLAN.md:123`), and the plan's own fixture says exactly that fails (`:132`). Task 1's acceptance check only counts `^## Evidence$` (`:152`), which passes even when the heading is not last, so the failure shows up in Task 2's tree test, after three commits. A haiku executor that follows the Rails literally reproduces it.
+
+- **LOW — the version rule's sentence split is not specified for the boundary cases, and one of the plan's own Evidence bullets is the case.** `version_hits` splits paragraphs on `(?<=[.!?])\s+` (`32-03-PLAN.md:159`). That splits `1.17.0 today.` into `1.` and `17.0 today.`, and `2026.10.14-941492e session.` into `2026.` and `10.14-941492e session.`. Both still match only because the first fragment keeps the tool name and two dotted numbers, which I verified by running the plan's regex. The cursor Evidence bullet the plan adds, `- The cursor-host validation ran from a cursor-agent 2026.10.14-941492e session.` (`:169`), matches `cursor-agent 2026.10.14` with no constraint word. It is safe only while it stays under a trailing `## Evidence`. If the MEDIUM above is fixed by moving the heading, this bullet must move with it.
+
+- **LOW — the doc-contract non-vacuity test does not fail when the clause is absent.** Task 3 says to copy the design-rule test (`32-03-PLAN.md:196`). That test replaces the flattened clause inside an already-extracted bullet (`tests/test_rules_docs.py:167-172`); `replace` on a missing clause returns the text unchanged, so `_missing_clauses` returns `[]` and the assertion passes. The positive test and `test_missing_marker_reports_all_clauses` still pin the wording, so this is a weak non-vacuity case, not a missing pin.
+
+- **LOW — one acceptance grep is not anchored.** `grep -c "^## Limits$" skills/ai-kit-gsd-curated-config/SKILL.md` (`32-03-PLAN.md:154`) counts 2 after the rename, because `## Limits (as of 2026-10-23)` at `:329` already begins with that prefix. The behavior assertion (`history_hits` returns `[]`) is the real check.
+
+##### Suggestions
+
+- State the append position as "after the file's last line, so `## Evidence` becomes the last `##` heading", and add `grep -c` is not enough: the acceptance line should be that the last `## ` line of each file equals `## Evidence`.
+- Move the cursor-agent bullet into the same trailing section in the same task that adds the version rule, and say so in the action.
+- In the non-vacuity test, assert the damaged bullet differs from the original before checking the reported clause, the way `tests/test_rules_docs.py:57` does.
+- Anchor the Limits grep: `^## Limits$`.
+
+##### Risk Assessment
+
+MEDIUM. The rules, fixtures and source edits are right, and I reproduced the plan's hit list exactly. The one blocking risk is mechanical: the Rails' append wording puts every moved date back into the checked region, and the task that would catch it commits after the task that creates it.
+
+##### Ponytail findings
+
+- Needed: yes. SPEC R9's main-flow rules and R6's doc lines, locked by D-18, D-19 and D-20. No extra option or abstraction; the new module is the gate, and it follows `tests/test_rules_docs.py:36-42` (`_flat`, `_missing_clauses`) rather than inventing a doc-contract style.
+- The version and run-log machinery is the requirement, not gold-plating: D-18 names the tool list, the constraint words and the phrase list.
+- Reach: Task 1 covers `Makefile` and `.pre-commit-config.yaml` through `tools/gen_test_groups.py`. No test module pins the strings these edits remove; the two that look like they do pin code (`tests/test_curated_config_followups.py:532`, `tests/test_ai_kit_spec_runtimes_table.py:890`).
+- **LOW** — the plan tells the executor to copy a 30-line `/proc` scanner from `29-01-PLAN.md:99-109` by hand. The section exists and is complete, so this is transcription cost, not a design gap.
+
+#### 32-05
+
+##### Summary
+
+The pointer half is also executable, and its scan is exact. Running the plan's five regexes with its URL substitution and bold-example exemption over every shipped `.md` outside `evals/` gives 20 hits, the same set the plan names: curated-config `:333`, `:334`, `:338`; spec-config `:332`; usage-metrics `:43`, `:313`; spec-discuss `decision-table.md:64,70`, `log-formats.md:51,60,95,96,114`, `worked-examples.md:14,24,47,54`; jev `laya.md:57`, `typesafe.md:18`; plus the `18.1-one-runtime-model/` pointer that 32-03 deletes. Each replacement string matches the current line once, and no test in `tests/test_ai_kit_gsd_spec_discuss.py` or `tests/test_jev_fast_decision.py` pins a removed string.
+
+##### Strengths
+
+- The bold-example exemption is specified by characters, not by intent: the two characters before the match are `**` and the character after it is `:`. `**D-14: The spike captures the payload**` at `skills/ai-kit-gsd-spec-discuss/references/log-formats.md:38` passes; bare `D-14` at `:95` fails. I ran both.
+- The regexes reject the lookalikes the SPEC names. `JDG-04`, `ID-07`, `D-<n>`, `NN D-xx` and `D-<first>..D-<last>` produce no match; `(D-01..D-06 kept)` produces two, which is why the plan replaces that range (`32-05-PLAN.md:134`).
+- The curated-config pin update is concrete. `tests/test_curated_config_apply.py:2615-2616` and `:2629` name the three phase files the plan removes, and the plan gives the replacement `assertIn` lines (`32-05-PLAN.md:122`). The row still contains `**not live-validated** (` and `pending`, so the other assertions in those tests survive.
+- `shipped_markdown` excludes `evals/` by the first relative part and skips `__pycache__`, matching the amended R9 boundary row (`32-SPEC.md:234`).
+- The plan depends on 32-03, which is the plan whose `history_hits` and `TestHistoryRulesNonVacuity` it extends, and it adds no test module, so it correctly does not regenerate the listings.
+
+##### Earlier fixes
+
+none for this plan. Same as 32-03: no confirmed item names it. The refuted B5 holds — only `pointer_hits` widens to other shipped Markdown (`32-05-PLAN.md:132`), so the 73 dated reference lines stay unchecked by design.
+
+##### Concerns
+
+- **LOW — the phase-folder regex excludes folders whose slug contains a digit.** `PHASE_DIR_RE` is `\d{1,2}(?:\.\d+)?-[a-z][a-z0-9]*(?:-[a-z0-9]+)*/` (`32-05-PLAN.md:118`), and `[a-z0-9]*` cannot cross the next hyphen. `21.1-atomic-reusable-decision-system-skills/` matches today, but `32-re-judge-baseline/` and `18.1-one-runtime-model/` do not: the slug piece `re` and `one` ends at the hyphen. The only such folder in the tree is the one 32-03 deletes (`skills/ai-kit-spec-execute-superpowers/SKILL.md:281`), so nothing ships it. A later skill that names a numbered phase folder with a digit in its slug would pass the gate.
+
+- **LOW — one acceptance grep is true on the current tree.** `grep -c "D-<n>" skills/ai-kit-gsd-spec-discuss/references/log-formats.md` (`32-05-PLAN.md:148`) already counts 2, from `D-<n>` inside `D-<name>` at `references/log-formats.md:21` and `:23`. The plan's new placeholders add more, so the count still rises, but "baseline 0" is wrong and the grep does not prove the edit.
+
+- **LOW — the usage-metrics rewrite drops the backlog title and is easy to miscount.** Lines 42-44 become two lines (`32-05-PLAN.md:124`), but the title "Cron/scheduling automation for usage-metrics daily ingestion" (`skills/ai-kit-usage-metrics/SKILL.md:44`) appears nowhere in the new text. D-19 says the backlog id goes and the limitation stays (`32-CONTEXT.md:199`), and the cycle-1 triage already accepted the deletion, so this is a wording loss, not a new defect. The acceptance grep `manual only.$` (`32-05-PLAN.md:130`) matches only because `:43` is `manual only (D-07). The gap is tracked as Backlog 999.2` with no period after `only`; after the edit the new line `manual only.` matches. An executor that keeps the trailing sentence breaks it.
+
+##### Suggestions
+
+- Allow a digit in a phase-folder slug piece, or say in the plan that the regex is an approximation and the known digit-slug folder is removed by 32-03.
+- Change the log-formats acceptance line to a string that is absent today, such as `**jev overridden**: D-<n>`.
+- Keep the usage-metrics limitation sentence whole: "Scheduling (cron / systemd timer) is not supported: invocation is manual only." is already what the plan writes; add the dropped title only if the owner wants it.
+
+##### Risk Assessment
+
+LOW. The pointer rules reproduce the plan's hit list exactly, the edits are unique, and the one test that pins the removed phase-file names is updated in the same commit. The residual risk is a regex that is narrower than the English description, with no current tree hit behind it.
+
+##### Ponytail findings
+
+- Needed: yes. SPEC R9's pointer rules as amended, locked by D-18 and D-19, including the three hits research added (`32-RESEARCH.md:286`, `:290`, `:291`).
+- No new module, no new helper beyond `pointer_hits` and `shipped_markdown`, and the pin update reuses `tests/test_curated_config_apply.py:2608-2638` instead of adding a test.
+- Reach: the plan edits the only test that asserts the removed strings, and it names the "if a test pins a replaced string" case (`32-05-PLAN.md:136`). I checked both named test modules; neither pins one.
+- Same-wave: 32-05 shares no file with 32-06 or 32-07. 32-07 edits `AGENTS.md` (`32-07-PLAN.md:12`), which 32-03 already committed in wave 2, and 32-07's own text says it is the wave's only editor of that file (`32-07-PLAN.md:95`). 32-03 shares wave 2 with 32-04 and no file (`32-04-PLAN.md:7-9`). Both `depends_on` lists name the plan whose output they read.
+
+##### Cross-Document Consistency
+
+- 32-05's `history_hits` calls `pointer_hits` on the whole `SKILL.md` (`32-05-PLAN.md:119`), while 32-03 defines `history_hits` over the main flow only (`32-03-PLAN.md:123`). The extension is stated in 32-05, so an executor reading both sees it. It also means a pointer inside an Evidence section fails, which is what D-19 says (`32-CONTEXT.md:193`).
+- SPEC R9's acceptance sentence still says the pointer fixtures fail "in a main flow" (`32-SPEC.md:129`), while the amended target and the edge row (`32-SPEC.md:234`) scan every shipped `.md`. The plan follows the amendment, so no plan change is needed; the SPEC sentence is the stale one.
+
+Skipped: I did not run the test suites or `make` targets, since this review is read-only. The regex checks were `python3 -c` reads. Risk: a hit that depends on git index state rather than the working tree would not show.
+
+### Batch C (32-04, 32-07)
+
+#### 32-04
+
+The plan is executable as written. `pool` and `count` are pure functions with pinned inputs, outputs, and fixture ids, and they cover SPEC R3 and R4 plus D-05 and D-08. A haiku executor can follow the task text without a design choice. The only real risk is size: `count_skill` and `load_inputs` have to be split to stay inside pylint, which the shared rails already require.
+
+##### Strengths
+
+- The pool rule is fully specified: first two usable judges, one usable plus native, or native alone, with a named reason for each substitute and a rejection when `--native` is also in `--judges`.
+- The probe comparison is exact string equality after `strip()`, so a truncated or reordered answer fails. That matches 32-01's token file (`AIKIT-SENTINEL` plus one 8-hex code per embedded file).
+- `count` checks deterministic triggers first and asks jev only when they give one. The pinned item carries fixed words only, and the test asserts that `json.dumps(item)` contains neither `skills/` nor the skill name.
+- The `jev` record contract is stated so 32-07 can round-trip it: `asked`, `item`, `level`, and `note` without the `: asks for two` / `: keeps one` suffix.
+- `load_inputs` rejects a name in both `skills` and `excluded`, and `count` iterates `inputs["skills"]` only. An unresolvable base commit keeps the deterministic count and records why.
+- The live ladder still answers this call shape. `jev_ladder.py:546-582` builds `reviewed_head` itself and maps a score item's `level` to the level text at `jev_ladder.py:500-504`.
+
+##### Earlier fixes
+
+- **L2 FIXED.** `.planning/phases/32-re-judge-baseline/32-04-PLAN.md:24` and `:161` reject a name in both maps; `:172` iterates `skills` only and refuses an unknown `--skill`.
+- **L3 FIXED.** `.planning/phases/32-re-judge-baseline/32-04-PLAN.md:23` and `:171` state the `jev` field contract, and `:150` pins the `final_count` round-trip.
+- **L5 FIXED.** `.planning/phases/32-re-judge-baseline/32-04-PLAN.md:21` and `:121` compare the whole token, including a last-code-only and a reordered answer.
+- No regression of those fixes. The cycle-2 revision only appended the Round 2 ledger (`git show 057586c`).
+
+##### Concerns
+
+- **LOW — `count_skill` and `load_inputs` will not fit one function.** `pyproject.toml:74-79` caps a function at 5 args, 15 locals, 12 branches, 6 returns and 50 statements, and the shared rails forbid a pylint disable (`.planning/phases/32-re-judge-baseline/32-01-PLAN.md:113`). The action lists both as one function (`.planning/phases/32-re-judge-baseline/32-04-PLAN.md:161`, `:171`). This is the same class as the already-refuted C2-2: the commit hook blocks an over-limit function, and the rails already say to split. No new evidence that the refutation is wrong. A haiku executor still has to pick the split points.
+
+##### Suggestions
+
+- Name the helpers in the action, the way 32-07 names `_count_problems` and `_skill_line`. For example `count_inputs`, `apply_ask`, and `jev_record`, each returning the `jev` dict the contract already defines.
+
+##### Risk Assessment
+
+**LOW.** The rule, the messages, and the tests are pinned. The lint split is the only place an executor has to invent structure, and the rails already decide the outcome.
+
+##### Ponytail findings
+
+- **Needed.** SPEC R3, R4 and D-05, D-08. Not optional.
+- **Not over-built.** `choose_pool`, `deterministic_count`, `final_count` and `jev_item` are the pure functions the checker in 32-07 recomputes. No extra options.
+- **Reuses what exists.** `lane_ok` and `last_status_line` from 32-01; `jev_review.py ladder` (`jev_ladder.py:618-640`); `skills_roots` copied from `jev_ladder.py:101-109`; `atomic_write_json` from 32-01.
+- **Reach.** No new test module, so no Makefile or pre-commit listing. Callers of the loop file are 32-07 and 32-08, and the record shape is stated for both. No doc in this plan; 32-07's README paragraph names `pool` and `count`.
+
+#### 32-07
+
+The report and the full checker are specified tightly enough to execute, and both cycle-2 fixes landed in the plan text. One fixture the plan calls valid is not: the 79.9 verdict's percent is 79.9 under Python `round` but 80.0 under the phase 27 validator that 32-01 tells the tool to copy. Every test that depends on that fixture would fail `validate_verdict` and never reach the bar assertion. A second, smaller hole is the check-dogfood wrapper unpacking the checker's return value.
+
+##### Strengths
+
+- `render_report` is a pure function of the records: no git, no clock, no `.planning` path, and `check` compares the committed file byte for byte.
+- `judge_order` is now the one order for the Verdicts rows and every `worst_record` call, in both `render_report` and `check`. It walks `pool.members`, then `pool.judges`, then `pool.native`, then other judges sorted (`.planning/phases/32-re-judge-baseline/32-07-PLAN.md:139`). A native substitute therefore always has a position.
+- `load_round` refuses a record that is not an object holding every `RECORD_KEYS` key, and the error propagates out of `check` so the CLI and check-dogfood both name the file (`.planning/phases/32-re-judge-baseline/32-07-PLAN.md:137`).
+- The bar, the cap, the refutation rule and the count recomputation each have a fixture and an expected problem string. The worst judge decides, a fourth round is a note unless `--gate`, and a refutation counts only with all four fields and a finding id of that judge's verdict.
+- `TestTracer` is extended in the same commit that makes `check` require `inputs.json`, the loop file and `REJUDGE.md`, so 32-01's tracer does not break.
+- Wave 3 overlap is clean. 32-07 is the only editor of `tools/judge_loop.py`, `tools/check_dogfood.py`, `AGENTS.md` and `README.md`. 32-05 edits skill text and 32-06 edits the frontmatter tests, the runner and the generated listings. `depends_on: [32-04, 32-02, 32-03]` matches what it reads.
+
+##### Earlier fixes
+
+- **C2-7 FIXED.** `.planning/phases/32-re-judge-baseline/32-07-PLAN.md:139` defines `judge_order`; `:140` and `:152` use it for every `worst_record`; `:127` is the substitute-row test (`replaces cli-b:model-b: cli-b lane hit its quota`, the 100.0 tie to `cli-a:model-a`, `report` then `check` exit 0). The default-list case is at `:173`.
+- **A2-1 FIXED.** `.planning/phases/32-re-judge-baseline/32-07-PLAN.md:137` and `:192` make `load_round` raise `JudgeLoopError` naming the file; `:174` removes `verdict` and expects exit 1 naming `cli-b_model-b.json`.
+- **M1, M2, M3, L3: no regression.** The tracer extension is at `:130`, the fixture drops are in `<context>` at `:99`, the not-judged case is at `:181` and `:193`, and the level-2 count round-trip is at `:180`.
+
+##### Concerns
+
+- **HIGH — the 79.9 fixture is not a valid verdict under the validator 32-01 copies.** `.planning/phases/32-re-judge-baseline/32-07-PLAN.md:99` and `:126` build 79.9 as `drops={"D1": (125, "high"), "D2": (76, "medium")}` on maxima of 125, total 799 of 1000, and say the arithmetic was re-checked. Python 3 `round(799 / 1000 * 100, 1)` returns `79.9` because 79.9 is exactly representable, so `make_verdict` writes `percent: 79.9`. The phase 27 checker uses old-style `%` formatting (`check_verdicts.py:65-67`), and `"%.1f" % (799 / 1000 * 100)` is `80.0`. 32-01 tells the tool to copy that body (`.planning/phases/32-re-judge-baseline/32-01-PLAN.md:171`) and states the recompute as `round(total / max_total * 100, 1)` (`:33`, `:45`). An executor who copies the body rejects this verdict with `percent 79.9 != 80.0`; an executor who transcribes `round(...)` accepts it. The same fixture is the bar test (`:126`), the refutation test (`:177`) and the SPEC R5 boundary case in 32-01 (`:209`). The 80.0 twin (total 800) is exact and is fine. I confirmed the two results with `python3 -c`.
+
+- **MEDIUM — check-dogfood unpacks a return value `check` does not have.** 32-01 defines `check(...) -> tuple[list[str], list[str], list[str]]` (lines, problems, notes) (`.planning/phases/32-re-judge-baseline/32-01-PLAN.md:176`). 32-07's Task 3 says a fake `check` returns `(["line"], ["p1"], ["n1"])` and the wrapper yields `(["judge records: p1"], ["judge records: n1"])` (`.planning/phases/32-re-judge-baseline/32-07-PLAN.md:219`). The action says only "the behavior above" and "catch only `JudgeLoopError`" (`:227`). It never says to unpack three values. A haiku executor following 32-01's signature will write `problems, notes = mod.check(...)`, which raises `ValueError: too many values to unpack`. `main` does not catch that (`check_dogfood.py:511-538`), so the push hook dies with a traceback instead of `judge records:`. The live behavior line (`make check-dogfood` prints `ok`, `:220`) does not catch it, because `.planning/judge` is absent and `check` is never called.
+
+- **LOW — `judge_order` can raise inside the checker.** `.planning/phases/32-re-judge-baseline/32-07-PLAN.md:140` says every record's judge has a position because `worst_record` is called with `judge_order(pool, <the judges of the round's records>)`. That is true only when the caller passes exactly that. `list.index` raises `ValueError` for any other list, and `ValueError` is not `JudgeLoopError`, so it escapes `main` and the check-dogfood wrapper (`:227` catches only `JudgeLoopError`). One sentence saying `worst_record` is only called with the `judge_order` of those records, and that a judge absent from `order` is a `JudgeLoopError` naming the judge, would close it.
+
+- **LOW — the README and AGENTS.md edits have no contract test.** `tests/test_rules_docs.py` pins the Code Exploration clauses, the design bullet and three Commands prefixes (`tests/test_rules_docs.py:216-222`). It does not pin the `make check-dogfood` sentence. The acceptance grep (`:246`) checks the Commands line and the README heading, but nothing fails if the Testing bullet or the README paragraph is worded differently from the plan. Predates this revision. Not a blocker: the greps do fail a missing edit.
+
+##### Suggestions
+
+- Drop the 79.9 fixture. Use total 798 (`drops={"D1": (125, "high"), "D2": (77, "medium")}`), which is 79.8 under both `round` and `"%.1f" %`, grade C, bar `not met`. State in 32-07 and in 32-01 that `validate_verdict` must compute the percent with `round(total / max_total * 100, 1)` and compare it to the verdict's percent with `==` after that same call, not with `%` formatting. 799 cannot be represented as 79.9 by the copied body.
+- In Task 3, write the unpacking explicitly: `lines, problems, notes = load().check(root, root / ".planning" / "judge", load().CheckOptions())`, then prefix `problems` and `notes` and discard `lines`.
+
+##### Risk Assessment
+
+**HIGH** until the 79.9 fixture is replaced. The rest of the plan is sound, and the two cycle-2 fixes are real, but the fixture the bar and refutation tests stand on is rejected by the validator the same phase copies. That fails the plan's own verify command, and the two percent implementations disagree, so the executor cannot fix it without a decision.
+
+##### Ponytail findings
+
+- **Needed.** SPEC R5, R6, R7 and D-03, D-04, D-06, D-07, D-12. The report, the checker and the push hook are the phase goal, not extra surface.
+- **Not over-built.** `judge_order`, `RECORD_KEYS` and the `render_report` guards are the minimum that stops a `KeyError` or an unordered tie from reaching the push hook. No new options beyond `--gate` and `--require-current`, which 32-01 already parses.
+- **Reuses what exists.** `validate_verdict`, `skill_digest`, `record_path`, `judge_slug` and `CheckOptions` from 32-01; `load_inputs`, `deterministic_count`, `final_count` and `choose_pool` from 32-04; the `(problems, notes)` composition and `_script` loader in `tools/check_dogfood.py:54-58` and `:511-538`.
+- **Reach.** `TestTracer` is updated in the same commit. `AGENTS.md` and `README.md` are both edited. No new test module, so no generated listing. 32-05 and 32-06 do not touch these files.
+
+Skipped: did not run the test suite or `make` targets (read-only review). Did not re-execute the live jev call from the cycle-2 refutation of C2-1. The 79.9 percent disagreement is the risk that blocks execution.
+
+### Batch D (32-08, 32-09)
+
+#### Review: `.planning/phases/32-re-judge-baseline/32-08-PLAN.md`, `.planning/phases/32-re-judge-baseline/32-09-PLAN.md`
+##### Document Type
+GSD · plan (grounded on `32-SPEC.md`, `32-CONTEXT.md`, `32-RESEARCH.md`, `32-01`, `32-04`, `32-07`)
+##### Files Read
+- both plans (current text)
+- `32-01-PLAN.md`, `32-04-PLAN.md`, `32-07-PLAN.md` (interfaces these plans call)
+- `.planning/scripts/cross-ai.mjs` (preamble, opencode review argv, stdout), `.planning/config.json`, `skills/ai-kit-cross-ai/SKILL.md`, `29-01-PLAN.md` scope section, `15-skills-vs-new-judge.md`
+- `tools/judge_loop.py` does not exist yet; judged from the plans that create it
+
+#### 32-08
+
+The run script is specified closely enough for a haiku executor, and the interfaces it calls (`prompt --probe`, `pool`, `count`, `ingest`, `judge_slug`) match 32-01 and 32-04. One transport detail makes the probe that picks the pool fail by construction: the runner appends reviewer rules that contradict the one-word answer the probe requires.
+
+##### Strengths
+- Judge ids are built at run time from `review.reviewer_instances` (`32-08-PLAN.md:96`); `.planning/config.json:58-64` has both `referee-two` and `referee-three` with `cli` and `model`.
+- The worker's exit handling matches the runner skill: exit 69 covers `stopped=hard-waits` and `stopped=cap` (`skills/ai-kit-cross-ai/SKILL.md:161-162`), and one wait per `retry_after_s` is that skill's own rule (`SKILL.md:137-139`).
+- `run-with-timeout` inherits stdio (`.claude/gsd-core/bin/gsd-tools.cjs:5098-5100`), so piping `prompt.md` reaches the runner, and a success writes the parsed reply to stdout (`cross-ai.mjs:10798`). `normalize` adds one trailing newline (`cross-ai.mjs:1525`), which `probe_result`'s `strip()` accepts (`32-04-PLAN.md:121`).
+- `inputs.json` matches `load_inputs`'s shape (`32-04-PLAN.md:79`), and the seven `last_v4` numbers match the SPEC Background.
+
+##### Earlier fixes
+- M3 (32-09's stop sentence): still present at `32-09-PLAN.md:92`. No regression.
+- L4: three effort variables at `32-08-PLAN.md:24`, `:97`, `:122`. No regression.
+- L5: the probe truth names a code after each embedded file and the exact `token` comparison (`32-08-PLAN.md:20`). No regression.
+
+##### Concerns
+
+- **HIGH — The review preamble makes every probe unusable.** `32-08-PLAN.md:98` builds the lane argv with `--mode review` and no `--no-preamble`. The runner then appends `REVIEW_PREAMBLE` to the prompt (`cross-ai.mjs:10657`, text at `cross-ai.mjs:146-149`): "Reply with the review only." The probe prompt ends "Reply now with only that word." and "Print nothing else." (`32-01-PLAN.md:214`), and `probe_result` accepts only a stripped stdout exactly equal to the `token` file (`32-04-PLAN.md:121`). A judge that follows the appended rule answers with a review, so both configured judges come back `answer is not the sentinel`. `choose_pool` then returns native alone (`32-04-PLAN.md:122`), and every skill is marked `second judge unavailable`. The same text is appended to the real judging prompts, whose rule 7 says "nothing else" (`32-01-PLAN.md:167`). Required: pass `--no-preamble` (the runner's own flag, `cross-ai.mjs:39`) on every probe and judging lane, so the built prompt is the whole prompt. This predates the revision; cycles 1 and 2 did not look at the preamble.
+
+- **MEDIUM — The native spawn message tells the agent to judge a probe.** `32-08-PLAN.md:135` runs `natives` before `launch`, and with one usable configured judge the pool's second member is the native id (`32-04-PLAN.md:110`). Task 3 then sends every path in `natives.txt` the same message: "judge the skill it names" (`32-08-PLAN.md:165`). A probe prompt names no skill and demands the sentinel word (`32-01-PLAN.md:214`). The agent's reply is saved as `lane.out` and ingested, and `ingest` with `--native-note` records a verdict whenever `lane.out` holds exactly one `{"skill"` line (`32-01-PLAN.md:170`, `:208`). Required: one sentence saying a lane dir that holds `token` and no `manifest.json` is a probe, and its message asks for the one word in `token`, compared by `probe_result` before `pool` is trusted. This predates the revision.
+
+- **LOW — `AI_KIT_REFUSE_REAL_HOME=1` does not protect HOME here.** `32-08-PLAN.md:96` sets it on every child, and T-32-20 (`32-08-PLAN.md:201`) cites it as the mitigation. The flag is checked only by `tools/setup.py:5165-5168`, and no lane runs `setup.py`. The runner writes its quota-cycle file under `$HOME/.local/state` (`cross-ai.mjs:3298-3326`). Setting `HOME` to a scratch directory would break the hard-tier state the worker relies on, so the plan should say the flag does not cover the lanes and the runner's state write is accepted. This predates the revision.
+
+##### Suggestions
+- Add `--no-preamble` to `lane-argv` and name it in the Task 1 truth.
+- Split the Task 3 message: probe dirs echo `token`; judging dirs follow `prompt.md`.
+- State in T-32-20 that the runner's cycle file under the real HOME is an accepted write.
+
+##### Risk Assessment
+**HIGH.** As written the pool selection throws away both configured judges, so the baseline would be native-only and every two-judge skill would be marked `second judge unavailable`. One flag fixes it.
+
+##### Ponytail findings
+- **MEDIUM — `lanes.py` re-implements the runner skill's exit table.** D-08 locks the run as a plan task that follows `ai-kit-cross-ai`, so the loop is required, not extra. It should call the runner and read its status line, which it does; no smaller existing helper covers the per-skill sequencing. Kept as a note, not a new defect (cycle 1 D13 and cycle 2 D2-6 already refuted it).
+- Needed for SPEC R3, R4, R7 and D-05, D-08, D-09, D-10. No same-wave overlap: it is the only plan of wave 4, and `files_modified` is empty.
+
+#### 32-09
+
+Publishing and checking are mechanical and match the checker 32-07 builds. The audit's column names exist in `render_report`, and the one commit is scoped to `.planning/judge/`.
+
+##### Strengths
+- `publish.py` copies byte for byte and refuses different bytes before copying (`32-09-PLAN.md:84`), which keeps the never-edit-a-verdict rule.
+- `check.py` derives skills from `inputs.json` and judges from the records' `judge` fields (`32-09-PLAN.md:86`), so it cannot drift from the run, and `--require-current` is the SPEC R7 acceptance (`32-07-PLAN.md:27`).
+- The audit reads real columns: `## Verdicts` has Judge, Lane status, Substitute and Score (`32-07-PLAN.md:149`), and the bar clause is the cell `judge_bar` returns (`32-07-PLAN.md:142`).
+- The stop sentence names `not judged` beside a stale digest and a mismatch (`32-09-PLAN.md:92`).
+
+##### Earlier fixes
+none for this plan (no confirmed cycle-2 item names it; M3's 32-09 half is still in place, no regression).
+
+##### Concerns
+
+- **LOW — The work-list line's bar cell is not pinned to a column.** `32-09-PLAN.md:117` says `bar <clause>`, and `render_report` puts the clause in the `Bar` column (`32-07-PLAN.md:148`). A haiku executor can also copy the `Why this many` cell, which holds the count reasons. Required: say the clause is the `Bar` cell. This predates the revision.
+
+##### Suggestions
+- Name the `Bar` column in the audit's per-skill line.
+
+##### Risk Assessment
+**LOW.** The publish, check and commit steps are determined by 32-07's interface, and the precondition `all lanes ended` is checked before anything is copied.
+
+##### Ponytail findings
+- The audit repeats `check`, which cycle 1 D14 and cycle 2 D2-10 already judged not a defect. It adds the row counts and the history-string scan the checker does not print, so it earns its place.
+- Needed for SPEC R7 and D-06, D-07, D-11, D-12. `depends_on: [32-08]` is the only producer of the scratch it reads. No same-wave plan exists in wave 5, and the only files it writes are the new `.planning/judge/` records.
+
+##### Cross-Document Consistency
+- `32-08`'s `lane-argv` omits `--no-preamble`, which `cross-ai.mjs:10657` needs for the probe contract `32-01` and `32-04` defined. That is the blocking gap between the plans.
+- `32-09`'s audit and `32-07`'s report layout agree on section names, column names and the `replaces <judge>: <reason>` cell.
+
+##### Status: Issues Found — fix and re-invoke
+
+Skipped: I did not run the plans or any test suite, and `tools/judge_loop.py` does not exist yet, so the pool and ingest behavior is taken from 32-01 and 32-04 rather than from code. Risk: if those two plans change the probe or the status line, this review's line citations move.
+
+### Batch E (32-06)
+
+#### 32-06
+
+The plan delivers SPEC R8 and D-17: a stdlib strict-subset gate over every installable entry, the two old guards removed, a PyYAML `UniqueKeyLoader` cross-check in `UNIT_UV_MODULES`, and a one-time npm `yaml` comparison recorded in the SUMMARY. The listing wiring, the sort order of the new unit-uv module, and the fixture outcomes are all checkable against source. One parser rule does not match YAML folding, and it fails the tree test the plan itself pins.
+
+##### Strengths
+
+- The gate replaces exactly the two guards D-17 names (`tests/test_setup.py:5524` and `:5538`) and leaves `setup._read_frontmatter` and the rest of `TestReadFrontmatter` alone, which the installer still needs (`tools/setup.py:908`).
+- `entry_files` reuses `setup.enumerate_entries` (`tools/setup.py:966`) instead of a second discovery walk. `CATEGORIES` is `("agents", "commands", "skills")` (`tools/setup.py:44`); the plan's skills-agents-commands order is an explicit reordering, so it does not inherit the wrong one.
+- `UNIT_UV_MODULES` is a one-line frozenset edit (`tools/run_unittest_parallel.py:94`), and `sorted(...)[0]` stays `tests.test_framework_profiles` (`tests/test_staged_mapper.py:553`). The generator writes `# unit-uv: <space-separated modules>` (`tools/gen_test_groups.py:39` plus `tools/run_unittest_parallel.py:580`), which is the string the acceptance grep pins.
+- Task 1 regenerates the listings before its verify runs `tests.test_gate_scope`, so the "stale listing" check (`tests/test_gate_scope.py:536`) can pass. The two commits split the shared-machinery cost the way the plan says.
+- Fixture outcomes I checked against PyYAML 6.0.3 match the plan: `name: 123` loads as an int, a duplicate key keeps the last value, a plain `: ` raises, an inline ` #` becomes a comment, a plain continuation folds, and the 1,024 / non-ASCII cases load. The two designed-stricter labels match Pitfall 3 (`32-RESEARCH.md:360`).
+- No same-wave file overlap. 32-05 and 32-07 do not touch `Makefile`, `.pre-commit-config.yaml` or `tools/run_unittest_parallel.py`. `depends_on: [32-03]` is conservative, not missing: this plan reads no 32-03 output.
+
+##### Earlier fixes
+
+none for this plan. Cycle 2 confirmed nothing in 32-06, and the revision only appended the Round 2 ledger. I did not re-raise E1, E2, E3 or E2-1 through E2-5.
+
+##### Concerns
+
+- **HIGH — the fold rule fails the tree the plan says passes.** `32-06-PLAN.md:114` says to fold `>` by joining consecutive non-blank lines with one space and turning each blank line into `\n`. YAML folded style turns a blank line into a single line break, not an empty line, so two non-blank lines with one blank between them become `a\nb\n`, not `a\n\nb\n`. The tree has that shape: `skills/ai-kit-cross-ai/SKILL.md:3-11` is `description: >` and its last content line is followed by the blank line before the closing fence. PyYAML returns 600 characters with no trailing newline; the plan's rule returns 601 with one. The four `>-` descriptions match. Task 1 pins `entry_problems(REPO_ROOT) == []` (`32-06-PLAN.md:103`, `:119`), so `test_every_entry_parses_strictly` fails on a file the plan never told the executor to edit. This is not E2-2: that refutation covered joining a space across a blank line, and the plan's "consecutive non-blank" wording is correct for that. The extra `\n` is a different step.
+- **MEDIUM — the chomp rule disagrees with YAML on two more shapes, so the cross-check is not the agreement it claims.** `32-06-PLAN.md:114` says to drop trailing blank lines, then add one `\n` for clip and one `\n` plus one per dropped blank for keep. PyYAML's chomp counts the trailing line break that the fold already ends with. A `>+` block with two trailing blank lines comes back as three trailing newlines from PyYAML and four from this rule. A `|` block whose content ends with a blank line comes back with that blank line kept and one trailing `\n` from PyYAML; the plan drops it first and the literal join never puts it back. No file in the tree uses `|+`/`>+` or a literal block today (Pitfall 4, `32-RESEARCH.md:362`), so the tree test survives, but `yaml_accepts` uses `field_problems` on PyYAML's value (`32-06-PLAN.md:149`) while the gate uses its own value. The "agree on every listed fixture" claim (`32-06-PLAN.md:178`) holds only while the fixtures the executor writes happen to avoid these shapes. The behavior block does not give the text of `folded description` or `literal description` (`32-06-PLAN.md:141`).
+- **LOW — two acceptance checks do not mean what they say.** `grep -c "def test_real_inline...\|def test_real_entries..."` (`32-06-PLAN.md:130`) needs `grep -E` or it counts lines containing the literal `|`. `grep -c "tests.test_skill_frontmatter" Makefile` (`32-06-PLAN.md:131`) is 1 today only because the unit line is one physical line (`Makefile:12`). `gen_test_groups.group_lines` writes one line per group (`tools/gen_test_groups.py:39`); a wrapped unit line would print 2 for one module. The runner's own stale-listing check is the real gate.
+- **LOW — `scope.py` is named but not specified in this plan.** Task 1 step 0 says to write `tmp/p32/06/scope.py` and run `start` and `selftest` (`32-06-PLAN.md:111`), and Task 2 ends with `scope.py test` and `scope.py close`. The interface lives in 32-01's rails, which the executor must open separately. A haiku executor that follows only this file has no signature to write.
+
+##### Suggestions
+
+- Change the `>` fold to: join consecutive non-blank lines with one space; a blank line ends the paragraph and contributes the line break, but never a second one. The clip result for `skills/ai-kit-cross-ai/SKILL.md` is then the 600-character string with no trailing newline. State that rule in one sentence next to the existing chomp sentence so the executor does not have to invent it.
+- Make chomp count the line break the fold already produced: clip keeps one trailing `\n`, strip keeps none, keep keeps one plus one per trailing blank line that was dropped. Apply the same trailing-break count to `|`, whose content blank lines stay. Add the two cases above as fixtures so the PyYAML module fails if the rule drifts.
+- Give the full text of `folded description` and `literal description` in the behavior block, the way `colon on first line` already has its text.
+- Replace the two `grep -c` checks with `grep -c -E` and `grep -F -x -c`, or drop them and keep the runner check.
+
+##### Risk Assessment
+
+**MEDIUM.** The requirement, the files, the group wiring and the fixture labels are right, and nothing in this plan collides with 32-05 or 32-07. The fold bug is a one-line rule correction, but as written Task 1's tree test fails on a skill the plan does not let the executor change, so the executor either stalls or edits a SKILL.md this plan does not own.
+
+##### Ponytail findings
+
+- **Needed.** SPEC R8 and D-17 require both layers, the fixture list, the npm comparison and the removal of the two old guards. Nothing here is an unrequested option or wrapper.
+- **Reuses the right things.** `enumerate_entries` (`tools/setup.py:966`), the `json.loads` precedent (`tools/setup.py:900`), `gen_test_groups.py`, and the `import yaml` pattern of `tests/test_framework_profiles.py:9`. A hand-rolled subset is what D-17 locked; calling PyYAML from the unit group would not run under system python3 (`tools/run_unittest_parallel.py:93-94`).
+- **LOW — one reach it states and does not mechanically check.** The plan says the two old tests are deleted and the module is listed, but the acceptance greps can pass for the wrong reason (above). The PyYAML module's import of `field_problems` is the right share; no second copy of the name and description rules is introduced in the committed code.
+- **Not cut short.** The tree gate, the cross-check and the recorded comparison are all present. The fold bug is a wrong rule, not missing scope.
+
+Skipped: I did not run the test suite or open 32-01's rails, so `scope.py`'s real signature is unverified. The fold numbers come from one read-only `uv run` against the tree and six synthetic blocks.
+
+## Consensus Summary (cycle 3)
+
+Only one reviewer ran, so no finding can be agreed or disputed across reviewers. The orchestrator weighed
+referee-two's findings against the source instead, and ran them where they described behaviour (Triage below). The
+review carries no `[reviewed-without-repo-access]` or `[reviewed-without-source-citations]` marker: every batch read
+the repository and cites `path:line` evidence.
+
+### Agreed Strengths
+
+None across reviewers (one reviewer). These strengths referee-two named were also confirmed by the orchestrator:
+
+- Both cycle-2 findings are fixed. `judge_order` is the one order for the Verdicts rows and every `worst_record` call,
+  with a substitute-row test. `load_round` refuses a record that lacks a `RECORD_KEYS` key with a `JudgeLoopError`
+  naming the file, with a TestCheck line. A simulation of the new substitute fixture gives the plan's expected order,
+  worst record, Digest and Spread cells.
+- No cycle-1 fix regressed.
+- 32-03's and 32-05's hit lists, edit targets and regexes reproduce on the tree.
+- No batch has a same-wave file overlap or a missing `depends_on`.
+
+### Agreed Concerns
+
+None (one reviewer).
+
+### Divergent Views
+
+The orchestrator's checks diverged from referee-two on all 3 HIGH labels (C3-2, D3-1, E3-1), each refuted by a run,
+and on every MEDIUM and LOW finding: none is confirmed. Two residual notes need no plan change and are not counted:
+
+- D3-1: only the configured reviewer model was probed; the second configured judge was not.
+- E3-1 and E3-2: for a block-scalar description that is the last frontmatter key, the PyYAML cross-check's value lacks
+  the final line break that the strict parser keeps. No test compares the two values.
+
+## Triage (cycle 3, orchestrator, 2026-11-07)
+
+3 HIGH labels were raised: C3-2, D3-1 and E3-1. Each was refuted by running the claim, so 0 HIGH remain. Both
+confirmed cycle-2 findings are fixed, and no cycle-1 fix regressed. No new finding is confirmed, so 0 actionable
+findings remain. Every cycle-3 finding is listed under "Rejected or not actionable" with its evidence.
+
+### Earlier fixes verified
+
+referee-two marked both cycle-2 items FIXED and found no cycle-1 regression. The orchestrator re-checked:
+
+- **C2-7 (32-07, the undefined `worst_record` tie order; no substitute-row test): FIXED.**
+  - `judge_order(pool, judges)` gives `pool.members`, then `pool.judges`, then `pool.native`, then every other judge
+    sorted (32-07-PLAN.md:143). `worst_record` takes its position from that order (:144). The Verdicts rows (:149),
+    `render_report` and `check` (:156, :201) all pass `judge_order(pool, <the round's judges>)`.
+  - TestReport adds the substitute line (:130). TestCheck runs the same records with the default judge list (:178).
+    The acceptance criteria (:165, :167, :214), a must-have truth (:40) and T-32-16 (:274) name it.
+  - Simulation (`sim_c3.py`), with `choose_pool`'s documented pool shape (32-04-PLAN.md:122):
+    - `judge_order(pool, ["native:fixture", "cli-a:model-a"])` is `["cli-a:model-a", "cli-b:model-b", "native:fixture"]`;
+    - `judge_order({}, ["z:m", "a:m"])` is `["a:m", "z:m"]`;
+    - the Verdicts rows are `cli-a:model-a`, then `native:fixture`, and the 100.0 tie goes to `cli-a:model-a`;
+    - the Digest cell is `000000000000` and the Spread is `0.0`;
+    - the check line lists the judges in record-file-name order: `cli-a_model-a.json`, then `native_fixture.json`.
+- **A2-1 (32-07, a record without the record keys raised a bare `KeyError`): FIXED.**
+  - `RECORD_KEYS` holds the fifteen keys 32-01 writes: its twelve manifest keys plus `substitute`, `attempts` and
+    `verdict` (32-07-PLAN.md:140; 32-01-PLAN.md:169, :174).
+  - `load_round` raises `JudgeLoopError("<path>: not a judge record (missing <keys>)")` (32-07-PLAN.md:140), and
+    Task 2 reads every record through it (:198).
+  - The TestCheck line removes `verdict` and expects exit 1 naming `cli-b_model-b.json` (:179, :214). A must-have
+    truth (:41) and T-32-15 (:273) name it.
+- **Cycle 1 items (M1, M2, M3, L1, L2, L3, L4, L5): no regression.**
+  - The revision kept 32-07's tracer extension, fixture drops, not-judged case and count round-trip.
+  - Cycle 2's run of all eight fixtures through the phase 27 validator passes again.
+  - The other plans changed only in their ledgers.
+
+### Confirmed HIGH
+
+None.
+
+### Confirmed actionable (MEDIUM and LOW)
+
+None.
+
+### Rejected or not actionable
+
+Batch A (32-01, 32-02):
+
+- **A3-1 (MEDIUM) 32-01, the module-list fixture cannot be produced.** Refuted by a run.
+  - `_skill_forms` returns the whole-token regex for every folder that is not tight (tools/staged_mapper.py:124-132).
+    `_token` rejects only a letter, digit, `_` or `-` beside the name (:61-63), and a double quote is none of these.
+  - The real mapper, run on the exact fixture (`tests/test_alpha.py` holding `SKILL = "demo-alpha"`,
+    32-01-PLAN.md:135), selected `tests.test_alpha`. 32-01's formula (:157) then gives `['tests/test_alpha.py']`
+    (`sim_module_list.py`).
+- **A3-2 (MEDIUM) 32-02, the scan's end heading is misnamed.** Refuted.
+  - The rule is "the text from the line `## Phase Details` to the next line starting with `## `" (32-02-PLAN.md:111).
+    "`## Backlog` is outside the scan" (:22) is a true consequence, not the stop.
+  - The fixture's next `## ` heading is `## Backlog` (:99), which exercises the same generic stop.
+  - The stated consequence is backwards: the scan stops at `## Progress`, so a `### Phase` line under it is never
+    scanned.
+  - This repeats cycle 1's A6 and A9 without new evidence, and Task 1's verify runs `make check-dogfood` on the live
+    file.
+- **A3-3 (LOW) 32-01, the pin message contradicts "copy".** Not actionable. One sentence states both the copied body
+  and the new message (32-01-PLAN.md:171). The wording predates the revision.
+- **A3-4 (LOW) 32-01, the check line is specified by one example.** Not actionable. Every part of the line is defined in
+  words (32-01-PLAN.md:176) beside the example (:138). The wording predates the revision.
+
+Batch B (32-03, 32-05):
+
+- **B3-1 (MEDIUM) 32-03, the appended `## Evidence` is not the last `##` heading.** Refuted by a run.
+  - The Rails add the heading "at the very end of the file", and it "must stay the last `##` heading of the file"
+    (32-03-PLAN.md:103).
+  - Applying every 32-03 edit in memory left `## Evidence` last in all six files. The plan's rules then found 0
+    main-flow hits in all 16 kept skills (`sim_batch_b.py`).
+  - This repeats cycle 2's B2-1.
+- **B3-2 (LOW) 32-03, the sentence split and the cursor Evidence bullet.** Not actionable. The reviewer ran the rule,
+  and the intended hits still match. The bullet sits under the trailing `## Evidence`, confirmed last above, which the
+  version rule never reads.
+- **B3-3 (LOW) 32-03, the copied non-vacuity test passes when a clause is absent.** Not actionable.
+  - The plan copies the house design-rule test (32-03-PLAN.md:192; tests/test_rules_docs.py:167-172).
+  - With a clause absent, the positive test fails first. The stated mechanism is also wrong: `_missing_clauses` would
+    report that clause, not `[]`.
+  - The extra `assertNotEqual` of tests/test_rules_docs.py:57 would be optional hardening.
+- **B3-4 (LOW) 32-03, `grep -c "^## Limits$"` counts two lines.** Refuted by a run. After the rename it counts one; `$`
+  anchors the pattern (32-03-PLAN.md:141).
+- **B3-5 (LOW) 32-05, `PHASE_DIR_RE` misses folder names with several hyphenated pieces.** Refuted by a run. The pattern
+  (32-05-PLAN.md:101) matched each of these in full: `32-re-judge-baseline/`, `18.1-one-runtime-model/`,
+  `21.1-atomic-reusable-decision-system-skills/`, `30.1-v2-wizard/` and `22-pi-live-validation/`.
+- **B3-6 (LOW) 32-05, the `D-<n>` grep baseline is two.** Refuted by a run. The exact grep prints 0 today
+  (32-05-PLAN.md:153), and the cited lines 21 and 23 hold no `D-<name>`.
+- **B3-7 (LOW) 32-05, the usage-metrics rewrite drops the backlog title.** Not actionable.
+  - D-19 drops the backlog id and keeps the limitation in plain words (32-CONTEXT.md:199), and cycle 1 accepted the
+    deletion.
+  - With the given replacement, the grep (32-05-PLAN.md:116) matches once from a baseline of 0.
+  - The reviewer calls it a wording loss, not a defect.
+- **Cross-document note (advisory, not counted).** SPEC R9's acceptance sentence names fixtures "in a main flow"
+  (32-SPEC.md:129), while its target covers every shipped Markdown file. The plans follow the target, the wider rule,
+  so no plan change is needed.
+
+Batch C (32-04, 32-07):
+
+- **C3-1 (LOW) 32-04, `count_skill` and `load_inputs` exceed the lint limits.** Refuted. This is cycle 2's C2-2 again:
+  the rails' split rule (32-01-PLAN.md:113) and the commit-stage pylint hook. The reviewer brings no new evidence.
+- **C3-2 (HIGH) 32-07, the 79.9 fixture fails the phase 27 validator.** Refuted by a run.
+  - The validator computes `pct = round(v["total"] / v["max_total"] * 100, 1)` (check_verdicts.py:65); `%` only
+    formats its error message (:67).
+  - `round(799 / 1000 * 100, 1)` is `79.9`, and `"%.1f" % (799 / 1000 * 100)` is `'79.9'`, not `'80.0'`.
+  - The real validator, loaded by path, accepted the fixture with no errors, and cycle 2's run of all eight fixtures
+    passes again (`sim_c3.py`).
+- **C3-3 (MEDIUM) 32-07, check-dogfood unpacks two values from a three-list `check`.** Refuted.
+  - The behavior line gives the fake `check`'s three lists and the exact prefixed result (32-07-PLAN.md:227).
+  - The task is test-first, with one TestJudgeRecords test per non-live behavior line, so a two-value unpack fails
+    that test before the commit.
+  - 32-01's `check` returns three lists (32-01-PLAN.md:176).
+- **C3-4 (LOW) 32-07, `judge_order`'s index lookup can raise.** Not actionable. Every call site passes
+  `judge_order(pool, <the round's judges>)` (32-07-PLAN.md:143, :149, :156, :201), so every record's judge has a
+  position by construction, as the substitute simulation shows.
+- **C3-5 (LOW) 32-07, the doc edits have no contract test.** Not actionable. The plan gives the exact sentences and
+  greps for two of the three edits (32-07-PLAN.md:253). The concern predates the revision.
+
+Batch D (32-08, 32-09):
+
+- **D3-1 (HIGH) 32-08, the runner's review preamble makes every probe unusable.** Refuted by a run.
+  - The runner appends `<reviewer_rules>`, ending "Reply with the review only.", in review mode unless
+    `--no-preamble` is given (cross-ai.mjs:146-149, :10657). 32-08's lane argv has no `--no-preamble`
+    (32-08-PLAN.md:98).
+  - The run: a 28 KB probe built as 32-01's `build_probe` describes, over three real skill-judge files, went once
+    through that exact argv with the preamble on to referee-two (13:26:43, 7 s). It answered the exact expected word:
+    `status=ok exit=0 tree=clean`, and `probe_result` counts the lane usable (`probe_preamble.py`).
+  - Judging lanes use the same command (32-RESEARCH.md:336). Read-only mode comes from opencode's `plan` agent
+    (cross-ai.mjs:1380), not from the preamble.
+  - Residual, not counted: referee-three was not probed, because this review uses only the configured reviewer. A
+    lane that fails its probe is not counted and gets the recorded native substitute (32-04's pool rule).
+- **D3-2 (MEDIUM) 32-08, the native spawn message could send a probe.** Refuted.
+  - `natives.txt` lists only native judging lane dirs under `lanes/`. Each is built by
+    `prompt --judge NATIVE --skill <skill>` and marked `native` (32-08-PLAN.md:136, :141).
+  - Probes are built only for the configured judges, under `probe/` (:100).
+  - So no probe dir can reach the message (:165).
+- **D3-3 (LOW) 32-08, `AI_KIT_REFUSE_REAL_HOME=1` does not guard the lanes.** Not actionable.
+  - The fact holds: only `tools/setup.py` and test tooling read the flag (skills/ai-kit-cross-ai/SKILL.md:182).
+  - The flag is still the owner's rule for every ai-kit run. The lanes are read-only (opencode's `plan` agent and the
+    tree fingerprint, T-32-18).
+  - The runner's XDG quota state is its normal write in every cross-AI run, and it sits outside the protected host
+    folders. T-32-20's other two mitigations hold (32-08-PLAN.md:201). At most the row overstates one mitigation.
+- **D3-4 (LOW) 32-09, the audit's bar cell is not tied to a column.** Not actionable. The audit reads the report by
+  column names, and `bar <clause>` names the `Bar` column (32-09-PLAN.md:117; 32-07-PLAN.md:148).
+
+Batch E (32-06):
+
+- **E3-1 (HIGH) 32-06, the fold rule fails the tree.** Refuted by a run.
+  - With the plan's exact parser and field rules, `entry_problems(REPO_ROOT) == []` over all 24 entries, and the three
+    `parse_strict` behavior lines hold (`sim_strict_tree.py`).
+  - `test_every_entry_parses_strictly` checks only the strict parse and the field rules (32-06-PLAN.md:103, :118-119),
+    never equality with PyYAML.
+  - The 601-versus-600 difference for `skills/ai-kit-cross-ai/SKILL.md` is real but comes from the PyYAML side.
+    `frontmatter_body` ends at the first `\n---\n` (32-06-PLAN.md:149), so the folded block, the last key, loses its
+    final line break. No blank line follows that block, contrary to the claim (SKILL.md:3-11).
+  - The strict value is the YAML value of the full frontmatter, which SPEC R8 measures "as the parser returns them"
+    (32-SPEC.md:232). No test compares the two values (`fold_tree.py`).
+- **E3-2 (MEDIUM) 32-06, the chomp rule disagrees with YAML on two more shapes.** Refuted by a run.
+  - The literal-block shape gives equal values. The keep shape differs by one line break, from the same extraction
+    effect, not from the chomp rule: fed full documents, the rule matched PyYAML on all nine shapes in cycle 2.
+  - Neither shape occurs in the tree or the fixture list. The cross-check compares accept or reject results, as SPEC
+    R8's acceptance asks (32-SPEC.md:124; 32-06-PLAN.md:143, :174), which one line break cannot change below the cap.
+  - The fixture-text part repeats cycle 2's E2-4.
+- **E3-3 (LOW) 32-06, two acceptance greps.**
+  - The first is refuted by a run: GNU grep's basic syntax takes `\|`, and the exact grep prints the stated
+    baseline 2 (32-06-PLAN.md:130).
+  - The second is not actionable: the generator writes one line per group (32-06-PLAN.md:131).
+  - Observation: once Task 2 adds `tests.test_skill_frontmatter_pyyaml`, the same grep counts 2. It is Task 1's
+    criterion, checked when Task 1 ends.
+- **E3-4 (LOW) 32-06, `scope.py` is not specified in this plan.** Refuted. 32-06 applies 32-01's Rails verbatim
+  (32-06-PLAN.md:86), and their Scope check says exactly how to write the script (32-01-PLAN.md:112).
+
+## Verification coverage (cycle 3)
+
+### Source-grounding pass (authority: grep)
+
+`drift-guard authority --raw` returned `grep`. `drift-guard severity` gives, per verdict:
+
+- VERIFIED: none;
+- MISSING: needs-acknowledgement, no hard block;
+- AMBIGUOUS: MEDIUM;
+- UNCHECKABLE: INFO.
+
+655 cited symbols were enumerated across the nine plans at `057586c` (cycle 2: 640), with cycle 2's script
+(`tmp/p32-review-c3/grounding.py`). The revision's new names, `RECORD_KEYS` and `judge_order`, are in 32-07's
+artifacts list.
+
+- 294 excluded: every symbol a phase 32 plan lists under "Artifacts this phase produces", plus each plan's own new
+  files.
+- 153 VERIFIED: the path exists, or the name has a declaration form in tracked source.
+- 164 MISSING. Each is acknowledged and classified (`tmp/p32-review-c3/grounding_classify.py`, 0 unclassified). None
+  is a missing reference to existing code:
+  - 34 synthetic fixtures that tests build in temp dirs, now including `cli-b_model-b.json`, the record file that
+    32-07's new TestCheck line rewrites;
+  - 29 scratch paths the plans create;
+  - 28 new names: test names, record and inputs keys, the records layout, 32-07's `fake_ask` and 32-09's
+    `publish.py`;
+  - 13 phase files written later;
+  - 34 generic tokens;
+  - 6 skill-relative paths, verified on disk;
+  - 4 installed skill-judge entries, verified on disk outside the repo;
+  - 2 npx-cache paths, re-verified live (`yaml` 2.9.0 and `skills` 1.5.20);
+  - 8 external names, not repository source: PyYAML's `SafeLoader`, `yaml.YAMLError`,
+    `yaml.constructor.ConstructorError` and `flatten_mapping`; Node's `module.createRequire`; Claude Code's
+    `CLAUDE_CODE_EFFORT_LEVEL`, `CLAUDE_CODE_SUBAGENT_EFFORT` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW`;
+  - 5 pointer and referee examples that the plans remove or use as failing fixtures;
+  - 1 replaced name: `--judge-dir`, replaced by `--judge-package`.
+- 8 AMBIGUOUS, each resolved by inspection, none actionable:
+  - bare `SKILL.md` (5) and `__init__.py` (1) are generic;
+  - `jev_review.py` is `skills/jev-fast-decision/scripts/jev_review.py`;
+  - `22-INTERACTIVE-PI.md` is a pointer that 32-05 removes.
+- 36 UNCHECKABLE (placeholders or globs, by design), the same list as cycle 2:
+  - 32-01: `tests/test_*.py`, `tests/skills/<name>/`, `tests/<stem>.py`, three `<tmp>/...` lane and record paths, the
+    `<tmp>/probe/...` prompt path, `skills/<name>/`, `skills/<skill>/SKILL.md`;
+  - 32-02: `test_*.py`, `tests/skills/<name>/`;
+  - 32-03: `skills/*/SKILL.md`;
+  - 32-04: `<r>/loops/32.json`;
+  - 32-05: `.planning/phases/<phase>/`, `.planning/phases/**/*-CONTEXT.md`, the `PHASE_DIR_RE` pattern;
+  - 32-06: `skills/*/SKILL.md`, `<HOME>/.npm/_npx/`;
+  - 32-07: `<records>/REJUDGE.md`, `loops/*.json`, `verdicts/**`, `refutations/*.json`, `refutations/<loop>.json`,
+    `<tmp>/rec/inputs.json`, `<tmp>/rec/loops/32.json`, `*.json`;
+  - 32-08: six `<DIR>/`, `RUN/` and `RECORDS/` placeholder paths;
+  - 32-09: three `tmp/p32/judge/` globs and two `RUN/*.pid` globs.
+- Signature claims are UNCHECKABLE under grep. Every reviewer claim about existing code was checked by hand or by a
+  run; the Triage records each.
+
+### Cross-artifact fact-drift pass
+
+- **Phase status:** `drift-guard phase-status --phase 32` returned `lag`: STATE.md says "Ready to execute" and
+  ROADMAP.md "Not started". Not a finding.
+- **Success criteria versus must-have truths: no drift.** Criterion 3 carries the bar-boundary amendment (73.0 to
+  87.0 inclusive), which matches JDG-06, SPEC R4 and 32-04's band test. The revision's two new 32-07 truths
+  (32-07-PLAN.md:40, :41) add to the criteria and remove nothing. The other criteria contradict no plan truth.
+- **Requirement IDs versus plan requirements:** consistent. ROADMAP lists JDG-01, 02, 04, 05, 06, 07 and 08, which
+  equals the union of the nine plans' `requirements` (`tmp/p32-review-c3/drift_facts.py`).
+- **Glossary versus plan usage: no contradiction.** 32-07's check line now takes its worst percent, grade, bar
+  clause and digest from one worst record (bar rank, then percent, then judge order), the record the report's row
+  uses. SPEC R7 reads the bar "from the worst judge" (32-SPEC.md:118), so the two agree. The probe is still one word
+  (SPEC R3).
+- **Coverage:** STATE.md, ROADMAP.md, REQUIREMENTS.md and 32-CONTEXT.md were all present, so no axis was skipped.
+
+## Cycle 2 (history)
+
+Cycle 2 as committed at `73b4d4f` (reviewed_at 2026-11-07T12:52:07-03:00, plans at `96d73cc`, same reviewer and model). Its text is unchanged; only its headings are nested one level down. Line numbers of the form `32-0N-PLAN.md:<line>` in it cite the plans at `96d73cc`.
+
+### Review conditions (cycle 2)
 
 Cycle 2 reviewed the nine plans as revised at `96d73cc`. Cycle 1 had reviewed them at `d9117a4`, and its review and
 triage are kept below under "Cycle 1 (history)".
@@ -89,7 +891,7 @@ codegraph for code, rg for Markdown. Where a finding was about behaviour, the or
 A finding counts as real only when that check confirms it. Six findings the reviewer withdrew or said need no change
 were not sent to jev: A2-6, B2-2, B2-3, B2-4, C2-4 and D2-10, listed in the Triage.
 
-### jev log (cycle 2; advisory; Laya, then TypeSafe; "fallback" means `needs_fallback`)
+#### jev log (cycle 2; advisory; Laya, then TypeSafe; "fallback" means `needs_fallback`)
 
 Triage was four calls at 12:43 with 32 items. Each item stayed under Laya's 2,000-character guard and each call under
 TypeSafe's 8,000.
@@ -130,15 +932,15 @@ TypeSafe's 8,000.
 - E2-4: laya real 0.36 (fallback), typesafe not_real 0.92; typesafe; not actionable.
 - E2-5: laya lower 0.55 (fallback), typesafe not_real 0.92; typesafe; refuted.
 
-## OpenCode Review (referee-two), cycle 2
+### OpenCode Review (referee-two), cycle 2
 
-### Batch A (32-01, 32-02)
+#### Batch A (32-01, 32-02)
 
-#### Review: .planning/phases/32-re-judge-baseline/32-01-PLAN.md, 32-02-PLAN.md
-##### Document Type
+##### Review: .planning/phases/32-re-judge-baseline/32-01-PLAN.md, 32-02-PLAN.md
+###### Document Type
 GSD · plan
 
-##### Files Read
+###### Files Read
 - `.planning/phases/32-re-judge-baseline/32-01-PLAN.md`, `32-02-PLAN.md`, `32-04-PLAN.md`, `32-07-PLAN.md` (handoffs), `32-SPEC.md` (grounding)
 - `.planning/milestones/v1.3-phases/27-one-shot-goal-and-loop-prompt-skill/skill-judge/check_verdicts.py` (lines 1–180)
 - `tools/check_dogfood.py` (1–40, 460–543), `tools/run_unittest_parallel.py` (240–269, 575–614), `tools/staged_mapper.py` (80–239)
@@ -146,35 +948,35 @@ GSD · plan
 - `tests/test_arch.py` (1680–1749), `tests/test_gate_scope.py` (1–20, 620–669), `tests/test_check_dogfood.py` (510–549)
 - `.planning/ROADMAP.md` (385–457, headings at 147, 886, 930)
 
-##### MEDIUM
+###### MEDIUM
 - **`check` crashes on a record whose `round` is missing or not an int** — Location: `.planning/phases/32-re-judge-baseline/32-01-PLAN.md` Task 1 `check` (the paragraph that starts `check(root, records, opts)`). Required: a record that is not a dict, or whose `round` is absent or not an int, becomes a named problem and the function returns; it never raises. Why: the latest round is "the highest" `r<N>` folder, then every record of that round is read and `record["round"]` is used as the round number. `validate_verdict` checks only the verdict object (`check_verdicts.py:41-79`), never the record envelope, so a hand-written or half-written record (D-07 says check-dogfood runs this on every push) raises `KeyError` or `TypeError` instead of exit 1. The tracer only feeds a record the tool itself wrote.
 - **A finding whose `file` does not exist raises instead of failing the attempt** — Location: `32-01-PLAN.md` Task 2 step 2 (`finding_path_errors`). Required: a finding `file` that does not exist, or whose parent is not a directory, is the attempt error, and the record is written with `verdict` null. Why: the behavior line says `../../outside.md` or a file that "does not exist" is a failed attempt (exit 0, record written). The action says the resolved path "must stay under it and be a file" and then "a non-null `line` must be <= the file's line count". Counting lines of a missing file raises `FileNotFoundError`, which `main` turns into a traceback, not exit 1. The confinement check has to come first and a missing file has to be the error text, not an exception.
 - **"Highest counts" does not say which verdict's critical and high** — Location: `32-01-PLAN.md` Task 1 `check`, the sentence "critical and high = the highest counts over those verdicts". Required: one rule, the maximum of each count taken separately over the verdict-bearing records. Why: one judge at 1 critical and 0 high and another at 0 critical and 2 high is either "1 critical, 2 high" or "the worst judge's counts". The tracer uses one judge, so it passes either reading. `32-07-PLAN.md` later says "the highest raw counts", which confirms the separate-max reading, but this plan is what the executor implements first.
 
-##### Cross-Document Consistency
+###### Cross-Document Consistency
 - **L5 probe shape matches 32-04.** `32-01` writes `AIKIT-SENTINEL-<8 hex>-...` (one code per embedded file, hyphens, one word) and `32-04` `probe_result` compares `lane.out.strip()` with that `token` file exactly (`32-04-PLAN.md` Task 1). The fixture answer there is three codes of the same shape. No mismatch.
 - **M2 arithmetic holds.** `make_verdict(..., drops={"D1": (125, "high"), "D2": (75, "medium")}, maxima={d: 125 for d in DIMS})` gives scores D1 0, D2 50, six at 125, total 800 of 1000, percent 80.0, grade B, findings F1 and F2. The 79.9 call (D2 loses 76) gives total 799, percent 79.9, grade C. Both stay non-negative, and both have one finding per below-max dimension, which is what `validate_verdict` requires (`32-01-PLAN.md` Task 1, "plus ... a finding for every dimension scored below its max").
 - **No same-wave file overlap.** Wave 1 is 32-01 and 32-02. 32-01 edits `tools/judge_loop.py`, `tests/test_judge_loop.py`, `tests/test_arch.py`, `agents/ai-kit-judge.md`, `README.md`, `Makefile`, `.pre-commit-config.yaml`. 32-02 edits `tools/check_dogfood.py`, `tests/test_check_dogfood.py`, `tests/test_gate_scope.py`. 32-02 adds no test module, so it does not regenerate the listings. `depends_on` is empty on both, and neither reads the other's output.
 
-##### Status: Issues Found — fix and re-invoke
+###### Status: Issues Found — fix and re-invoke
 
-#### 32-01
+##### 32-01
 
 `tools/judge_loop.py` is specified tightly enough to build: one stdlib module, three subcommands, a fixture git repo, and a tracer that walks prompt, ingest and check. The revision fixed the three cycle-1 items that named this plan, and the 80.0 / 79.9 fixtures now survive the validator they are tested against. What is left is error handling around records and finding paths the tracer never feeds, plus one count rule the one-judge tracer cannot pin.
 
-##### Strengths
+###### Strengths
 - The prompt rules are literal sentences, including both D7 splits in one fixed rule 5, so two skills differ only in the name and the rule 4 line (`32-01-PLAN.md` Task 1, rules 3-5). That matches SPEC R2.
 - `module_list` reuses `staged_mapper.covering_modules(build_index(root), "skills/<name>/SKILL.md")`. `build_index` returns `tests.<stem>` (`tools/staged_mapper.py:94-95`), and `removeprefix("tests.")` turns that back into `tests/<stem>.py`. SKILL.md is a data file, so the data-file path in `covering_modules` (`tools/staged_mapper.py:218-223`) is the one that runs. Correct.
 - `SKILLS_ROOTS` is specified as the same five-row tuple as `jev_ladder.py:35-41`, and `LOOKUP_COPIES` gains `tools/judge_loop.py` (`tests/test_arch.py:1687-1694`). `python_roots` reads it with `ast.literal_eval` (`tests/test_arch.py:1728-1734`), so the copy is drift-checked.
 - Digest, pin and ingest refusals are concrete: trailing-slash pathspec, sha256 over `<hash>  <path>\n`, pin from the rubric's first two lines, a verdict record never overwritten (`32-01-PLAN.md` Task 1 and Task 2).
 - The probe revision is the right shape: one 8-hex code after each embedded file, joined with hyphens into one word, and `32-04` compares it exactly.
 
-##### Cycle 1 fixes
+###### Cycle 1 fixes
 - **L1 (null verdict) — FIXED.** `32-01-PLAN.md` Task 1 `check`: "a record whose `verdict` is null (failed attempts only) is skipped for validation and for the summary line ... only a round where no record holds a verdict is `not judged`". The artifacts section repeats it.
 - **M2 (80.0 and 79.9 fixtures) — FIXED.** `32-01-PLAN.md` Task 2 behavior "Validator" gives the two `make_verdict` calls (maxima 125 each, D1 and D2 drops, totals 800 and 799, findings F1 and F2). Task 1 step 2 makes `make_verdict` assert every score stays >= 0 and number findings in dimension order. Arithmetic checked against `grade_of` at `check_verdicts.py:37-38` and the percent formula at `check_verdicts.py:65-66`.
 - **L5 (probe reads only the end) — FIXED.** `32-01-PLAN.md` Task 2 step 1: one code per embedded block, `PROBE PART {n}: {code}` right after each END marker, answer `AIKIT-SENTINEL-` plus every code. The behavior line requires five codes for the five-file fixture and different codes on two builds. `32-04-PLAN.md` compares the token exactly, including a last-code-only answer and a reordered answer.
 
-##### Concerns
+###### Concerns
 - **MEDIUM — `check` raises on a bad record envelope.** See the first MEDIUM above. `32-01-PLAN.md` Task 1 `check`. The round number comes from `record["round"]` with no type check, and `validate_verdict` (`check_verdicts.py:43`) only checks the verdict's key set.
 - **MEDIUM — a missing finding file is an exception, not a failed attempt.** See the second MEDIUM above. `32-01-PLAN.md` Task 2 step 2 versus the behavior line "a finding whose `file` is `../../outside.md` or does not exist".
 - **MEDIUM — critical and high "highest counts" has two readings.** See the third MEDIUM above. `32-01-PLAN.md` Task 1 `check`. `32-07-PLAN.md` Task 1 says "the highest raw counts over the round's verdicts", which is the separate-max reading, but this plan is implemented first.
@@ -182,125 +984,125 @@ GSD · plan
 - **LOW — `check` with an empty `--skills` list prints nothing and exits 0.** `32-01-PLAN.md` Task 1 `main`: `--skills` is `nargs='*'`, and `check` iterates `opts.skills`. The tracer always passes one skill, so this passes. SPEC R5's "a skill with no tracked files is an error naming it" is not reachable from `check` until 32-07. Acceptable for an interim checker if the plan says the empty list is not a gate.
 - **LOW — `parse_status_line` is copied as-is, and a status line with a value containing spaces splits wrong.** `check_verdicts.py:30-34` splits on whitespace. The fixture status lines have no spaces in values, so the tests pass. Not a new gap.
 
-##### Suggestions
+###### Suggestions
 - In `check`, read the round number from the `r<N>` folder name, and treat a record that is not a dict or lacks `verdict`, `judge`, `rubric_version` or `spec_sha` as the problem `<skill> r<N>: record is not a verdict record`.
 - In `finding_path_errors`, resolve and confine first; if the path is not a file, return that as the error and do not open it.
 - Replace "the highest counts" with "the maximum critical count and the maximum high count, each taken over the verdict-bearing records".
 
-##### Risk Assessment
+###### Risk Assessment
 **MEDIUM.** The happy path, the digest, the pin and the two boundary percents are specified and check out against the phase 27 checker. The remaining risk is records and finding paths the tracer does not build: those hit the push hook later, and an exception there fails the hook with a traceback instead of a named problem.
 
-##### Ponytail findings
+###### Ponytail findings
 - **Needed.** SPEC R2, R5 (digest and validator) and R6 (attempts), plus D-01, D-02, D-10, D-13, D-14, D-15. Not a half feature.
 - **Not over-built.** One module, three subcommands, the other three deferred to 32-04 and 32-07. `CheckOptions` is a NamedTuple the later plan extends, which the CONTEXT decision already requires.
 - **Reuse.** `validate_verdict`, `grade_of` and `parse_status_line` from `check_verdicts.py:30-79`. `_load_mapper` from `tools/run_unittest_parallel.py:587-595`. `covering_modules` and `build_index` from `tools/staged_mapper.py:86` and `:218`. `SKILLS_ROOTS` and `skills_roots` from `jev_ladder.py:35-41` and `:101-109`. The temp-repo helper pattern from `tests/test_staged_mapper.py` (the plan cites the right helper).
 - **Reach.** New module joins the generated listings through `gen_test_groups.py` in the same commit. `LOOKUP_COPIES` is the one arch caller. README row and the agent frontmatter are in Task 3. No caller of a function that does not exist yet.
 - **LOW — rule 6 (attribution) is not in SPEC R2 or D-13.** `32-01-PLAN.md` Task 1, prompt rule 6. It changes what the judge scores and no test asserts it. Either cite the decision that requires it or drop it; a judge instruction nobody asked for is scope.
 
-#### 32-02
+##### 32-02
 
 The citation guard and the stray-module guard are both small, both tested on fixtures, and both match the code they extend. The live ROADMAP already has the `JDG-04` citations the guard requires, and the scan window stops at `## Progress`, so the backlog is outside it. No confirmed cycle-1 finding named this plan. No new defect from the revision.
 
-##### Strengths
+###### Strengths
 - The scan window is right. `## Phase Details` is at `.planning/ROADMAP.md:147` and the next `## ` heading is `## Progress` at `:886`; `## Backlog` is at `:930`, past it. `_PHASE_HEAD` (`^### Phase (\d+(?:\.\d+)*):`) matches `### Phase 32.1: Batch 1, general small skills` (`:428`).
 - The criteria span is right on the live file. Every phase block uses `**Success Criteria** (what must be TRUE):` (`:435`, `:450`, and the rest of the 74 hits) and ends at `**Plans**`. `JDG-04` as a whole token, with the lookaround the plan gives, rejects `JDG-040` and `jdg-04`.
 - Phase ordering matches the decision. `tuple(int(part) for part in number.split(".")) > (32,)` keeps 32.1 and drops 32 and 31.1, which is what the behavior lines require.
 - `check_jdg04_citations` returns `(problems, notes)` and `main()` composes it the way `check_edge_floors` is composed (`tools/check_dogfood.py:529-530`). The fixture helper copies `TestEdgeFloors._root` (`tests/test_check_dogfood.py:518-531`).
 - `stray_test_modules` uses `fnmatch.fnmatchcase` against `test_*.py`, the same case-sensitive pattern `discover_modules` globs (`tools/run_unittest_parallel.py:246-248`). It skips `tests/` itself and `__pycache__`, so the seven-file fixture returns exactly the two nested `test_*.py` paths. The non-vacuity class already exists (`tests/test_gate_scope.py:633`).
 
-##### Cycle 1 fixes
+###### Cycle 1 fixes
 none for this plan. A6, A7, A8 and A9 were refuted in cycle 1, and the revised plan records that. Rechecked: the scan still stops at the next `## ` heading, which on the live file is `## Progress` (`ROADMAP.md:886`), and the marker `**Success Criteria**` occurs in every phase block. No new evidence against those refutations.
 
-##### Concerns
+###### Concerns
 - **LOW — `_criteria` stops at the first `**Plans**`, and the plan does not say "first".** `32-02-PLAN.md` Task 1 step 1. On the live ROADMAP every block has exactly one (`ROADMAP.md:442` and the other `**Plans**` hits), so the tree passes. A fixture that put `**Plans**` inside a criterion before the real heading would hide a later `JDG-04`. The behavior tests never do that. Say "the first `**Plans**`".
 - **LOW — a phase heading with a trailing space before the colon is skipped.** `_PHASE_HEAD` requires `:` immediately after the number. The live headings have no space (`ROADMAP.md:428`). A fixture written with `### Phase 33 :` would not be flagged. The plan's own fixtures use `### Phase 33:`, so the tests pass. Worth one sentence so the executor anchors the regex as written.
 
-##### Suggestions
+###### Suggestions
 - State that `_criteria` ends at the first `**Plans**` line, and that a block with no such line runs to the block end (the plan already says "or the block end").
 
-##### Risk Assessment
+###### Risk Assessment
 **LOW.** Both guards are read-only, the live file matches the regexes, and `make check-dogfood` on the tree is the verify step. The fixture tests cover the boundary the SPEC lists (32 versus 32.1, `JDG-040`, citation outside the criteria, backlog excluded, empty tree, nested `test_*.py` named, a `.py.txt` not named).
 
-##### Ponytail findings
+###### Ponytail findings
 - **Needed.** SPEC R1 and R10, D-16 and D-21. D-22 is already committed; this plan only guards it.
 - **Not over-built.** Two functions and one walk. No new module, so no listing regeneration.
 - **Reuse.** `check_edge_floors` composition at `tools/check_dogfood.py:529-530`. `TestEdgeFloors._root` at `tests/test_check_dogfood.py:519`. `TestGateScopeNonVacuity` at `tests/test_gate_scope.py:633`. `discover_modules`' glob at `tools/run_unittest_parallel.py:248`.
 - **Reach.** `main()` is the only caller, and the plan adds the call. Docs are deferred to 32-07, which the plan says explicitly. No missed caller.
 
-##### Same-wave overlap
+###### Same-wave overlap
 None. 32-01 and 32-02 share no file, and 32-02 does not regenerate `Makefile` or `.pre-commit-config.yaml`. Neither plan's `depends_on` is missing a same-wave predecessor.
 
 Skipped: did not run the suites or simulate the regex over the whole ROADMAP (read-only review). Risk: a phase block whose success criteria use a marker other than `**Success Criteria**` would be flagged; every current block uses that marker.
 
-### Batch B (32-03, 32-05)
+#### Batch B (32-03, 32-05)
 
-#### 32-03
+##### 32-03
 
 The plan implements SPEC R9’s main-flow half and the AGENTS.md sentences from R6 and R9. The cited lines still match the tree, the planned edits cover the current history hits, and the tests that pin those phrases are either updated or unaffected. One planned Evidence bullet fails the version rule the same task defines, so Task 2’s tree test cannot pass as written.
 
-##### Strengths
+###### Strengths
 
 - The history scan is exact. The current SKILL.md hits are cross-ai line 91, curated-config lines 329 and 334, spec-config lines 221 and 314, spec-review line 164, spec-discuss line 206, review-checklist line 199, and jev line 62.
 - `confirmed live` is narrowed to a colon or date, so spec-config line 194 remains a coverage statement. The fence rule matches SPEC R9: dates fail inside fences, versions do not.
 - The new module is generated into the listings, and 32-03 is the only wave-2 plan that edits `Makefile` and `.pre-commit-config.yaml`. 32-04 edits only `tools/judge_loop.py` and `tests/test_judge_loop.py`.
 - The doc pins reuse `_flat`, `_missing_clauses`, and `_design_bullet` from `tests/test_rules_docs.py:36-143`. The three sentences stay inside the existing bullet at `AGENTS.md:55-60`, and 32-07 later edits different AGENTS.md bullets.
 
-##### Cycle 1 fixes
+###### Cycle 1 fixes
 
 none for this plan
 
-##### Concerns
+###### Concerns
 
 - **MEDIUM — the cursor Evidence bullet fails the version rule this task adds.** At `.planning/phases/32-re-judge-baseline/32-03-PLAN.md:170`, the plan appends `- The cursor-host validation ran from a cursor-agent 2026.10.14-941492e session.` `cursor-agent` is in `VERSION_TOOLS`, and that sentence has no constraint word. Simulating the planned `version_hits` returns `cursor-agent 2026.10.14`. The Evidence section is still main flow because Task 1 appends it after `## Subcommand reference` (line 340), `## NEVER` (line 353), `## Common mistakes` (line 380), and `## Reporting rule` (line 394). Task 2’s tree assertion therefore fails. Put the build string in backticks, or append Evidence only after the last section.
 
 - **LOW — the main-flow rule misses the same shape of history in references.** `skills/jev-fast-decision/reference.md:110-117` contains `## What Jev 1.14 changed (as of 2026-10-15)` and `## Capability matrix (as of 2026-10-18)`. This matches D-18’s split and was the basis of refuted B5, so it is not re-raised as a defect. It remains a real gap against JDG-05’s “no dates in the main flow” wording.
 
-##### Suggestions
+###### Suggestions
 
 - Change the cursor bullet to `` `cursor-agent 2026.10.14-941492e` ``, or move the final Evidence append to the real end of the file.
 - State explicitly that Task 1’s Evidence section is temporary and Task 2’s tree test is the first full-rule check.
 
-##### Risk Assessment
+###### Risk Assessment
 
 **MEDIUM.** The implementation is otherwise executable, but Task 2 fails its own acceptance test until the Evidence bullet or heading placement changes.
 
-##### Ponytail findings
+###### Ponytail findings
 
 - Needed: SPEC R9 and R6, D-18, D-19, and D-20. No extra abstraction.
 - Reuse is correct: the clause-pin helpers and `tools/gen_test_groups.py`.
 - The version scanner is the minimum new logic the rule needs. The failing Evidence bullet is a completeness miss, not over-engineering.
 - Callers reached: the pinned tests for the edited phrases are updated or do not assert them. `test_node_floor` at `tests/test_ai_kit_spec_runtimes_table.py:888` reads spec-review, not execute-superpowers.
 
-#### 32-05
+##### 32-05
 
 The pointer half is accurate and executable. Its regexes hit exactly the listed planning artifacts, preserve the required generic paths and placeholders, and update the two curated-config tests that would otherwise break. It adds no test module and shares no file with wave-3 plans 32-06 or 32-07.
 
-##### Strengths
+###### Strengths
 
 - The pointer inventory matches the tree: curated-config lines 333, 334, and 338; spec-config line 332; usage-metrics lines 43 and 313; the named spec-discuss reference lines; `backends/laya.md:57`; and `backends/typesafe.md:18`.
 - The patterns reject `18.1-one-runtime-model/`, `21-SMOKE-CURSOR.md`, `999.2`, `(D-07)`, `20 D-11`, and `router-env/`, while accepting `.planning/config.json`, `.planning/phases/<phase>/`, `NN-SPEC.md`, `D-<n>`, `NN D-xx`, `JDG-04`, and URL-contained ids.
 - The bold exception is concrete: the two characters before `D-14` at `references/log-formats.md:38` are `**`, and `:` follows it. `D-01..D-06` is deliberately replaced rather than exempted.
 - `tests/test_curated_config_apply.py:2608-2635` is the only test pinning the removed phase-file names, and the plan updates both assertions. The spec-discuss and usage-metrics tests do not pin the removed strings.
 
-##### Cycle 1 fixes
+###### Cycle 1 fixes
 
 none for this plan
 
-##### Concerns
+###### Concerns
 
 - **LOW — the bold-example exemption is narrower than the SPEC’s example.** At `.planning/phases/32-re-judge-baseline/32-05-PLAN.md:101`, exemption requires the two preceding characters to be exactly `**` and the next character to be `:`. The current example qualifies, but `**D-14 : …**` or a line-broken marker would fail. This is an executor-safe rule, just stricter than the prose example.
 
 - **LOW — one reference date sample remains unchecked by design.** `skills/ai-kit-spec-review/references/cross-ai-dispatch.md:91` contains `2026-09-02-ai-kit-model-discovery-config.md`. It is not a numbered phase file, and D-18 keeps date rules off references. This restates the accepted scope boundary; it does not contradict the refutation of B5.
 
-##### Suggestions
+###### Suggestions
 
 - No change is required before execution. If the bold exemption should match the SPEC literally, define it as a Markdown bold span beginning with `D-<digits>:` rather than a two-character lookbehind.
 
-##### Risk Assessment
+###### Risk Assessment
 
 **LOW.** The edits are literal, the regex behavior was checked against the current files, and the known dependent tests are in the plan.
 
-##### Ponytail findings
+###### Ponytail findings
 
 - Needed: SPEC R9’s pointer amendment, D-18, and D-19. No new module, option, or wrapper.
 - It correctly extends 32-03’s `history_hits` instead of creating a second checker, and its `depends_on: [32-03]` covers the file it reads.
@@ -308,9 +1110,9 @@ none for this plan
 
 Skipped: no tests or make targets were run; regex behavior was checked with read-only Python. The remaining risk is the cursor Evidence bullet in 32-03, which fails its own version rule.
 
-### Batch C (32-04, 32-07)
+#### Batch C (32-04, 32-07)
 
-#### 32-04
+##### 32-04
 
 `pool` and `count` are specified tightly enough for a haiku executor, and the cycle-1 fixes land. One new contract bug remains: `ask_jev` runs `jev_review.py ladder` with a payload that command never answers, so the advisory jev step (SPEC R4 / D-05) cannot raise a count on a real run.
 
@@ -321,7 +1123,7 @@ Skipped: no tests or make targets were run; regex behavior was checked with read
 - The jev item is pinned byte-for-byte, and `json.dumps(item)` is asserted to contain neither a path nor the skill name (T-32-08).
 - `numstat` rejects a base that is not 7-40 hex before any git call, and an unresolvable commit stays one judge with a recorded reason (`32-RESEARCH.md:66`).
 
-##### Cycle 1 fixes
+###### Cycle 1 fixes
 - **L2 — FIXED.** `load_inputs` rejects a name in both maps (`32-04-PLAN.md:22`, `:160`); `count` iterates `inputs["skills"]` only and refuses an unknown `--skill` (`32-04-PLAN.md:153-154`).
 - **L3, 32-04 part — FIXED.** The `jev` record contract is explicit: `asked`, `item`, `level` (int or null), and `note` stored without the `: asks for two` / `: keeps one` suffix, with a `final_count` round-trip (`32-04-PLAN.md:23`, `:151`, `:170`).
 - **L5, 32-04 part — FIXED.** `probe_result` compares the whole `token` file, and TestPool covers a last-code-only and a reordered answer (`32-04-PLAN.md:21`, `:109`, `:117`).
@@ -339,14 +1141,14 @@ Skipped: no tests or make targets were run; regex behavior was checked with read
 
 **Risk Assessment: MEDIUM.** The pool rule and the deterministic count are sound and tested. The one path that can change a real baseline (jev raising 88.0 and 88.8) is wired to the wrong command, and the unit tests cannot see it.
 
-##### Ponytail findings
+###### Ponytail findings
 - Needed: yes. SPEC R3 and R4, D-05 and D-08. No extra options beyond the locked `--no-jev` and `--client`.
 - Reuse is right: `lane_ok`, `parse_status_line`, `skills_roots`, `atomic_write_json` and `JEV_ENTRY_REL` come from 32-01 rather than new copies (`32-01-PLAN.md:146`, `:170`).
 - The jev call should reuse the screen entry the research already verified (`jev_review.py:2047-2061`), not a second invocation of the ladder. **HIGH**, same as the concern above.
 - `count_skill` as one function fights the repo's pylint limits. **MEDIUM.**
 - Callers reached: 32-07 consumes `final_count`, `deterministic_count`, `load_inputs` and the `jev` contract; 32-08 consumes `pool` and `count`. No listing or doc change belongs in this plan.
 
-#### 32-07
+##### 32-07
 
 The report and the full checker cover SPEC R5, R6 and R7, and the cycle-1 fixture and tracer fixes are real. Two new seams can make a correct records folder fail `check`, and one of them is already contradicted by 32-01's checker.
 
@@ -357,7 +1159,7 @@ The report and the full checker cover SPEC R5, R6 and R7, and the cycle-1 fixtur
 - `check_judge_records` follows `check_edge_floors`: injected loader, `(problems, notes)`, missing folder is a note, and `main()` composes it after the JDG-04 lines (`tools/check_dogfood.py:478-530`).
 - Same-wave file check is clean. 32-05 edits skill text; 32-06 edits the frontmatter tests, runner and listings. 32-07 is the only wave-3 editor of `AGENTS.md`, `README.md` and `tools/check_dogfood.py`. `depends_on: [32-04, 32-02, 32-03]` names the plans whose output it reads. 32-03's three AGENTS.md sentences do not overlap the Testing and Commands lines 32-07 edits (`32-03-PLAN.md:191`, `AGENTS.md:226-230`, `:358`).
 
-##### Cycle 1 fixes
+###### Cycle 1 fixes
 - **M1 — FIXED.** `TestTracer` gains `inputs.json`, `loops/32.json` (`pool` plus `counts` from `count_skill`, equal to `deterministic_count(None)`) and a `report` run before each `check` (`32-07-PLAN.md:119`). `render_report` raises `JudgeLoopError` naming the skill, and `check` reports `REJUDGE.md not checked: ...` (`32-07-PLAN.md:117-118`, `:136`).
 - **M2, 32-07 part — FIXED.** Every boundary verdict has an exact `make_verdict` call with maxima and drops (`32-07-PLAN.md:93`, `:114-116`, `:165-166`). The 90.0 judge is reworded to "90.0 with no critical or high finding" on maxima of 125 each.
 - **M3 — FIXED.** TestCheck states `demo-c: not judged (no verdict in loop 32 round 1)`, no per-skill line, exit 1 in default mode, and exit 0 once a verdict exists (`32-07-PLAN.md:169`). 32-09's stop sentence names `not judged` (`32-09-PLAN.md:92`).
@@ -380,7 +1182,7 @@ The report and the full checker cover SPEC R5, R6 and R7, and the cycle-1 fixtur
 
 **Risk Assessment: MEDIUM.** The bar math, refutations, round cap and byte compare are right and well tested. The default judge list omits the native substitute 32-08 actually records, so the first real `check` of a two-judge pool with one failed lane fails a correct report.
 
-##### Ponytail findings
+###### Ponytail findings
 - Needed: yes. SPEC R5, R6, R7, D-03, D-04, D-06, D-07 and D-12. No new option beyond the locked `--gate` and `--require-current`.
 - Reuse is right: `validate_verdict`, `skill_digest`, `record_path`, `judge_slug`, `load_inputs`, `deterministic_count` and `final_count` are extended, not rewritten (`32-07-PLAN.md:88`).
 - `render_report` as a single function, and a default judge list that ignores `pool.members`, are the two places new code does less than the records already express. **MEDIUM** and **HIGH** respectively.
@@ -388,18 +1190,18 @@ The report and the full checker cover SPEC R5, R6 and R7, and the cycle-1 fixtur
 
 Skipped: did not run the suites or import `judge_loop` (read-only review; the tool does not exist until 32-01). Did not re-check the seven refuted cycle-1 items; no new evidence contradicts them.
 
-### Batch D (32-08, 32-09)
+#### Batch D (32-08, 32-09)
 
-#### 32-08
+##### 32-08
 
 The baseline run plan is a careful, executable script of the judge run: it freezes the tree, probes the configured judges with the hardened sentinel, records one or two judges per skill, and keeps every external lane inside the cross-AI runner's own retry rules. The cycle-1 fixes landed. The new problems are a wait budget that can never cover the probe it bounds, a pool-file shape the launcher reads a field that does not exist in, and a worker that treats the runner's own hard-tier stop as a reason to retry.
 
-##### Cycle 1 fixes
+###### Cycle 1 fixes
 
 - **L4 — FIXED.** Task 1's `effort-env` records all three variables the research names, prints set or unset only, and the acceptance expects exactly three lines (`.planning/phases/32-re-judge-baseline/32-08-PLAN.md:97`, `:123`).
 - **L5 — FIXED.** The run-directive-5 truth says the probe carries a code after each embedded file's END marker and `pool` accepts only the exact one-word answer in the `token` file, with no second check in the run scripts (`32-08-PLAN.md:20`). That matches 32-01's `build_probe` and 32-04's `probe_result`.
 
-##### Concerns
+###### Concerns
 
 - **HIGH — the probe wait can never report `probes ended`.** Task 1 step 3 repeats `wait --what probes --max-seconds 170` "until it prints `probes ended` (at most about 11 minutes)" (`32-08-PLAN.md:112`). The `--max-seconds` budget is consumed by `run-with-timeout 660` plus the lane itself, not by wall-clock sleep: `wait` polls every 15 s and exits 3 when N seconds pass (`32-08-PLAN.md:102`), and the runner's own `--outer-timeout 600` is the pass condition (`32-RESEARCH.md:120`). A probe that takes its full budget returns after about 660 s, and the eleventh 170 s call lands at about 1,870 s — past it. The verify then demands `probes ended` within 5 s (`32-08-PLAN.md:115-116`). This is the D4 concern with a new, concrete bound the revision added; the earlier refutation ("repeats until ended, each probe bounded at 660 s") does not cover the "at most 11 minutes" cap.
 
@@ -411,30 +1213,30 @@ The baseline run plan is a careful, executable script of the judge run: it freez
 
 - **LOW — the frozen-tree window and the scope check disagree about what "this run" is.** `scope.py start` snapshots `/proc` (`29-01-PLAN.md:103`) and `close` flags any new process whose cwd is the checkout (`29-01-PLAN.md:105`). The plan says the workers have exited before `close` (`32-08-PLAN.md:207`), which is true only if Task 3 reached `all lanes ended`. A checkpoint resume that runs `close` while a detached `work` child is still alive — its cwd is `ROOT` (`32-08-PLAN.md:96`) — fails the plan for a process the plan itself started. Worth one sentence naming that `close` runs only after `status` says no worker is alive.
 
-##### Suggestions
+###### Suggestions
 
 - Drop the "at most 11 minutes" sentence and bound the probe wait by the runner: repeat the 170 s wait until `probes ended` or until `run-with-timeout` has returned, and say which status line ends a probe that never wrote `done`.
 - State the `members` element type in Task 2: "each entry of `pool.members` is the judge id string `pool` printed", or, if 32-04 stores the probe dict, "`member['judge']`".
 - In `work`, stop the judge when the status line carries `stopped=hard-waits` or `stopped=cap`, and only sleep on `retry_after_s` when the same line does not.
 - Name the four base shas' reachability: if `git rev-parse --verify` fails, the recorded note `jev input absent` is the expected result, not a stop.
 
-##### Risk Assessment
+###### Risk Assessment
 
 MEDIUM. The run is well fenced (review mode, `AI_KIT_REFUSE_REAL_HOME=1`, outputs under `tmp/`, HEAD checked at the end), but the probe-wait cap and the ambiguous pool shape can stall the run before a single verdict is recorded, and both are decisions a haiku executor would have to make alone.
 
-##### Ponytail findings
+###### Ponytail findings
 
 - **MEDIUM — the lane worker re-implements the cross-AI skill.** `work`'s exit table (`32-08-PLAN.md:138`) duplicates `skills/ai-kit-cross-ai/SKILL.md:111-170`, including the hard-tier wait the runner already counts. D-08 requires the run to follow that skill, so the worker should call the runner and trust its `stopped=` line rather than re-deciding the ladder. The rest of the plan earns its size: the frozen tree, the sentinel probe and the recorded substitutes are SPEC R3, R4 and R7, and no existing tool launches a judge lane.
 
-#### 32-09
+##### 32-09
 
 Publishing the staging records unchanged, generating the report and refusing to hand-edit either one is the right shape for SPEC R7, and the one confirmed cycle-1 item for this plan is fixed. The audit the plan adds cannot pass against the report layout 32-07 actually generates, so Task 2 fails on a green run.
 
-##### Cycle 1 fixes
+###### Cycle 1 fixes
 
 - **M3 — FIXED.** Task 1 step 3 names a skill reported `not judged` as a stop-and-report case beside a stale digest and a mismatch (`32-09-PLAN.md:92`), and the verify fails on a `judge-loop:` line holding `not judged` (`32-09-PLAN.md:98`). The exit-1 behaviour itself is pinned in 32-07's TestCheck (`32-07-PLAN.md:181`).
 
-##### Concerns
+###### Concerns
 
 - **HIGH — `audit.py` checks columns the report does not have.** Task 2 checks "every `## Verdicts` row whose Score is not `not judged`" for a non-empty Judge and Lane status, and "every `## Verdicts` row whose Substitute is not `-`" for the text `replaces <judge>: <reason>` (`32-09-PLAN.md:114`). 32-07's `## Verdicts` table is `| Skill | Loop | Round | Judge | Lane status | Substitute | Score | Percent | Grade | Critical | High |` (`32-07-PLAN.md:145`), so those columns exist — but `render_report` writes `Substitute = replaces <judge>: <reason> or -` and `Lane status = the last attempt's status_line, else its note` (`32-07-PLAN.md:145`). The audit's check is therefore only as good as its row parser, which the plan never specifies. A parser that splits on `|` and takes cells by the header works; one that matches the literal `replaces` anywhere in the row also matches the `## Judge pool` section's `Substitutes:` line (`32-07-PLAN.md:147`). The plan gives the executor neither the column indexes nor the section boundary, so the audit can pass while reading the wrong table or fail while reading the right one.
 
@@ -442,17 +1244,17 @@ Publishing the staging records unchanged, generating the report and refusing to 
 
 - **LOW — `publish.py` refuses a destination that differs, but not one a rerun would clobber with equal bytes.** The copy refuses when a destination exists with different bytes (`32-09-PLAN.md:90`). A rerun after a partial copy of identical bytes succeeds and prints `published <n> files` again, hiding that the tree was already dirty. Harmless given the precondition, but the script should say `unchanged` for an equal existing file so the SUMMARY does not report a fresh publish.
 
-##### Suggestions
+###### Suggestions
 
 - Give `audit.py` the header row and the cell indexes from 32-07 (`32-07-PLAN.md:145`): Judge is cell 4, Lane status cell 5, Substitute cell 6, Score cell 7, and the scan of each section ends at the next `##`.
 - Compare old scores only inside `## Judged skills`, cut off before `## Verdicts`, and match the whole `value` string rather than a substring a new percent could collide with.
 - Have `publish.py` print `unchanged <path>` for a byte-identical destination instead of counting it as published.
 
-##### Risk Assessment
+###### Risk Assessment
 
 MEDIUM. The publish and the checker gate are sound and match D-06, D-07 and D-11, and `--gate` is correctly kept out of the baseline. The risk is Task 2: its audit is the only check that the committed report carries the SPEC R7 fields, and as written it parses a layout it does not pin down.
 
-##### Ponytail findings
+###### Ponytail findings
 
 - **LOW — `audit.py` repeats the checker.** Row counts, judge names and the history separation are already enforced by `judge_loop.py check` (`32-07-PLAN.md:144-148`), which Task 1 runs with `--require-current`. The audit's only new content is the per-skill work-list line D-12 asks the SUMMARY to hold (`32-09-PLAN.md:115`). Keep that line; the six `ok/FAIL` checks duplicate the tool. D14 was judged not a defect, and this agrees — it is duplication, not a failure.
 
@@ -460,15 +1262,15 @@ Same-wave overlap: none. 32-08 is alone in wave 4 and 32-09 alone in wave 5 (`32
 
 Skipped: I did not run the plans or the test suite, and `tools/judge_loop.py` does not exist yet, so the pool, count and report shapes are taken from plans 32-01, 32-04 and 32-07 rather than from code. Risk: if 32-04's `choose_pool` actually stores bare id strings, the HIGH pool-shape finding drops to a wording gap.
 
-### Batch E (32-06)
+#### Batch E (32-06)
 
-#### 32-06
+##### 32-06
 
-##### Summary
+###### Summary
 
 Plan 32-06 is an executable GSD plan for SPEC R8 and D-17: a stdlib strict frontmatter gate, a PyYAML cross-check in `unit-uv`, and a one-time npm `yaml` comparison. The tree coverage, fixture list, and generated-listing steps match the source. Two instructions contradict the source or the YAML comparison they depend on, and a haiku executor would have to invent YAML behavior the plan does not pin.
 
-##### Strengths
+###### Strengths
 
 - The gate covers every installable entry through `setup.enumerate_entries` (`tools/setup.py:966-980`), which returns skills, agents, then commands. `entry_files` then maps a skill directory to `SKILL.md`. That matches `validate_entry` (`tools/setup.py:948-963`).
 - It replaces exactly the two real-tree guards at `tests/test_setup.py:5524` and `:5538`, and keeps the installer reader tests. The research says `_read_frontmatter` is lossy and must not be reused for the strict gate (`32-RESEARCH.md:267`).
@@ -476,11 +1278,11 @@ Plan 32-06 is an executable GSD plan for SPEC R8 and D-17: a stdlib strict front
 - The fixture labels cover every SPEC R8 failure and the two designed-stricter cases from research Pitfall 3 (`32-RESEARCH.md:360`).
 - Same-wave overlap is clean: 32-05 and 32-07 do not edit `Makefile`, `.pre-commit-config.yaml`, `tools/run_unittest_parallel.py`, or `tests/test_setup.py`. `depends_on: [32-03]` is correct because the history edits land before this gate runs.
 
-##### Cycle 1 fixes
+###### Cycle 1 fixes
 
 None for this plan. E1, E2, and E3 were refuted, and the revised text does not reopen them.
 
-##### Concerns
+###### Concerns
 
 - **HIGH — the `UNIT_UV_MODULES` edit breaks the test the plan says it preserves.** Task 2 step 3 writes `frozenset({"tests.test_framework_profiles", "tests.test_skill_frontmatter_pyyaml"})` (`32-06-PLAN.md:150`) and the read-first line says `sorted(UNIT_UV_MODULES)[0]` must stay `tests.test_framework_profiles` (`32-06-PLAN.md:139`). String order is the opposite: `tests.test_skill_frontmatter_pyyaml` sorts first. `tests/test_staged_mapper.py:552-564` then passes that first name to `_run_staged_modules` as a covering uv module. The Task 2 verify runs this test and requires `ok`, so the task cannot pass as written. Research already states the required order (`32-RESEARCH.md:462`).
 
@@ -492,18 +1294,18 @@ None for this plan. E1, E2, and E3 were refuted, and the revised text does not r
 
 - **LOW — chomp and clip behavior is easy to mis-count.** “Drop trailing blank lines, then chomp” does not say whether the dropped lines are content-final blanks only, and `+` “adds one `\n` plus one per dropped blank line” can double-count the YAML clip newline. The acceptance fixture uses `>-` and `|` without internal blanks, so the stated tests do not catch it. Predates this revision’s ledger; the fold wording is part of the revised parser text.
 
-##### Suggestions
+###### Suggestions
 
 - Put the new module second in the written set only if a comment records why, or change `tests/test_staged_mapper.py:553` in this plan to select a named module instead of `sorted(...)[0]`. The acceptance grep already expects `framework_profiles` first in the generated Makefile line.
 - Replace the fold sentence with the YAML 1.2 rule: a blank line breaks the fold, and no space is inserted across that break. Add one fixture whose text has a blank line inside `>`.
 - Point `yaml_compare.mjs` at `tmp/p32/06/fixtures.json` only. Keep the Python dump as the single reader of `FIXTURES`.
 - Pin quote handling with one example each: `"say \"hi\""`, a single-quoted `''`, and a trailing-comment case. State that the quote check applies to the value after the `: ` separator.
 
-##### Risk Assessment
+###### Risk Assessment
 
 **HIGH.** The plan implements the right requirement and its file ownership is sound, but Task 2’s verify command fails on the existing staged-mapper test, and the parser rule can make the required npm comparison fail or silently measure the wrong description length.
 
-##### Ponytail findings
+###### Ponytail findings
 
 - The new parser is needed: SPEC R8 and D-17 require a strict subset, and `setup._read_frontmatter` (`tools/setup.py:908-939`) folds every shape and cannot reject the required errors.
 - `entry_files` and `entry_problems` are small and justified. `UniqueKeyLoader` is the minimum way to make PyYAML reject duplicate keys; research shows plain `safe_load` keeps the last value (`32-RESEARCH.md:360`).
@@ -513,14 +1315,14 @@ None for this plan. E1, E2, and E3 were refuted, and the revised text does not r
 
 Skipped: I did not run the test suite or the npm probe, per the read-only review limit. The fold mismatch is from the YAML rule and the plan text, not from executing the missing parser.
 
-## Consensus Summary (cycle 2)
+### Consensus Summary (cycle 2)
 
 Only one reviewer ran, so no finding can be agreed or disputed across reviewers. The orchestrator weighed
 referee-two's findings against the source instead, and ran them where they described behaviour (Triage below). The
 review carries no `[reviewed-without-repo-access]` or `[reviewed-without-source-citations]` marker: every batch read
 the repository and cites `path:line` evidence.
 
-### Agreed Strengths
+#### Agreed Strengths
 
 None across reviewers (one reviewer). These strengths referee-two named were also confirmed by the orchestrator:
 
@@ -531,23 +1333,23 @@ None across reviewers (one reviewer). These strengths referee-two named were als
 - 32-03's and 32-05's cited skill lines still match the tree.
 - No batch has a same-wave file overlap or a missing `depends_on`.
 
-### Agreed Concerns
+#### Agreed Concerns
 
 None (one reviewer).
 
-### Divergent Views
+#### Divergent Views
 
 The orchestrator's check diverged from referee-two on all 7 HIGH labels; each was refuted against source or by a run.
 It confirmed one MEDIUM as raised (C2-7) and one MEDIUM at LOW (A2-1).
 
-## Triage (cycle 2, orchestrator, 2026-11-07)
+### Triage (cycle 2, orchestrator, 2026-11-07)
 
 7 HIGH labels were raised: C2-1, C2-5, D2-1, D2-2, D2-7, E2-1 and E2-2. Each was refuted against source or by
 running the claim, so 0 HIGH remain. Every confirmed cycle-1 item is fixed. Two findings are confirmed: one MEDIUM
 and one LOW, both in 32-07 and both older than the revision. Each comes with the plan change it still needs. Every
 other finding is listed under "Rejected or not actionable" with its evidence.
 
-### Cycle 1 fixes verified
+#### Cycle 1 fixes verified
 
 referee-two marked each confirmed cycle-1 item FIXED, and the orchestrator re-checked them:
 
@@ -572,11 +1374,11 @@ referee-two marked each confirmed cycle-1 item FIXED, and the orchestrator re-ch
 - **Roadmap drift (advisory): resolved.** ROADMAP Phase 32 criterion 3 now carries the bar-boundary amendment (see
   Verification coverage).
 
-### Confirmed HIGH
+#### Confirmed HIGH
 
 None.
 
-### Confirmed actionable (MEDIUM and LOW)
+#### Confirmed actionable (MEDIUM and LOW)
 
 - **C2-7 MEDIUM, 32-07: `worst_record` breaks ties by an `order` the plan never defines, and no test renders a
   substitute.**
@@ -619,7 +1421,7 @@ None.
     message naming the file.
   - 32-01's interim checker needs no change: it runs only in tests until 32-07 replaces it.
 
-### Rejected or not actionable
+#### Rejected or not actionable
 
 Batch A (32-01, 32-02):
 
@@ -759,9 +1561,9 @@ Batch E (32-06):
 - **E2-5 (LOW) 32-06, the chomp rules are easy to miscount.** Refuted by the same nine-case PyYAML comparison (keep,
   clip and strip all match).
 
-## Verification coverage (cycle 2)
+### Verification coverage (cycle 2)
 
-### Source-grounding pass (authority: grep)
+#### Source-grounding pass (authority: grep)
 
 `drift-guard authority --raw` returned `grep`. `drift-guard severity` gives, per verdict:
 
@@ -815,7 +1617,7 @@ now ends at the new "Review Dispositions Ledger" heading, so names that a ledger
 - Signature claims are UNCHECKABLE under grep. Every reviewer claim about existing code was checked by hand or by a
   run; the Triage records each.
 
-### Cross-artifact fact-drift pass
+#### Cross-artifact fact-drift pass
 
 - **Phase status:** `drift-guard phase-status --phase 32` returned `lag`: STATE.md says "Ready to execute" and
   ROADMAP.md "Not started". Not a finding.
