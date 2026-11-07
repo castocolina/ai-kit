@@ -1182,7 +1182,9 @@ class WizardApp(App):
         if self.flow.step != STEP_ARRANGE or not self.hosts:
             return
         host_id = self.hosts[self.flow.host_index].id
-        widget = self.query_one("#preview", Static)
+        widget = self._preview_widget()
+        if widget is None:    # the resize timer fired after teardown
+            return
         st = self._serialize_state()
         cols = widget.content_size.width or 100
         adopt = bool(self.model.state.get("adopt"))
@@ -1229,8 +1231,11 @@ class WizardApp(App):
         if not callable(getattr(host.engine, "render_preview", None)):
             self._show_preview_fallback()
             return
+        widget = self._preview_widget()
+        if widget is None:
+            return
         st = self._serialize_state()
-        cols = self.query_one("#preview", Static).content_size.width or 100
+        cols = widget.content_size.width or 100
         self.preview.running = True
         self._render_preview_job(host.id, st["segments"], st["layout"], cols,
                                  functools.partial(self._apply_preview, seq, host.id))
@@ -1260,8 +1265,10 @@ class WizardApp(App):
         if not out:
             self._show_preview_fallback()
             return
-        self.query_one("#preview", Static).update(
-            Text.assemble(self._preview_text(out), "\n", Text.from_markup(self._count_markup())))
+        widget = self._preview_widget()
+        if widget is not None:
+            widget.update(Text.assemble(self._preview_text(out), "\n",
+                                        Text.from_markup(self._count_markup())))
 
     def _preview_timeout(self, seq) -> None:
         """The 2 s display deadline: a render still running shows the samples and the note."""
@@ -1269,9 +1276,17 @@ class WizardApp(App):
             self.preview.seq += 1  # the late result is dropped by the seq check
             self._show_preview_fallback()
 
+    def _preview_widget(self) -> Static | None:
+        """The preview box, or None: the debounce, deadline and worker callbacks can fire after
+        the screen is torn down (the app quit mid-render), and then there is nothing to draw."""
+        return next(iter(self.query("#preview").results(Static)), None)
+
     def _show_preview_fallback(self) -> None:
+        widget = self._preview_widget()
+        if widget is None:
+            return
         body = "\n".join(f"[#d6dee8]{p}[/]" for p in self._preview_lines(self._pane()))
-        self.query_one("#preview", Static).update(Text.from_markup(
+        widget.update(Text.from_markup(
             f"{body}\n[{DIM}]{PREVIEW_FALLBACK_NOTE}[/]\n{self._count_markup()}"))
 
     @staticmethod

@@ -631,6 +631,21 @@ class TestExtraSpendAlert(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.model.state["host_keys"]["cursor"], {"extra_alert": True})
             self.assertTrue(app.is_running)
 
+    async def test_preview_callbacks_without_the_preview_box_are_a_no_op(self):
+        # The debounce, deadline, resize and worker callbacks can fire after teardown removed
+        # #preview (seen as a NoMatches in this class at push time).
+        app = _alert_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter", "enter")
+            await app.query_one("#preview").remove()
+            # pylint: disable=protected-access
+            app._kick_preview()
+            app._show_preview_fallback()
+            app._schedule_preview()
+            app._apply_preview(app.preview.seq, app.hosts[app.flow.host_index].id, "x")
+            self.assertTrue(app.is_running)
+
     async def test_limit_text_falls_back_to_unknown_without_an_engine_callable(self):
         app = _alert_app(limit=None)
         async with app.run_test() as pilot:
