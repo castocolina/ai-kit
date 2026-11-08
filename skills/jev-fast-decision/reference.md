@@ -74,6 +74,8 @@ Keep results in durable artifacts as advisory evidence, never in a verdict field
 
 `${XDG_CONFIG_HOME:-~/.config}/ai-kit/jev-consent.json` — `consent grant|revoke|show <backend>` writes and reads it, keyed by backend with `host` and `granted` (ISO date); a grant is bound to the row's current host, so an endpoint move needs a new grant. The session gate is `JEV_ALLOW_REMOTE`: `1` names every remote, a comma list names those rows, anything else opens nothing. A remote row runs when the gate names it or its record matches its current host. A grant's announcement says the questions go to that host and retention terms are unverified.
 
+A record key or a `JEV_ALLOW_REMOTE` name that the client table no longer has (a removed backend) opens nothing. `--probe` and `consent show` list it under `leftover` with its source (`consent_record` or `JEV_ALLOW_REMOTE`), never a value; `consent revoke <name>` deletes such a record key, and a `JEV_ALLOW_REMOTE` entry goes when you edit that variable.
+
 ## Environment
 
 | Variable | Meaning |

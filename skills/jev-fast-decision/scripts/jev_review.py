@@ -1017,6 +1017,18 @@ def write_consent(data):
         raise
 
 
+def leftover_entries():
+    """Backend names a consent record or `JEV_ALLOW_REMOTE` still lists that the table no longer
+    has: name and source only, never a value."""
+    entries = [{"name": name, "source": "consent_record"}
+               for name in sorted(read_consent()) if row_named(name) is None]
+    raw = os.environ.get("JEV_ALLOW_REMOTE", "").strip()
+    parts = [] if raw == "1" else dict.fromkeys(p.strip() for p in raw.split(",") if p.strip())
+    entries += [{"name": name, "source": "JEV_ALLOW_REMOTE"}
+                for name in parts if row_named(name) is None]
+    return entries
+
+
 def _row_host(row):
     """The host a consent record binds this row to right now: its url adapter's hostname."""
     endpoint, reason = row["url"]()
@@ -1077,6 +1089,8 @@ def consent_command(action, backend):
     grant the minimal announcement — TypeSafe's retention terms are unverified (RESEARCH 11)."""
     row = row_named(backend)
     if row is None:
+        if action in ("show", "revoke") and backend in {e["name"] for e in leftover_entries()}:
+            return _leftover_consent(action, backend)
         return {"ok": False, "reason": "unknown_backend"}
     if not row["remote"]:
         return {"ok": False, "reason": "not_remote"}  # laya stays local: no record to give
@@ -1095,7 +1109,21 @@ def consent_command(action, backend):
     if action == "grant":
         result["note"] = (f"questions go to {host}; retention terms unverified; revoke with: "
                           f"jev_review.py consent revoke {backend}")
+    if action == "show":
+        result["leftover"] = leftover_entries()
     return result
+
+
+def _leftover_consent(action, backend):
+    """`consent show|revoke <leftover>`: a name the table no longer has. Revoke deletes its record
+    key through `write_consent`; a `JEV_ALLOW_REMOTE` entry is edited in the environment instead."""
+    if action == "revoke":
+        data = read_consent()
+        if backend in data:
+            del data[backend]
+            write_consent(data)
+    return {"ok": True, "backend": backend, "leftover": leftover_entries(),
+            "file": consent_path()}
 
 
 def _parse_jev_min_confidence():
@@ -1234,6 +1262,7 @@ def probe_report():
               "selected": candidates[0] if candidates else None,
               "candidates": candidates, "unavailable": unavailable,
               "backends": entries}
+    report["leftover"] = leftover_entries()
     if candidates:
         return report
     consent = _consent_result(choice, unavailable, [], {})

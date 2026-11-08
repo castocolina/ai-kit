@@ -1739,6 +1739,78 @@ class TestConsent(_ClientCase):
         self.assertEqual(mode, 0o600)  # mkstemp's mode carried over by os.replace
 
 
+class TestLeftovers(_ClientCase):
+    """A consent record or JEV_ALLOW_REMOTE name the table no longer has (a removed backend):
+    reported by name and source, routed to nothing, and `consent revoke` deletes the record."""
+
+    def consent(self, argv):
+        """main(argv) with stdout captured: (exit code, the parsed JSON it printed)."""
+        out = io.StringIO()
+        with mock.patch.object(sys, "stdout", out):
+            code = JR.main(argv)
+        return code, json.loads(out.getvalue())
+
+    def write_leftover_record(self):
+        JR.write_consent({"opencode": {"host": "example.invalid", "granted": "2026-10-01"}})
+
+    def test_leftover_record_and_allow_list_are_reported_and_route_nothing(self):
+        self.write_leftover_record()
+        with JevStub(model="jev-1.13.0") as stub:
+            self.point_remote("typesafe", stub)
+            os.environ["TYPESAFE_API_KEY"] = "typesafe-key"
+            os.environ["JEV_ALLOW_REMOTE"] = "opencode"
+            _code, report = self.run_probe()
+        self.assertEqual(report["leftover"],
+                         [{"name": "opencode", "source": "consent_record"},
+                          {"name": "opencode", "source": "JEV_ALLOW_REMOTE"}])
+        self.assertEqual(self.backend_entry(report, "typesafe")["reason"],
+                         "consent_required_for_remote")
+        self.assertEqual(stub.requests, [])  # the leftover opened nothing
+
+    def test_no_leftover_reports_an_empty_list(self):
+        _code, report = self.run_probe()
+        self.assertEqual(report["leftover"], [])
+        os.environ["JEV_ALLOW_REMOTE"] = "1"
+        _code, report = self.run_probe()
+        self.assertEqual(report["leftover"], [])
+
+    def test_consent_show_carries_leftover(self):
+        self.write_leftover_record()
+        os.environ["JEV_ALLOW_REMOTE"] = "opencode"
+        _code, out = self.consent(["consent", "show", "typesafe"])
+        self.assertEqual(out["leftover"],
+                         [{"name": "opencode", "source": "consent_record"},
+                          {"name": "opencode", "source": "JEV_ALLOW_REMOTE"}])
+
+    def test_consent_show_and_revoke_accept_a_leftover_name(self):
+        self.write_leftover_record()
+        _code, out = self.consent(["consent", "show", "opencode"])
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["leftover"], [{"name": "opencode", "source": "consent_record"}])
+        _code, out = self.consent(["consent", "revoke", "opencode"])
+        self.assertTrue(out["ok"])
+        self.assertNotIn("opencode", JR.read_consent())
+        _code, out = self.consent(["consent", "show", "opencode"])
+        self.assertEqual(out, {"ok": False, "reason": "unknown_backend"})
+
+    def test_unknown_name_that_is_no_leftover_stays_unknown_backend(self):
+        self.write_leftover_record()
+        _code, out = self.consent(["consent", "show", "ghost"])
+        self.assertEqual(out, {"ok": False, "reason": "unknown_backend"})
+        _code, out = self.consent(["consent", "grant", "opencode"])
+        self.assertEqual(out, {"ok": False, "reason": "unknown_backend"})
+
+    def test_leftover_report_holds_names_only(self):
+        sentinel = "sentinel-host.example.invalid"
+        JR.write_consent({"opencode": {"host": sentinel, "granted": "2026-10-01"}})
+        os.environ["JEV_ALLOW_REMOTE"] = "opencode"
+        _code, text = self.run_probe_text()
+        self.assertIn('"leftover"', text)
+        self.assertNotIn(sentinel, text)
+        _code, out = self.consent(["consent", "show", "opencode"])
+        self.assertNotIn(sentinel, json.dumps(out))
+
+
 class TestAnswerLog(_ClientCase):
     """D-19, SPEC R7: one line per dispatched item in `$XDG_STATE_HOME/ai-kit` — and nothing
     the caller did not send as its own question: no context, no state, no criteria text, no
