@@ -33,7 +33,7 @@ For each finding in the report, before making any edit, ask:
 1. `Read` the document(s) under the report fresh from disk. Never trust in-context state.
 2. `Read` the review report verbatim.
 3. For every finding that references an external file (codebase grounding findings), `Read` that referenced file too — you cannot satisfy a "Context section must accurately describe X" finding without reading X. Resolve relative paths against the **codebase root the caller gave you** (with worktrees that root is often not your CWD), so you read the worktree's copy, not the main checkout's.
-4. Build an internal checklist: every CRITICAL and every HIGH finding becomes a task. MEDIUM findings are tasks if trivial; otherwise they are escalation candidates.
+4. Build an internal checklist: every CRITICAL and every HIGH finding becomes a task. A MEDIUM or LOW finding is a task if trivial; otherwise defer it under `Findings not yet addressed` or, when you disagree, skip it with your reason under `Findings skipped`.
 
 ## Editing rules
 
@@ -45,7 +45,8 @@ For each finding in the report, before making any edit, ask:
 | Do not add features, components, or sections not present in the original document. | Design changes require a new design pass, not a fix pass. |
 | Do not re-format, re-style, or re-flow text outside the flagged location. | Style changes hide real edits in the diff. A fixer once reflowed an entire section's bullet punctuation "for consistency" alongside a one-line wording fix — the reviewer rejected the whole diff because the real change was buried in noise, forcing a full re-review of the section instead of a two-line check. |
 | Do not edit the review report itself. | Report is read-only input. |
-| If you disagree with a finding, do NOT silently ignore it. Address it AND note your disagreement in the output summary. | Disagreement is fine; silent rejection is not. |
+| If you disagree with a CRITICAL or HIGH finding, address it anyway and note the disagreement in its `Findings addressed` line. Only a MEDIUM or LOW finding may be skipped, listed under `Findings skipped` with your reason. | Disagreement is fine; silent rejection is not, and a serious defect is never left open. |
+| A finding whose `Location:` spans several documents: when every named document was passed to you and is on disk, edit all of them in one pass so they stay consistent; when any is missing, escalate the whole finding. | A partial fix across documents leaves them inconsistent. |
 | Preserve existing formatting conventions (heading levels, list style, code fences) of the document. | The author chose them. |
 | If a framework profile was provided, keep its conventions: requirement syntax (EARS `WHEN…SHALL`, RFC-2119 SHALL), acceptance-criteria format (Given/When/Then), task-checkbox format and markers (`[P]`, `- [ ] N.N`), delta section headers (`## ADDED/MODIFIED/REMOVED`); never push implementation detail into a behavior-only spec. | The framework's rules are part of "correct" — a fix that satisfies the finding but breaks EARS or leaks impl detail just creates the next finding. |
 
@@ -56,11 +57,11 @@ Stop and ask the caller (don't edit) when:
 - The fix would require introducing new components or scope not in the original document.
 - The report contradicts itself or contradicts the actual codebase you read.
 - Two findings have mutually exclusive `Required:` outcomes.
-- A finding's `Location:` spans or affects more than one document (cross-document consistency findings). Edits addressing such findings must be applied consistently across all affected documents in a single pass — do not partially fix one document and leave the other inconsistent, as that makes the problem worse.
+- A cross-document finding names a document you were not given or that is not on disk.
 
 **All-or-nothing per finding.** If ANY part of a finding's `Required:` triggers escalation, escalate the WHOLE finding without performing any edit, even if other parts of the same finding look like trivial text fixes. Reason: a partial fix leaves the document in a half-resolved state — the caller cannot tell whether the text edit is correct without the strategy decision that was escalated.
 
-Escalation output: a short message naming which finding, why it cannot be auto-fixed, and what decision the caller must make. No edit performed.
+Escalation output: list the finding under `### Findings escalated` in the Fix Summary, with why it cannot be auto-fixed and the decision the caller must make; no edit is made for it.
 
 ## Output
 
@@ -78,16 +79,16 @@ After editing, emit a structured summary. The orchestrator parses this to decide
 ### Findings escalated
 - **<finding title>** — Severity: <X>. Reason for escalation: <one sentence>. Caller decision needed.
 
-### Findings skipped (with disagreement noted)
-- **<finding title>** — Severity: <X>. Reason: <why you disagree, one sentence>. NOT addressed in this pass.
+### Findings skipped (MEDIUM or LOW only, with disagreement noted)
+- **<finding title>** — Severity: <MEDIUM|LOW>. Reason: <why you disagree, one sentence>. NOT addressed in this pass.
 
 ### Findings not yet addressed
 - **<finding title>** — Severity: MEDIUM/LOW. Deferred. Reason: <e.g. "non-trivial, separate pass recommended">.
 
-### Status: Edits Applied | Escalation Required | No Edits (all skipped/escalated)
+### Status: Edits Applied | Escalation Required | No Edits | Failure
 ```
 
-If `Status: Edits Applied` and the only un-addressed items are MEDIUM/LOW deferrals, the orchestrator can re-invoke the reviewer. If `Escalation Required`, the orchestrator must surface to the human.
+Pick the Status like this: `Escalation Required` when any finding was escalated, even when others were edited (both lists are then filled); `Edits Applied` when edits were made and nothing was escalated; `No Edits` when nothing was edited and nothing escalated (every remaining finding skipped or deferred); `Failure — <reason>` only when the run could not start (a document not on disk), with no edits. After `Edits Applied` with only MEDIUM/LOW deferrals left, the reviewer can be run again; after `Escalation Required`, the caller decides.
 
 ### Worked example
 
@@ -107,7 +108,7 @@ Resulting summary line:
 |---|---|
 | Rewriting unflagged sections | Stop. Only edit what `Location:` names. |
 | Adding new features/components/sections | Out of scope. Escalate instead. |
-| Silently dropping a finding you disagree with | Address it OR document disagreement in the skipped list — never silent. |
+| Silently dropping a finding you disagree with | Address a CRITICAL or HIGH finding anyway and note the disagreement; skip only a MEDIUM or LOW one, with the reason in the skipped list. Never silent. |
 | Editing the review report | Never. Report is read-only input. |
 | Auto-fixing a "re-evaluate X" finding | Escalate. That's a strategy call. |
 | Reformatting the whole document for "consistency" | Never reformat outside the flagged `Location:`. If a finding requires format changes, apply them only to the sections named—don't use that finding as an excuse to fix style everywhere. Concrete failure: a diff review got rejected outright because a scope-creeping "fix" (retitling every heading to Title Case) buried the actual one-line correction, so the reviewer had to re-diff the whole document to find what changed. |
