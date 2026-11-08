@@ -1,0 +1,166 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=94s out=33369 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"markdown-to-pdf\",\"judge\":\"opencode:router-env/my-referee-three\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":16,\"D2\":12,\"D3\":13,\"D4\":13,\"D5\":13,\"D6\":14,\"D7\":13,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":107,\"max_total\":125,\"percent\":85.6,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":14,\"evidence\":\"Opening paragraph 'Turn a Markdown document with embedded mermaid diagrams into a PDF (or a marp deck) in one non-destructive command...' restates the description and the Never list\",\"fix\":\"Cut the intro to one line naming the script, or delete it; the description and the NEVER list already carry this\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":19,\"evidence\":\"'Before you run, decide' gives three framing questions, but the Draft-or-final branch ends the same way either way ('any installed backend is fine' / 'let the quality-ranked auto-selection pick')\",\"fix\":\"Swap the draft/final question for one that changes the action, for example 'Does the doc use LaTeX math or CJK text? Then prefer pandoc-latex or typst over chromium', so each question leads to a different command\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":59,\"evidence\":\"Environment facts such as '(SVG support on `weasyprint` is patchy)' and the --to html relative-link behaviour sit in table cells and prose, not in a Gotchas list\",\"fix\":\"Add a short Gotchas list: weasyprint SVG is patchy; --to html keeps relative links and writes <stem>-assets/ that must travel with the HTML; mmdc needs a headless Chrome even when the mermaid source is valid\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":3,\"evidence\":\"The description has no 'Not for' boundary, though the trigger set has near-miss neighbours (DOCX/HTML to PDF, editing or merging PDFs, restyling an existing marp deck, one standalone mermaid diagram to PNG)\",\"fix\":\"Convert a Markdown document (with embedded mermaid diagrams) into a PDF, or into a marp slide deck (pdf, pptx, html), in one non-destructive command; every ```mermaid block is rendered with mmdc and embedded. Use when the user wants to turn a .md file into a PDF or slide deck, 'export markdown to pdf', 'md to pdf', 'render mermaid and make a PDF', 'build a deck from this markdown', or asks which PDF backend is installed. Auto-detects the best installed backend (Pandoc+LaTeX > Typst > WeasyPrint > Chromium) and never auto-installs. Not for editing, merging, compressing or filling existing PDFs, for DOCX/HTML to PDF, for restyling an existing marp deck, or for rendering one standalone mermaid diagram. Keywords: markdown to pdf, md to pdf, mermaid, marp deck, slide deck, export pdf, pandoc, typst.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/examples/sample-with-mermaid.md\",\"line\":null,\"evidence\":\"examples/sample-with-mermaid.md is tracked, but SKILL.md, references/ and scripts/ never mention it\",\"fix\":\"Reference it with a trigger (for example 'To smoke-test the installed toolchain, run the primary flow on examples/sample-with-mermaid.md') or delete it\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":82,\"evidence\":\"'Hand the `.rendered.md` to `marp-slide` for themes/polish/export.' The handoff gives no instruction on keeping the sibling .rendered-assets/ folder with the file\",\"fix\":\"Add: 'keep <source>.rendered-assets/ next to the .rendered.md; marp-slide resolves the diagram links relative to it'\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/scripts/markdown_to_pdf.py\",\"line\":null,\"evidence\":\"The script reports success as free text ('Wrote /path/source.pdf  (backend: <name>, diagrams: mmdc(<fmt>))'), and --help lists neither exit codes 2/3/4 nor any structured output option\",\"fix\":\"Document the exit codes (0 ok, 2 mermaid or browser failure, 3 no backend, 4 backend failed) in the argparse epilog, and add a --json flag that prints {output, backend, diagram_format} to stdout\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":38,\"evidence\":\"Primary flow is 'Run, then report the printed result line verbatim'. No step checks the output, and nothing covers a document with no mermaid blocks or a missing local image\",\"fix\":\"After exit 0, check that the output file exists and is non-empty, and state what happens to a document with zero mermaid blocks (plain conversion) and to a broken relative image link (which backend fails, which exit code)\"}]}"
+  }
+ ],
+ "digest": "7eff8867401fc0751366b681c0079c003c7e35801680eeda6a8b99d756556d6c",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-three",
+ "loop": "32.1",
+ "modules": [
+  "tests/test_markdown_to_pdf.py",
+  "tests/test_markdown_to_pdf_e2e.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "83067e78e60e5fd0374d1b1a29a635497e4e83fba20773089e0354377d26e209",
+ "round": 3,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "markdown-to-pdf",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "Opening paragraph 'Turn a Markdown document with embedded mermaid diagrams into a PDF (or a marp deck) in one non-destructive command...' restates the description and the Never list",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Cut the intro to one line naming the script, or delete it; the description and the NEVER list already carry this",
+    "id": "D1-1",
+    "line": 14,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "'Before you run, decide' gives three framing questions, but the Draft-or-final branch ends the same way either way ('any installed backend is fine' / 'let the quality-ranked auto-selection pick')",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Swap the draft/final question for one that changes the action, for example 'Does the doc use LaTeX math or CJK text? Then prefer pandoc-latex or typst over chromium', so each question leads to a different command",
+    "id": "D2-1",
+    "line": 19,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "Environment facts such as '(SVG support on `weasyprint` is patchy)' and the --to html relative-link behaviour sit in table cells and prose, not in a Gotchas list",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add a short Gotchas list: weasyprint SVG is patchy; --to html keeps relative links and writes <stem>-assets/ that must travel with the HTML; mmdc needs a headless Chrome even when the mermaid source is valid",
+    "id": "D3-1",
+    "line": 59,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description has no 'Not for' boundary, though the trigger set has near-miss neighbours (DOCX/HTML to PDF, editing or merging PDFs, restyling an existing marp deck, one standalone mermaid diagram to PNG)",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Convert a Markdown document (with embedded mermaid diagrams) into a PDF, or into a marp slide deck (pdf, pptx, html), in one non-destructive command; every ```mermaid block is rendered with mmdc and embedded. Use when the user wants to turn a .md file into a PDF or slide deck, 'export markdown to pdf', 'md to pdf', 'render mermaid and make a PDF', 'build a deck from this markdown', or asks which PDF backend is installed. Auto-detects the best installed backend (Pandoc+LaTeX > Typst > WeasyPrint > Chromium) and never auto-installs. Not for editing, merging, compressing or filling existing PDFs, for DOCX/HTML to PDF, for restyling an existing marp deck, or for rendering one standalone mermaid diagram. Keywords: markdown to pdf, md to pdf, mermaid, marp deck, slide deck, export pdf, pandoc, typst.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "examples/sample-with-mermaid.md is tracked, but SKILL.md, references/ and scripts/ never mention it",
+    "file": "skills/markdown-to-pdf/examples/sample-with-mermaid.md",
+    "fix": "Reference it with a trigger (for example 'To smoke-test the installed toolchain, run the primary flow on examples/sample-with-mermaid.md') or delete it",
+    "id": "D5-1",
+    "line": null,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "'Hand the `.rendered.md` to `marp-slide` for themes/polish/export.' The handoff gives no instruction on keeping the sibling .rendered-assets/ folder with the file",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add: 'keep <source>.rendered-assets/ next to the .rendered.md; marp-slide resolves the diagram links relative to it'",
+    "id": "D6-1",
+    "line": 82,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The script reports success as free text ('Wrote /path/source.pdf  (backend: <name>, diagrams: mmdc(<fmt>))'), and --help lists neither exit codes 2/3/4 nor any structured output option",
+    "file": "skills/markdown-to-pdf/scripts/markdown_to_pdf.py",
+    "fix": "Document the exit codes (0 ok, 2 mermaid or browser failure, 3 no backend, 4 backend failed) in the argparse epilog, and add a --json flag that prints {output, backend, diagram_format} to stdout",
+    "id": "D7-1",
+    "line": null,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "Primary flow is 'Run, then report the printed result line verbatim'. No step checks the output, and nothing covers a document with no mermaid blocks or a missing local image",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "After exit 0, check that the output file exists and is non-empty, and state what happens to a document with zero mermaid blocks (plain conversion) and to a broken relative image link (which backend fails, which exit code)",
+    "id": "D8-1",
+    "line": 38,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-three",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 85.6,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 16,
+   "D2": 12,
+   "D3": 13,
+   "D4": 13,
+   "D5": 13,
+   "D6": 14,
+   "D7": 13,
+   "D8": 13
+  },
+  "skill": "markdown-to-pdf",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 107
+ }
+}
