@@ -515,8 +515,8 @@ class TestCheck(ReportFixture):
         code, out = self._check("--skills", "demo-b", "--judges", "cli-a:model-a")
         self.assertEqual(code, 1)
         self.assertIn("demo-b: loop 32 rounds are not r1..r3", out)
-        entry = judge_loop.count_entry(self.repo, self.records, "demo-a", "32.1",
-                                       demo_inputs()["skills"]["demo-a"])
+        entry = judge_loop.with_base(demo_inputs()["skills"]["demo-a"], judge_loop.prior_base(
+            self.repo, self.records, "demo-a", "32.1"))
         count = judge_loop.count_skill(self.repo, "demo-a", entry, None)
         loop_32_1 = {"pool": demo_pool(), "counts": {"demo-a": count}}
         judge_loop.atomic_write_json(self._loop_file("32.1"), loop_32_1)
@@ -1530,6 +1530,7 @@ class TestCountGit(unittest.TestCase):
         self.repo = make_repo(self.base, SKILL_REPO_FILES)
         self.base_sha = _git(self.repo, _git_env(self.base), "rev-parse", "HEAD").strip()
         self.records = self.base / "rec"
+        self.pkg = make_package(self.base)
 
     def _write_inputs(self, skills, excluded=None):
         self.records.mkdir(parents=True, exist_ok=True)
@@ -1538,7 +1539,7 @@ class TestCountGit(unittest.TestCase):
 
     def _count(self, extra):
         return run_main(["--root", str(self.repo), "count", "--loop", "32",
-                         "--records", str(self.records), *extra])
+                         "--records", str(self.records), "--judge-package", str(self.pkg), *extra])
 
     def test_numstat_is_none_for_an_unresolvable_base_and_refuses_bad_input(self):
         self.assertIsNone(judge_loop.numstat(self.repo, "deadbee", "demo-alpha"))
@@ -1690,6 +1691,7 @@ class TestPriorBase(unittest.TestCase):
         self.repo = make_repo(self.base, SKILL_REPO_FILES)
         self.base_sha = _git(self.repo, _git_env(self.base), "rev-parse", "HEAD").strip()
         self.records = self.base / "rec"
+        self.pkg = make_package(self.base)
         self.digest_a = judge_loop.skill_digest(self.repo, "demo-alpha")
         self.inputs = {"schema": 1, "excluded": {}, "skills": {
             "demo-alpha": {"batch": "32.1", "last_v4": None, "old_score": None}}}
@@ -1699,7 +1701,7 @@ class TestPriorBase(unittest.TestCase):
 
     def _count(self, *extra):
         return run_main(["--root", str(self.repo), "count", "--records", str(self.records),
-                         *extra])
+                         "--judge-package", str(self.pkg), *extra])
 
     def _check(self, *args):
         return run_main(["--root", str(self.repo), "check", str(self.records), *args])
@@ -1713,8 +1715,8 @@ class TestPriorBase(unittest.TestCase):
         rec = make_record("32.1", "demo-alpha", 1, "cli-a:model-a", verdict, digest=self.digest_a)
         judge_loop.atomic_write_json(judge_loop.record_path(
             self.records, "32.1", "demo-alpha", 1, "cli-a:model-a"), rec)
-        entry = judge_loop.count_entry(self.repo, self.records, "demo-alpha", "32.1",
-                                       self.inputs["skills"]["demo-alpha"])
+        entry = judge_loop.with_base(self.inputs["skills"]["demo-alpha"], judge_loop.prior_base(
+            self.repo, self.records, "demo-alpha", "32.1"))
         count = judge_loop.count_skill(self.repo, "demo-alpha", entry, None)
         judge_loop.atomic_write_json(self.records / "loops" / "32.1.json",
                                      {"pool": demo_pool(), "counts": {"demo-alpha": count}})
@@ -1773,6 +1775,25 @@ class TestPriorBase(unittest.TestCase):
         self.assertEqual(judge_loop._count_problems(self.records, "32", "demo-alpha",
                                                     self.inputs), [])
 
+    def test_count_takes_its_pin_from_the_rubric_before_any_record_exists(self):
+        # loop 32 is pinned v4; the rubric is now v5, and loop 32.1 has no record yet
+        pkg5 = make_package(self.base / "v5")
+        rubric = pkg5 / "references" / "rubric.md"
+        rubric.write_text(rubric.read_text(encoding="utf-8").replace(
+            "rubric_version: 4", "rubric_version: 5"), encoding="utf-8")
+        code, out = self._count("--loop", "32.1", "--no-jev", "--skill", "demo-alpha",
+                                "--judge-package", str(pkg5))
+        self.assertEqual(code, 0, out)
+        record = judge_loop.read_loop_file(self.records, "32.1")["counts"]["demo-alpha"]
+        self.assertIsNone(record["last_v4"])
+        verdict = full_verdict("demo-alpha", "cli-a:model-a")
+        rec = {**make_record("32.1", "demo-alpha", 1, "cli-a:model-a", verdict,
+                             digest=self.digest_a), "rubric_version": 5}
+        judge_loop.atomic_write_json(judge_loop.record_path(
+            self.records, "32.1", "demo-alpha", 1, "cli-a:model-a"), rec)
+        self.assertEqual(judge_loop._count_problems(self.records, "32.1", "demo-alpha",
+                                                    self.inputs), [])
+
 
 @unittest.skipUnless(HAS_GIT, "git not installed")
 class TestPriorLoop(ReportFixture):
@@ -1783,8 +1804,8 @@ class TestPriorLoop(ReportFixture):
         verdict = make_verdict("demo-b", "cli-a:model-a", drops={"D1": (points_lost, "low")},
                                maxima={d: 125 for d in DIMS})
         self._put(make_record("32.1", "demo-b", 1, "cli-a:model-a", verdict))
-        entry = judge_loop.count_entry(self.repo, self.records, "demo-b", "32.1",
-                                       demo_inputs()["skills"]["demo-b"])
+        entry = judge_loop.with_base(demo_inputs()["skills"]["demo-b"], judge_loop.prior_base(
+            self.repo, self.records, "demo-b", "32.1"))
         count = judge_loop.count_skill(self.repo, "demo-b", entry, None)
         judge_loop.atomic_write_json(self._loop_file("32.1"), {"counts": {"demo-b": count}})
         self._report()
@@ -1832,6 +1853,17 @@ class TestPriorLoop(ReportFixture):
         self.assertIn("demo-b: bar not met", out)
         self.assertNotIn("demo-b: count inputs differ", out)
         self.assertNotIn("demo-b: recorded count differs", out)
+
+    def test_a_prior_loop_on_another_rubric_pin_gives_no_base(self):
+        verdict = make_verdict("demo-b", "cli-a:model-a", drops={"D1": (100, "low")},
+                               maxima={d: 125 for d in DIMS})
+        for tweak, expect_base in (({"rubric_version": 5}, False), ({"spec_sha": "b" * 40}, False),
+                                   ({}, True)):
+            rec = {**make_record("32.1", "demo-b", 1, "cli-a:model-a", verdict), **tweak}
+            self._put(rec)
+            found = judge_loop.prior_worst(self.records, "demo-b", "32.1")
+            # loop 32 is pinned (4, SHA_A): only the identical pin gives loop 32 as the base
+            self.assertEqual(found[0] if found else None, "32" if expect_base else None, tweak)
 
     def test_loop_32_report_is_byte_identical(self):
         self._report()

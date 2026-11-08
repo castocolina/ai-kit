@@ -9,6 +9,7 @@ Usage (from a git checkout, or pass --root):
   judge_loop.py report RECORDS
   judge_loop.py pool --loop L --native ID --probe-dir DIR --records DIR [--judges J ...]
   judge_loop.py count --loop L --records DIR [--skill S ...] [--no-jev] [--client PATH]
+                [--judge-package DIR]
   count bases each skill on its latest prior loop's lowest valid percent and worst verdict
   (inputs.json only when no earlier loop judged it); report and check --gate fail a round whose
   lowest percent is more than 7.0 points under that base.
@@ -871,13 +872,28 @@ def _last_round(records, skill):
     return None if loop is None else _round_state(records, loop, skill)
 
 
-def prior_worst(records, skill, loop):
-    """(prior loop, round state) of the newest loop below `loop` that ranked the skill, or None."""
+def _loop_pin(records, loop, skill):
+    """The (rubric_version, spec_sha) pin of the skill's last round in a loop, or None."""
+    numbers = round_numbers(records, loop, skill)
+    recs = load_round(records, loop, skill, numbers[-1]) if numbers else []
+    return (recs[0]["rubric_version"], recs[0]["spec_sha"]) if recs else None
+
+
+def prior_worst(records, skill, loop, pin=None):
+    """(prior loop, round state) of the newest loop below `loop` that ranked the skill, or None.
+
+    Only a loop judged on the same rubric pin gives a base: percents from another rubric
+    version are not comparable. `pin` is the rubric's own pin (count runs before the loop has
+    records); without it the loop's records give it."""
+    pin = pin or _loop_pin(records, loop, skill)
     for prior in reversed(_loop_names(records)):
         if loop_key(prior) >= loop_key(loop) or not _skill_dir(records, prior, skill).is_dir():
             continue
         state = _round_state(records, prior, skill)
-        if state is not None and state["worst"] is not None:
+        if state is None or state["worst"] is None:
+            continue
+        worst = state["worst"]
+        if pin is None or (worst["rubric_version"], worst["spec_sha"]) == pin:
             return prior, state
     return None
 
@@ -960,9 +976,9 @@ def base_commit(root, digest, name):
     return None
 
 
-def prior_base(root, records, skill, loop):
+def prior_base(root, records, skill, loop, pin=None):
     """The count base for `skill` at `loop` from its prior loop's worst round, or None."""
-    found = prior_worst(records, skill, loop)
+    found = prior_worst(records, skill, loop, pin)
     if found is None:
         return None
     prior_loop, state = found
@@ -970,9 +986,8 @@ def prior_base(root, records, skill, loop):
     return {**_base_signals(skill, prior_loop, state), "judged_at": judged_at}
 
 
-def count_entry(root, records, name, loop, entry):
+def with_base(entry, base):
     """The skill's inputs entry, with last_v4 replaced by its prior loop's base when one exists."""
-    base = prior_base(root, records, name, loop)
     return entry if base is None else {**entry, "last_v4": base}
 
 
@@ -1735,9 +1750,11 @@ def _cmd_count(args, root):
     if not args.no_jev:
         override = _abs(root, args.client) if args.client else None
         ask = _ask_for(find_jev_client(root, os.environ, override))
+    package = _abs(root, args.judge_package) if args.judge_package else None
+    pin = read_pin(find_judge_package(root, os.environ, package))
     counts = dict(read_loop_file(records, args.loop).get("counts", {}))
     for name in names:
-        entry = count_entry(root, records, name, args.loop, inputs["skills"][name])
+        entry = with_base(inputs["skills"][name], prior_base(root, records, name, args.loop, pin))
         counts[name] = count_skill(root, name, entry, ask)
     update_loop_file(records, args.loop, "counts", counts)
     for name in names:
@@ -1829,6 +1846,7 @@ def build_parser():
     count_p.add_argument("--skill", action="append", default=[])
     count_p.add_argument("--no-jev", action="store_true", help="keep the deterministic count")
     count_p.add_argument("--client", help="the jev client (default: the installed one)")
+    count_p.add_argument("--judge-package")
     return parser
 
 
