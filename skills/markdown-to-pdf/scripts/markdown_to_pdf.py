@@ -133,7 +133,8 @@ def _map_local_links(text, resolve):
         return chunk
 
     def image_label(m):
-        return _label_key(_LABEL.search(m.group(1)).group(1)) in labels
+        label = _LABEL.search(m.group(1))  # always found: _REF_DEF's group 1 holds `[label]:`
+        return label is not None and _label_key(label.group(1)) in labels
 
     def definitions(chunk):
         return _REF_DEF.sub(fix_with(True, image_label), chunk)
