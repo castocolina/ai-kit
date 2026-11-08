@@ -202,6 +202,9 @@ class TestSkillText(unittest.TestCase):
     def test_parse_failure_recovery(self):
         bullets = [line for line in self.text.split("\n") if "fails to parse" in line]
         self.assertTrue(any("git restore <paths>" in line for line in bullets))
+        # a validation error stops the whole run the same way (TestAbort in the codemod module)
+        self.assertTrue(any("fails LibCST validation" in line for line in bullets))
+        self.assertIn("stops the run there", self._bullet("add-parameter"))
 
     def test_subcommand_outcomes_stated(self):
         add = self._bullet("add-parameter")

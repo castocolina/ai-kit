@@ -223,3 +223,18 @@ class TestAbort(_CodemodCase):
                          self.expected("rename_symbol", "a.expected.txt"))
         self.assertEqual((self.tmp / "p/c.py").read_bytes(),
                          self.expected("rename_symbol", "c.py.txt"))
+
+    def test_validation_error_aborts_after_earlier_files(self):
+        sources = {"a.py": "def f(x, *args):\n    return x\n",
+                   "b.py": "def f(x=1):\n    return x\n",
+                   "c.py": "def f(x):\n    return x\n"}
+        for name, text in sources.items():
+            (self.tmp / name).write_text(text, encoding="utf-8")
+        proc = self.codemod("add-parameter", "--function", "f", "--param", "y",
+                            "--paths", "a.py", "b.py", "c.py")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("CSTValidationError", proc.stderr)
+        self.assertEqual((self.tmp / "a.py").read_text(encoding="utf-8"),
+                         "def f(x, y, *args):\n    return x\n")
+        for name in ("b.py", "c.py"):
+            self.assertEqual((self.tmp / name).read_text(encoding="utf-8"), sources[name])
