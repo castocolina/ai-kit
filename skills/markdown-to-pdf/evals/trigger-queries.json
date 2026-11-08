@@ -1,0 +1,22 @@
+[
+  {"query": "Can you export this markdown file to PDF so I can print it for the review?", "should_trigger": true},
+  {"query": "md to pdf with mermaid diagrams please, the architecture doc has several flowcharts", "should_trigger": true},
+  {"query": "Build a slide deck from my notes markdown, I want it as a presentation", "should_trigger": true},
+  {"query": "Render the mermaid diagrams in this file and make a PDF I can email to the team", "should_trigger": true},
+  {"query": "Which PDF backend is installed for markdown conversion on this machine?", "should_trigger": true},
+  {"query": "Make a marp deck from this markdown outline and export it as pptx", "should_trigger": true},
+  {"query": "I need HTML slides built from this markdown outline for the workshop", "should_trigger": true},
+  {"query": "Convert README.md to a printable PDF with its images and diagrams included", "should_trigger": true},
+  {"query": "Turn the quarterly markdown report with its images into a PDF report", "should_trigger": true},
+  {"query": "Turn the design doc into a PDF for the review meeting tomorrow morning", "should_trigger": true},
+  {"query": "Edit the text inside this existing PDF and fix the typo on page three", "should_trigger": false},
+  {"query": "Merge these two PDF files into one document with the cover first", "should_trigger": false},
+  {"query": "Convert this DOCX Word file to PDF so I can share it with the client", "should_trigger": false},
+  {"query": "Polish the theme and colors of my existing marp deck without changing content", "should_trigger": false},
+  {"query": "Render this single mermaid diagram to a PNG file with no surrounding document", "should_trigger": false},
+  {"query": "Convert this HTML web page to PDF using the browser print layout", "should_trigger": false},
+  {"query": "Extract all the text from this PDF file into a plain text file", "should_trigger": false},
+  {"query": "Write a new markdown README for this project from scratch", "should_trigger": false},
+  {"query": "Compress this large PDF file so it is under ten megabytes for email", "should_trigger": false},
+  {"query": "Fill in the form fields of this PDF application and save the result", "should_trigger": false}
+]

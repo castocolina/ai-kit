@@ -4,7 +4,7 @@ Criteria: install ease, agent-friendliness, output quality, image/diagram handli
 
 | Backend | Install ease | Agent-friendly | Output quality | Image/diagram | Total /20 | Notes |
 |---|---|---|---|---|---|---|
-| **Typst + Pandoc** | 5 | 5 | 4 | 4 | **18** | Winner: small self-contained binaries, fast, deterministic, native SVG+PNG |
+| **Typst + Pandoc** | 5 | 5 | 4 | 4 | **18** | Recommended install when no pipeline exists: small self-contained binaries, fast, deterministic, native SVG+PNG |
 | Pandoc + LaTeX (tectonic/xelatex) | 2 | 3 | 5 | 3 | 13 | Best typography; heavy; SVG needs `rsvg-convert`; noisy errors |
 | WeasyPrint | 4 | 3 | 3 | 3 | 13 | Lightweight Python; needs Pango system lib; patchy SVG; 2-step |
 | Headless-Chromium / md-to-pdf | 2 | 2 | 4 | 5 | 13 | Best SVG fidelity; huge Chromium; container-launch fragility |
@@ -14,8 +14,7 @@ Criteria: install ease, agent-friendliness, output quality, image/diagram handli
 Use the best **complete pipeline** already installed, by quality order:
 **Pandoc+LaTeX > Typst > WeasyPrint > Chromium**.
 
-If no complete pipeline is installed, recommend the researched winner:
-**Typst + Pandoc** — smallest footprint, most agent-friendly, native SVG.
+If no complete pipeline is installed, the install recommendation is **Typst + Pandoc**: smallest footprint, most agent-friendly, native SVG.
 
 ## Install commands (exact, secure-manager only)
 

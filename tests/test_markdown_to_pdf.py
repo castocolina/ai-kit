@@ -2,6 +2,7 @@
 import contextlib
 import io
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -483,3 +484,68 @@ class TestLocalAssets(unittest.TestCase):
                 body = fh.read()
             self.assertIn(f"{name}-assets/diagram-0.svg", body)
             self.assertNotIn(f"{other}-assets", body)
+
+
+class TestDocContract(unittest.TestCase):
+    """The stated backend order and decision rows match the code they describe."""
+    ROOT = os.path.join(os.path.dirname(__file__), "..")
+    SKILL_DIR = os.path.join(ROOT, "skills", "markdown-to-pdf")
+    ORDER_RE = re.compile(r"([A-Za-z+]+(?: > [A-Za-z+]+){3})")
+    DISPLAY = {"LaTeX": "pandoc-latex", "Pandoc+LaTeX": "pandoc-latex", "Typst": "typst",
+               "WeasyPrint": "weasyprint", "Chromium": "chromium"}
+
+    def _read(self, *parts):
+        with open(os.path.join(self.SKILL_DIR, *parts), encoding="utf-8") as fh:
+            return fh.read()
+
+    def _expected(self):
+        return [b.name for b in sorted(db.BACKENDS, key=lambda b: -b.quality)]
+
+    def _names(self, chain):
+        return [self.DISPLAY.get(n, n) for n in chain.split(" > ")]
+
+    def test_every_stated_order_matches_detect_backends(self):
+        skill_chains = self.ORDER_RE.findall(self._read("SKILL.md"))
+        backend_chains = self.ORDER_RE.findall(self._read("references", "backends.md"))
+        self.assertGreaterEqual(len(skill_chains), 2)
+        self.assertGreaterEqual(len(backend_chains), 1)
+        for chain in skill_chains + backend_chains:
+            self.assertEqual(self._names(chain), self._expected())
+
+    def test_readme_row_states_the_same_order(self):
+        with open(os.path.join(self.ROOT, "README.md"), encoding="utf-8") as fh:
+            rows = [ln for ln in fh.read().splitlines() if ln.startswith("| [`markdown-to-pdf`]")]
+        self.assertEqual(len(rows), 1)
+        chains = self.ORDER_RE.findall(rows[0])
+        self.assertEqual(len(chains), 1)
+        self.assertEqual(self._names(chains[0]), self._expected())
+
+    def test_winner_is_only_the_install_recommendation(self):
+        text = self._read("references", "backends.md")
+        self.assertNotIn("Winner:", text)
+        self.assertNotIn("researched winner", text)
+        section = text.split("## Selection rule", 1)[1].split("\n## ", 1)[0]
+        lines = [ln for ln in section.splitlines()
+                 if ln.startswith("If no complete pipeline is installed")]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("install recommendation", lines[0])
+        winner = {v: k for k, v in self.DISPLAY.items()}[db.WINNER]
+        self.assertIn(winner, lines[0])
+
+    def test_decision_rows(self):
+        text = self._read("SKILL.md")
+        for needle in ("Exit code 0", "Exit code 2", "Could not find Chrome", "Exit code 3",
+                       "No backend available", "Exit code 4"):
+            self.assertIn(needle, text)
+        with open(os.path.join(self.SKILL_DIR, "scripts", "markdown_to_pdf.py"),
+                  encoding="utf-8") as fh:
+            self.assertIn("No backend available", fh.read())
+
+    def test_low_res_row_names_each_backend(self):
+        rows = [ln for ln in self._read("SKILL.md").splitlines()
+                if ln.startswith("| Diagram looks low-res")]
+        self.assertEqual(len(rows), 1)
+        for b in db.BACKENDS:
+            self.assertIn(f"`{b.name}`", rows[0])
+        for needle in ("PNG", "SVG", "--format svg", "rsvg-convert"):
+            self.assertIn(needle, rows[0])
