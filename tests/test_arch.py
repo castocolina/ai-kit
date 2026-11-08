@@ -1683,7 +1683,8 @@ def cross_skill_allowlist_problems(allowlist):
 # Phase 29 D-13 (SPEC R9 ordering): every copy of the installed-skill lookup follows the order of
 # jev's documented table (skills/jev-fast-decision/reference.md `## Installed-skill lookup`, rows
 # 2-6). Each copy is parsed from its own text, never executed. The fold-step copy is a shell block
-# that names the fold skill as its suffix; its roots are the same five rows.
+# that names the fold skill as its suffix; its roots are the same five rows. The usage-metrics
+# SKILL.md block names its own skill as the suffix and is compared the same way (32.1 D-17).
 LOOKUP_COPIES = (
     "skills/jev-fast-decision/scripts/jev_ladder.py",
     "skills/ai-kit-commit-fold/scripts/fold_group.py",
@@ -1692,14 +1693,15 @@ LOOKUP_COPIES = (
     "tools/judge_loop.py",
     "skills/ai-kit-commit-fold/gsd/ai-kit-commit-fold/ai-kit-fold.cjs",
     "skills/ai-kit-spec-execute-superpowers/references/fold-step.md",
+    "skills/ai-kit-usage-metrics/SKILL.md",
 )
 _LOOKUP_NAMES = frozenset({"JEV_ENTRY_REL", "SKILLS_ROOTS"})
 _DOC_ROOT_BRACED = re.compile(r"^\$\{(\w+):-\$HOME/([^}]+)\}/(.+)$")
 _DOC_ROOT_PLAIN = re.compile(r"^\$HOME/(.+)$")
 _JS_SKILLS_ROOTS = re.compile(r"^const SKILLS_ROOTS = (\[.*\]);$", re.MULTILINE)
 _SHELL_ROOT = re.compile(
-    r'\$\{(\w+):-\$HOME/([^}]+)\}/([^"\s]+?)/ai-kit-commit-fold'
-    r'|"\$HOME/([^"$/]+)/([^"\s]+?)/ai-kit-commit-fold"'
+    r'\$\{(\w+):-\$HOME/([^}]+)\}/([^"\s]+?)/ai-kit-(?:commit-fold|usage-metrics)'
+    r'|"\$HOME/([^"$/]+)/([^"\s]+?)/ai-kit-(?:commit-fold|usage-metrics)"'
 )
 
 
@@ -1746,7 +1748,7 @@ def js_roots(text):
 
 def shell_roots(text):
     """The host roots of a shell block, in order: each `${VAR:-$HOME/<fallback>}/<suffix>` or
-    `"$HOME/<fallback>/<suffix>"` in front of `/ai-kit-commit-fold`."""
+    `"$HOME/<fallback>/<suffix>"` in front of `/ai-kit-commit-fold` or `/ai-kit-usage-metrics`."""
     roots = []
     for match in _SHELL_ROOT.finditer(text):
         if match.group(1):
@@ -3160,6 +3162,10 @@ class TestArchNonVacuity(unittest.TestCase):
             '  "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/skills/ai-kit-commit-fold"; do\n'
         )
         self.assertEqual(rows, shell_roots(shell_text))
+        usage_text = shell_text.replace("ai-kit-commit-fold", "ai-kit-usage-metrics")
+        self.assertEqual(rows, shell_roots(usage_text))
+        other_text = shell_text.replace("ai-kit-commit-fold", "ai-kit-other")
+        self.assertEqual([], shell_roots(other_text))
         doc = (
             "## Installed-skill lookup\n\n| Order | Skills root |\n| --- | --- |\n"
             "| 1 | the caller's own root |\n"
