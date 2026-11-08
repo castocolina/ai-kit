@@ -107,6 +107,18 @@ def make_verdict(skill, judge, drops=None, maxima=None):
             "percent": pct, "grade": judge_loop.grade_of(pct), "findings": findings}
 
 
+def bar_rec(judge, pct, high=False):
+    """A minimal scored record for the bar: one judge's percent, with one high finding if asked."""
+    findings = [{"id": "F1", "severity": "high"}] if high else []
+    return {"skill": "demo-a", "round": 1, "judge": judge,
+            "verdict": {"percent": pct, "findings": findings}}
+
+
+def prior_at(pct):
+    """A prior loop's round state holding one valid verdict at `pct`, as loop 32."""
+    return "32", {"valid": [bar_rec("p", pct)]}
+
+
 def write_lane(lane_dir, status_line, out_text):
     """A lane folder: stderr with the status line, stdout with the verdict text."""
     lane = Path(lane_dir)
@@ -503,7 +515,10 @@ class TestCheck(ReportFixture):
         code, out = self._check("--skills", "demo-b", "--judges", "cli-a:model-a")
         self.assertEqual(code, 1)
         self.assertIn("demo-b: loop 32 rounds are not r1..r3", out)
-        loop_32_1 = {"pool": demo_pool(), "counts": {"demo-a": DET_TWO}}
+        entry = judge_loop.count_entry(self.repo, self.records, "demo-a", "32.1",
+                                       demo_inputs()["skills"]["demo-a"])
+        count = judge_loop.count_skill(self.repo, "demo-a", entry, None)
+        loop_32_1 = {"pool": demo_pool(), "counts": {"demo-a": count}}
         judge_loop.atomic_write_json(self._loop_file("32.1"), loop_32_1)
         for number in (1, 2, 3):
             self._put(make_record("32.1", "demo-a", number, "cli-a:model-a",
@@ -1662,6 +1677,173 @@ class TestCountGit(unittest.TestCase):
         loop = judge_loop.read_loop_file(self.records, "32")
         self.assertEqual(loop["counts"]["demo-alpha"]["jev"]["note"],
                          "jev unavailable: no jev client found")
+
+
+@unittest.skipUnless(HAS_GIT, "git not installed")
+class TestPriorBase(unittest.TestCase):
+    """The count base comes from the prior loop's worst round; its commit is found by digest."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="judge-prior-base-test-")
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name)
+        self.repo = make_repo(self.base, SKILL_REPO_FILES)
+        self.base_sha = _git(self.repo, _git_env(self.base), "rev-parse", "HEAD").strip()
+        self.records = self.base / "rec"
+        self.digest_a = judge_loop.skill_digest(self.repo, "demo-alpha")
+        self.inputs = {"schema": 1, "excluded": {}, "skills": {
+            "demo-alpha": {"batch": "32.1", "last_v4": None, "old_score": None}}}
+        verdict = make_verdict("demo-alpha", "cli-a:model-a", drops={"D1": (20, "high")})
+        rec = make_record("32", "demo-alpha", 1, "cli-a:model-a", verdict, digest=self.digest_a)
+        write_records(self.records, self.inputs, {"32": {"pool": demo_pool()}}, [rec])
+
+    def _count(self, *extra):
+        return run_main(["--root", str(self.repo), "count", "--records", str(self.records),
+                         *extra])
+
+    def _check(self, *args):
+        return run_main(["--root", str(self.repo), "check", str(self.records), *args])
+
+    def _report(self):
+        return run_main(["--root", str(self.repo), "report", str(self.records)])
+
+    def _write_32_1(self):
+        """A loop 32.1 round 1 verdict for demo-alpha, and its count record from the count rule."""
+        verdict = full_verdict("demo-alpha", "cli-a:model-a")
+        rec = make_record("32.1", "demo-alpha", 1, "cli-a:model-a", verdict, digest=self.digest_a)
+        judge_loop.atomic_write_json(judge_loop.record_path(
+            self.records, "32.1", "demo-alpha", 1, "cli-a:model-a"), rec)
+        entry = judge_loop.count_entry(self.repo, self.records, "demo-alpha", "32.1",
+                                       self.inputs["skills"]["demo-alpha"])
+        count = judge_loop.count_skill(self.repo, "demo-alpha", entry, None)
+        judge_loop.atomic_write_json(self.records / "loops" / "32.1.json",
+                                     {"pool": demo_pool(), "counts": {"demo-alpha": count}})
+
+    def _edit_32_1(self, edit):
+        path = self.records / "loops" / "32.1.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        edit(data)
+        judge_loop.atomic_write_json(path, data)
+
+    def test_digest_at_matches_the_working_digest_of_that_commit(self):
+        commit_change(self.repo, "skills/demo-alpha/SKILL.md", "# demo-alpha\nmore\n")
+        head = _git(self.repo, _git_env(self.base), "rev-parse", "HEAD").strip()
+        self.assertEqual(judge_loop.digest_at(self.repo, self.base_sha, "demo-alpha"),
+                         self.digest_a)
+        self.assertNotEqual(judge_loop.digest_at(self.repo, head, "demo-alpha"), self.digest_a)
+        self.assertEqual(judge_loop.base_commit(self.repo, self.digest_a, "demo-alpha"),
+                         self.base_sha)
+        self.assertIsNone(judge_loop.base_commit(self.repo, "f" * 64, "demo-alpha"))
+        self.assertIsNone(judge_loop.digest_at(self.repo, "HEAD", "demo-alpha"))
+
+    def test_count_takes_the_prior_loop_base(self):
+        code, out = self._count("--loop", "32.1", "--no-jev", "--skill", "demo-alpha")
+        self.assertEqual(code, 0, out)
+        record = judge_loop.read_loop_file(self.records, "32.1")["counts"]["demo-alpha"]
+        self.assertEqual(record["last_v4"], {
+            "percent": 84.0, "critical": 0, "high": 1, "judged_at": self.base_sha,
+            "source": "verdicts/32/demo-alpha/r1/cli-a_model-a.json"})
+        self.assertEqual(record["count"], 2)
+        self.assertIn("last verdict had a critical or high finding", record["reasons"])
+
+    def test_check_mirrors_the_prior_loop_base(self):
+        self._write_32_1()
+        self._report()
+        code, out = self._check("--skills", "demo-alpha", "--judges", "cli-a:model-a")
+        self.assertEqual(code, 0, out)
+        self._edit_32_1(lambda data: data["counts"]["demo-alpha"]["last_v4"].update(percent=80.0))
+        code, out = self._check("--skills", "demo-alpha", "--judges", "cli-a:model-a")
+        self.assertEqual(code, 1)
+        self.assertIn("demo-alpha: count inputs differ from the prior loop's base", out)
+
+    def test_check_ignores_the_recorded_base_commit(self):
+        self._write_32_1()
+        self._report()
+        self._edit_32_1(lambda data: data["counts"]["demo-alpha"]["last_v4"].update(
+            judged_at="f" * 40))
+        _code, out = self._check("--skills", "demo-alpha", "--judges", "cli-a:model-a")
+        self.assertNotIn("count inputs differ from the prior loop's base", out)
+
+    def test_loop_32_count_still_uses_inputs_json(self):
+        code, out = self._count("--loop", "32", "--no-jev", "--skill", "demo-alpha")
+        self.assertEqual(code, 0, out)
+        record = judge_loop.read_loop_file(self.records, "32")["counts"]["demo-alpha"]
+        self.assertIsNone(record["last_v4"])
+        self.assertEqual(record["count"], 2)
+        self.assertEqual(judge_loop._count_problems(self.records, "32", "demo-alpha",
+                                                    self.inputs), [])
+
+
+@unittest.skipUnless(HAS_GIT, "git not installed")
+class TestPriorLoop(ReportFixture):
+    """The regression limit (SPEC R11): a round's lowest percent against the prior loop's."""
+
+    def _demo_b_32_1(self, points_lost):
+        """Loop 32.1 round 1 for demo-b losing `points_lost` of 1000, and its count record."""
+        verdict = make_verdict("demo-b", "cli-a:model-a", drops={"D1": (points_lost, "low")},
+                               maxima={d: 125 for d in DIMS})
+        self._put(make_record("32.1", "demo-b", 1, "cli-a:model-a", verdict))
+        entry = judge_loop.count_entry(self.repo, self.records, "demo-b", "32.1",
+                                       demo_inputs()["skills"]["demo-b"])
+        count = judge_loop.count_skill(self.repo, "demo-b", entry, None)
+        judge_loop.atomic_write_json(self._loop_file("32.1"), {"counts": {"demo-b": count}})
+        self._report()
+
+    def test_bar_without_prior_loop_is_unchanged(self):
+        record = bar_rec("a", 65.0)
+        self.assertEqual(judge_loop.bar_with_base(record, [], [record], None),
+                         judge_loop._record_bar(record, []))
+
+    def test_regression_boundary_in_tenths(self):
+        record = bar_rec("a", 65.0)
+        self.assertEqual(judge_loop.bar_with_base(record, [], [record], prior_at(72.0)),
+                         (2, "met: no critical or high finding; lowest percent 65.0, "
+                             "loop 32 base 72.0"))
+        low = bar_rec("a", 64.9)
+        self.assertEqual(judge_loop.bar_with_base(low, [], [low], prior_at(72.0)),
+                         (0, "not met: lowest percent 64.9 is more than 7.0 points under the "
+                             "loop 32 base 72.0"))
+
+    def test_grade_b_clause_carries_the_base(self):
+        record = bar_rec("a", 81.0, high=True)
+        self.assertEqual(judge_loop.bar_with_base(record, [], [record], prior_at(72.0)),
+                         (1, "met: grade B or better; lowest percent 81.0, loop 32 base 72.0"))
+
+    def test_lowest_percent_decides_not_the_ranked_worst(self):
+        a = bar_rec("a", 80.5, high=True)
+        b = bar_rec("b", 78.0)
+        self.assertIs(judge_loop.worst_record([a, b], [], ["a", "b"]), a)
+        self.assertEqual(judge_loop.bar_with_base(a, [], [a, b], prior_at(87.2)),
+                         (0, "not met: lowest percent 78.0 is more than 7.0 points under the "
+                             "loop 32 base 87.2"))
+
+    def test_report_and_gate_use_the_regression_limit(self):
+        self._demo_b_32_1(70)
+        self.assertIn("; lowest percent 93.0, loop 32 base 100.0 |", self._render())
+        code, out = self._check("--skills", "demo-b", "--gate")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("demo-b: count inputs differ", out)
+        self.assertNotIn("demo-b: recorded count differs", out)
+        self._demo_b_32_1(71)
+        self.assertIn("not met: lowest percent 92.9 is more than 7.0 points under the loop 32 "
+                      "base 100.0", self._render())
+        code, out = self._check("--skills", "demo-b", "--gate")
+        self.assertEqual(code, 1)
+        self.assertIn("demo-b: bar not met", out)
+        self.assertNotIn("demo-b: count inputs differ", out)
+        self.assertNotIn("demo-b: recorded count differs", out)
+
+    def test_loop_32_report_is_byte_identical(self):
+        self._report()
+        self.assertNotIn("lowest percent", self._render())
+        code, out = self._check("--skills", "demo-b", "--judges", "cli-a:model-a")
+        self.assertEqual(code, 0, out)
+
+    def test_count_table_shows_the_base_used(self):
+        self._demo_b_32_1(70)
+        self.assertIn("| demo-b | 32.1 | 100.0 | 0 | 0 | - | "
+                      "verdicts/32/demo-b/r1/cli-a_model-a.json | jev not asked (--no-jev) | 1 | "
+                      "no deterministic trigger; jev not asked (--no-jev) |", self._render())
 
 
 if __name__ == "__main__":

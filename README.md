@@ -795,7 +795,7 @@ e2e module is over the commit budget) are recorded beside that subtotal, and the
 worst-case whole push (`push-worst`, every pre-push hook timed alone) is 42.7 s.
 Tests never call a real host CLI or read `.planning/`.
 
-**Skill judging.** `tools/judge_loop.py` builds skill-judge prompts that embed the installed judge's rubric and spec files (`prompt`, `prompt --probe`), picks the judge pool from probe lanes (`pool`), decides one or two judges per skill from recorded signals plus an advisory jev score (`count`), records each lane's verdict with its status line (`ingest`), and generates and checks the re-judge report in `.planning/judge/` (`report`, `check`; `--gate` also fails an unmet bar or a loop over three rounds, `--require-current` a stale digest).
+**Skill judging.** `tools/judge_loop.py` builds skill-judge prompts that embed the installed judge's rubric and spec files (`prompt`, `prompt --probe`), picks the judge pool from probe lanes (`pool`), decides one or two judges per skill from recorded signals plus an advisory jev score (`count`), records each lane's verdict with its status line (`ingest`), and generates and checks the re-judge report in `.planning/judge/` (`report`, `check`; `--gate` also fails an unmet bar or a loop over three rounds, `--require-current` a stale digest). From a skill's second loop on, `count` takes its recorded signals from the skill's previous loop (its lowest valid percent and its worst verdict's critical and high counts) instead of `inputs.json`, and `report` and `check --gate` also fail the bar when a round's lowest percent is more than 7.0 points under the previous loop's lowest percent.
 
 ## Compatibility notes
 
