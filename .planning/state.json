@@ -46,7 +46,7 @@
     {
       "number": "32.1",
       "name": "Batch 1, general small skills",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "32.2",
@@ -191,8 +191,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step",
-    "reason": "Phase 9 of 37 · 22% · executing"
+    "label": "Advance to the next step (plan phase 32.2)",
+    "reason": "Phase 10 of 37 — needs a plan"
   },
-  "updated_at": "2026-11-08T00:45:37.090Z"
+  "updated_at": "2026-11-08T03:56:54.595Z"
 }

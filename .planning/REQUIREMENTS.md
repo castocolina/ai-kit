@@ -621,7 +621,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   without printing any value; the skill gives credential guidance for non-interactive shells; and the home-file
   fallback is removed once a test shows agent shells inherit the key from the environment, or kept with a recorded
   reason.
-- [ ] **JEV-02**: OpenCode Zen is gone from the jev-fast-decision skill.
+- [x] **JEV-02**: OpenCode Zen is gone from the jev-fast-decision skill.
 - [ ] **JEV-03**: Laya is calibrated against its accuracy floor, the opencode judge lane is re-judged, and the
   calibration script is documented. *(amended 2026-11-07, owner decision from the jev and typesafe-ai research:
   before calibrating, Laya is upgraded from 0.4.2 to 0.4.27 or the reason to stay is recorded; the calibration
@@ -641,14 +641,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **JEV-07**: A knob in ai-kit's config turns jev classification on or off for every skill; it is asked once
   when absent, and with it off every skill behaves exactly as if jev were not installed, shown by tests in a scratch
   home.
-- [ ] **JEV-08**: jev-fast-decision's SKILL.md replaces "Required reading" with "read X when Y" pointers: when
+- [x] **JEV-08**: jev-fast-decision's SKILL.md replaces "Required reading" with "read X when Y" pointers: when
   designing a new item shape, meeting a new TypeSafe feature or a capability fact that looks stale, read the
   official `typesafe:typesafe-ai` skill's doc flow when it is installed (otherwise start at the docs index, then the
   changelog and the models page). The stale Jev 1.14 facts are refreshed (`jev-latest` is `jev-1.14.0`), receipts
   record the versioned model id that answered rather than the alias, and ai-kit never installs the official skill
   (ai-kit installs only its own skills, DIST-07); a doc-contract test pins the pointers. *(added 2026-11-07, owner
   decision from the jev and typesafe-ai research)*
-- [ ] **JEV-09**: jev-fast-decision's reference.md has a "Writing an item" section that adopts TypeSafe's question
+- [x] **JEV-09**: jev-fast-decision's reference.md has a "Writing an item" section that adopts TypeSafe's question
   rules for an agent's own decisions: ask an observable judgment and let the agent decide; never ask about
   arithmetic, counting, dates or durations, or with double negatives; re-ask a close choice with the options
   reordered; give a choice a no-match option; run a cheap yes/no screen before an expensive step. A doc-contract test
@@ -945,14 +945,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | ARCH-01 | Phase 52 | Pending |
 | ARCH-02 | Phase 52 | Pending |
 | JEV-01 | Phase 34 | Pending |
-| JEV-02 | Phase 32.1 | Pending |
+| JEV-02 | Phase 32.1 | Complete |
 | JEV-03 | Phase 34 | Pending |
 | JEV-04 | Phase 54 | Pending |
 | JEV-05 | Phase 54 | Pending |
 | JEV-06 | Phase 29 | Complete |
 | JEV-07 | Phase 34 | Pending |
-| JEV-08 | Phase 32.1 | Pending |
-| JEV-09 | Phase 32.1 | Pending |
+| JEV-08 | Phase 32.1 | Complete |
+| JEV-09 | Phase 32.1 | Complete |
 | JEV-10 | Phase 34 | Pending |
 | JEV-11 | Phase 34 | Pending |
 | FEAT-01 | Phase 30.1 | Complete |

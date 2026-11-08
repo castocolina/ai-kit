@@ -114,7 +114,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 30.2: Cursor status-line parity (INSERTED)** - Cursor status line brought back to the approved proof of concept and to Claude's look where the data allows (completed 2026-11-06)
 - [x] **Phase 31: Removals and small defects** - Three skills and rtk gone, seven small known defects fixed *(amended 2026-11-03, 31 spec: seven items per DEF-01)* (completed 2026-11-06)
 - [x] **Phase 32: Re-judge baseline** - One current-judge report for every kept skill, plus strict frontmatter and text checks (completed 2026-11-07)
-- [ ] **Phase 32.1: Batch 1, general small skills** - cst-refactor, markdown-to-pdf, spec-review-fixer and usage-metrics reach the bar; jev-fast-decision gets its JEV fixes and keeps its bar *(amended 2026-11-07, 32.1 D-01: owner batch scope "Narrow")*
+- [x] **Phase 32.1: Batch 1, general small skills** - cst-refactor, markdown-to-pdf, spec-review-fixer and usage-metrics reach the bar; jev-fast-decision gets its JEV fixes and keeps its bar *(amended 2026-11-07, 32.1 D-01: owner batch scope "Narrow")* (completed 2026-11-08)
 - [ ] **Phase 32.2: Batch 2, spec review family** - checklist reaches the bar; spec-config and spec-execute get their fixes; spec-review deferred to Phases 39-40 *(amended 2026-11-07, 32.1 D-01)*
 - [ ] **Phase 32.3: Batch 3, execution and session skills** - spec-execute-superpowers and session-wake keep their bar; one shared secret scanner; cross-ai deferred to Phases 37-38 *(amended 2026-11-07, 32.1 D-01)*
 - [ ] **Phase 32.4: Batch 4, planning skills and the closing report** - goal-prompt, spec-discuss and curated-config keep their bar with their fixes; the closing report shows all 15 judged skills *(amended 2026-11-07, 32.1 D-01)*
@@ -439,23 +439,23 @@ Plans:
   4. `jev-fast-decision`'s SKILL.md has "read X when Y" pointers instead of "Required reading": the official `typesafe:typesafe-ai` skill's doc flow when it is installed (docs index, changelog, models page otherwise), for a new item shape, a new TypeSafe feature or a stale-looking capability fact; the Jev 1.14 facts are current, receipts record the versioned model id, nothing installs the official skill, and a doc-contract test pins the pointers (JEV-08). *(added 2026-11-07)*
   5. `jev-fast-decision`'s reference.md has a "Writing an item" section with the observable-judgment rule, the topics never to ask about (arithmetic, counting, dates, double negatives), the reordered re-ask for a close choice, a no-match option and the cheap yes/no screen before an expensive step, each pinned by a doc-contract test (JEV-09). *(added 2026-11-07)* *(amended 2026-11-07, 32.1 spec R9-R10: the section also warns about ai-kit's own size guards (a TypeSafe batch state over 8,000 characters, a Laya item over 2,000, comes back with every answer forced and `needs_fallback`; TypeSafe documents 64k tokens per request, so the 8,000 figure is ai-kit's guard, not a TypeSafe limit), and a stub test pins that behaviour; the client keeps one request per batch (owner decision 2026-11-07, 32.1 D-24: no batch split))*
 
-**Plans**: 9 plans
+**Plans**: 9/9 plans complete
 
 Plans:
 **Wave 1**
-- [ ] 32.1-01-PLAN.md — jev-fast-decision: remove OpenCode Zen, report leftover settings (wave 1)
-- [ ] 32.1-02-PLAN.md — ai-kit-usage-metrics: runnable lookup under the drift test, failure branch, evals (wave 1)
-- [ ] 32.1-03-PLAN.md — cst-refactor: real outcomes, validation loop, stdlib contract test, evals (wave 1)
-- [ ] 32.1-04-PLAN.md — judge_loop: prior-loop base for count and check, 7.0-point regression limit (wave 1)
+- [x] 32.1-01-PLAN.md — jev-fast-decision: remove OpenCode Zen, report leftover settings (wave 1)
+- [x] 32.1-02-PLAN.md — ai-kit-usage-metrics: runnable lookup under the drift test, failure branch, evals (wave 1)
+- [x] 32.1-03-PLAN.md — cst-refactor: real outcomes, validation loop, stdlib contract test, evals (wave 1)
+- [x] 32.1-04-PLAN.md — judge_loop: prior-loop base for count and check, 7.0-point regression limit (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 32.1-05-PLAN.md — jev-fast-decision: docs pointer, Jev facts, versioned receipts, "Writing an item", guard warning (wave 2)
-- [ ] 32.1-06-PLAN.md — markdown-to-pdf: local assets, exit 4, one pinned backend order, evals (wave 2)
-- [ ] 32.1-07-PLAN.md — ai-kit-spec-review-fixer: one rule set, four Status values, doc-contract test, evals (wave 2)
+- [x] 32.1-05-PLAN.md — jev-fast-decision: docs pointer, Jev facts, versioned receipts, "Writing an item", guard warning (wave 2)
+- [x] 32.1-06-PLAN.md — markdown-to-pdf: local assets, exit 4, one pinned backend order, evals (wave 2)
+- [x] 32.1-07-PLAN.md — ai-kit-spec-review-fixer: one rule set, four Status values, doc-contract test, evals (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 32.1-08-PLAN.md — LibCST dev dependency (owner package gate) and cst-refactor behaviour tests (wave 3, off the critical path)
-- [ ] 32.1-09-PLAN.md — loop 32.1 re-judge of the changed skills, records, report and bar table (wave 3)
+- [x] 32.1-08-PLAN.md — LibCST dev dependency (owner package gate) and cst-refactor behaviour tests (wave 3, off the critical path)
+- [x] 32.1-09-PLAN.md — loop 32.1 re-judge of the changed skills, records, report and bar table (wave 3)
 
 **Cross-cutting constraints:** <!-- gsd:generated -->
 - SPEC R1 concurrency: evals are static files read by a read-only test, so the shape test runs beside other modules
@@ -920,7 +920,7 @@ Plans:
 | 30.2. Cursor status-line parity | 5/5 | Complete    | 2026-11-06 |
 | 31. Removals and small defects | 6/6 | Complete    | 2026-11-06 |
 | 32. Re-judge baseline | 9/9 | Complete    | 2026-11-07 |
-| 32.1. Batch 1, general small skills | 0/TBD | Not started | - |
+| 32.1. Batch 1, general small skills | 9/9 | Complete    | 2026-11-08 |
 | 32.2. Batch 2, spec review family | 0/TBD | Not started | - |
 | 32.3. Batch 3, execution and session skills | 0/TBD | Not started | - |
 | 32.4. Batch 4, planning skills and the closing report | 0/TBD | Not started | - |
