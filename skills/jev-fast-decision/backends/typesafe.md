@@ -39,7 +39,7 @@ leaves the machine.
 | --- | --- |
 | 401 / 403 | escalate + `unauthorized` (the key is wrong) |
 | 503 (+ `Retry-After`) | retry, at most 2, then escalate |
-| 402 | next model id; there is none here, so the item escalates to the next consented rung (OpenCode Zen); with no rung left it ends with `http_402` |
+| 402 | next model id; there is none here and no rung after TypeSafe, so the item ends with `http_402`, or keeps a low local answer it already holds (`needs_fallback`) |
 | other 4xx | final `caller_error:http_<code>` for that item |
 
 ## Consent

@@ -60,7 +60,7 @@ Every answer also carries `model` (what answered it), `backend`, `top` (the winn
 | `unavailable` / `backend_unavailable:<name>:consent_required_for_remote` | explicit backend without consent | ask; on yes grant/export, retry |
 | `unavailable` / `invalid_input` (+ `item`) | one bad item named in `item` | fix that item, retry explicitly |
 | `unavailable` / other reasons (`http_503`, `unauthorized`, `network_error`, `deadline`, `no_backend_available`, `unsupported_feature`, ...) | read `reason`, `unavailable`, `attempts` | fix or reason it yourself; never retry blindly |
-| `unsupported_feature` | the item asks for a shape no row can run, or the explicit `JEV_BACKEND` row cannot run one item (the whole request stops; e.g. `score` on `opencode`) | reason it yourself, or drop that item and retry |
+| `unsupported_feature` | the item asks for a shape no row can run, or the explicit `JEV_BACKEND` row cannot run one item (the whole request stops; e.g. an `image` or `box` item) | reason it yourself, or drop that item and retry |
 
 ## Receipts
 
@@ -90,9 +90,6 @@ Keep results in durable artifacts as advisory evidence, never in a verdict field
 | `JEV_TYPESAFE_URL` | TypeSafe question URL (default `https://api.typesafe.ai/v1/systemone`; `https` only, else `insecure_url`) |
 | `TYPESAFE_API_KEY` | TypeSafe key — the documented way is the environment (an agent inherits it only if its shell had it when it started; restart the terminal after changing it); then `JEV_API_KEY`, the file `JEV_API_KEY_FILE` names, a `TYPESAFE_API_KEY` or `JEV_API_KEY` assignment line in `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, then `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` (every file 0600 enforced), and last — transitional only, until running agents inherit the env; remove when no longer needed — a `TYPESAFE_API_KEY` or `JEV_API_KEY` line in `~/.mycreds` (0600 enforced, parsed line by line, never `source`d; the value is never printed or copied) |
 | `JEV_TYPESAFE_MODEL` | pins the request id (default `jev-latest`) |
-| `JEV_OPENCODE_URL` | Zen POST target (default `https://opencode.ai/inference/systemone/v1/systemone`; `https` only, else `insecure_url`) |
-| `OPENCODE_ZEN_API_KEY` | Zen key; falls back to `${PI_CODING_AGENT_DIR:-~/.pi/agent}/keys.json`'s `opencode-zen.key` (0600 enforced) |
-| `JEV_OPENCODE_MODEL` | pins one request id, turning off the free-to-paid step (default `jev-1.13-free`, then `jev-1.13`) |
 | `JEV_CALLER` | a label written into answer-log lines |
 
 **Deprecated:** `JEV_MODEL` / `JEV_RESPONSE_MODEL` (the single-endpoint variables of the pre-table skill). `JEV_API_URL` survives only as a loopback Laya alias; remote rows ignore it.
@@ -118,16 +115,16 @@ One item per request: Laya reads the whole `state` for every question, so batchi
 
 Every cell is `verified-live`, `documented`, `unsupported` or `unverified`, with its source and date; the cells equal the client table's `cells` (a `documented` or `verified-live` cell means the row may run the feature — but only `choice`, `noul` and `score` request shapes are built, so `image` and `box` items return `unsupported_feature` even where a cell says `documented`; builders are backlog).
 
-| Feature | typesafe | opencode | laya |
-| --- | --- | --- | --- |
-| choice | verified-live (todo notes 2026-10-13/14, 2026-10-14) | verified-live (jev-1.13-free 14/14, 2026-10-11) | verified-live (llm-env check-server, 2026-10-12) |
-| noul | verified-live (todo notes 2026-10-13/14, 2026-10-14) | verified-live (jev-1.13-free 14/14, 2026-10-11) | verified-live (llm-env check-server, 2026-10-12) |
-| score | documented (docs.typesafe.ai primitives, 2026-10-18) | unverified (opencode.ai/docs/zen lists text ids only, 2026-10-18) | verified-live (llm-env check-server, 2026-10-12) |
-| box | documented (docs.typesafe.ai models: 1.14 only, 2026-10-18) | unverified (opencode.ai/docs/zen lists text ids only, 2026-10-18) | unsupported (laya 0.4.2 server source: no box type, 2026-10-18) |
-| image | documented (docs.typesafe.ai images, 2026-10-18) | unverified (opencode.ai/docs/zen lists text ids only, 2026-10-18) | unsupported (laya 0.4.2 server source: no assets, 2026-10-18) |
-| images_compared | documented (docs.typesafe.ai images, 2026-10-18) | unverified (opencode.ai/docs/zen lists text ids only, 2026-10-18) | unsupported (laya 0.4.2 server source: no assets, 2026-10-18) |
-| long_context | documented (docs.typesafe.ai models, 2026-10-18) | unverified (opencode.ai/docs/zen lists text ids only, 2026-10-18) | unsupported (50,000-char state cap, 512/1024 tokens, 2026-10-18) |
-| batch | verified-live (todo notes 2026-10-13/14, 2026-10-14) | verified-live (jev-1.13-free 14/14, 2026-10-11) | unsupported (per-question contamination measured, 2026-10-10) |
+| Feature | typesafe | laya |
+| --- | --- | --- |
+| choice | verified-live (todo notes 2026-10-13/14, 2026-10-14) | verified-live (llm-env check-server, 2026-10-12) |
+| noul | verified-live (todo notes 2026-10-13/14, 2026-10-14) | verified-live (llm-env check-server, 2026-10-12) |
+| score | documented (docs.typesafe.ai primitives, 2026-10-18) | verified-live (llm-env check-server, 2026-10-12) |
+| box | documented (docs.typesafe.ai models: 1.14 only, 2026-10-18) | unsupported (laya 0.4.2 server source: no box type, 2026-10-18) |
+| image | documented (docs.typesafe.ai images, 2026-10-18) | unsupported (laya 0.4.2 server source: no assets, 2026-10-18) |
+| images_compared | documented (docs.typesafe.ai images, 2026-10-18) | unsupported (laya 0.4.2 server source: no assets, 2026-10-18) |
+| long_context | documented (docs.typesafe.ai models, 2026-10-18) | unsupported (50,000-char state cap, 512/1024 tokens, 2026-10-18) |
+| batch | verified-live (todo notes 2026-10-13/14, 2026-10-14) | unsupported (per-question contamination measured, 2026-10-10) |
 
 ## Hosts
 

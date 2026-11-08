@@ -1,11 +1,11 @@
 ---
 name: jev-fast-decision
-description: "Use when a fast, cheap typed judgment beats a full reasoning pass: yes/no (noul), picking among named options (choice), a rubric score (score), or screening evidence against a criterion, through the shared System One client on Laya (local), TypeSafe or OpenCode Zen (remote, consent required). Advisory only: needs_fallback means you decide that item yourself, and no answer is a verdict or gate. Not for building TypeSafe into an app (typesafe-ai) or for editing code."
+description: "Use when a fast, cheap typed judgment beats a full reasoning pass: yes/no (noul), picking among named options (choice), a rubric score (score), or screening evidence against a criterion, through the shared System One client on Laya (local), TypeSafe (remote, consent required). Advisory only: needs_fallback means you decide that item yourself, and no answer is a verdict or gate. Not for building TypeSafe into an app (typesafe-ai) or for editing code."
 ---
 
 # Jev fast-decision (shared System One client)
 
-Advisory typed judgments from local Laya or a consented remote (TypeSafe, OpenCode Zen). Every answer feeds your reasoning; none is a verdict or gate.
+Advisory typed judgments from local Laya or a consented remote (TypeSafe). Every answer feeds your reasoning; none is a verdict or gate.
 
 ## Pick the backend
 
@@ -15,9 +15,8 @@ From this skill's directory, run `python3 -B scripts/jev_review.py --probe` befo
 |---|---|---|---|
 | `laya` | local, probed first | one call per item (state-bleed measured) | no |
 | `typesafe` | direct API; needs `TYPESAFE_API_KEY` from the environment | one batch | yes |
-| `opencode` | OpenCode Zen (`jev-1.13-free`→`jev-1.13`) | one call per item | yes |
 
-`JEV_BACKEND=<name>` overrides auto, never falls back. Without consent, auto uses laya only. `typesafe` and `opencode` are different routes: "use TypeSafe" is not "use Zen"; a missing key makes `typesafe` unavailable.
+`JEV_BACKEND=<name>` overrides auto, never falls back. Without consent, auto uses laya only; a missing key makes `typesafe` unavailable.
 
 ## Callers (other skills and hooks)
 
