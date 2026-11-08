@@ -439,7 +439,27 @@ Plans:
   4. `jev-fast-decision`'s SKILL.md has "read X when Y" pointers instead of "Required reading": the official `typesafe:typesafe-ai` skill's doc flow when it is installed (docs index, changelog, models page otherwise), for a new item shape, a new TypeSafe feature or a stale-looking capability fact; the Jev 1.14 facts are current, receipts record the versioned model id, nothing installs the official skill, and a doc-contract test pins the pointers (JEV-08). *(added 2026-11-07)*
   5. `jev-fast-decision`'s reference.md has a "Writing an item" section with the observable-judgment rule, the topics never to ask about (arithmetic, counting, dates, double negatives), the reordered re-ask for a close choice, a no-match option and the cheap yes/no screen before an expensive step, each pinned by a doc-contract test (JEV-09). *(added 2026-11-07)* *(amended 2026-11-07, 32.1 spec R9-R10: the section also warns about ai-kit's own size guards (a TypeSafe batch state over 8,000 characters, a Laya item over 2,000, comes back with every answer forced and `needs_fallback`; TypeSafe documents 64k tokens per request, so the 8,000 figure is ai-kit's guard, not a TypeSafe limit), and a stub test pins that behaviour; the client keeps one request per batch (owner decision 2026-11-07, 32.1 D-24: no batch split))*
 
-**Plans**: TBD
+**Plans**: 9 plans
+
+Plans:
+**Wave 1**
+- [ ] 32.1-01-PLAN.md — jev-fast-decision: remove OpenCode Zen, report leftover settings (wave 1)
+- [ ] 32.1-02-PLAN.md — ai-kit-usage-metrics: runnable lookup under the drift test, failure branch, evals (wave 1)
+- [ ] 32.1-03-PLAN.md — cst-refactor: real outcomes, validation loop, stdlib contract test, evals (wave 1)
+- [ ] 32.1-04-PLAN.md — judge_loop: prior-loop base for count and check, 7.0-point regression limit (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 32.1-05-PLAN.md — jev-fast-decision: docs pointer, Jev facts, versioned receipts, "Writing an item", guard warning (wave 2)
+- [ ] 32.1-06-PLAN.md — markdown-to-pdf: local assets, exit 4, one pinned backend order, evals (wave 2)
+- [ ] 32.1-07-PLAN.md — ai-kit-spec-review-fixer: one rule set, four Status values, doc-contract test, evals (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 32.1-08-PLAN.md — LibCST dev dependency (owner package gate) and cst-refactor behaviour tests (wave 3, off the critical path)
+- [ ] 32.1-09-PLAN.md — loop 32.1 re-judge of the changed skills, records, report and bar table (wave 3)
+
+**Cross-cutting constraints:** <!-- gsd:generated -->
+- SPEC R1 concurrency: evals are static files read by a read-only test, so the shape test runs beside other modules
+- SPEC R1 adjacency, empty, encoding, ordering: near-miss negatives never share text with a positive; an eval with no input carries `"files": []`; lengths and duplicates compare Python str values; order carries no meaning
 
 ### Phase 32.2: Batch 2, spec review family
 

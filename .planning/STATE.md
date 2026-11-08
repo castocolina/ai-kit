@@ -4,16 +4,16 @@ milestone: v2.0
 milestone_name: Skill Refactor
 current_phase: "32.1"
 current_phase_name: Batch 1, general small skills
-status: planning
+status: executing
 stopped_at: "Phase 32.1 spec and context gathered (assumptions mode); next: plan-phase 32.1"
-last_updated: "2026-11-07T20:56:22.410Z"
+last_updated: "2026-11-08T00:45:37.078Z"
 last_activity: 2026-11-07
 last_activity_desc: Phase 32 complete (review, security, validation, re-verification)
-state_head: cabccbe04ec2d9912a2cad294109f784ed45812c
+state_head: 474e752507c1939e5fb2a56bff483a09bfdb254b
 progress:
   total_phases: 37
   completed_phases: 8
-  total_plans: 64
+  total_plans: 73
   completed_plans: 64
   percent: 22
 ---
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 32.1 — Batch 1, general small skills
+Phase: 32.1 (Batch 1, general small skills) — READY TO EXECUTE
 Plan: Not started
-Status: Ready to plan
+Status: Ready to execute
 Last activity: 2026-11-07 — Phase 32 complete (review, security, validation, re-verification)
 
 Progress: [██░░░░░░░░] 22%
