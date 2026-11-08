@@ -180,6 +180,48 @@ class TestDesignRule(unittest.TestCase):
         self.assertTrue(_above_generated_block(_read(_AGENTS_PATH)))
 
 
+_JUDGE_MARKER = "- Any new or materially updated `SKILL.md` passes the `skill-judge` review"
+_JUDGE_CLAUSES = (
+    "A judge loop stops after three rounds per skill: its result is recorded as it stands, "
+    "and an unmet bar goes to the owner.",
+    "A disputed finding counts as refuted only through a recorded run (the finding id, "
+    "`path:line`, the command and its observed output), never through another judge round.",
+    "SKILL.md describes behaviour; provenance and version history live in a trailing section "
+    "or a reference, and version-specific text appears only as a conditional.",
+)
+
+
+def _judge_bullet(text):
+    padded = "\n" + text
+    start = padded.find("\n" + _JUDGE_MARKER)
+    if start < 0:
+        return ""
+    ends = [e for e in (padded.find("\n- ", start + 1), padded.find("\n## ", start + 1)) if e >= 0]
+    return _flat(padded[start : min(ends) if ends else len(padded)])
+
+
+class TestSkillJudgeRule(unittest.TestCase):
+    def setUp(self):
+        self.bullet = _judge_bullet(_read(_AGENTS_PATH))
+
+    def test_every_judge_clause_is_in_the_bullet(self):
+        self.assertTrue(self.bullet, "skill-judge bullet missing from AGENTS.md")
+        self.assertEqual(_missing_clauses(self.bullet, _JUDGE_CLAUSES), [])
+
+    def test_removing_one_judge_clause_reports_exactly_that_clause(self):
+        # non-vacuity: a removed clause must be the one reported
+        for clause in _JUDGE_CLAUSES:
+            with self.subTest(clause=clause[:40]):
+                damaged = self.bullet.replace(_flat(clause), "", 1)
+                self.assertNotEqual(damaged, self.bullet)
+                self.assertEqual(_missing_clauses(damaged, _JUDGE_CLAUSES), [clause])
+
+    def test_missing_marker_reports_all_clauses(self):
+        bullet = _judge_bullet("# title\n\nno judge bullet here\n")
+        self.assertEqual(bullet, "")
+        self.assertEqual(len(_missing_clauses(bullet, _JUDGE_CLAUSES)), len(_JUDGE_CLAUSES))
+
+
 class TestRunbook(unittest.TestCase):
     def setUp(self):
         self.text = _read(_RUNBOOK_PATH)

@@ -88,7 +88,7 @@ AIKIT-XAI status=auth cli=pi model=fake/auth exit=69 cli_rc=1 elapsed=0s out=0 t
 Before it, on a stop, come the report and the upstream lines (self-test case `auth`):
 
 ```
-cross-ai: report status=auth lane=pi/fake/auth route=unknown attempts=1 cycles=0 first_failure=2026-10-25T17:26:29.839Z last_failure=2026-10-25T17:26:29.855Z due_at=- stopped=class upstream=present
+cross-ai: report status=auth lane=pi/fake/auth route=unknown attempts=1 cycles=0 first_failure=<iso time> last_failure=<iso time> due_at=- stopped=class upstream=present
 cross-ai: upstream body="401 unauthorized"
 cross-ai: upstream fields=-
 ```

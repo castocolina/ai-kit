@@ -218,7 +218,7 @@ python3 "$TOOLS_PY" build-command --runtime <id> \
   [--effort <e>] [--service-tier <t>] [--mode plan|ask]
 ```
 **codex's `model` field must be the BARE model id — never suffix an effort/tier tag onto it.**
-Confirmed live 2026-08-29: `codex exec -m gpt-5.6-sol-high` is REJECTED outright ("The
+`codex exec -m gpt-5.6-sol-high` is REJECTED outright ("The
 'gpt-5.6-sol-high' model is not supported..."); the correct pair is `model = "gpt-5.6-sol"`
 with `effort = "high"` stored on the entry (the runner passes it as `--codex-effort`, not in
 the model string). This is the opposite convention from cursor below, where effort/fast/context
@@ -311,9 +311,7 @@ either a primary pick or a pure fallback, depending on where the user places it 
 `policy.ladder` at Step 2.8. **A host-run entry is never automatically prioritized over a
 subprocess one** — `resolve_reviewers` (`ai-kit-spec.py`) treats every ladder entry
 identically; only its position in `policy.ladder` decides priority, and quota/availability
-failures decide fallback (changed 2026-08-29 — an earlier design gave host-run entries an
-automatic guaranteed-baseline slot in `double` mode regardless of ladder position; a real
-config hit this and got a silently reordered ladder, so it was removed). If the user wants one
+failures decide fallback. If the user wants one
 as pure fallback, place it LAST in the ladder order at Step 2.8. **When the captured `host` is
 `"claude"`**, the entry is the pair `runtime = "claude"` plus one of the four aliases
 (`sonnet`/`opus`/`haiku`/`fable`), never a full model id like `"opus-5"`; ask the user to pick
@@ -329,7 +327,7 @@ reads an absent `purpose` as "matches both review and execute": an assumption th
 deliberate, documented legacy-compat default, never an accident of how a brand-new entry
 happened to get written. Carry the answer into this entry's `purpose` field at Step 3's write,
 exactly like a Step 2.2-sourced entry — never leave it unset for a newly-registered one. Carry
-the captured host into the entry as described above — never silently omitted (D-04).
+the captured host into the entry as described above — never silently omitted.
 
 #### Step 2.8 — Set policy.mode, policy.ladder order, and strategy
 
@@ -463,3 +461,8 @@ apply the same `--show` / ask / trust sequence, then re-run `probe-quota` before
 output as authoritative for that project's local entries.
 
 Finally, `rm -rf "$SCRATCH"` (only on a successful write; a failed one keeps it, above).
+
+## Evidence
+
+- The bare-model rule for codex was confirmed live on 2026-08-29: `codex exec -m gpt-5.6-sol-high` was rejected ("The 'gpt-5.6-sol-high' model is not supported...").
+- Until 2026-08-29 an earlier design gave host-run entries an automatic guaranteed-baseline slot in `double` mode regardless of ladder position; a real config hit this and got a silently reordered ladder, so it was removed.

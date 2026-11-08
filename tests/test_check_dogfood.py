@@ -622,6 +622,137 @@ class TestEdgeFloors(unittest.TestCase):
         self.assertIn(f"{removed[0]} {removed[1]}", problems[0])
 
 
+_JDG04_PROBLEM = "Phase {} names a SKILL.md but no success criterion cites JDG-04"
+
+
+def _phase(number: str, names_skill: bool = True, criteria: str | None = "Plain criterion.",
+           requirements: str = "JDG-01") -> str:
+    """One ROADMAP `### Phase N:` block; criteria None omits the success-criteria marker."""
+    goal = "Edit `skills/x/SKILL.md`." if names_skill else "Edit the tools."
+    text = (f"### Phase {number}: Title {number}\n\n**Goal:** {goal}\n\n"
+            f"**Requirements**: {requirements}\n\n")
+    if criteria is not None:
+        text += f"**Success Criteria** (what must be TRUE):\n\n1. {criteria}\n\n"
+    return text + "**Plans**: 1 plan\n\n"
+
+
+def _roadmap(*blocks: str) -> str:
+    """A roadmap with a Progress section, the Phase Details blocks and a Backlog entry that
+    names a SKILL.md and no JDG-04, which the scan must never read."""
+    return ("# Roadmap\n\n## Progress\n\nnone\n\n## Phase Details\n\n" + "".join(blocks)
+            + "## Backlog\n\n### Phase 999.9: B\n\n**Goal:** Edit `skills/x/SKILL.md`.\n\n"
+            "**Success Criteria** (what must be TRUE):\n\n1. Nothing.\n")
+
+
+class TestJdg04Citations(unittest.TestCase):
+    def _root(self, roadmap: str | None) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        if roadmap is not None:
+            (root / ".planning").mkdir()
+            (root / ".planning" / "ROADMAP.md").write_text(roadmap, encoding="utf-8")
+        return root
+
+    def test_skill_phase_without_citation_is_flagged_and_backlog_is_skipped(self):
+        root = self._root(_roadmap(_phase("33", criteria="Plain criterion.")))
+        self.assertEqual(check_dogfood.check_jdg04_citations(root),
+                         ([_JDG04_PROBLEM.format("33")], []))
+
+    def test_adding_the_citation_clears_the_problem(self):
+        root = self._root(_roadmap(_phase("33", criteria="Plain criterion.")))
+        self.assertEqual(len(check_dogfood.check_jdg04_citations(root)[0]), 1)
+        (root / ".planning" / "ROADMAP.md").write_text(
+            _roadmap(_phase("33", criteria="Meets the bar (JDG-04).")), encoding="utf-8")
+        self.assertEqual(check_dogfood.check_jdg04_citations(root), ([], []))
+
+    def test_phases_up_to_32_are_not_checked_but_32_1_is(self):
+        root = self._root(_roadmap(_phase("32"), _phase("31.1"), _phase("32.1")))
+        self.assertEqual(check_dogfood.check_jdg04_citations(root),
+                         ([_JDG04_PROBLEM.format("32.1")], []))
+
+    def test_look_alike_ids_and_requirements_line_do_not_count(self):
+        root = self._root(_roadmap(
+            _phase("33", criteria="Cites JDG-040 and jdg-04."),
+            _phase("34", criteria="Plain criterion.", requirements="JDG-04"),
+        ))
+        self.assertEqual(check_dogfood.check_jdg04_citations(root),
+                         ([_JDG04_PROBLEM.format("33"), _JDG04_PROBLEM.format("34")], []))
+
+    def test_skill_phase_without_criteria_marker_is_flagged_and_non_skill_is_not(self):
+        root = self._root(_roadmap(
+            _phase("35", criteria=None),
+            _phase("36", names_skill=False, criteria=None),
+        ))
+        self.assertEqual(check_dogfood.check_jdg04_citations(root),
+                         ([_JDG04_PROBLEM.format("35")], []))
+
+    def test_every_offender_is_reported_in_roadmap_order(self):
+        root = self._root(_roadmap(_phase("33"), _phase("33.1"), _phase("35")))
+        self.assertEqual(check_dogfood.check_jdg04_citations(root), ([
+            _JDG04_PROBLEM.format("33"),
+            _JDG04_PROBLEM.format("33.1"),
+            _JDG04_PROBLEM.format("35"),
+        ], []))
+
+    def test_missing_roadmap_and_missing_section_are_named_notes(self):
+        self.assertEqual(check_dogfood.check_jdg04_citations(self._root(None)), ([], [
+            "JDG-04 citations not checked: no .planning/ROADMAP.md"]))
+        root = self._root("# Roadmap\n\n## Progress\n\nnone\n")
+        self.assertEqual(check_dogfood.check_jdg04_citations(root), ([], [
+            "JDG-04 citations not checked: no ## Phase Details section"]))
+
+
+class TestJudgeRecords(unittest.TestCase):
+    """check_judge_records (32 D-07) with a fake check; no real .planning/judge is read."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="check-dogfood-judge-")
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.real = check_dogfood._judge_loop()
+
+    def _fake(self, result=None, error=None):
+        calls = []
+
+        def fake_check(root, records, opts):
+            calls.append((root, records, opts))
+            if error is not None:
+                raise error
+            return result
+
+        module = unittest.mock.Mock(check=fake_check, CheckOptions=self.real.CheckOptions,
+                                    JudgeLoopError=self.real.JudgeLoopError)
+        return module, calls
+
+    def test_a_missing_folder_is_a_note_and_nothing_is_loaded(self):
+        def never_loaded():
+            raise AssertionError("the judge tool was loaded without .planning/judge")
+
+        self.assertEqual(check_dogfood.check_judge_records(self.root, load=never_loaded),
+                         ([], ["judge records not checked: no .planning/judge"]))
+
+    def test_problems_and_notes_are_prefixed_and_the_checker_gets_the_folder(self):
+        (self.root / ".planning" / "judge").mkdir(parents=True)
+        module, calls = self._fake(result=(["line"], ["p1"], ["n1"]))
+        found = check_dogfood.check_judge_records(self.root, load=lambda: module)
+        self.assertEqual(found, (["judge records: p1"], ["judge records: n1"]))
+        self.assertEqual(calls, [(self.root, self.root / ".planning" / "judge",
+                                  self.real.CheckOptions())])
+
+    def test_a_refused_input_is_a_problem_not_a_traceback(self):
+        (self.root / ".planning" / "judge").mkdir(parents=True)
+        module, _calls = self._fake(error=self.real.JudgeLoopError("bad inputs"))
+        self.assertEqual(check_dogfood.check_judge_records(self.root, load=lambda: module),
+                         (["judge records: bad inputs"], []))
+
+    def test_an_unexpected_record_error_is_a_problem_not_a_traceback(self):
+        (self.root / ".planning" / "judge").mkdir(parents=True)
+        module, _calls = self._fake(error=KeyError("findings"))
+        self.assertEqual(check_dogfood.check_judge_records(self.root, load=lambda: module),
+                         (["judge records: KeyError: 'findings'"], []))
+
+
 def _real_edge_engine() -> str | None:
     """The edge-probe.cjs engine that edge_floor.find_engine resolves for this checkout, or None."""
     return edge_floor.find_engine(os.environ, str(REPO_ROOT), None)

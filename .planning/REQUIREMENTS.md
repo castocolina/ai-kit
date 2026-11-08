@@ -120,7 +120,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### Skill quality and judging
 
-- [ ] **JDG-01**: A re-judge report scores every kept skill with the current judge (two judges chosen from what the
+- [x] **JDG-01**: A re-judge report scores every kept skill with the current judge (two judges chosen from what the
   environment offers, native opus at xhigh as fallback); old /120 scores appear only as history. The judge prompt
   embeds the rubric and the spec sources it cites, and states one reading of ai-kit's flat `tests/test_*.py` layout
   and of skills without a `scripts/` folder that holds for every skill. *(amended 2026-11-07, owner decision: the
@@ -129,8 +129,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   live (flat `tests/test_*.py` or `tests/skills/<name>/`, as the skill-judge rubric expects) is decided in the phase
   32 spec after a spike that measures the cost of moving them (parallel runner, gate-scope test, staged mapper,
   recorded e2e times); the judge prompt states the chosen layout. Evals stay in each skill's `evals/` folder, as the
-  Agent Skills standard says, and DIST-01 trims them from the shipped copy)*
-- [ ] **JDG-02**: The verdict checker is a tracked tool that takes the skill and judge lists as arguments and names
+  Agent Skills standard says, and DIST-01 trims them from the shipped copy)* *(amended 2026-11-07, 32 spec: the
+  spike chose the flat layout; the judge prompt lists each skill's test modules by one rule, and a skill that ships
+  runnable code is judged with the 5/5/5 split on them, one with no runnable code with the 8/7 split)*
+- [x] **JDG-02**: The verdict checker is a tracked tool that takes the skill and judge lists as arguments and names
   no referee, resolves the repository root itself (the same digest when run from a sub-folder, proven by a test) and
   reports how many judge rounds ran.
 - [ ] **JDG-03**: Every kept skill has `evals/evals.json`, trigger queries (about 20, half near-misses) and tests,
@@ -142,15 +144,20 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   with new-shape evals and tests, no critical or high finding or grade B or better, and no regression beyond judge
   variation, recorded in that phase's verification before it closes; each such phase carries a success criterion
   that cites this requirement.
-- [ ] **JDG-05**: Skill text carries behaviour, not history: no tool versions, dates or observation logs in the main
+  *(2026-11-07, Phase 32 close-out: Phase 32's part is done (the bar is recorded per judged skill in `.planning/judge/REJUDGE.md`, 8 met and 7 not met, and check-dogfood guards the citations); the requirement stays open until every skill-changing phase meets it)*
+- [x] **JDG-05**: Skill text carries behaviour, not history: no tool versions, dates or observation logs in the main
   flow, provenance in a trailing evidence section, no hardcoded referee names, and no shipped text pointing into a
   planning folder; ai-kit's AGENTS.md states the rule in one line (SKILL.md describes behaviour; provenance and
   version history live in a trailing section or a reference; version-specific text appears only as a conditional).
-- [ ] **JDG-06**: The number of judges per round (one or two) comes from deterministic signals plus jev's score, with
+- [x] **JDG-06**: The number of judges per round (one or two) comes from deterministic signals plus jev's score, with
   a floor of one (two when the last verdict sits within judge noise of a grade boundary or had a high finding).
-- [ ] **JDG-07**: Every SKILL.md passes a strict frontmatter check (strict YAML, 1,024-character description cap) that
+  *(amended 2026-11-07, 32 spec, confirmed by the owner 2026-11-07: "a grade boundary" is read as the bar's pass boundary at
+  80 percent and judge noise as the recorded 7 points, so two judges run from 73.0 to 87.0 inclusive, and a skill
+  with no rubric-v4 verdict also gets two; with 10-point grade bands every percent from 53 to 97 lies within 7
+  points of some band edge, so the literal reading would never leave room for one judge or for jev's score)*
+- [x] **JDG-07**: Every SKILL.md passes a strict frontmatter check (strict YAML, 1,024-character description cap) that
   matches what `npx skills` accepts.
-- [ ] **JDG-08**: AGENTS.md's skill-judge rule caps a judge loop at a stated number of rounds and requires a
+- [x] **JDG-08**: AGENTS.md's skill-judge rule caps a judge loop at a stated number of rounds and requires a
   disputed finding to be refuted by running the code, not by judging again; the verdict checker flags a loop that
   runs past the cap.
 
@@ -436,6 +443,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   removed, ignored or committed before the close, and untracked files that predate the unit are left untouched
   and only reported. *(added 2026-11-04: owner request)*
   *(amended 2026-11-04, owner: a general rule, generated into every project that uses ai-kit's project rules and stressed by ai-kit's hook advisory there, not ai-kit-only)*
+  *(amended 2026-11-07, Phase 32 close-out: where a host rule forbids deleting outside `tmp/`, the playbook moves the run's own `/tmp` leftovers into the repository's `tmp/` instead of deleting them; the per-plan scope script that plan rails carry today deletes its run folder and zero-byte `uv-*.lock` files in `/tmp`, breaking that rule, and this playbook replaces it)*
 
 - [ ] **RULE-30**: The end-of-task and phase playbook says a verification item that needs a real push or a run
   inside a host session is not owner-only: the agent does it. For a push check it folds the history first
@@ -755,6 +763,15 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **DEF-08**: Before an auto-mode run starts, spec-discuss shows the owner a short summary of every requested
   item in the range and how it plans to resolve each one, and waits for the owner's go-ahead before it runs; a
   doc-contract test pins it. *(added 2026-11-07, owner decision)*
+- [ ] **DEF-09**: No runtime label or docstring in spec-review's `detection.py` names a planning file (today
+  `20-SMOKE-OPENCODE.md`, `21-SMOKE-CURSOR.md`, `20-SMOKE-CODEX.md`, one pinned by
+  `tests/test_ai_kit_spec_runtimes_table.py`), and a test fails when a string literal in shipped skill Python code
+  names a file under a planning folder; Phase 32's history-text check reads Markdown only. *(added 2026-11-07,
+  Phase 32 close-out)*
+- [ ] **DEF-10**: curated-config's real-gsd-tools tracer test passes with `TMPDIR` inside a GSD project checkout:
+  the behaviour for a new project nested inside another project is decided and tested, and the six-environment
+  custom-tmpdir row keeps `.planning/` in its clone so it catches the case. *(added 2026-11-07, Phase 32
+  close-out)*
 
 ## Future Requirements
 
@@ -802,14 +819,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RMV-02 | Phase 31 | Complete |
 | RMV-03 | Phase 31 | Complete |
 | RMV-04 | Phase 31 | Complete |
-| JDG-01 | Phase 32 | Pending |
-| JDG-02 | Phase 32 | Pending |
+| JDG-01 | Phase 32 | Complete |
+| JDG-02 | Phase 32 | Complete |
 | JDG-03 | Phase 32.4 | Pending |
 | JDG-04 | Phase 31, Phase 32 | Pending |
-| JDG-05 | Phase 32 | Pending |
-| JDG-06 | Phase 32 | Pending |
-| JDG-07 | Phase 32 | Pending |
-| JDG-08 | Phase 32 | Pending |
+| JDG-05 | Phase 32 | Complete |
+| JDG-06 | Phase 32 | Complete |
+| JDG-07 | Phase 32 | Complete |
+| JDG-08 | Phase 32 | Complete |
 | CFG-01 | Phase 33 | Pending |
 | CFG-02 | Phase 33 | Pending |
 | CFG-03 | Phase 33 | Pending |
@@ -950,10 +967,12 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | DEF-06 | Phase 32.4 | Pending |
 | DEF-07 | Phase 32.4 | Pending |
 | DEF-08 | Phase 32.4 | Pending |
+| DEF-09 | Phase 32.2 | Pending |
+| DEF-10 | Phase 32.4 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 170 total
-- Mapped to phases: 170
+- v2.0 requirements: 172 total
+- Mapped to phases: 172
 - Unmapped: 0
 
 ---
@@ -967,3 +986,5 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *Amended 2026-11-04 by the owner rules audit (the owner's local memory compared with the requirements): RULE-14 (jev first) and RULE-18 (jev-first block with time rules, codegraph instruction and real-home guard in every brief) amended; RULE-30 (agent closes push and host-session verification items, through herdr for host sessions), RULE-31 (failed external runs: no silent harness switch, foreground probe) and RULE-32 (GSD-only settings rules) added.*
 *Amended 2026-11-06 by the owner's decision on Phase 30.1's cycle-2 review: WIZ-03 amended (a foreign status line is kept, removed so the host shows its own default, or replaced by a customized ai-kit line).*
 *Amended 2026-11-07 by the owner's decisions on the jev and typesafe-ai research and the skill-distribution fact sheet (`.planning/research/2026-11-07-*.md`): DEF-08 (Phase 32.4), JEV-08 and JEV-09 (Phase 32.1), JEV-10 and JEV-11 (Phase 34), DIST-08 (Phase 53) and DIST-09 (Phase 52) added; JDG-01, JDG-03, RULE-27, JEV-03, JEV-05, DIST-01, DIST-02, DIST-03 and DIST-04 amended.*
+*Amended 2026-11-07 by Phase 32's spec and discuss: JDG-01 (the flat test layout and the scripts reading) and JDG-06 (the bar-boundary reading, confirmed by the owner 2026-11-07) amended; ROADMAP 32 criterion 8, 32.1-32.3 criterion 2 and 34 criterion 3 cite JDG-04; the stale `decide.py` anchors of 32.4 and 34 corrected.*
+*Amended 2026-11-07 at Phase 32's close-out: DEF-09 (Phase 32.2) and DEF-10 (Phase 32.4) added; RULE-29 amended (move `/tmp` leftovers into `tmp/` under a no-delete host rule; replaces the plan-rail scope script).*

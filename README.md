@@ -48,7 +48,7 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`ai-kit-spec-goal-prompt`](skills/ai-kit-spec-goal-prompt/SKILL.md) | skill | Builds a ready-to-paste `/goal`, `/loop` or `/gsd-autonomous` prompt file (one-shot goal, autonomous run) for GSD phases or superpowers plans, with rails, quota directives and e2e-based done. Detects host primitives (labelled verified or unverified), picks one to three strategies, writes a committable file. Never runs the prompt. |
 | [`ai-kit-usage-metrics`](skills/ai-kit-usage-metrics/SKILL.md) | skill | Runs the local capture-refine-dashboard pipeline over Claude Code, opencode, Codex and Cursor session logs, plus previously stored CLI command history, then opens a static, filterable HTML usage-metrics dashboard. Does not export or import data. |
 | [`jev-fast-decision`](skills/jev-fast-decision/SKILL.md) | skill | Shared System One client: one backend table (local Laya, TypeSafe, OpenCode Zen), `--probe`, one escalation ladder with a per-item trail, a consent record, an answer log, a dated capability matrix, one entry point for every caller (`ladder`, `detect`, `consent`) and the installed-skill lookup callers copy — advisory only. Linked for claude/opencode and pi; codex is a documented gap (`~/.agents/skills` is shared by other hosts) and cursor is reached through its `~/.claude/skills` compatibility read (cited in `reference.md`, not live-verified). |
-| [`ai-kit-judge`](agents/ai-kit-judge.md) | agent | Read-only native judge lane for Claude Code (Opus; Read, Grep and Glob only): follows the given prompt and replies only with what it asks, such as verdict JSON lines. Linked to `~/.claude/agents/ai-kit-judge.md`. |
+| [`ai-kit-judge`](agents/ai-kit-judge.md) | agent | Read-only native judge lane for Claude Code (Opus at xhigh effort, set in its frontmatter; Read, Grep and Glob only): follows the given prompt and replies only with what it asks, such as verdict JSON lines. Linked to `~/.claude/agents/ai-kit-judge.md`. |
 
 ## How the installer works
 
@@ -762,7 +762,7 @@ make setup-dev  # uv sync, the missing flow tools (pre-commit, gh, gh-stack, cod
 make test       # full suite in parallel, one subprocess per module, through tools/run_unittest_parallel.py (system python3 for the unit group)
 make lint       # shellcheck + py-compile hooks (pre-commit, all files)
 make validate   # the full quality gate (see below)
-make check-dogfood    # live-project check: dogfood runner copy and curated-config guards (also a pre-push hook)
+make check-dogfood    # live-project check: dogfood runner copy, curated-config guards, JDG-04 citations and judge records (also a pre-push hook)
 make test-env-matrix  # six-environment proof, about six make test runs; not part of make test or validate
 ```
 
@@ -794,6 +794,8 @@ vulture (1.9 s), check-dogfood (0.5 s) and deferred-e2e (0.0 s, no push range; n
 e2e module is over the commit budget) are recorded beside that subtotal, and the
 worst-case whole push (`push-worst`, every pre-push hook timed alone) is 42.7 s.
 Tests never call a real host CLI or read `.planning/`.
+
+**Skill judging.** `tools/judge_loop.py` builds skill-judge prompts that embed the installed judge's rubric and spec files (`prompt`, `prompt --probe`), picks the judge pool from probe lanes (`pool`), decides one or two judges per skill from recorded signals plus an advisory jev score (`count`), records each lane's verdict with its status line (`ingest`), and generates and checks the re-judge report in `.planning/judge/` (`report`, `check`; `--gate` also fails an unmet bar or a loop over three rounds, `--require-current` a stale digest).
 
 ## Compatibility notes
 

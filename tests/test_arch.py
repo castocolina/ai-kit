@@ -1689,6 +1689,7 @@ LOOKUP_COPIES = (
     "skills/ai-kit-commit-fold/scripts/fold_group.py",
     "skills/ai-kit-spec-goal-prompt/scripts/gp_host.py",
     "tools/hooks/precompact_core.py",
+    "tools/judge_loop.py",
     "skills/ai-kit-commit-fold/gsd/ai-kit-commit-fold/ai-kit-fold.cjs",
     "skills/ai-kit-spec-execute-superpowers/references/fold-step.md",
 )

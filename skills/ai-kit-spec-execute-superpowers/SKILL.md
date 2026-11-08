@@ -276,10 +276,7 @@ Dispatch steps, the **Classify** step (`ok`, `quota`, `real_error`) and, inside 
 writes unverified). Every other exec target has full permissions, and its stay-in-the-target-dir
 guidance is not a boundary. `claude` is review-only and never runs here. pi exec is verified by the
 runner's hermetic self-test only and live verification is still open (stderr prints that note); a copilot target gets a similar note:
-unverified error rows, all tools allowed, the task prompt visible on argv. **Node:** subprocess
-dispatch needs Node 24 (GSD's declared floor, `@opengsd/gsd-core` 1.17.0 `engines.node >=24.0.0` per
-`.planning/phases/18.1-one-runtime-model/18.1-RESEARCH.md:231`, not declared in this tree; older untested).
-The runner fails closed as `dispatch_unavailable` (a `real_error` stop) only when `node` is absent; an older Node may crash, and that crash is a `real_error` of the pair, never a reason to switch pairs.
+unverified error rows, all tools allowed, the task prompt visible on argv. **Node:** subprocess dispatch needs Node 24 (GSD's declared floor; older versions untested). The runner fails closed as `dispatch_unavailable` (a `real_error` stop) only when `node` is absent; an older Node may crash, and that crash is a `real_error` of the pair, never a reason to switch pairs.
 
 ## Step 4: Task review, fix loop, final review — unaffected
 
@@ -297,3 +294,7 @@ skill's scope ends at Step 3 until Step 5 and never touches review, adjudication
 When the job ends (the final whole-branch review finished, which the caller runs, or a stop ended the
 run) and only when `WAKE_OWNED=1`, run the close block in `references/session-wake.md` (never on the
 one-shot wait branch of Schedule-or-stop). When `WAKE_OWNED=0`, call nothing.
+
+## Evidence
+
+- GSD's Node floor: `@opengsd/gsd-core` 1.17.0 declares `engines.node >=24.0.0`; this tree does not declare it.

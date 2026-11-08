@@ -1,0 +1,90 @@
+{
+ "schema": 1,
+ "excluded": {
+  "ai-kit-commit-fold": "temporary; Phase 45 absorbs it (RULE-27)",
+  "ai-kit-project-rules-agents": "being replaced in Phases 45-47",
+  "ai-kit-project-rules-all": "being replaced in Phases 45-47",
+  "ai-kit-project-rules-arch": "being replaced in Phases 45-47",
+  "ai-kit-project-rules-cicd": "being replaced in Phases 45-47",
+  "ai-kit-project-rules-docker": "being replaced in Phases 45-47",
+  "ai-kit-project-rules-makefile": "being replaced in Phases 45-47",
+  "ai-kit-project-rules-precommit": "being replaced in Phases 45-47"
+ },
+ "skills": {
+  "cst-refactor": {
+   "batch": "32.1",
+   "last_v4": null,
+   "old_score": {"value": "old 91/120 FAIL (1 Important open), 2026-10-15, phase 16.1 independent judge", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+  },
+  "markdown-to-pdf": {
+   "batch": "32.1",
+   "last_v4": null,
+   "old_score": null
+  },
+  "jev-fast-decision": {
+   "batch": "32.1",
+   "last_v4": {"percent": 85.6, "critical": 0, "high": 0, "judged_at": "3410359", "source": ".planning/phases/29-logical-commit-folding-and-the-shared-jev-ladder/29-JUDGE.md:96"},
+   "old_score": {"value": "old: Opus 107/120 pass, opencode 101/120 (usability below its floor), UNRESOLVED, 2026-10-23, phase 21.1", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+  },
+  "ai-kit-spec-review-fixer": {
+   "batch": "32.1",
+   "last_v4": null,
+   "old_score": null
+  },
+  "ai-kit-usage-metrics": {
+   "batch": "32.1",
+   "last_v4": null,
+   "old_score": {"value": "old 108/120, 2026-09-10, phase 5 (v1.0); phase 15.1 planned a re-judge, but no score was found", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+  },
+  "ai-kit-spec-review": {
+   "batch": "32.2",
+   "last_v4": null,
+   "old_score": {"value": "old 99/120 PASS, 2026-10-25, phase 25.1", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+  },
+  "ai-kit-spec-review-checklist": {
+   "batch": "32.2",
+   "last_v4": null,
+   "old_score": null
+  },
+  "ai-kit-spec-config": {
+   "batch": "32.2",
+   "last_v4": {"percent": 77.6, "critical": 0, "high": 0, "judged_at": null, "source": ".planning/phases/31-removals-and-small-defects/31-VERIFICATION.md:70"},
+   "old_score": {"value": "old 99/120 UNRESOLVED, 2026-10-25, phase 25.1", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+  },
+  "ai-kit-spec-execute": {
+   "batch": "32.2",
+   "last_v4": {"percent": 80.8, "critical": 0, "high": 1, "judged_at": null, "source": ".planning/phases/31-removals-and-small-defects/31-VERIFICATION.md:69"},
+   "old_score": null
+  },
+  "ai-kit-spec-execute-superpowers": {
+   "batch": "32.3",
+   "last_v4": {"percent": 83.2, "critical": 0, "high": 0, "judged_at": "76fa531", "source": ".planning/phases/30-phase-boundary-index-refresh-code-exploration-rules-and-lens/30-JUDGE.md:55"},
+   "old_score": {"value": "old 86/120 (71.7%) FAIL, owner accepted and deferred, 2026-10-31, phase 26 round 24", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+  },
+  "ai-kit-cross-ai": {
+   "batch": "32.3",
+   "last_v4": null,
+   "old_score": {"value": "old 102/120 (85.0%) PASS, 2026-10-25, phase 25.1", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+  },
+  "ai-kit-session-wake": {
+   "batch": "32.3",
+   "last_v4": null,
+   "old_score": {"value": "old 108/120 PASS, 2026-10-30, phase 26", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+  },
+  "ai-kit-spec-goal-prompt": {
+   "batch": "32.4",
+   "last_v4": {"percent": 88.8, "critical": 0, "high": 0, "judged_at": "d2855bc", "source": ".planning/phases/29-logical-commit-folding-and-the-shared-jev-ladder/29-JUDGE.md:99"},
+   "old_score": {"value": "no 120-point result; its phase 27 base on the 125-point rubric was 90.4 (history, 32 D-12)", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+  },
+  "ai-kit-gsd-spec-discuss": {
+   "batch": "32.4",
+   "last_v4": {"percent": 88.0, "critical": 0, "high": 0, "judged_at": "16153d6", "source": ".planning/phases/29.1-stacked-phase-branches-chained-prs-and-the-merge-chain-inserted/29.1-JUDGE.md:82"},
+   "old_score": {"value": "old 106/114/109 per judge (Opus/referee-two/referee-one, round 4), PASS conditional, 2026-10-24, quick 261024-ryk", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+  },
+  "ai-kit-gsd-curated-config": {
+   "batch": "32.4",
+   "last_v4": {"percent": 84.0, "critical": 0, "high": 1, "judged_at": null, "source": ".planning/phases/31-removals-and-small-defects/31-VERIFICATION.md:71"},
+   "old_score": {"value": "old 106/120 (88.3%) PASS, 2026-10-25, phase 25.1", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+  }
+ }
+}

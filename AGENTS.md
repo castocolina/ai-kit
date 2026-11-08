@@ -58,6 +58,12 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   `skill-judge` rubric defines the bands and the total, so this rule carries no
   absolute score), and no regression against the previous judged result of the
   same skill beyond the judge's run-to-run variation.
+  A judge loop stops after three rounds per skill: its result is recorded as it
+  stands, and an unmet bar goes to the owner. A disputed finding counts as refuted
+  only through a recorded run (the finding id, `path:line`, the command and its
+  observed output), never through another judge round. SKILL.md describes
+  behaviour; provenance and version history live in a trailing section or a
+  reference, and version-specific text appears only as a conditional.
 - Commit one coherent, buildable logical change (a logical commit) with its
   tests and documentation together. Let pre-commit hooks run; never use
   `--no-verify` to skip pre-commit checks or dodge a real failure. The one
@@ -226,7 +232,10 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 - `make check-dogfood`: the live-project check. It verifies that the project's own
   cross-AI runner copy is a pristine render of the shipped template, and that the
   curated-config write flows leave the live `.planning/` config and runner files
-  untouched. It is the only reader of `.planning/`, part of `make validate`, and a
+  untouched. It also checks that every ROADMAP phase after 32 that names a SKILL.md cites
+  JDG-04 in its success criteria, and that the judge records in `.planning/judge/` are valid
+  and reproduce `REJUDGE.md` (`tools/judge_loop.py check`). It is the only reader of
+  `.planning/`, part of `make validate`, and a
   pre-push hook.
 - `make test-env-matrix`: the six-environment proof (SPEC R7). It runs `make test`
   in plain, host-session, no-host-cli, long-path (a checkout path of 200+
@@ -355,7 +364,7 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 - `make test-unit` / `test-integration` / `e2e-test` / `arch-test` — individual pyramid tiers
 - `make lint` — shellcheck + py-compile hooks (pre-commit, all files)
 - `make validate` — the commit and push hooks, all files (via per-hook targets)
-- `make check-dogfood` — the live-project check (dogfood runner copy, curated-config guards); also a pre-push hook
+- `make check-dogfood` — the live-project check (dogfood runner copy, curated-config guards, JDG-04 citations, judge records); also a pre-push hook
 - `make test-env-matrix` — the six-environment proof (about six `make test` durations); not part of `make test`, `validate` or any hook
 - `make format` — `ruff format .` (dev-only, mutates files, not wired into validate)
 - `make security-scanner` / `make duplicate-code` — informational/non-gating checks, not wired into `validate`

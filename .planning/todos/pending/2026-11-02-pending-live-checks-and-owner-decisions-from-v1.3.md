@@ -114,7 +114,9 @@ None of these is taken. Each shows the options and what happens if nothing chang
   each base to the current percent so only regressions count. Default: old bases stay and those verdicts stay
   unresolved. This also covers the unresolved config-skill verdict and the pass bar of
   `ai-kit-spec-goal-prompt` (94.4% and 87.2% from two judges against a 90.4 base: accept the result, or lower
-  the base).
+  the base). *(folded 2026-11-07 into Phase 32 as 32 D-12, confirmed by the owner 2026-11-07: the baseline verdict becomes each judged
+  skill's base for the batch phases' regression check; the older bases, such as spec-config's 105 and
+  goal-prompt's 90.4, are history (JDG-01))*
 - [ ] Phase 20 open points. (a) How many fix rounds count against the skill-judge cap (two of two rounds plus
   one voluntary edit): accept the accounting or change the counting rule; default accepted as recorded.
   (b) The 29 opencode compact agents carry no model line: file an upstream report or document the limit in
@@ -170,11 +172,14 @@ None of these is taken. Each shows the options and what happens if nothing chang
   execute-superpowers skill text (it points at the Phase 18.1 research file for the Node requirement). Either
   edit the two paths to the archive location, or rewrite the sentences so they no longer depend on a planning
   path (preferred: shipped skill text should not point into a planning folder). Skills were left untouched on
-  purpose at the close.
+  purpose at the close. *(folded 2026-11-07 into Phase 32, 32-SPEC R9: both sentences are rewritten without a
+  planning path, and a test keeps planning pointers out of every shipped skill Markdown file)*
 - [ ] The skill-judge evidence of Phase 26 for the execute-superpowers skill is stale: the package changed after its
   last judged round because the audit fixed a dead link in one of its references (a link depth, no behaviour).
   The checker therefore reports a stale verdict for that skill (the Phase 27 checker is fine). The verdict is
-  already deferred to the skill refactor; re-judge it there and the evidence becomes current again.
+  already deferred to the skill refactor; re-judge it there and the evidence becomes current again. *(folded
+  2026-11-07 into Phase 32: the baseline re-judges every judged skill on its current text, execute-superpowers
+  included)*
 - [x] *(done in Phase 28-03, GATE-03: the no-git e2e case passes with TMPDIR inside a git work tree)* The
   end-to-end test that checks a checkout without git fails when the temporary directory sits inside a git
   repository (it only passes with the system temporary directory). Make the test build its temporary folder

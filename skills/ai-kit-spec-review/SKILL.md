@@ -161,7 +161,7 @@ the review to the next configured entry, which may be another provider, before S
 anything. When no configured entry is available, the walk ends on the session default (same
 vendor as the author): the Step 5 message then adds `every configured reviewer unavailable;
 reviewed with the session default`. The ordered walk itself is the owner's instruction ("try
-A, then B, fall back to native only if both lack quota", recorded 2026-08-29 in
+A, then B, fall back to native only if both lack quota", recorded in
 `resolve_reviewers`' docstring in `ai_kit_spec/quota.py`, for a ladder that listed its native
 entry). Two parts of the shipped walk go beyond that quote and are not owner-ruled yet: the
 implicit session default when the ladder lists no native entry, and walking past a probe that
@@ -490,3 +490,7 @@ that directory through its resume pointer, and removing it strands the lane. Eve
 spans several invocations and deleting the reports once destroyed the only evidence of a
 still-open review. Each kept directory's name (Step 0.7 point 1) names its repo, branch and
 document; remove a stale one by hand once that review is done.
+
+## Evidence
+
+- The owner's ordered-walk instruction quoted in the reviewer walk was recorded on 2026-08-29.

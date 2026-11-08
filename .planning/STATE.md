@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 32
-current_phase_name: Re-judge baseline
+current_phase: "32.1"
+current_phase_name: Batch 1, general small skills
 status: planning
-stopped_at: Phase 31 complete, ready to plan Phase 32
-last_updated: "2026-11-07T01:00:38.816Z"
-last_activity: 2026-11-06
-last_activity_desc: Phase 31 complete
-state_head: a9f6b67dc41e3188ae9503226cf23ded25372051
+stopped_at: "Phase 32 complete (close-out part 1: review, security, validation, re-verification); next: fold and push (part 2), then phase 32.1"
+last_updated: "2026-11-07T19:51:41.964Z"
+last_activity: 2026-11-07
+last_activity_desc: Phase 32 complete (review, security, validation, re-verification)
+state_head: 202a2883c6aeea71296b30c01c300a6a5deb2633
 progress:
   total_phases: 37
-  completed_phases: 7
-  total_plans: 55
-  completed_plans: 55
-  percent: 19
+  completed_phases: 8
+  total_plans: 64
+  completed_plans: 64
+  percent: 22
 ---
 
 # Project State
@@ -25,22 +25,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 31 — Removals and small defects
+**Current focus:** Phase 32 — Re-judge baseline
 
 ## Current Position
 
-Phase: 32 — Re-judge baseline
+Phase: 32.1 — Batch 1, general small skills
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-11-06 - Completed quick task 261106-ua8: wizard component names and descriptions from frontmatter
+Last activity: 2026-11-07 — Phase 32 complete (review, security, validation, re-verification)
 
-Progress: [██░░░░░░░░] 19%
+Progress: [██░░░░░░░░] 22%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 209
+- Total plans completed: 218
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -89,6 +89,7 @@ Progress: [██░░░░░░░░] 19%
 | 30.1 | 6 | - | - |
 | 30.2 | 5 | - | - |
 | 31 | 6 | - | - |
+| 32 | 9 | - | - |
 
 **Recent Trend:**
 
@@ -682,9 +683,9 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-03T19:08:45.122Z
-Stopped at: Phase 31 complete, ready to plan Phase 32
-Resume file: .planning/phases/31-removals-and-small-defects/31-CONTEXT.md
+Last session: 2026-11-07T19:51:41.615Z
+Stopped at: Phase 32 complete (close-out part 1: review, security, validation, re-verification); next: fold and push (part 2), then phase 32.1
+Resume file: None
 
 ## Operator Next Steps
 

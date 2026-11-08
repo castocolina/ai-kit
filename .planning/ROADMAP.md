@@ -113,7 +113,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)** - One card per component kind, host-styled status-line panes, config doctor reachable from the wizard (completed 2026-11-06)
 - [x] **Phase 30.2: Cursor status-line parity (INSERTED)** - Cursor status line brought back to the approved proof of concept and to Claude's look where the data allows (completed 2026-11-06)
 - [x] **Phase 31: Removals and small defects** - Three skills and rtk gone, seven small known defects fixed *(amended 2026-11-03, 31 spec: seven items per DEF-01)* (completed 2026-11-06)
-- [ ] **Phase 32: Re-judge baseline** - One current-judge report for every kept skill, plus strict frontmatter and text checks
+- [x] **Phase 32: Re-judge baseline** - One current-judge report for every kept skill, plus strict frontmatter and text checks (completed 2026-11-07)
 - [ ] **Phase 32.1: Batch 1, general small skills** - cst-refactor, markdown-to-pdf, jev-fast-decision, spec-review-fixer and usage-metrics reach the bar
 - [ ] **Phase 32.2: Batch 2, spec review family** - spec-review, checklist, spec-config and spec-execute reach the bar
 - [ ] **Phase 32.3: Batch 3, execution and session skills** - spec-execute-superpowers, cross-ai and session-wake reach the bar; one shared secret scanner
@@ -397,14 +397,33 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. A re-judge report scores each of the 15 kept skills with the current judge (two judges chosen from what the environment offers, native opus at xhigh as fallback); old /120 scores appear only as history, and the seven project-rules skills are listed as excluded because they are being replaced; the judge prompt embeds the rubric and its cited spec sources and states one reading of the flat `tests/test_*.py` layout and of skills without `scripts/`, the same for every skill. *(amended 2026-11-07, owner decision: the 16 non-rules skills are kept, 15 judged; `ai-kit-commit-fold` is listed as excluded beside the seven project-rules skills because it is temporary and Phase 45 absorbs it (RULE-27); the judge prompt states the test layout criterion 8 decides)*
   2. The verdict checker is a tracked tool that takes the skill and judge lists as arguments, and it names no referee, resolves the repository root itself (the same digest from a sub-folder) and reports the round count.
-  3. The report shows for each skill why one or two judges ran: deterministic signals plus jev's score, a floor of one, two when the last verdict sat within judge noise of a grade boundary or had a high finding.
+  3. The report shows for each skill why one or two judges ran: deterministic signals plus jev's score, a floor of one, two when the last verdict sat within judge noise of a grade boundary or had a high finding. *(amended 2026-11-07, 32 spec and owner confirmation: the boundary is the bar's pass boundary at 80, within the recorded 7-point judge variation, 73.0 to 87.0 inclusive (SPEC R4, JDG-06))*
   4. A strict frontmatter check (strict YAML, 1,024-character description cap, matching what `npx skills` accepts) passes on every SKILL.md in the tree.
   5. A text check fails on tool versions, dates or observation logs in a skill's main flow, a hardcoded referee name, or shipped text pointing into a planning folder; every kept skill passes it, with provenance in a trailing evidence section; ai-kit's AGENTS.md states the rule in one line.
   6. AGENTS.md's skill-judge rule caps a judge loop at a stated number of rounds and requires a disputed finding to be refuted by running the code; the verdict checker flags a loop past the cap.
   7. The judge bar (JDG-04) is recorded per judged skill, and every later phase that adds or changes a SKILL.md has a success criterion that cites it.
-  8. The phase 32 spec records where tests live (flat `tests/test_*.py` or `tests/skills/<name>/`, as the skill-judge rubric expects), decided by a spike that measures the cost of moving them on the parallel runner, the gate-scope test, the staged mapper and the recorded e2e times; evals stay in each skill's `evals/` folder per the Agent Skills standard, and Phase 52 trims them from the shipped copy (DIST-01). *(added 2026-11-07, owner decision)*
+  8. The phase 32 spec records where tests live (flat `tests/test_*.py` or `tests/skills/<name>/`, as the skill-judge rubric expects), decided by a spike that measures the cost of moving them on the parallel runner, the gate-scope test, the staged mapper and the recorded e2e times; evals stay in each skill's `evals/` folder per the Agent Skills standard, and Phase 52 trims them from the shipped copy (DIST-01). *(added 2026-11-07, owner decision)* *(amended 2026-11-07, 32 spec: the spike chose the flat layout (32-SPEC Background and R1); a guard test fails on a test module in a `tests/` subfolder, where the runner never discovers it)*
 
-**Plans**: TBD
+**Plans**: 9/9 plans complete in 5 waves
+Plans:
+**Wave 1**
+- [x] 32-01-PLAN.md — `tools/judge_loop.py` `prompt`, `ingest`, `check` for one lane end to end; the judge prompt embeds the skill-judge package; the native judge at xhigh effort (R2, R5 part)
+- [x] 32-02-PLAN.md — check-dogfood JDG-04 citation guard; stray test-module guard in the gate-scope test (R10, R1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 32-03-PLAN.md — history-text test (dates, versions, run logs) with the kept skills' text moved into evidence sections; AGENTS.md round cap, refute-by-running and behaviour-not-history lines (R9 part, R6 doc)
+- [x] 32-04-PLAN.md — `pool` from sentinel probes and `count` from deterministic triggers plus an advisory jev score (R3, R4)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 32-05-PLAN.md — history-text pointer rules over every shipped skill Markdown file, with the pointers removed (R9 pointer part)
+- [x] 32-06-PLAN.md — strict frontmatter gate with a PyYAML cross-check and a one-time npm `yaml` comparison (R8)
+- [x] 32-07-PLAN.md — `report` and the full `check` (round cap, refutations, worst-judge bar, count recomputation); check-dogfood runs it; docs (R5, R6, R7 tooling)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [x] 32-08-PLAN.md — the baseline judge run: probes, pool, counts, external lanes and orchestrator-run native lanes into staging records under `tmp/` (R3, R4, R7 run)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [x] 32-09-PLAN.md — publish the records to `.planning/judge/`, generate `REJUDGE.md`, check with every skill current, one commit (R7)
 
 ### Phase 32.1: Batch 1, general small skills
 
@@ -415,7 +434,7 @@ Plans:
 **Code anchors**: `skills/cst-refactor/`, `skills/markdown-to-pdf/`, `skills/jev-fast-decision/` (`SKILL.md`, `reference.md`, `scripts/jev_review.py` Zen rung `ZEN_KEY_FILE`, receipts, `backends/`; the pinned doc links in `tests/test_jev_fast_decision.py`), `skills/ai-kit-spec-review-fixer/`, `skills/ai-kit-usage-metrics/`; new: `evals/evals.json` and trigger queries per skill, unit tests; docs: each SKILL.md
 **Success Criteria** (what must be TRUE):
   1. Each of the five skills has `evals/evals.json`, about 20 trigger queries (half near-misses) and tests that run in the unit tier.
-  2. The re-judge report shows each of the five with no critical or high finding, or grade B or better, and no regression beyond judge variation.
+  2. The re-judge report shows each of the five with no critical or high finding, or grade B or better, and no regression beyond judge variation. *(amended 2026-11-07, 32 spec: this criterion is the judge bar, JDG-04)*
   3. `jev-fast-decision`'s skill text, scripts and tests no longer mention OpenCode Zen.
   4. `jev-fast-decision`'s SKILL.md has "read X when Y" pointers instead of "Required reading": the official `typesafe:typesafe-ai` skill's doc flow when it is installed (docs index, changelog, models page otherwise), for a new item shape, a new TypeSafe feature or a stale-looking capability fact; the Jev 1.14 facts are current, receipts record the versioned model id, nothing installs the official skill, and a doc-contract test pins the pointers (JEV-08). *(added 2026-11-07)*
   5. `jev-fast-decision`'s reference.md has a "Writing an item" section with the observable-judgment rule, the topics never to ask about (arithmetic, counting, dates, double negatives), the reordered re-ask for a close choice, a no-match option and the cheap yes/no screen before an expensive step, each pinned by a doc-contract test (JEV-09). *(added 2026-11-07)*
@@ -426,12 +445,14 @@ Plans:
 
 **Goal**: `ai-kit-spec-review`, `ai-kit-spec-review-checklist`, `ai-kit-spec-config` and `ai-kit-spec-execute` reach the judge bar with new-shape evals and tests, and the cheap-execution ranking works again.
 **Depends on**: Phase 32
-**Requirements**: HUB-04
+**Requirements**: HUB-04, DEF-09
+*(DEF-09 was added 2026-11-07 at the Phase 32 close-out.)*
 **Code anchors**: `skills/ai-kit-spec-review/` (`SKILL.md`, `evals/`), `skills/ai-kit-spec-review-checklist/`, `skills/ai-kit-spec-config/`, `skills/ai-kit-spec-execute/`; cheap-execution ranking in `skills/ai-kit-spec-review/ai_kit_spec/model_ranker.py` (`mechanical` weights and `coding_index` floor) and `references/ranking-weights.toml`; new: evals, null-index catalog fixture; docs: each SKILL.md
 **Success Criteria** (what must be TRUE):
   1. Each of the four skills has `evals/evals.json`, about 20 trigger queries (half near-misses) and tests that run in the unit tier.
-  2. The re-judge report shows each of the four with no critical or high finding, or grade B or better, and no regression beyond judge variation.
+  2. The re-judge report shows each of the four with no critical or high finding, or grade B or better, and no regression beyond judge variation. *(amended 2026-11-07, 32 spec: this criterion is the judge bar, JDG-04)*
   3. The cheap-execution ranking returns candidates from a catalog fixture where Artificial Analysis gives null coding and agentic indexes.
+  4. No runtime label or docstring in `skills/ai-kit-spec-review/ai_kit_spec/detection.py` names a planning file (today `20-SMOKE-OPENCODE.md`, `21-SMOKE-CURSOR.md` and `20-SMOKE-CODEX.md`, with `tests/test_ai_kit_spec_runtimes_table.py` pinning `21-SMOKE-CURSOR.md`), and a test fails when a string literal in shipped skill Python code names a file under a planning folder, which the Markdown-only history-text check of Phase 32 does not cover (DEF-09). *(added 2026-11-07, Phase 32 close-out)*
 
 **Plans**: TBD
 
@@ -443,7 +464,7 @@ Plans:
 **Code anchors**: `skills/ai-kit-spec-execute-superpowers/`, `skills/ai-kit-cross-ai/`, `skills/ai-kit-session-wake/`; secret-scanner copies in `skills/ai-kit-session-wake/ai_kit_session_wake/reset_parse.py`, `skills/ai-kit-spec-goal-prompt/scripts/gp_common.py`, `skills/ai-kit-spec-review/references/cross-ai.mjs` (`redactSecrets`), fourth copy unknown until research; new: one shared scanner (home must survive copy installs, DIST-03), evals; docs: each SKILL.md
 **Success Criteria** (what must be TRUE):
   1. Each of the three skills has `evals/evals.json`, about 20 trigger queries (half near-misses) and tests that run in the unit tier.
-  2. The re-judge report shows each of the three with no critical or high finding, or grade B or better, and no regression beyond judge variation.
+  2. The re-judge report shows each of the three with no critical or high finding, or grade B or better, and no regression beyond judge variation. *(amended 2026-11-07, 32 spec: this criterion is the judge bar, JDG-04)*
   3. One shared secret-shape scanner with more key shapes replaces the four copies; tests show every former caller catches the new shapes, and a copy install of each caller still works.
 
 **Plans**: TBD
@@ -452,9 +473,9 @@ Plans:
 
 **Goal**: `ai-kit-spec-goal-prompt`, `ai-kit-gsd-spec-discuss` and `ai-kit-gsd-curated-config` reach the judge bar with their known fixes, and the refreshed report shows every kept skill with evals and tests.
 **Depends on**: Phase 32.1, Phase 32.2, Phase 32.3
-**Requirements**: FLOW-08, FLOW-09, JDG-03, CUR-06, DEF-03, DEF-04, DEF-06, DEF-07, DEF-08
-*(DEF-08 was added 2026-11-07 by owner decision.)*
-**Code anchors**: `skills/ai-kit-spec-goal-prompt/scripts/` (`gp_render.py`, `gp_sections.py` refusal of long lines), `skills/ai-kit-gsd-spec-discuss/` (`SKILL.md`, `scripts/decide.py`), `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cli.py` (the `review.effort.opencode` write) and `presets.py`; new: evals for the three skills, closing re-judge report; goal-prompt rails in `skills/ai-kit-spec-goal-prompt/scripts/gp_sections.py` (`rail_sections`, `stop_lines`) with `tests/test_ai_kit_spec_goal_prompt_render.py`; goal-prompt entry `goal_prompt.py` (`build_parser`) for the spec-discuss handoff; spec-discuss analyze-mode and auto-mode text in its `SKILL.md`; docs: each SKILL.md
+**Requirements**: FLOW-08, FLOW-09, JDG-03, CUR-06, DEF-03, DEF-04, DEF-06, DEF-07, DEF-08, DEF-10
+*(DEF-08 was added 2026-11-07 by owner decision; DEF-10 was added 2026-11-07 at the Phase 32 close-out.)*
+**Code anchors**: `skills/ai-kit-spec-goal-prompt/scripts/` (`gp_render.py`, `gp_sections.py` refusal of long lines), `skills/ai-kit-gsd-spec-discuss/` (`SKILL.md`, `scripts/decide.py` *(amended 2026-11-07, 32 spec: deleted in Phase 29 (29 D-14); spec-discuss asks `jev-fast-decision` as a black box)*), `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cli.py` (the `review.effort.opencode` write) and `presets.py`; new: evals for the three skills, closing re-judge report; goal-prompt rails in `skills/ai-kit-spec-goal-prompt/scripts/gp_sections.py` (`rail_sections`, `stop_lines`) with `tests/test_ai_kit_spec_goal_prompt_render.py`; goal-prompt entry `goal_prompt.py` (`build_parser`) for the spec-discuss handoff; spec-discuss analyze-mode and auto-mode text in its `SKILL.md`; docs: each SKILL.md
 **Success Criteria** (what must be TRUE):
   1. goal-prompt wraps long lists and commands over several lines instead of refusing them.
   2. Each of the eight spec-discuss polish items has a fix and a pinned doc-contract test, including analyze-mode trade-offs written as one header per option with pros and cons bullets and interactive questions that first say what each named item is and who uses it.
@@ -464,6 +485,7 @@ Plans:
   6. goal-prompt's rails say when a run may ask the owner, forbid ending a turn with a waiting message while independent work remains, and require the local time, running step and start time in every progress ping, each pinned by a doc-contract test within the prompt's length caps.
   7. spec-discuss lists the recommended run mode first with `(Recommended)`, and its text documents the one-subagent-per-phase interactive relay (questions out in batches, answers back to the same subagent); doc-contract tests pin both.
   8. Before an auto-mode run starts, spec-discuss shows the owner a short summary of every requested item in the range and how it plans to resolve each one, and waits for the owner's go-ahead; a doc-contract test pins it (DEF-08). *(added 2026-11-07, owner decision)*
+  9. `tests/test_curated_config_e2e.py`'s `test_tracer_against_real_installed_gsd_tools` passes when `TMPDIR` points inside a GSD project checkout (today its fresh project then sits inside the checkout's project and apply refuses with `applied: false`): curated-config's behaviour for a new project nested inside another project is decided and tested, and the six-environment custom-tmpdir row runs in a clone that keeps `.planning/`, so it catches this case (DEF-10). *(added 2026-11-07, Phase 32 close-out)*
 
 **Plans**: TBD
 
@@ -488,11 +510,11 @@ Plans:
 **Depends on**: Phase 33
 **Requirements**: JEV-01, JEV-03, JEV-07, JEV-10, JEV-11
 *(JEV-10 and JEV-11 were added and JEV-03 amended 2026-11-07 from the owner's decisions on `.planning/research/2026-11-07-jev-vs-typesafe-ai.md`.)*
-**Code anchors**: `skills/jev-fast-decision/scripts/jev_review.py` (`LAYA_DEFAULT_URL`, `_laya_url`, `_backend_choice`, `_typesafe_key_sources`, `_keyed_remotes`, `probe_report`, `_laya_probe`, `_get_probe`, the capability `TABLE`); new: Laya known-features list and cache, `--check-updates`; the Laya server version (llm-env, outside ai-kit); `backends/laya.md`; `scripts/eval_cases.py` (`calibrate`, `_run_calibration`); the Phase 33 config reader; jev on/off knob read by `skills/ai-kit-gsd-spec-discuss/scripts/decide.py` (`find_client`, `client_ok`) and the Phase 29 shared client; docs: `skills/jev-fast-decision/SKILL.md`, `reference.md`, new: calibration how-to
+**Code anchors**: `skills/jev-fast-decision/scripts/jev_review.py` (`LAYA_DEFAULT_URL`, `_laya_url`, `_backend_choice`, `_typesafe_key_sources`, `_keyed_remotes`, `probe_report`, `_laya_probe`, `_get_probe`, the capability `TABLE`); new: Laya known-features list and cache, `--check-updates`; the Laya server version (llm-env, outside ai-kit); `backends/laya.md`; `scripts/eval_cases.py` (`calibrate`, `_run_calibration`); the Phase 33 config reader; jev on/off knob read by `skills/ai-kit-gsd-spec-discuss/scripts/decide.py` (`find_client`, `client_ok`) and the Phase 29 shared client; docs: `skills/jev-fast-decision/SKILL.md`, `reference.md`, new: calibration how-to *(amended 2026-11-07, 32 spec: `decide.py` was deleted in Phase 29 (29 D-14); `find_client` and `client_ok` now live in `skills/jev-fast-decision/scripts/jev_ladder.py`, the shared client)*
 **Success Criteria** (what must be TRUE):
   1. jev's probe shows the backend it picked on each host: Laya first at the URL from ai-kit's config (asked once on the first run when no Laya answers), TypeSafe from the environment, the home-file key fallback last; tests run in a scratch home; the probe names a missing key source and the multiplexer hint without printing a value, and the home-file fallback is removed once agent shells inherit the key (or kept with a recorded reason).
   2. A calibration run records Laya's accuracy against its floor and the re-judged opencode judge lane, and the calibration script has a documented how-to. *(amended 2026-11-07, owner decision, JEV-03: Laya is upgraded from 0.4.2 to 0.4.27, or the reason to stay is recorded, before the run; the run records confident-answer accuracy with the Laya version and checkpoint revision)*
-  3. `jev-fast-decision` keeps its judge result with no regression beyond judge variation.
+  3. `jev-fast-decision` keeps its judge result with no regression beyond judge variation. *(amended 2026-11-07, 32 spec: criterion 6 changes jev's SKILL.md, so the full judge bar applies: every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation)*
   4. With the jev knob off every skill behaves as if jev were not installed, and the knob is asked once when absent (scratch-home tests).
   5. jev's probe reads Laya's `/health` body and `/openapi.json`, caches them for 24 hours or until a checkpoint revision changes, and warns on each difference from the recorded known-features list without upgrading any capability cell to verified, labelling the package version not exposed; an on-demand `--check-updates` with a 7-day cache follows the official skill's doc flow and PyPI with public requests only and never runs on a normal call (fake-server tests, JEV-10). *(added 2026-11-07)*
   6. The skill text (SKILL.md's result recipe and `backends/laya.md`) states that a confident Laya answer is not proven accurate, citing the 32-case run that measured about half right when confident (JEV-03). *(added 2026-11-07)*
@@ -734,7 +756,7 @@ Plans:
   4. The delegation playbook time-boxes pieces to about 20-30 minutes with one verifiable result each, forbids extra spawned reviewers unless asked and says how to report running agents and shells; its brief header appears in every brief that spec-review, the superpowers adapter and goal-prompt generate.
   5. A recorded decision says where the shared quota logic lives (library, playbook or skill) for session-wake, the rules playbook and the runner; the quota playbook follows it, arms a wake at the reset before stopping, removes it when the run ends, and its pings give the local time, the running step and its start time.
   6. After a seeded hook failure on a fixture, the playbook re-runs only the failed check's target before the next commit, never `make validate`, and the hook output names that target (RULE-28). *(added 2026-11-04)*
-  7. On a fixture plan that starts a background process group, a container, a browser instance, a held lock and temporary files, plus an untracked, non-ignored scratch file in the working tree, the end-of-plan playbook lists each leftover against the start-of-unit snapshot with its owner and removal command, removes only what the run started, and reports the rest (RULE-29). *(added 2026-11-04)*
+  7. On a fixture plan that starts a background process group, a container, a browser instance, a held lock and temporary files, plus an untracked, non-ignored scratch file in the working tree, the end-of-plan playbook lists each leftover against the start-of-unit snapshot with its owner and removal command, removes only what the run started, and reports the rest (RULE-29). *(added 2026-11-04)* *(amended 2026-11-07, Phase 32 close-out: under a host rule that forbids deleting outside `tmp/`, the playbook moves the run's own `/tmp` leftovers into the repository's `tmp/` instead of deleting them, and the per-plan scope script in plan rails, which deletes its run folder and zero-byte `uv-*.lock` files in `/tmp`, is replaced by this playbook)*
   8. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 
 **Plans**: TBD
@@ -877,7 +899,7 @@ Plans:
 | 30.1. Setup wizard, component cards and host status-line panes | 6/6 | Complete    | 2026-11-06 |
 | 30.2. Cursor status-line parity | 5/5 | Complete    | 2026-11-06 |
 | 31. Removals and small defects | 6/6 | Complete    | 2026-11-06 |
-| 32. Re-judge baseline | 0/TBD | Not started | - |
+| 32. Re-judge baseline | 9/9 | Complete    | 2026-11-07 |
 | 32.1. Batch 1, general small skills | 0/TBD | Not started | - |
 | 32.2. Batch 2, spec review family | 0/TBD | Not started | - |
 | 32.3. Batch 3, execution and session skills | 0/TBD | Not started | - |
@@ -913,7 +935,7 @@ Plans:
 Open entries only. An entry a v2.0 requirement absorbs moves to **Absorbed into v2.0 phases**
 (moved there 2026-11-07: 999.2, 999.5, 999.7 to 999.17 and 999.19), with the requirement and phase
 that track it. 999.6 stays open (secondary runtime); 999.20 (Claude extra-usage segment) was added
-2026-11-07. The Playwright MCP Chrome path row in 999.1 is
+2026-11-07, and 999.21 (runner temp directories) at the Phase 32 close-out. The Playwright MCP Chrome path row in 999.1 is
 the FEAT-06 owner decision; the whole-tree layering suite once named 999.3 is ARCH-01 (Phase 52).
 Finished entries move to **Done** at the end of this section, with the date and what delivered them.
 
@@ -940,6 +962,23 @@ payload. Only if it does, add a Claude status-line segment that matches Cursor's
 (WIZ-04: the amount in bold red once spend reaches the limit, with an on/off toggle in the wizard).
 If it does not, record the finding and build nothing. Added 2026-11-07 by owner decision, from the
 open note in `.planning/todos/pending/2026-11-06-low-risk-review-and-judge-notes-from-phases-28-31.md`.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.21: The cross-AI runner removes the temp directories it creates (BACKLOG)
+
+**Goal:** [Captured for future planning] Every run of the cross-AI runner
+(`skills/ai-kit-spec-review/references/cross-ai.mjs`, `makeTemp`) leaves an empty `cross-ai-*` directory, and
+an indexed run an empty `xai-idx-*` directory, in the system temp folder; Phase 32's review and judge runs left
+about 100 of them in a few hours. The runner removes each temp directory it created when the run ends, on
+success, failure, timeout and signal alike, keeping any file it is told to keep elsewhere, and a runner
+self-test case proves that a run leaves no new entry in its temp folder. The rendered project copy follows
+through the template sync. Likely home: Phase 38 (runner hardening). Found 2026-11-07 at the Phase 32
+close-out; until then the orchestrator moves the leftovers into the repository's `tmp/`.
 **Requirements:** TBD
 **Plans:** 0 plans
 

@@ -59,7 +59,7 @@ A remote row at `consent_required_for_remote` (a `--probe` row's `reason`, a `de
 
 ## Required reading
 
-- [Jev 1.14 notes](https://typesafe.ai/blog/jev-1-14)
+- [Jev release notes](https://typesafe.ai/blog/jev-1-14)
 - [Primitives](https://docs.typesafe.ai/primitives)
 - [Images](https://docs.typesafe.ai/images)
 - [Confidence](https://docs.typesafe.ai/confidence)

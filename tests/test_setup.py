@@ -5521,37 +5521,6 @@ class TestReadFrontmatter(unittest.TestCase):
         self.assertEqual(setup._read_frontmatter(os.path.join(self.tmp, "absent.md")), {})
         self.assertEqual(setup._read_frontmatter(""), {})
 
-    def test_real_entries_have_a_name_and_a_description(self):
-        entries = setup.enumerate_entries(_REPO_ROOT)
-        seen = 0
-        for cat in ("skills", "agents", "commands"):
-            for entry, path in entries.get(cat, []):
-                with self.subTest(entry=f"{cat}/{entry}"):
-                    front = setup._read_frontmatter(path)
-                    self.assertTrue(front.get("description"), "empty description")
-                    self.assertTrue(front.get("name"), "no frontmatter name")
-                    # Agent Skills spec cap; a longer description is rejected or cut by hosts.
-                    self.assertLessEqual(len(front["description"]), 1024, "description > 1024")
-                    seen += 1
-        self.assertGreater(seen, 10)
-
-    def test_real_inline_descriptions_are_strict_yaml(self):
-        # A host's YAML parser rejects a plain (unquoted) value holding ': ' or ' #', and the
-        # skill then shows no description there (the project-rules agents/cicd/docker bug).
-        entries = setup.enumerate_entries(_REPO_ROOT)
-        for cat in ("skills", "agents", "commands"):
-            for entry, path in entries.get(cat, []):
-                md = os.path.join(path, "SKILL.md") if os.path.isdir(path) else path
-                with open(md, encoding="utf-8") as f:
-                    lines = f.read().splitlines()
-                for line in lines[1:lines.index("---", 1)]:
-                    value = line.removeprefix("description:").strip()
-                    plain = value[:1] not in ("", '"', "'", ">", "|")
-                    if line.startswith("description:") and plain:
-                        with self.subTest(entry=f"{cat}/{entry}"):
-                            self.assertNotIn(": ", value)
-                            self.assertNotIn(" #", value)
-
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestComponentMetaInContext(unittest.TestCase):

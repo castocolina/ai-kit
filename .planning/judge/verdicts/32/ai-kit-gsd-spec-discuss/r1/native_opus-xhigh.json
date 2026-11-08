@@ -1,0 +1,202 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": "native, xhigh (frontmatter, documented; not observed)",
+   "status_line": null,
+   "verdict_line": "{\"skill\":\"ai-kit-gsd-spec-discuss\",\"judge\":\"native:opus-xhigh\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":15,\"D2\":13,\"D3\":13,\"D4\":13,\"D5\":13,\"D6\":14,\"D7\":13,\"D8\":12},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":106,\"max_total\":125,\"percent\":84.8,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":256,\"evidence\":\"'NEVER treat a jev answer as the decision — log it as advisory; the decision is yours' repeats the mindset paragraph (lines 16-18), §3 line 198 ('It is never the decision on its own') and decision-table.md lines 11-12; the Evidence section (line 291, 'One real run scored the same item 0.74, then 0.67') repeats §3 line 206\",\"fix\":\"State the jev-is-advisory rule once in the mindset paragraph and once in decision-table.md, and delete the other restatements. Fold the 0.74/0.67 example into the §3 nondeterminism bullet and delete the separate Evidence section.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":241,\"evidence\":\"§7 Pacing ('A phase's analyzer must never start before that phase's spec step has finished') and §6 amendments sit after the phase steps they constrain, so the agent has to piece together the per-phase checkpoint order from §1, §2, §6 and §7\",\"fix\":\"Start §1 with a one-line per-phase order: fold start, spec workflow, jev, edge_floor floor/check, SPEC commit, analyzer, jev, CONTEXT+LOG+amendments commit. Move the §6 and §7 constraints into the steps they gate, so the Process pattern reads as one phased workflow with checkpoints.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":258,\"evidence\":\"'NEVER send code, diffs, file contents, config values or secrets to jev — summaries only, never a key, config value or file content in a jev item.' and line 267 'NEVER print or log a key — any key check is the jev-fast-decision skill's job' restate the rule instead of giving a reason. Environment facts (line 49 'it does not parse --ws itself', lines 73-74 'Bare config-get exits Key not found', lines 45-46 CLAUDE_ENV_FILE, lines 61-63 SPEC-newer false positive) are spread through the steps with no Gotchas section\",\"fix\":\"Give each of these NEVER items its real reason: where a jev item is sent and who can read it, and where a logged key ends up (the committed DISCUSSION-LOG). Collect the scattered environment facts into a short ## Gotchas section, keeping a one-line pointer at each step.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":3,\"evidence\":\"'Use when asked to spec and discuss several GSD phases unattended or in one run' leaves out single-phase runs, which the skill supports (--list, evals precise-auto-mode and edge-jev-absent, trigger query 'Spec and discuss phase 18 in auto mode'). The boundary names only plan-phase and execute-phase, not the near-miss neighbours in its own negatives (gsd-autonomous, goal-prompt files, a single discuss question). The description is also phrased in the third person with mechanics ('best-over-easy design rule')\",\"fix\":\"Use this skill to take one or more GSD phases through /gsd-spec-phase then /gsd-discuss-phase in one run (NN-SPEC.md, then NN-CONTEXT.md + NN-DISCUSSION-LOG.md), deciding gray areas with advisory answers from the `jev-fast-decision` skill, a logged decision trail, a deferred ledger and dated cross-phase amendments. Auto mode (spec --auto, assumptions-mode discuss) or interactive mode (the user answers). Use when asked to spec and discuss a phase or a range of phases, unattended or not ('spec/discuss phases 17-24', 'spec and discuss phase 18 in auto mode', 'run spec-phase and discuss-phase for every undiscussed phase', '--analyze --all --batch --assumptions'), or to settle GSD gray areas with jev before planning. Works without jev installed. Not for plan-phase, execute-phase, plan review, gsd-autonomous runs, goal-prompt files or a single discuss question.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":24,\"evidence\":\"The body is 291 dense lines, about 5,500 tokens, above the spec's recommended 5,000. §0 alone is 75 lines, including the 13-line resolver bash block (lines 26-37) and the --ws workstream branch (lines 47-53), which applies only when a workstream is in use\",\"fix\":\"Move the resolver bash block and the --ws/workstream handling into references/setup.md. Gate them: read the resolver once at run start, and read the workstream section only when --ws is passed or GSD_WORKSTREAM or a session pointer is active. Keep a three-line summary of step 1 and step 2 in the body.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":121,\"evidence\":\"'Live-verify before you write a claim: installed versions, real config keys, real CLI output in a scratch dir.' Unlike analyzer-brief.md lines 22-23 ('under <tmp path>, never in the user's real config dirs. Never print a secret'), the spec step does not say where the scratch dir goes or what must stay untouched, which is loose guidance for an operation that can touch real config\",\"fix\":\"Add to the §1 bullet: 'in a scratch dir under the system temp dir with HOME/XDG overrides, never in the user's real config dirs; never print a key value'. This matches the analyzer brief.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-gsd-spec-discuss/evals/evals.json\",\"line\":null,\"evidence\":\"Eight evals, but none covers the edge_floor gate (exit 1 drift, exit 2 fail closed), the 'SPEC newer' false-positive check, a cross-phase amendment, or an executed phase under an explicit range (roadmap-analyze.json has no complete phase). The edge-blocking-unresolved and edge-jev-absent prompts describe abstract situations ('One gray area blocks every later decision') instead of realistic inputs\",\"fix\":\"Add evals with input files for: an edge_floor check that exits 1 after an amendment (assert that check is re-run and no row is hand-written); a SPEC whose last commit only appended an amendment (assert the phase is dropped with a reason); and a roadmap with an executed phase in an explicit range (assert the agent asks for confirmation first). Give the blocking eval a concrete SPEC and gray area.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-gsd-spec-discuss/evals/trigger-queries.json\",\"line\":3,\"evidence\":\"All 20 queries are clean, formal one-liners with no file paths, typos or personal context, and several positives copy the description verbatim ('Run spec-phase and discuss-phase for every undiscussed phase in the roadmap.')\",\"fix\":\"Rewrite about half the queries with realistic context, for example 'ok phases 20-23 still have no context files in .planning/phases, can u spec+discuss them overnight and leave me the open questions'. Add positives that never say spec or discuss, and casual negatives such as 'jev, quick: postgres or sqlite for the phase 14 cache?'.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":52,\"evidence\":\"Step 2: 'the first phase's `init.phase-op` gives `state_path` and `phase_dir`; pass the parent of `phase_dir` to `phase_range.py --phases-root`'. But step 4's commands (lines 59-60) omit --phases-root, and without an explicit range the first phase is known only after phase_range.py runs. On the no-range path with an active workstream, the agent has to guess which phase to query\",\"fix\":\"In step 2, call `init.phase-op` on the first roadmap phase (or the explicit --from/--list head) only to get the phases root, then add `--phases-root <parent of phase_dir>` to both phase_range.py command lines in step 4.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":78,\"evidence\":\"Step 7: 'Without it: read the project mode ... then **ask the user once**'. A request the description itself names as a trigger ('spec/discuss phases 17-24 unattended') carries no literal --auto flag, so on this branch the run stops for an answer the user is not there to give\",\"fix\":\"Treat an explicit 'unattended', 'auto' or 'overnight' request, like the --auto flag, as choosing the auto path and log the choice. Ask the run-mode question only when the request is silent about attendance.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":131,\"evidence\":\"'Exit 2 means node or the engine is missing — fail closed: stop the spec step for this phase' does not say whether the phase's discuss step and the later phases (which stack on this one) still run\",\"fix\":\"Add: 'skip this phase's discuss step, ledger it as blocked, and stop the run when a later in-range phase stacks on it; otherwise continue with the next phase and show the skip in the end report.'\"}]}"
+  }
+ ],
+ "digest": "8d13c39e068959973ea85e558821093bd6a59c0c2681cec31fb4071134fbfb89",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "native:opus-xhigh",
+ "loop": "32",
+ "modules": [
+  "tests/test_ai_kit_caller_text.py",
+  "tests/test_ai_kit_gsd_spec_discuss.py",
+  "tests/test_ai_kit_gsd_spec_discuss_e2e.py",
+  "tests/test_ai_kit_spec_goal_prompt_common.py",
+  "tests/test_ai_kit_spec_goal_prompt_golden.py",
+  "tests/test_ai_kit_spec_gsd_tools.py",
+  "tests/test_check_dogfood.py",
+  "tests/test_flow_docs.py",
+  "tests/test_gate_scope.py",
+  "tests/test_jev_fast_decision.py"
+ ],
+ "prompt_sha256": "047fbc8e375c27e2a4e37b1f72c47dd722561e3f160a80f3a2c765c857bfad30",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "ai-kit-gsd-spec-discuss",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": {
+  "reason": "failed: AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=57s out=274150 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+  "replaces": "opencode:router-env/my-referee-two"
+ },
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "'NEVER treat a jev answer as the decision — log it as advisory; the decision is yours' repeats the mindset paragraph (lines 16-18), §3 line 198 ('It is never the decision on its own') and decision-table.md lines 11-12; the Evidence section (line 291, 'One real run scored the same item 0.74, then 0.67') repeats §3 line 206",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "State the jev-is-advisory rule once in the mindset paragraph and once in decision-table.md, and delete the other restatements. Fold the 0.74/0.67 example into the §3 nondeterminism bullet and delete the separate Evidence section.",
+    "id": "D1-1",
+    "line": 256,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "§7 Pacing ('A phase's analyzer must never start before that phase's spec step has finished') and §6 amendments sit after the phase steps they constrain, so the agent has to piece together the per-phase checkpoint order from §1, §2, §6 and §7",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "Start §1 with a one-line per-phase order: fold start, spec workflow, jev, edge_floor floor/check, SPEC commit, analyzer, jev, CONTEXT+LOG+amendments commit. Move the §6 and §7 constraints into the steps they gate, so the Process pattern reads as one phased workflow with checkpoints.",
+    "id": "D2-1",
+    "line": 241,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "'NEVER send code, diffs, file contents, config values or secrets to jev — summaries only, never a key, config value or file content in a jev item.' and line 267 'NEVER print or log a key — any key check is the jev-fast-decision skill's job' restate the rule instead of giving a reason. Environment facts (line 49 'it does not parse --ws itself', lines 73-74 'Bare config-get exits Key not found', lines 45-46 CLAUDE_ENV_FILE, lines 61-63 SPEC-newer false positive) are spread through the steps with no Gotchas section",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "Give each of these NEVER items its real reason: where a jev item is sent and who can read it, and where a logged key ends up (the committed DISCUSSION-LOG). Collect the scattered environment facts into a short ## Gotchas section, keeping a one-line pointer at each step.",
+    "id": "D3-1",
+    "line": 258,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "'Use when asked to spec and discuss several GSD phases unattended or in one run' leaves out single-phase runs, which the skill supports (--list, evals precise-auto-mode and edge-jev-absent, trigger query 'Spec and discuss phase 18 in auto mode'). The boundary names only plan-phase and execute-phase, not the near-miss neighbours in its own negatives (gsd-autonomous, goal-prompt files, a single discuss question). The description is also phrased in the third person with mechanics ('best-over-easy design rule')",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "Use this skill to take one or more GSD phases through /gsd-spec-phase then /gsd-discuss-phase in one run (NN-SPEC.md, then NN-CONTEXT.md + NN-DISCUSSION-LOG.md), deciding gray areas with advisory answers from the `jev-fast-decision` skill, a logged decision trail, a deferred ledger and dated cross-phase amendments. Auto mode (spec --auto, assumptions-mode discuss) or interactive mode (the user answers). Use when asked to spec and discuss a phase or a range of phases, unattended or not ('spec/discuss phases 17-24', 'spec and discuss phase 18 in auto mode', 'run spec-phase and discuss-phase for every undiscussed phase', '--analyze --all --batch --assumptions'), or to settle GSD gray areas with jev before planning. Works without jev installed. Not for plan-phase, execute-phase, plan review, gsd-autonomous runs, goal-prompt files or a single discuss question.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "The body is 291 dense lines, about 5,500 tokens, above the spec's recommended 5,000. §0 alone is 75 lines, including the 13-line resolver bash block (lines 26-37) and the --ws workstream branch (lines 47-53), which applies only when a workstream is in use",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "Move the resolver bash block and the --ws/workstream handling into references/setup.md. Gate them: read the resolver once at run start, and read the workstream section only when --ws is passed or GSD_WORKSTREAM or a session pointer is active. Keep a three-line summary of step 1 and step 2 in the body.",
+    "id": "D5-1",
+    "line": 24,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "'Live-verify before you write a claim: installed versions, real config keys, real CLI output in a scratch dir.' Unlike analyzer-brief.md lines 22-23 ('under <tmp path>, never in the user's real config dirs. Never print a secret'), the spec step does not say where the scratch dir goes or what must stay untouched, which is loose guidance for an operation that can touch real config",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "Add to the §1 bullet: 'in a scratch dir under the system temp dir with HOME/XDG overrides, never in the user's real config dirs; never print a key value'. This matches the analyzer brief.",
+    "id": "D6-1",
+    "line": 121,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "Eight evals, but none covers the edge_floor gate (exit 1 drift, exit 2 fail closed), the 'SPEC newer' false-positive check, a cross-phase amendment, or an executed phase under an explicit range (roadmap-analyze.json has no complete phase). The edge-blocking-unresolved and edge-jev-absent prompts describe abstract situations ('One gray area blocks every later decision') instead of realistic inputs",
+    "file": "skills/ai-kit-gsd-spec-discuss/evals/evals.json",
+    "fix": "Add evals with input files for: an edge_floor check that exits 1 after an amendment (assert that check is re-run and no row is hand-written); a SPEC whose last commit only appended an amendment (assert the phase is dropped with a reason); and a roadmap with an executed phase in an explicit range (assert the agent asks for confirmation first). Give the blocking eval a concrete SPEC and gray area.",
+    "id": "D7-1",
+    "line": null,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "All 20 queries are clean, formal one-liners with no file paths, typos or personal context, and several positives copy the description verbatim ('Run spec-phase and discuss-phase for every undiscussed phase in the roadmap.')",
+    "file": "skills/ai-kit-gsd-spec-discuss/evals/trigger-queries.json",
+    "fix": "Rewrite about half the queries with realistic context, for example 'ok phases 20-23 still have no context files in .planning/phases, can u spec+discuss them overnight and leave me the open questions'. Add positives that never say spec or discuss, and casual negatives such as 'jev, quick: postgres or sqlite for the phase 14 cache?'.",
+    "id": "D7-2",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "Step 2: 'the first phase's `init.phase-op` gives `state_path` and `phase_dir`; pass the parent of `phase_dir` to `phase_range.py --phases-root`'. But step 4's commands (lines 59-60) omit --phases-root, and without an explicit range the first phase is known only after phase_range.py runs. On the no-range path with an active workstream, the agent has to guess which phase to query",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "In step 2, call `init.phase-op` on the first roadmap phase (or the explicit --from/--list head) only to get the phases root, then add `--phases-root <parent of phase_dir>` to both phase_range.py command lines in step 4.",
+    "id": "D8-1",
+    "line": 52,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "Step 7: 'Without it: read the project mode ... then **ask the user once**'. A request the description itself names as a trigger ('spec/discuss phases 17-24 unattended') carries no literal --auto flag, so on this branch the run stops for an answer the user is not there to give",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "Treat an explicit 'unattended', 'auto' or 'overnight' request, like the --auto flag, as choosing the auto path and log the choice. Ask the run-mode question only when the request is silent about attendance.",
+    "id": "D8-2",
+    "line": 78,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'Exit 2 means node or the engine is missing — fail closed: stop the spec step for this phase' does not say whether the phase's discuss step and the later phases (which stack on this one) still run",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "Add: 'skip this phase's discuss step, ledger it as blocked, and stop the run when a later in-range phase stacks on it; otherwise continue with the next phase and show the skip in the end report.'",
+    "id": "D8-3",
+    "line": 131,
+    "severity": "low"
+   }
+  ],
+  "grade": "B",
+  "judge": "native:opus-xhigh",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 84.8,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 15,
+   "D2": 13,
+   "D3": 13,
+   "D4": 13,
+   "D5": 13,
+   "D6": 14,
+   "D7": 13,
+   "D8": 12
+  },
+  "skill": "ai-kit-gsd-spec-discuss",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 106
+ }
+}
