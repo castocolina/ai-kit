@@ -2,6 +2,17 @@
 
 Resolve the client as `scripts/jev_review.py` relative to this skill's root.
 
+## Docs flow
+
+Read in this order when the pointer in SKILL.md applies: the installed `typesafe:typesafe-ai` skill's live-docs flow; otherwise `https://docs.typesafe.ai/llms.txt` (the docs index), then `https://docs.typesafe.ai/changelog.md`, then `https://docs.typesafe.ai/models.md`.
+
+Pages the skill cites:
+
+- Release notes: `https://typesafe.ai/blog/jev-1-14`
+- Primitives: `https://docs.typesafe.ai/primitives`
+- Images: `https://docs.typesafe.ai/images`
+- Confidence: `https://docs.typesafe.ai/confidence`
+
 ## Request shape
 
 ```json
@@ -30,6 +41,16 @@ python3 -B scripts/jev_review.py <<'JSON'
   "criteria": ["cosmetic","minor","major","critical"]}]}
 JSON
 ```
+
+## Writing an item
+
+- Ask an observable judgment and let the agent decide: ask whether the log shows a timeout, not whether to retry.
+- Never ask about arithmetic, counting, dates or durations, and never with a double negative.
+- Re-ask a close `choice` with the options reordered and compare the answers: choice leans toward the first option.
+- Give a `choice` a no-match option (for example `none of these`).
+- Run a cheap `noul` screen before an expensive step.
+- An item with nothing to judge gets a confident-looking, meaningless answer: put the material in the item.
+- Size guards, in characters of the sent state (its JSON text): a TypeSafe batch holds every item in one state, and past 8,000 characters every answer of that one request comes back forced with `needs_fallback`. The 8,000-character figure is ai-kit's own guard, not a TypeSafe limit (TypeSafe documents 64k tokens per request). A Laya item past 2,000 characters is forced the same way; that 2,000-character guard is ai-kit's own too. Keep each item short and summary-only, or send fewer items per request.
 
 ## Response shape
 
@@ -64,7 +85,7 @@ Every answer also carries `model` (what answered it), `backend`, `top` (the winn
 
 ## Receipts
 
-Keep results in durable artifacts as advisory evidence, never in a verdict field: `reviewed_head`, `request_sha256`, `model`, per-item answers, `usage`. `request_sha256` is the sha256 over the concatenation of the exact request bodies sent, in send order; each answer's own `request_sha256` names the body it came from. Reuse a recorded receipt instead of re-calling when the exact request and revision are unchanged.
+Keep results in durable artifacts as advisory evidence, never in a verdict field: `reviewed_head`, `request_sha256`, `model`, per-item answers, `usage`. `request_sha256` is the sha256 over the concatenation of the exact request bodies sent, in send order; each answer's own `request_sha256` names the body it came from. Reuse a recorded receipt instead of re-calling when the exact request and revision are unchanged. Each answer's `model`, its trail entry's `model` and its answer-log line's `model` are the versioned id the server answered with (for example `jev-1.14.0`), never the requested alias (`jev-latest`).
 
 ## Answer log
 
@@ -110,7 +131,8 @@ One item per request: Laya reads the whole `state` for every question, so batchi
 
 - Images are supported by the API (`TypeSafe-Danger-Zone-Images: true`; PNG/JPEG, 280–1568 px, 16 MiB/file, 32 MiB/request) — but this client has no image builder, so such items return `unsupported_feature`.
 - Jev 1.14 adds a `box` type (one bounding box) and a long-context flag (`TypeSafe-Danger-Zone-Long-Context: true` → 262k). No builder here either.
-- Versions: 1.14.0 ships as `jev-preview`; `jev-latest` moves to it about a week after release; 1.13.0 stays available.
+- Versions: `jev-latest` and `jev-preview` both point to `jev-1.14.0` (no preview build exists right now; docs.typesafe.ai/models.md, checked 2026-11-07). An alias moves when a new release ships, so its answers can change with no change on your side; 1.13.0 stays available.
+- Context: 64k tokens per request (the state plus every question) and 32k per question (the state plus one); the `TypeSafe-Danger-Zone-Long-Context: true` header raises both to 262k (not built here).
 - Answers: `choice`/`score` carry `probabilities` and a spread-derived `confidence` (1 = all mass on one outcome); it is not a calibration guarantee. `noul` has none — use `p` or |2p−1|.
 
 ## Capability matrix (as of 2026-10-18)
@@ -158,7 +180,7 @@ In each root the entry point is `jev-fast-decision/scripts/jev_review.py`; the f
 
 ## Red Flags (full text)
 
-Verbatim rationalizations from the RED baseline arms (2026-10-19); SKILL.md quotes each trigger phrase and points here:
+Verbatim rationalizations from the RED baseline arms (2026-10-19); SKILL.md's NEVER list quotes each trigger phrase:
 
 - "The key is set" — a S3 arm planned a TypeSafe-direct fallback on the configured key with no consent step: *"I'd skip it and move on to the fallback ladder: Laya, then TypeSafe direct, then my own reasoning."* A configured key is not consent.
 - "The ladder says TypeSafe next" — the same arms treated the ladder's next rung as authorization: *"I'd treat the 429 as a rung failure and drop to the next rung of the decision ladder: Laya first, then TypeSafe direct."* The ladder's order is not a consent decision; the user grants remote rungs.

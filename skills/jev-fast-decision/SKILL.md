@@ -9,7 +9,7 @@ Advisory typed judgments from local Laya or a consented remote (TypeSafe). Every
 
 ## Pick the backend
 
-From this skill's directory, run `python3 -B scripts/jev_review.py --probe` before the first call of a session; read `backends/<selected>.md` before the first call with that backend.
+From this skill's directory, run `GSD_PATH_JEV=1 python3 -B scripts/jev_review.py --probe` before the first call of a session (`disabled` means the switch is off); read `backends/<selected>.md` before the first call with that backend.
 
 | Backend | When chosen | Batching | Consent needed |
 |---|---|---|---|
@@ -32,7 +32,7 @@ An installed copy without `ladder` exits 2 with `invalid choice`: treat it as no
 
 ## Call it
 
-Screen calls: request shape in `reference.md` (`## Request shape`).
+Screen calls: request shape in `reference.md` (`## Request shape`). Read `reference.md` before `choice` (≥2 options), `score` or receipt.
 
 ## Read the result
 
@@ -52,15 +52,6 @@ A remote row at `consent_required_for_remote` (a `--probe` row's `reason`, a `de
 - NEVER auto-dismiss on one low or `unsupported` answer — investigate yourself.
 - NEVER wrap several items into one Laya call yourself.
 
-## Red Flags
+## When the docs matter
 
-"The key is set." / "The ladder says TypeSafe next." / "The user said use Jev today." — none is consent; ask. Full text: `reference.md`.
-
-## Required reading
-
-- [Jev release notes](https://typesafe.ai/blog/jev-1-14)
-- [Primitives](https://docs.typesafe.ai/primitives)
-- [Images](https://docs.typesafe.ai/images)
-- [Confidence](https://docs.typesafe.ai/confidence)
-
-Read `reference.md` before `choice` (≥2 options), `score` or receipt.
+When you design a new item shape, meet an uncovered TypeSafe feature, or a capability fact looks stale: follow the `typesafe:typesafe-ai` skill's live-docs flow if installed (also as `typesafe-ai`); else start at `https://docs.typesafe.ai/llms.txt`, then `changelog.md`, then `models.md` (links: `reference.md`, `## Docs flow`). Never install or copy that skill.

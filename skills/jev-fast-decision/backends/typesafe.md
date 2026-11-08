@@ -9,12 +9,12 @@ leaves the machine.
 - URL: `POST https://api.typesafe.ai/v1/systemone` (override `JEV_TYPESAFE_URL`, which must be
   `https`: any other URL is refused as `insecure_url`); the probe is a bearer `GET /v1/models`
   on the same origin — it checks the key before any question is sent.
-- Request model: `jev-latest`. **The alias moves**: `jev-preview` is 1.14.0, and `jev-latest`
-  moves onto it about a week after a release; `jev-1.13.0` stays available for a while.
-  Versioned request ids are documented (`docs.typesafe.ai/models`, cited 2026-10-18) but not
-  live-tested here — pin with `JEV_TYPESAFE_MODEL` if you need a fixed id. Responses fullmatch
-  `jev-<version>` (`jev-1.13.0`, `jev-1.14.0-preview`; SPEC R5): the response names the
-  versioned id that answered, whatever alias was asked for.
+- Request model: `jev-latest`. **The alias moves** when a new release ships:
+  `jev-latest` and `jev-preview` both point to `jev-1.14.0` (docs.typesafe.ai/models, checked
+  2026-11-07). Versioned request ids are documented but not live-tested here; pin one with
+  `JEV_TYPESAFE_MODEL` if you need a fixed id. Responses fullmatch `jev-<version>` (`jev-1.13.0`,
+  `jev-1.14.0`, `jev-1.14.0-preview`): the response names the versioned id that answered,
+  whatever alias was asked for.
 - Key sources, in order: `TYPESAFE_API_KEY`, `JEV_API_KEY`, the first line of the file
   `JEV_API_KEY_FILE` names, a `TYPESAFE_API_KEY=` or `JEV_API_KEY=` line in
   `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, then the first line of

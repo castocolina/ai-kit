@@ -2258,6 +2258,72 @@ def _eval():
     return module
 
 
+class TestReceipts(_ClientCase):
+    """SPEC R8 / D-11: every receipt names the versioned id the server answered with."""
+
+    def test_versioned_id_in_answer_trail_and_log(self):
+        with JevStub(model="jev-1.14.0") as stub:
+            self.point_remote("typesafe", stub)
+            self.enable_remote("typesafe")
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(stub.bodies[0]["model"], "jev-latest")
+        self.assertEqual(result["answers"]["a"]["model"], "jev-1.14.0")
+        self.assertEqual(result["trail"]["a"][-1]["model"], "jev-1.14.0")
+        log = Path(JR.answer_log_path()).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(json.loads(log[-1])["model"], "jev-1.14.0")
+
+
+class TestOverGuardBatch(_ClientCase):
+    """SPEC R10 / D-24: a TypeSafe batch is one request; past the guard every answer is forced."""
+
+    @staticmethod
+    def padded_payload(total):
+        """Two noul items whose request state is exactly `total` characters (ASCII: one each)."""
+        first, second = noul_item("a"), noul_item("b")
+        measured = JR._state_chars(JR.request_body(payload(first, second), "jev-latest")[0])
+        first["context"] += "x" * (total - measured)
+        return payload(first, second)
+
+    def run_typesafe_batch(self, value):
+        with JevStub(model="jev-1.14.0") as stub:
+            self.point_remote("typesafe", stub)
+            self.enable_remote("typesafe")
+            result = self.run_screen(value)
+        return result, stub
+
+    def test_batch_at_the_guard_is_sent_whole_and_not_forced(self):
+        result, stub = self.run_typesafe_batch(self.padded_payload(8000))
+        self.assertEqual(JR._state_chars(stub.bodies[0]), 8000)
+        self.assertEqual(len(stub.posts), 1)
+        self.assertEqual(set(result["answers"]), {"a", "b"})
+        self.assertFalse(any(answer["forced"] for answer in result["answers"].values()))
+
+    def test_batch_over_the_guard_is_one_request_with_every_answer_forced(self):
+        result, stub = self.run_typesafe_batch(self.padded_payload(8001))
+        self.assertEqual(JR._state_chars(stub.bodies[0]), 8001)
+        self.assertEqual(len(stub.posts), 1)
+        self.assertEqual(set(result["answers"]), {"a", "b"})
+        for answer in result["answers"].values():
+            self.assertTrue(answer["forced"])
+            self.assertTrue(answer["needs_fallback"])
+
+    def test_no_consent_sends_nothing(self):
+        with JevStub() as stub:
+            self.point_remote("typesafe", stub)
+            self.enable("typesafe")
+            os.environ["TYPESAFE_API_KEY"] = "typesafe-key"
+            self.run_screen(payload(noul_item("a")))
+        self.assertEqual(stub.requests, [])
+
+    def test_empty_item_list_makes_no_request(self):
+        with JevStub() as stub:
+            self.point_remote("typesafe", stub)
+            self.enable_remote("typesafe")
+            result = self.run_screen({"reviewed_head": HEAD, "items": []})
+        self.assertEqual(stub.requests, [])
+        self.assertNotIn("answers", result)
+
+
 class TestDocs(unittest.TestCase):
     """Doc tests (tag `doc`): the shipped documents cannot drift from the client table."""
 
@@ -2292,10 +2358,58 @@ class TestDocs(unittest.TestCase):
         # the plan's awk rule: words after the closing frontmatter `---`
         self.assertLess(len(self.body.split()), 500)
 
-    def test_doc_required_reading(self):
+    def test_doc_links_live_in_reference(self):
         for url in ("https://typesafe.ai/blog/jev-1-14", "https://docs.typesafe.ai/primitives",
                     "https://docs.typesafe.ai/images", "https://docs.typesafe.ai/confidence"):
-            self.assertIn(url, self.skill_text)
+            self.assertIn(url, self.reference_text)
+        self.assertNotIn("## Required reading", self.skill_text)
+
+    def test_doc_pointer_both_branches(self):
+        for needle in ("`typesafe:typesafe-ai`", "`typesafe-ai`",
+                       "https://docs.typesafe.ai/llms.txt"):
+            self.assertIn(needle, self.body)
+        positions = [self.body.index(name) for name in ("llms.txt", "changelog.md", "models.md")]
+        self.assertLess(positions[0], positions[1])
+        self.assertLess(positions[1], positions[2])
+
+    def test_doc_docs_flow_order(self):
+        section = _section(self.reference_text, "## Docs flow")
+        urls = ("https://docs.typesafe.ai/llms.txt", "https://docs.typesafe.ai/changelog.md",
+                "https://docs.typesafe.ai/models.md")
+        positions = [section.index(url) for url in urls]
+        self.assertLess(positions[0], positions[1])
+        self.assertLess(positions[1], positions[2])
+
+    def test_doc_probe_command(self):
+        self.assertIn("GSD_PATH_JEV=1 python3 -B scripts/jev_review.py --probe", self.body)
+        self.assertIn("`disabled`", self.body)
+
+    def test_doc_alias_facts(self):
+        typesafe_md = self.SKILL_MD.parent / "backends" / "typesafe.md"
+        for text in (self.reference_text, typesafe_md.read_text(encoding="utf-8")):
+            self.assertIn("`jev-latest` and `jev-preview` both point to `jev-1.14.0`", text)
+            self.assertNotIn("about a week", text)
+        self.assertIn("64k", self.reference_text)
+        self.assertIn("32k", self.reference_text)
+
+    def test_doc_receipt_names_the_versioned_id(self):
+        section = _section(self.reference_text, "## Receipts")
+        self.assertIn("versioned id", section)
+        self.assertIn("never the requested alias", section)
+
+    def test_doc_writing_an_item(self):
+        section = _section(self.reference_text, "## Writing an item")
+        for needle in ("observable judgment", "arithmetic", "counting", "dates",
+                       "double negative", "reordered", "no-match", "cheap", "screen",
+                       "nothing to judge", "characters", "needs_fallback",
+                       "ai-kit's own guard, not a TypeSafe limit"):
+            self.assertIn(needle, section)
+        typesafe_limit = JR.row_named("typesafe")["state_chars_limit"]
+        laya_limit = JR.row_named("laya")["state_chars_limit"]
+        self.assertEqual((typesafe_limit, laya_limit), (8000, 2000))
+        self.assertIn(f"{typesafe_limit:,}", section)
+        self.assertIn(f"{laya_limit:,}", section)
+        self.assertNotIn("about 8", section)
 
     def test_doc_recipes(self):
         self.assertIn("--probe", self.body)
@@ -3103,6 +3217,19 @@ class TestLadderCli(_TmpHome):
         for identifier in ("sure1", "low1", "low2"):
             columns = set(result["items"][identifier]) - {"decided_by"}
             self.assertEqual(columns, {"laya", "typesafe"})
+
+    def test_ladder_column_carries_the_versioned_model(self):
+        # SPEC R8 / D-11: the ladder column names the versioned id, never the requested alias.
+        with (JevStub(tops={"low1": 0.5}) as laya, JevStub(model="jev-1.14.0") as remote):
+            extra = {"JEV_LAYA_URL": laya.url,
+                     "JEV_TYPESAFE_URL": f"http://127.0.0.1:{remote.port}",
+                     "TYPESAFE_API_KEY": SENTINEL}
+            granted = self.grant_typesafe(**extra)
+            self.assertTrue(granted["ok"])
+            result, _ = self.ladder([choice_item_ladder("low1")], **extra)
+            request_models = [body["model"] for body in remote.bodies]
+        self.assertEqual(request_models, ["jev-latest"])
+        self.assertEqual(result["items"]["low1"]["typesafe"]["model"], "jev-1.14.0")
 
     def test_ladder_no_consent_zero_remote(self):
         environ_before = dict(os.environ)
