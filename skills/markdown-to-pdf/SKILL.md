@@ -51,9 +51,10 @@ Flags (defaults are tuned — reach for these only when the situation demands):
 | User wants slides | Use the marp deck path (below). |
 | Exit code 3 (no backend) | Show the printed install command as-is; never auto-install. |
 | Exit code 2 (mermaid failed) | Show mmdc's error; user fixes the source block at the named line. Nothing was emitted. |
+| Exit code 4 (backend failed) | The backend ran and failed; stderr holds its error (`<backend> failed: ...` or `marp failed: ...`). Show it; fix what it names, or pick another backend with `--backend`. Nothing was written. |
 | Diagram looks low-res in the PDF | It's already `-s 3` (high-DPI PNG). For vector sharpness use `--format svg` — but ONLY if the backend is `typst` or `chromium`. |
 | SVG render fails under `pandoc-latex` | That backend needs `rsvg-convert` on PATH. Re-run with `--format png` (the default) or install librsvg. |
-| Chromium/`md-to-pdf` won't launch (container/CI) | Headless Chrome needs `--no-sandbox`; use an environment that allows it or pick another backend. |
+| Chromium/`md-to-pdf` exits 4 in a container | The script already launches Chrome with `--no-sandbox`; read the backend error, or pick another backend with `--backend`. |
 
 ## Marp deck path — slides
 
@@ -72,6 +73,12 @@ you, not by any script — see the portability landmine):
   python3 scripts/markdown_to_pdf.py --deck <source.md> [--to pdf|pptx|html]
   ```
   Requires marp-cli (`pnpm add -g @marp-team/marp-cli`). Deck diagrams default to SVG.
+  The deck runs with marp's `--allow-local-files`. For `pdf` and `pptx` the script
+  rewrites relative image links to absolute paths, so your local images and the
+  diagrams are embedded. `--to html` keeps your relative image links as written, so
+  they resolve beside the output HTML (write the deck next to its images, or copy them
+  along), and writes its diagrams to `<output stem>-assets/` beside the HTML; keep that
+  folder with the file.
 
 ## Never
 

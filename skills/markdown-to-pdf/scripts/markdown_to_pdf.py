@@ -5,6 +5,7 @@ Non-destructive: the source .md is never modified; all work happens on a copy in
 a temp dir. The final PDF lands alongside the source (or a user path)."""
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -17,15 +18,24 @@ import detect_backends
 import render_mermaid
 
 _PANDOC_ENGINE = {"typst": "typst", "weasyprint": "weasyprint"}
+# the same sandbox flags render_mermaid gives mmdc
+CHROME_LAUNCH_OPTIONS = '{"args":["--no-sandbox","--disable-setuid-sandbox"]}'
+# a markdown image destination: `<...>` or a run of non-space, non-`)` characters
+_IMAGE = re.compile(r"(!\[[^\]]*\]\()(<[^>]*>|[^)\s]+)")
+_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
-def build_command(backend_name, in_md, out_pdf, engine=None):
+def build_command(backend_name, in_md, out_pdf, engine=None, resource_dir=None):
     if backend_name == "chromium":
-        return ["md-to-pdf", in_md, "--output", out_pdf]
+        # md-to-pdf has no output flag: it writes <stem>.pdf beside its input
+        return ["md-to-pdf", in_md, "--basedir", os.path.abspath(os.sep),
+                "--launch-options", CHROME_LAUNCH_OPTIONS]
     cmd = ["pandoc", in_md, "-o", out_pdf]
     eng = engine or _PANDOC_ENGINE.get(backend_name)
     if eng:
         cmd.append(f"--pdf-engine={eng}")
+    if resource_dir:
+        cmd.append(f"--resource-path={resource_dir}")
     return cmd
 
 
@@ -38,6 +48,23 @@ def _resolve_engine(backend, which=shutil.which):
     return _PANDOC_ENGINE.get(backend.name)
 
 
+def _absolutize_images(text, src_dir):
+    """Rewrite relative local image links to absolute paths under src_dir.
+
+    The copy the converter renders lives in a temp folder, so a relative link would
+    resolve there. URLs, data URIs, absolute paths and `#` anchors pass through."""
+    def fix(m):
+        dest = m.group(2)
+        inner = dest[1:-1] if dest.startswith("<") else dest
+        if not inner or inner[0] in "/#" or _SCHEME.match(inner):
+            return m.group(0)
+        path = os.path.normpath(os.path.join(src_dir, inner))
+        if " " in path:
+            path = f"<{path}>"
+        return m.group(1) + path
+    return _IMAGE.sub(fix, text)
+
+
 Result = namedtuple("Result", "backend renderer out")
 
 
@@ -45,6 +72,10 @@ class BackendUnavailable(Exception):
     def __init__(self, recommend):
         self.recommend = recommend
         super().__init__("no Markdown->PDF backend available")
+
+
+class BackendFailed(RuntimeError):
+    """A backend ran and failed; main() prints its error and returns 4."""
 
 
 class ConvertOptions(NamedTuple):
@@ -69,16 +100,10 @@ def _select_backend(backend_name, which):
     return sel.backend
 
 
-def _run_pdf_command(chosen, copy_md, tmp_pdf, which, run):
-    cmd = build_command(
-        chosen.name,
-        copy_md,
-        tmp_pdf,
-        engine=_resolve_engine(chosen, which),
-    )
+def _run_pdf_command(name, cmd, run):
     p = run(cmd, capture_output=True, text=True, check=False)
     if p.returncode != 0:
-        raise RuntimeError(f"{chosen.name} failed: {(p.stderr or p.stdout).strip()}")
+        raise BackendFailed(f"{name} failed: {(p.stderr or p.stdout).strip()}")
 
 
 def _finalize_output(tmp_path, out_path):
@@ -101,12 +126,21 @@ def _convert_with_options(src_md, opts):
     work = tempfile.mkdtemp(prefix="markdown-to-pdf-")
     try:
         new_text = opts.render(text, work, fmt=render_fmt, run=opts.run)
+        if chosen.name == "chromium":
+            new_text = _absolutize_images(new_text, os.path.dirname(src_md))
         copy_md = os.path.join(work, "doc.md")
         with open(copy_md, "w", encoding="utf-8") as fh:
             fh.write(new_text)
         out_path = os.path.abspath(opts.out_path or os.path.splitext(src_md)[0] + ".pdf")
         tmp_pdf = os.path.join(work, "doc.pdf")
-        _run_pdf_command(chosen, copy_md, tmp_pdf, opts.which, opts.run)
+        cmd = build_command(
+            chosen.name,
+            copy_md,
+            tmp_pdf,
+            engine=_resolve_engine(chosen, opts.which),
+            resource_dir=os.path.dirname(src_md),
+        )
+        _run_pdf_command(chosen.name, cmd, opts.run)
         _finalize_output(tmp_pdf, out_path)
         return Result(chosen.name, f"mmdc({render_fmt})", out_path)
     finally:
@@ -115,6 +149,16 @@ def _convert_with_options(src_md, opts):
 
 _MARP = detect_backends.Backend("marp-cli", 0, [("marp",)], "svg",
                                 "pnpm add -g @marp-team/marp-cli")
+
+
+def _persist_deck_assets(work, new_text, out_path, fmt):
+    """Copy the rendered diagrams of an HTML deck beside its output, linked relatively."""
+    assets = os.path.splitext(out_path)[0] + "-assets"
+    os.makedirs(assets, exist_ok=True)
+    for name in os.listdir(work):
+        if name.startswith("diagram-") and name.endswith("." + fmt):
+            shutil.copyfile(os.path.join(work, name), os.path.join(assets, name))
+    return new_text.replace(work + os.sep, os.path.basename(assets) + "/")
 
 
 def convert_deck(src_md, options=None):
@@ -131,21 +175,25 @@ def _convert_deck_with_options(src_md, opts):
     work = tempfile.mkdtemp(prefix="markdown-to-pdf-deck-")
     try:
         new_text = opts.render(text, work, fmt=opts.fmt or "svg", run=opts.run)
-        copy_md = os.path.join(work, "deck.md")
-        with open(copy_md, "w", encoding="utf-8") as fh:
-            fh.write(new_text)
         out_path = os.path.abspath(
             opts.out_path or os.path.splitext(src_md)[0] + "." + opts.deck_to,
         )
+        if opts.deck_to in ("pdf", "pptx"):
+            new_text = _absolutize_images(new_text, os.path.dirname(src_md))
+        if opts.deck_to == "html" and render_mermaid.find_fences(text):
+            new_text = _persist_deck_assets(work, new_text, out_path, opts.fmt or "svg")
+        copy_md = os.path.join(work, "deck.md")
+        with open(copy_md, "w", encoding="utf-8") as fh:
+            fh.write(new_text)
         tmp_out = os.path.join(work, "deck." + opts.deck_to)
         p = opts.run(
-            ["marp", copy_md, "-o", tmp_out],
+            ["marp", copy_md, "-o", tmp_out, "--allow-local-files"],
             capture_output=True,
             text=True,
             check=False,
         )
         if p.returncode != 0:
-            raise RuntimeError(f"marp failed: {(p.stderr or p.stdout).strip()}")
+            raise BackendFailed(f"marp failed: {(p.stderr or p.stdout).strip()}")
         _finalize_output(tmp_out, out_path)
         return Result("marp-cli", f"mmdc({opts.fmt or 'svg'})", out_path)
     finally:
@@ -235,6 +283,9 @@ def main(argv=None):
                 file=sys.stderr,
             )
         return 3
+    except BackendFailed as e:
+        print(str(e), file=sys.stderr)
+        return 4
     print(f"Wrote {res.out}  (backend: {res.backend}, diagrams: {res.renderer})")
     return 0
 

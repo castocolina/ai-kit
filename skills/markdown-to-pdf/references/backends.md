@@ -56,3 +56,7 @@ pnpm add -g @marp-team/marp-cli
 ```
 pnpm add -g @mermaid-js/mermaid-cli
 ```
+
+## Local files
+
+Relative images resolve against the source file's folder: pandoc gets `--resource-path=<source folder>`; for md-to-pdf the script rewrites relative image links in its temp copy to absolute paths and serves files from the filesystem root (`--basedir /`), so for the seconds of the render any local file the document links is readable on localhost. marp decks run with `--allow-local-files`, the same trust level; `pdf` and `pptx` decks get the same absolute-link rewrite, while an HTML deck keeps relative links, which resolve beside the output HTML. Convert only documents you trust.
