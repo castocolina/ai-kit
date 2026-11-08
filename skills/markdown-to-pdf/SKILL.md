@@ -76,8 +76,8 @@ you, not by any script — see the portability landmine):
   ```
   Requires marp-cli (`pnpm add -g @marp-team/marp-cli`). Deck diagrams default to SVG.
   The deck runs with marp's `--allow-local-files`. For `pdf` and `pptx` the script
-  rewrites relative image links to absolute paths, so your local images and the
-  diagrams are embedded. `--to html` keeps your relative image links as written, so
+  rewrites relative image links (Markdown, reference-style and `<img>`, never code
+  samples) to absolute paths, so your local images and the diagrams are embedded. `--to html` keeps your relative image links as written, so
   they resolve beside the output HTML (write the deck next to its images, or copy them
   along), and writes its diagrams to `<output stem>-assets/` beside the HTML; keep that
   folder with the file.

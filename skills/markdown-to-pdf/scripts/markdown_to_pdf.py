@@ -13,6 +13,7 @@ import tempfile
 from collections import namedtuple
 from collections.abc import Callable
 from typing import NamedTuple
+from urllib.parse import unquote, urlsplit
 
 import detect_backends
 import render_mermaid
@@ -20,15 +21,37 @@ import render_mermaid
 _PANDOC_ENGINE = {"typst": "typst", "weasyprint": "weasyprint"}
 # the same sandbox flags render_mermaid gives mmdc
 CHROME_LAUNCH_OPTIONS = '{"args":["--no-sandbox","--disable-setuid-sandbox"]}'
-# a markdown image destination: `<...>` or a run of non-space, non-`)` characters
-_IMAGE = re.compile(r"(!\[[^\]]*\]\()(<[^>]*>|[^)\s]+)")
+# Link forms whose destination is a local file, as (pattern, may wrap a space in `<...>`).
+# Group 1 is the text before the destination, group 2 the destination.
+_LINK_PATTERNS = (
+    # inline image: `<...>` or a run of non-space, non-`)` characters
+    (re.compile(r"(!\[[^\]]*\]\()(<[^>]*>|[^)\s]+)"), True),
+    # HTML image
+    (re.compile(r"""(<img\b[^>]*?\bsrc=["'])([^"']+)"""), False),
+)
+# A well-formed reference definition: destination (on the label's line or the next one), then
+# an optional title, then the line ends. Group 1 is `[label]:` and the space after it, group 2
+# the destination. Not a footnote.
+_REF_DEF = re.compile(
+    r"(?m)^( {0,3}\[(?!\^)[^\]]+\]:[ \t]*(?:\n[ \t]*)?)(<[^>\n]*>|[^\s<]\S*)"
+    r"(?=(?:[ \t]+[\"'(].*)?[ \t]*$)")
+_IMAGE_REF = re.compile(r"!\[([^\]]*)\](?:\[([^\]]*)\])?(?!\()")
+_LABEL = re.compile(r"\[([^\]]+)\]")
 _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+_CODE_SPAN = re.compile(r"(`+)[^`].*?\1", re.S)
+_BLANK_LINE = re.compile(r"(\n[ \t]*\n)")
+
+
+def _label_key(label):
+    return " ".join(label.lower().split())
 
 
 def build_command(backend_name, in_md, out_pdf, engine=None, resource_dir=None):
     if backend_name == "chromium":
-        # md-to-pdf has no output flag: it writes <stem>.pdf beside its input
-        return ["md-to-pdf", in_md, "--basedir", os.path.abspath(os.sep),
+        # md-to-pdf has no output flag: it writes <stem>.pdf beside its input, and its
+        # HTTP server serves --basedir, so that is only the folder that holds the copy
+        return ["md-to-pdf", in_md, "--basedir", os.path.dirname(in_md),
                 "--launch-options", CHROME_LAUNCH_OPTIONS]
     cmd = ["pandoc", in_md, "-o", out_pdf]
     eng = engine or _PANDOC_ENGINE.get(backend_name)
@@ -48,21 +71,120 @@ def _resolve_engine(backend, which=shutil.which):
     return _PANDOC_ENGINE.get(backend.name)
 
 
+def _outside_code(text, fn, spans=True):
+    """Apply fn to every part of text that is not a fenced block or an inline code span.
+
+    spans=False hands fn each whole stretch between fences (for rules that match whole lines).
+    shortcut: a 4-space indented code block is not recognised (a list item cannot be told
+    from it without a block parser), and an inline image whose alt text holds a code span
+    (`![`x`](a.png)`) is split at the span and left as written; upgrade if such samples
+    hold image links."""
+    def paragraph(chunk):
+        parts, pos = [], 0
+        for m in _CODE_SPAN.finditer(chunk):
+            parts += [fn(chunk[pos:m.start()]), m.group(0)]
+            pos = m.end()
+        return "".join(parts) + fn(chunk[pos:])
+
+    def prose(chunk):
+        if not spans:
+            return fn(chunk)
+        # a code span never crosses a blank line
+        return "".join(p if _BLANK_LINE.fullmatch(p) else paragraph(p)
+                       for p in _BLANK_LINE.split(chunk))
+
+    out, buf, fence = [], [], None
+    for line in text.splitlines(keepends=True):
+        m = _FENCE.match(line)
+        if fence is None and m:
+            out += [prose("".join(buf)), line]
+            buf, fence = [], m.group(1)
+        elif fence is None:
+            buf.append(line)
+        else:
+            out.append(line)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) \
+                    and line.strip() == m.group(1):
+                fence = None
+    return "".join(out) + prose("".join(buf))
+
+
+def _map_local_links(text, resolve):
+    """Rewrite link destinations outside code: resolve(dest) returns the new one or None.
+
+    Covers inline images, HTML `<img>` and the reference definitions an image uses; one
+    rule set for every backend."""
+    def fix_with(wrap, accept=None):
+        def fix(m):
+            if accept is not None and not accept(m):
+                return m.group(0)
+            dest = m.group(2)
+            inner = dest[1:-1] if dest.startswith("<") and dest.endswith(">") else dest
+            new = resolve(inner)
+            if new is None:
+                return m.group(0)
+            return m.group(1) + (f"<{new}>" if wrap and " " in new else new)
+        return fix
+
+    labels = set()
+
+    def collect(chunk):
+        labels.update(_label_key(m.group(2) or m.group(1)) for m in _IMAGE_REF.finditer(chunk))
+        return chunk
+
+    def image_label(m):
+        return _label_key(_LABEL.search(m.group(1)).group(1)) in labels
+
+    def definitions(chunk):
+        return _REF_DEF.sub(fix_with(True, image_label), chunk)
+
+    def prose(chunk):
+        for pattern, wrap in _LINK_PATTERNS:
+            chunk = pattern.sub(fix_with(wrap), chunk)
+        return chunk
+    # labels from whole stretches, so a code span in the alt text cannot hide one; an extra
+    # label only lets a definition an image might use be rewritten
+    _outside_code(text, collect, spans=False)
+    return _outside_code(_outside_code(text, definitions, spans=False), prose)
+
+
+def _is_relative(dest):
+    return bool(dest) and dest[0] not in "/#" and not _SCHEME.match(dest)
+
+
 def _absolutize_images(text, src_dir):
     """Rewrite relative local image links to absolute paths under src_dir.
 
     The copy the converter renders lives in a temp folder, so a relative link would
     resolve there. URLs, data URIs, absolute paths and `#` anchors pass through."""
-    def fix(m):
-        dest = m.group(2)
-        inner = dest[1:-1] if dest.startswith("<") else dest
-        if not inner or inner[0] in "/#" or _SCHEME.match(inner):
-            return m.group(0)
-        path = os.path.normpath(os.path.join(src_dir, inner))
-        if " " in path:
-            path = f"<{path}>"
-        return m.group(1) + path
-    return _IMAGE.sub(fix, text)
+    return _map_local_links(
+        text,
+        lambda d: os.path.normpath(os.path.join(src_dir, d)) if _is_relative(d) else None,
+    )
+
+
+def _localize_images(text, src_dir, work):
+    """Chromium: copy each linked local image into `work` and link it relatively.
+
+    md-to-pdf serves only `work`. Diagram links (absolute paths inside `work`) become
+    relative too. A relative link whose file is missing stays as written."""
+    copies = {}
+
+    def resolve(dest):
+        if dest.startswith(work + os.sep):
+            return os.path.relpath(dest, work)
+        if not _is_relative(dest):
+            return None
+        # the link is a URL reference: decode `%20`, drop the query, keep the fragment
+        parts = urlsplit(dest)
+        src = os.path.normpath(os.path.join(src_dir, unquote(parts.path)))
+        if not os.path.isfile(src):
+            return None
+        if src not in copies:
+            copies[src] = f"asset-{len(copies)}{os.path.splitext(src)[1]}"
+            shutil.copyfile(src, os.path.join(work, copies[src]))
+        return copies[src] + (f"#{parts.fragment}" if parts.fragment else "")
+    return _map_local_links(text, resolve)
 
 
 Result = namedtuple("Result", "backend renderer out")
@@ -107,6 +229,8 @@ def _run_pdf_command(name, cmd, run):
 
 
 def _finalize_output(tmp_path, out_path):
+    if not os.path.isfile(tmp_path):
+        raise BackendFailed("the backend exited 0 but wrote no output file")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     shutil.move(tmp_path, out_path)
 
@@ -127,12 +251,12 @@ def _convert_with_options(src_md, opts):
     try:
         new_text = opts.render(text, work, fmt=render_fmt, run=opts.run)
         if chosen.name == "chromium":
-            new_text = _absolutize_images(new_text, os.path.dirname(src_md))
+            new_text = _localize_images(new_text, os.path.dirname(src_md), work)
         copy_md = os.path.join(work, "doc.md")
         with open(copy_md, "w", encoding="utf-8") as fh:
             fh.write(new_text)
         out_path = os.path.abspath(opts.out_path or os.path.splitext(src_md)[0] + ".pdf")
-        tmp_pdf = os.path.join(work, "doc.pdf")
+        tmp_pdf = os.path.splitext(copy_md)[0] + ".pdf"  # where md-to-pdf writes it
         cmd = build_command(
             chosen.name,
             copy_md,
@@ -151,14 +275,28 @@ _MARP = detect_backends.Backend("marp-cli", 0, [("marp",)], "svg",
                                 "pnpm add -g @marp-team/marp-cli")
 
 
-def _persist_deck_assets(work, new_text, out_path, fmt):
-    """Copy the rendered diagrams of an HTML deck beside its output, linked relatively."""
-    assets = os.path.splitext(out_path)[0] + "-assets"
+def _deck_assets_dir(out_path):
+    return os.path.splitext(out_path)[0] + "-assets"
+
+
+def _link_deck_assets(work, new_text, assets):
+    """Point the diagram links of an HTML deck at the `<out>-assets/` folder (text only)."""
+    prefix = os.path.basename(assets) + "/"
+    return _map_local_links(
+        new_text,
+        lambda d: prefix + os.path.relpath(d, work) if d.startswith(work + os.sep) else None,
+    )
+
+
+def _copy_deck_assets(work, assets):
+    """Replace the diagrams in `<out>-assets/` with this run's; run after marp succeeded."""
     os.makedirs(assets, exist_ok=True)
+    for name in os.listdir(assets):
+        if name.startswith("diagram-"):
+            os.remove(os.path.join(assets, name))
     for name in os.listdir(work):
-        if name.startswith("diagram-") and name.endswith("." + fmt):
+        if name.startswith("diagram-") and not name.endswith(".mmd"):
             shutil.copyfile(os.path.join(work, name), os.path.join(assets, name))
-    return new_text.replace(work + os.sep, os.path.basename(assets) + "/")
 
 
 def convert_deck(src_md, options=None):
@@ -180,8 +318,9 @@ def _convert_deck_with_options(src_md, opts):
         )
         if opts.deck_to in ("pdf", "pptx"):
             new_text = _absolutize_images(new_text, os.path.dirname(src_md))
-        if opts.deck_to == "html" and render_mermaid.find_fences(text):
-            new_text = _persist_deck_assets(work, new_text, out_path, opts.fmt or "svg")
+        diagrams = opts.deck_to == "html" and render_mermaid.find_fences(text)
+        if diagrams:
+            new_text = _link_deck_assets(work, new_text, _deck_assets_dir(out_path))
         copy_md = os.path.join(work, "deck.md")
         with open(copy_md, "w", encoding="utf-8") as fh:
             fh.write(new_text)
@@ -195,6 +334,8 @@ def _convert_deck_with_options(src_md, opts):
         if p.returncode != 0:
             raise BackendFailed(f"marp failed: {(p.stderr or p.stdout).strip()}")
         _finalize_output(tmp_out, out_path)
+        if diagrams:
+            _copy_deck_assets(work, _deck_assets_dir(out_path))
         return Result("marp-cli", f"mmdc({opts.fmt or 'svg'})", out_path)
     finally:
         shutil.rmtree(work, ignore_errors=True)

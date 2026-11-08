@@ -3,6 +3,7 @@ import contextlib
 import io
 import os
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -115,8 +116,10 @@ class TestBuildCommand(unittest.TestCase):
 
     def test_chromium_is_standalone(self):
         cmd = m2p.build_command("chromium", "in.md", "out.pdf")
-        self.assertEqual(cmd, ["md-to-pdf", "in.md", "--basedir", os.path.abspath(os.sep),
+        self.assertEqual(cmd, ["md-to-pdf", "in.md", "--basedir", "",
                                "--launch-options", m2p.CHROME_LAUNCH_OPTIONS])
+        cmd = m2p.build_command("chromium", os.path.join("w", "doc.md"), "out.pdf")
+        self.assertEqual(cmd[3], "w")  # the server root is the folder of the copy, never "/"
         self.assertEqual(m2p.CHROME_LAUNCH_OPTIONS,
                          '{"args":["--no-sandbox","--disable-setuid-sandbox"]}')
 
@@ -277,19 +280,24 @@ class TestDeckAndMain(unittest.TestCase):
             img = os.path.join(work_dir, "diagram-0." + fmt)
             with open(img, "wb") as fh:
                 fh.write(b"<svg/>")
-            return f"# deck\n![diagram]({img})\n"
+            return f"# deck\n![diagram](<{img}>)\n"
         out = m2p.render_only(src, m2p.ConvertOptions(render=fake_render))
         self.assertTrue(out.endswith(".rendered.md"))
         with open(out) as fh:
             body = fh.read()
         self.assertIn("![diagram](", body)
-        link = body.split("![diagram](")[1].split(")")[0]
+        link = body.split("![diagram](<")[1].split(">)")[0]
         self.assertTrue(os.path.exists(link))          # image persisted past the call
         with open(src) as fh:
             self.assertEqual(fh.read(), "# deck\n```mermaid\nA-->B\n```\n")  # source untouched
 
 
 class TestBackendFailure(unittest.TestCase):
+    def _tmp(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
+
     def _recording_run(self, record, returncode=0, stderr=""):
         def run(cmd, capture_output=True, text=True, **kwargs):
             del capture_output, kwargs
@@ -312,7 +320,7 @@ class TestBackendFailure(unittest.TestCase):
         self.assertEqual(cmd[-2:], ["--pdf-engine=typst", "--resource-path=/src"])
 
     def test_convert_passes_the_source_folder(self):
-        d = tempfile.mkdtemp()
+        d = self._tmp()
         src = self._src(d)
         record = []
         which = lambda n: "/x/" + n if n in {"pandoc", "pdflatex"} else None
@@ -321,7 +329,7 @@ class TestBackendFailure(unittest.TestCase):
         self.assertIn(f"--resource-path={d}", record[0])
 
     def test_failing_backend_raises_backend_failed(self):
-        d = tempfile.mkdtemp()
+        d = self._tmp()
         src = self._src(d)
         which = lambda n: "/x/" + n if n in {"pandoc", "pdflatex"} else None
         opts = m2p.ConvertOptions(which=which, run=self._recording_run([], 1, "boom"),
@@ -333,7 +341,7 @@ class TestBackendFailure(unittest.TestCase):
 
     def test_main_backend_failed_returns_4_with_stderr(self):
         from unittest import mock
-        src = self._src(tempfile.mkdtemp())
+        src = self._src(self._tmp())
         err = io.StringIO()
         with mock.patch.object(m2p, "convert",
                                side_effect=m2p.BackendFailed("pandoc-latex failed: boom")), \
@@ -344,7 +352,7 @@ class TestBackendFailure(unittest.TestCase):
 
     def test_main_does_not_catch_a_bare_runtime_error(self):
         from unittest import mock
-        src = self._src(tempfile.mkdtemp())
+        src = self._src(self._tmp())
         with mock.patch.object(m2p, "convert", side_effect=RuntimeError("x")), \
                 self.assertRaises(RuntimeError):
             m2p.main([src])
@@ -354,6 +362,11 @@ class TestBackendFailure(unittest.TestCase):
 
 
 class TestLocalAssets(unittest.TestCase):
+    def _tmp(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
+
     # The stubs read the copy while it still exists: the work folder is removed on return.
     def _pdf_run(self, record):
         def run(cmd, capture_output=True, text=True, **kwargs):
@@ -386,10 +399,10 @@ class TestLocalAssets(unittest.TestCase):
         img = os.path.join(work_dir, "diagram-0." + fmt)
         with open(img, "wb") as fh:
             fh.write(b"<svg/>")
-        return text.replace("```mermaid\nA-->B\n```\n", f"![diagram]({img})\n")
+        return text.replace("```mermaid\nA-->B\n```\n", f"![diagram](<{img}>)\n")
 
     def test_absolutize_images_rewrites_relative_links_only(self):
-        d = tempfile.mkdtemp()
+        d = self._tmp()
         text = ("![a](img/a.svg)\n![b](./b.png)\n![c](sub/deep/c.png \"T\")\n"
                 "![s](<my img.png>)\n![u](https://example.com/x.png)\n"
                 "![x](data:image/png;base64,AA)\n![z](/already/abs.png)\n")
@@ -403,23 +416,119 @@ class TestLocalAssets(unittest.TestCase):
         self.assertEqual(m2p._absolutize_images(text, d), want)
         self.assertEqual(m2p._absolutize_images("no image here\n", d), "no image here\n")
 
-    def test_chromium_gets_absolute_links_and_its_own_output_path(self):
-        d = tempfile.mkdtemp()
-        src = self._write(os.path.join(d, "doc.md"), "# hi\n![a](img/a.svg)\n")
-        out = os.path.join(d, "out.pdf")
+    def _chromium(self, d, text, files=(), render=None):
+        """Run the chromium path on `text`; return (cmd, copy text, copied names, work dir)."""
+        for rel in files:
+            os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True)
+            self._write(os.path.join(d, rel), rel)
+        src = self._write(os.path.join(d, "doc.md"), text)
+        seen = []
+
+        def run(cmd, **kwargs):
+            work = os.path.dirname(cmd[1])
+            seen.append((cmd, sorted(os.listdir(work)), work))
+            return self._pdf_run(record)(cmd, **kwargs)
         record = []
         which = lambda n: "/x/md-to-pdf" if n == "md-to-pdf" else None
-        res = m2p.convert(src, m2p.ConvertOptions(
-            out_path=out, which=which, run=self._pdf_run(record),
-            render=lambda t, _w, fmt="png", run=None: t))
-        cmd, copy_text = record[0]
-        self.assertEqual(cmd[0], "md-to-pdf")
-        self.assertIn(f"![a]({os.path.join(d, 'img', 'a.svg')})", copy_text)
-        self.assertEqual(res.out, out)
-        self.assertEqual(sorted(os.listdir(d)), ["doc.md", "out.pdf"])
+        m2p.convert(src, m2p.ConvertOptions(
+            out_path=os.path.join(d, "out.pdf"), which=which, run=run,
+            render=render or (lambda t, _w, fmt="png", run=None: t)))
+        return record[0][0], record[0][1], seen[0][1], seen[0][2]
+
+    def test_chromium_serves_only_the_work_folder_with_images_copied_in(self):
+        d = self._tmp()
+        cmd, copy_text, names, work = self._chromium(
+            d, "# hi\n![a](img/a.svg)\n![b](img/a.svg)\n![m](<my pic.png>)\n![x](gone.png)\n",
+            files=("img/a.svg", "my pic.png"))
+        self.assertEqual(cmd[cmd.index("--basedir") + 1], work)
+        self.assertNotEqual(work, os.path.abspath(os.sep))
+        self.assertEqual(copy_text,
+                         "# hi\n![a](asset-0.svg)\n![b](asset-0.svg)\n![m](asset-1.png)\n"
+                         "![x](gone.png)\n")  # one copy per file; a missing file stays as written
+        self.assertEqual(names, ["asset-0.svg", "asset-1.png", "doc.md"])
+        self.assertEqual(sorted(os.listdir(d)), ["doc.md", "img", "my pic.png", "out.pdf"])
+
+    def test_chromium_localizes_reference_and_html_images_and_skips_code(self):
+        d = self._tmp()
+        text = ("![l][r]\n\n[r]: img/a.svg\n[^1]: a note\n\n<img src=\"img/b.png\" width=\"9\">\n"
+                "`![c](img/a.svg)`\n```md\n![f](img/a.svg)\n[r]: img/a.svg\n```\n")
+        _, copy_text, names, _ = self._chromium(d, text, files=("img/a.svg", "img/b.png"))
+        self.assertEqual(copy_text,
+                         "![l][r]\n\n[r]: asset-0.svg\n[^1]: a note\n\n"
+                         "<img src=\"asset-1.png\" width=\"9\">\n"
+                         "`![c](img/a.svg)`\n```md\n![f](img/a.svg)\n[r]: img/a.svg\n```\n")
+        self.assertEqual(names, ["asset-0.svg", "asset-1.png", "doc.md"])
+
+    def test_chromium_decodes_percent_links_and_keeps_the_fragment(self):
+        d = self._tmp()
+        _, copy_text, names, _ = self._chromium(
+            d, "![p](my%20pic.png)\n![i](icon.svg#a)\n![q](icon.svg?v=1)\n",
+            files=("my pic.png", "icon.svg"))
+        self.assertEqual(copy_text, "![p](asset-0.png)\n![i](asset-1.svg#a)\n![q](asset-1.svg)\n")
+        self.assertEqual(names, ["asset-0.png", "asset-1.svg", "doc.md"])
+
+    PROSE_AND_DEFS = ("[Update]: the API changed last week\n\nSee [the readme][r].\n\n"
+                      "[r]: README.md\n![l][i]\n\n[i]: img/a.svg \"Title\"\n"
+                      "a `b`[i]: img/b.svg\n")
+
+    def test_only_image_reference_definitions_are_rewritten(self):
+        d = self._tmp()
+        _, copy_text, names, _ = self._chromium(
+            d, self.PROSE_AND_DEFS, files=("README.md", "img/a.svg", "img/b.svg"))
+        self.assertEqual(copy_text, self.PROSE_AND_DEFS.replace(
+            "img/a.svg \"Title\"", "asset-0.svg \"Title\""))
+        self.assertEqual(names, ["asset-0.svg", "doc.md"])
+        self.assertEqual(
+            m2p._absolutize_images(self.PROSE_AND_DEFS, d),
+            self.PROSE_AND_DEFS.replace("img/a.svg", os.path.join(d, "img", "a.svg")))
+
+    def test_definition_on_the_next_line_and_code_in_the_alt_text(self):
+        d = self._tmp()
+        text = "![l][i]\n![`x`][j]\n\n[i]:\n  img/a.svg\n[j]: img/b.svg\n[Note]:\nthe API changed\n"
+        _, copy_text, names, _ = self._chromium(d, text, files=("img/a.svg", "img/b.svg"))
+        self.assertEqual(copy_text, text.replace("img/a.svg", "asset-0.svg")
+                         .replace("img/b.svg", "asset-1.svg"))
+        self.assertEqual(names, ["asset-0.svg", "asset-1.svg", "doc.md"])
+
+    def test_a_code_span_never_crosses_a_blank_line(self):
+        d = self._tmp()
+        text = "Press the ` key.\n\n![p](icon.svg)\n\nRun `ls`.\n"
+        self.assertEqual(m2p._absolutize_images(text, d),
+                         text.replace("icon.svg", os.path.join(d, "icon.svg")))
+
+    def test_chromium_diagram_links_become_relative_names(self):
+        d = self._tmp()
+        _, copy_text, names, work = self._chromium(
+            d, "# deck\n```mermaid\nA-->B\n```\n", render=self._mermaid_render)
+        self.assertEqual(copy_text, "# deck\n![diagram](diagram-0.svg)\n")
+        self.assertNotIn(work, copy_text)
+        self.assertIn("diagram-0.svg", names)
+
+    def test_a_backend_that_wrote_no_output_is_backend_failed(self):
+        d = self._tmp()
+        src = self._write(os.path.join(d, "doc.md"), "hi\n")
+        run = lambda cmd, **kwargs: type(
+            "P", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+        which = lambda n: "/x/md-to-pdf" if n == "md-to-pdf" else None
+        with self.assertRaises(m2p.BackendFailed):
+            m2p.convert(src, m2p.ConvertOptions(
+                which=which, run=run, render=lambda t, _w, fmt="png", run=None: t))
+        self.assertEqual(os.listdir(d), ["doc.md"])
+
+    def test_absolutize_skips_code_and_covers_reference_and_html_forms(self):
+        d = self._tmp()
+        text = ("![l][r]\n[r]: img/a.svg\n<img class=\"x\" src='b.png'>\n[^1]: note\n"
+                "`![c](c.png)` and ``![e](e.png)``\n"
+                "```markdown\n![f](f.png)\n```\n~~~\n![t](t.png)\n~~~\n![out](o.png)\n")
+        want = (f"![l][r]\n[r]: {os.path.join(d, 'img', 'a.svg')}\n"
+                f"<img class=\"x\" src='{os.path.join(d, 'b.png')}'>\n[^1]: note\n"
+                "`![c](c.png)` and ``![e](e.png)``\n"
+                "```markdown\n![f](f.png)\n```\n~~~\n![t](t.png)\n~~~\n"
+                f"![out]({os.path.join(d, 'o.png')})\n")
+        self.assertEqual(m2p._absolutize_images(text, d), want)
 
     def test_every_deck_call_allows_local_files(self):
-        d = tempfile.mkdtemp()
+        d = self._tmp()
         src = self._write(os.path.join(d, "s.md"), "# slide\n")
         which = lambda n: "/x/marp" if n == "marp" else None
         for to in ("pdf", "pptx", "html"):
@@ -430,7 +539,7 @@ class TestLocalAssets(unittest.TestCase):
             self.assertIn("--allow-local-files", record[0][0])
 
     def test_pdf_and_pptx_decks_get_absolute_image_links_html_keeps_relative(self):
-        d = tempfile.mkdtemp()
+        d = self._tmp()
         src = self._write(os.path.join(d, "s.md"), "# slide\n![a](img/a.svg)\n")
         which = lambda n: "/x/marp" if n == "marp" else None
         for to in ("pdf", "pptx"):
@@ -448,7 +557,7 @@ class TestLocalAssets(unittest.TestCase):
             self.assertIn("![a](img/a.svg)", fh.read())
 
     def test_html_deck_diagrams_survive_next_to_the_output(self):
-        d = tempfile.mkdtemp()
+        d = self._tmp()
         src = self._write(os.path.join(d, "s.md"), "# deck\n```mermaid\nA-->B\n```\n")
         out = os.path.join(d, "s.html")
         which = lambda n: "/x/marp" if n == "marp" else None
@@ -461,7 +570,7 @@ class TestLocalAssets(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(d)), sorted(["s.md", "s.html", "s-assets"]))
 
     def test_html_deck_without_diagrams_creates_no_assets(self):
-        d = tempfile.mkdtemp()
+        d = self._tmp()
         src = self._write(os.path.join(d, "s.md"), "# slide\n")
         which = lambda n: "/x/marp" if n == "marp" else None
         for to in ("html", "pdf"):
@@ -471,7 +580,7 @@ class TestLocalAssets(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(d)), sorted(["s.md", "s.html", "s.pdf"]))
 
     def test_two_html_decks_keep_separate_assets(self):
-        d = tempfile.mkdtemp()
+        d = self._tmp()
         src = self._write(os.path.join(d, "s.md"), "# deck\n```mermaid\nA-->B\n```\n")
         which = lambda n: "/x/marp" if n == "marp" else None
         for name in ("a", "b"):
@@ -484,6 +593,40 @@ class TestLocalAssets(unittest.TestCase):
                 body = fh.read()
             self.assertIn(f"{name}-assets/diagram-0.svg", body)
             self.assertNotIn(f"{other}-assets", body)
+
+    def _html_deck(self, d, out_name, run, text="# deck\n```mermaid\nA-->B\n```\n"):
+        src = self._write(os.path.join(d, "s.md"), text)
+        which = lambda n: "/x/marp" if n == "marp" else None
+        return m2p.convert_deck(src, m2p.ConvertOptions(
+            out_path=os.path.join(d, out_name), deck_to="html", which=which, run=run,
+            render=self._mermaid_render))
+
+    def test_html_deck_link_survives_a_space_in_the_output_name(self):
+        d = self._tmp()
+        self._html_deck(d, "s s.html", self._deck_run([]))
+        with open(os.path.join(d, "s s.html"), encoding="utf-8") as fh:
+            self.assertIn("![diagram](<s s-assets/diagram-0.svg>)", fh.read())
+
+    def test_failed_html_deck_writes_nothing_and_a_new_one_replaces_stale_diagrams(self):
+        d = self._tmp()
+        failing = lambda cmd, **kwargs: type(
+            "P", (), {"returncode": 1, "stderr": "boom", "stdout": ""})()
+        with self.assertRaises(m2p.BackendFailed):
+            self._html_deck(d, "s.html", failing)
+        self.assertEqual(os.listdir(d), ["s.md"])  # no s-assets/ after a failure
+        os.makedirs(os.path.join(d, "s-assets"))
+        for stale in ("diagram-7.svg", "keep.txt"):
+            self._write(os.path.join(d, "s-assets", stale), "old")
+        self._html_deck(d, "s.html", self._deck_run([]))
+        self.assertEqual(sorted(os.listdir(os.path.join(d, "s-assets"))),
+                         ["diagram-0.svg", "keep.txt"])  # stale diagram gone, other files kept
+
+    def test_html_deck_diagram_links_skip_code(self):
+        d = self._tmp()
+        record = []
+        self._html_deck(d, "s.html", self._deck_run(record),
+                        text="# deck\n```mermaid\nA-->B\n```\n```md\n![x](y.png)\n```\n")
+        self.assertIn("```md\n![x](y.png)\n```\n", record[0][1])
 
 
 class TestDocContract(unittest.TestCase):
