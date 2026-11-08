@@ -5,11 +5,11 @@ milestone_name: Skill Refactor
 current_phase: "32.1"
 current_phase_name: Batch 1, general small skills
 status: planning
-stopped_at: "Phase 32 complete (close-out part 1: review, security, validation, re-verification); next: fold and push (part 2), then phase 32.1"
-last_updated: "2026-11-07T19:51:41.964Z"
+stopped_at: "Phase 32.1 spec and context gathered (assumptions mode); next: plan-phase 32.1"
+last_updated: "2026-11-07T20:56:22.410Z"
 last_activity: 2026-11-07
 last_activity_desc: Phase 32 complete (review, security, validation, re-verification)
-state_head: 202a2883c6aeea71296b30c01c300a6a5deb2633
+state_head: cabccbe04ec2d9912a2cad294109f784ed45812c
 progress:
   total_phases: 37
   completed_phases: 8
@@ -683,9 +683,9 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-07T19:51:41.615Z
-Stopped at: Phase 32 complete (close-out part 1: review, security, validation, re-verification); next: fold and push (part 2), then phase 32.1
-Resume file: None
+Last session: 2026-11-07T20:56:22.060Z
+Stopped at: Phase 32.1 spec and context gathered (assumptions mode); next: plan-phase 32.1
+Resume file: /var/home/bazzite/git/personal/ai-kit/.planning/phases/32.1-batch-1-general-small-skills/32.1-CONTEXT.md
 
 ## Operator Next Steps
 

@@ -138,13 +138,25 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **JDG-03**: Every kept skill has `evals/evals.json`, trigger queries (about 20, half near-misses) and tests,
   written in the batch phase that improves it; the closing re-judge report shows them for every kept skill.
   *(amended 2026-11-07, owner decision: the report covers the 15 judged skills; `ai-kit-commit-fold` is excluded as
-  in JDG-01)*
+  in JDG-01)* *(amended 2026-11-07, 32.1 D-01, owner batch scope "Narrow": evals, trigger queries and tests are
+  written in the phase that brings a skill to the bar or, for a skill already at the bar, in the phase that next
+  materially changes its SKILL.md (JDG-04): batches 32.1-32.4 for the five below-bar skills no later phase touches,
+  Phases 37-38 for `ai-kit-cross-ai`, Phases 39-40 for `ai-kit-spec-review`, and that next phase for
+  `ai-kit-session-wake`; the 32.4 closing report shows every judged skill's evals, trigger-query and test state and
+  names the phase for each one still missing; the requirement completes when every kept skill has them)*
 - [ ] **JDG-04**: Every phase of this milestone that adds or materially changes a SKILL.md (the batch phases and
   every other phase that touches a skill, including the new `ai-kit-project-rules` skill) leaves each such skill
   with new-shape evals and tests, no critical or high finding or grade B or better, and no regression beyond judge
   variation, recorded in that phase's verification before it closes; each such phase carries a success criterion
   that cites this requirement.
   *(2026-11-07, Phase 32 close-out: Phase 32's part is done (the bar is recorded per judged skill in `.planning/judge/REJUDGE.md`, 8 met and 7 not met, and check-dogfood guards the citations); the requirement stays open until every skill-changing phase meets it)*
+  *(amended 2026-11-07, 32.1 D-01, owner batch scope "Narrow": the batch phases 32.1-32.4 bring to the bar only the
+  below-bar skills no later phase touches (`cst-refactor`, `markdown-to-pdf`, `ai-kit-spec-review-fixer`,
+  `ai-kit-usage-metrics`, `ai-kit-spec-review-checklist`); a below-bar skill a later phase modifies reaches the bar in
+  that phase (`ai-kit-cross-ai` in Phases 37-38, `ai-kit-spec-review` in Phases 39-40); a skill already at the bar that
+  a phase changes only for the fixes its requirements name keeps the bar with no regression beyond judge variation;
+  each phase re-judges only the skills whose SKILL.md it adds or materially changes, and never judges a skill a later
+  phase removes or replaces)*
 - [x] **JDG-05**: Skill text carries behaviour, not history: no tool versions, dates or observation logs in the main
   flow, provenance in a trailing evidence section, no hardcoded referee names, and no shipped text pointing into a
   planning folder; ai-kit's AGENTS.md states the rule in one line (SKILL.md describes behaviour; provenance and
@@ -988,3 +1000,4 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *Amended 2026-11-07 by the owner's decisions on the jev and typesafe-ai research and the skill-distribution fact sheet (`.planning/research/2026-11-07-*.md`): DEF-08 (Phase 32.4), JEV-08 and JEV-09 (Phase 32.1), JEV-10 and JEV-11 (Phase 34), DIST-08 (Phase 53) and DIST-09 (Phase 52) added; JDG-01, JDG-03, RULE-27, JEV-03, JEV-05, DIST-01, DIST-02, DIST-03 and DIST-04 amended.*
 *Amended 2026-11-07 by Phase 32's spec and discuss: JDG-01 (the flat test layout and the scripts reading) and JDG-06 (the bar-boundary reading, confirmed by the owner 2026-11-07) amended; ROADMAP 32 criterion 8, 32.1-32.3 criterion 2 and 34 criterion 3 cite JDG-04; the stale `decide.py` anchors of 32.4 and 34 corrected.*
 *Amended 2026-11-07 at Phase 32's close-out: DEF-09 (Phase 32.2) and DEF-10 (Phase 32.4) added; RULE-29 amended (move `/tmp` leftovers into `tmp/` under a no-delete host rule; replaces the plan-rail scope script).*
+*Amended 2026-11-07 by Phase 32.1's spec and discuss (owner batch scope "Narrow"): JDG-03 and JDG-04 amended; ROADMAP goals and criteria 1-2 of 32.1-32.3, 32.1 criterion 5, 32.4's goal and criterion 4, and the JDG-04 criterion of Phases 37-40 amended; backlog 999.22 (headless installer agents) added.*
