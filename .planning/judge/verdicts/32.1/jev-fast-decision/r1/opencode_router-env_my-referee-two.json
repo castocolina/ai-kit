@@ -1,0 +1,191 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=71s out=314221 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"jev-fast-decision\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":17,\"D2\":13,\"D3\":13,\"D4\":14,\"D5\":13,\"D6\":13,\"D7\":13,\"D8\":12},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":108,\"max_total\":125,\"percent\":86.4,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/jev-fast-decision/reference.md\",\"line\":153,\"evidence\":\"Hosts restates that Claude Code and opencode read ~/.claude/skills, pi reads ${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills, and Cursor reads ~/.claude/skills.\",\"fix\":\"Drop the host skill-directory facts the harnesses already implement; keep only the documented Codex duplication gap and the 'not live-verified' flags.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/jev-fast-decision/backends/laya.md\",\"line\":37,\"evidence\":\"Threshold: the row's `min_confidence` is a conservative retained default; the live 32-case eval in this repo (see the eval object below); `JEV_MIN_CONFIDENCE` overrides it for one call.\",\"fix\":\"Finish the sentence so the default is tied to the measured result: the 32-case eval proposed null, so min_confidence 0.7 stays, and JEV_MIN_CONFIDENCE overrides it for one call.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/jev-fast-decision/SKILL.md\",\"line\":47,\"evidence\":\"The NEVER list gives reasons, but there is no Gotchas heading for the environment facts that defy assumptions (Laya state bleed, uncalibrated confidence, alias drift).\",\"fix\":\"Add a short Gotchas section that points at those three facts and their reasons, leaving the detail in reference.md.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/jev-fast-decision/SKILL.md\",\"line\":3,\"evidence\":\"Description covers WHAT, WHEN and the not-for boundary, but omits the shorthand trigger words an agent matches on: ladder, probe, consent, needs_fallback is named only as a result, and evidence screening is not a keyword.\",\"fix\":\"Use when a fast, cheap typed judgment beats a full reasoning pass: yes/no (noul), picking among named options (choice), a rubric score (score), or screening evidence against a criterion, through the shared System One client on Laya (local) or TypeSafe (remote, consent required), including ladder, probe and consent grant or revoke. Advisory only: needs_fallback means you decide that item yourself, and no answer is a verdict or gate. Not for building TypeSafe into an app (typesafe-ai) or for editing code.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/jev-fast-decision/backends/typesafe.md\",\"line\":18,\"evidence\":\"Key sources, in order: TYPESAFE_API_KEY, JEV_API_KEY, the first line of the file JEV_API_KEY_FILE names, a TYPESAFE_API_KEY= or JEV_API_KEY= line in secrets.env, then the first line of the state api_key.\",\"fix\":\"Copy the order from scripts/jev_review.py _typesafe_key: env names, then the whole first non-empty line of JEV_API_KEY_FILE, then a secrets.env assignment, then the state file's first non-empty line, and last a ~/.mycreds assignment. Say the state file is not assignment-parsed.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/jev-fast-decision/reference.md\",\"line\":114,\"evidence\":\"The TYPESAFE_API_KEY cell lists six sources in one row, including a transitional ~/.mycreds path, while backends/typesafe.md stops at the state file.\",\"fix\":\"Keep one ordered default in backends/typesafe.md and make the environment table point at that list instead of restating a longer order.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/jev-fast-decision/evals/evals.json\",\"line\":7,\"evidence\":\"The casual-flaky-ci assertion requires an item of type noul that has an id, instructions and context, while the prompt supplies a CI summary to screen against a criterion, which the skill's own shorthand shape is {id, criterion, evidence}.\",\"fix\":\"Split the assertion so a shorthand screen item (id, criterion, evidence) and a noul item (id, type, instructions, context) are both acceptable when the evidence stays value-free.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/jev-fast-decision/scripts/eval_cases.py\",\"line\":223,\"evidence\":\"eval_cases.py is a tracked script with structured JSON output, but its main() builds the parser with no --help text beyond argparse defaults, unlike jev_review.py.\",\"fix\":\"Give eval_cases.py an ArgumentParser description and flag help that names --record and --calibrate, matching the module docstring.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/jev-fast-decision/backends/typesafe.md\",\"line\":18,\"evidence\":\"An agent that follows this file puts the key only in the state file's first line and never tries ~/.mycreds, while reference.md line 114 and _typesafe_key try ~/.mycreds last and read the state file as a raw first non-empty line, not an assignment.\",\"fix\":\"State one key order, the one _typesafe_key implements, in backends/typesafe.md and point reference.md at it: env, JEV_API_KEY_FILE (whole first non-empty line), secrets.env assignment, state file (whole first non-empty line), ~/.mycreds assignment.\"}]}"
+  }
+ ],
+ "digest": "b76ba8510f5413f9f351cf11c8bac76c8353b65b2a173d027b58b360128ae42f",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "32.1",
+ "modules": [
+  "tests/test_ai_kit_caller_text.py",
+  "tests/test_ai_kit_commit_fold.py",
+  "tests/test_ai_kit_commit_fold_adapters.py",
+  "tests/test_ai_kit_commit_fold_e2e.py",
+  "tests/test_ai_kit_gsd_spec_discuss.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_golden.py",
+  "tests/test_ai_kit_spec_goal_prompt_host.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_goal_prompt_variants.py",
+  "tests/test_arch.py",
+  "tests/test_check_dogfood.py",
+  "tests/test_curated_config_skills.py",
+  "tests/test_decision_probe.py",
+  "tests/test_jev_fast_decision.py",
+  "tests/test_jev_skill_install_e2e.py",
+  "tests/test_judge_loop.py",
+  "tests/test_precompact_core.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "0e674d16bc3b8955bc171ced5131d8fa1d91dbcfeaeccaf99c86a55c83a85564",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "jev-fast-decision",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "Hosts restates that Claude Code and opencode read ~/.claude/skills, pi reads ${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills, and Cursor reads ~/.claude/skills.",
+    "file": "skills/jev-fast-decision/reference.md",
+    "fix": "Drop the host skill-directory facts the harnesses already implement; keep only the documented Codex duplication gap and the 'not live-verified' flags.",
+    "id": "D1-1",
+    "line": 153,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "Threshold: the row's `min_confidence` is a conservative retained default; the live 32-case eval in this repo (see the eval object below); `JEV_MIN_CONFIDENCE` overrides it for one call.",
+    "file": "skills/jev-fast-decision/backends/laya.md",
+    "fix": "Finish the sentence so the default is tied to the measured result: the 32-case eval proposed null, so min_confidence 0.7 stays, and JEV_MIN_CONFIDENCE overrides it for one call.",
+    "id": "D2-1",
+    "line": 37,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "The NEVER list gives reasons, but there is no Gotchas heading for the environment facts that defy assumptions (Laya state bleed, uncalibrated confidence, alias drift).",
+    "file": "skills/jev-fast-decision/SKILL.md",
+    "fix": "Add a short Gotchas section that points at those three facts and their reasons, leaving the detail in reference.md.",
+    "id": "D3-1",
+    "line": 47,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "Description covers WHAT, WHEN and the not-for boundary, but omits the shorthand trigger words an agent matches on: ladder, probe, consent, needs_fallback is named only as a result, and evidence screening is not a keyword.",
+    "file": "skills/jev-fast-decision/SKILL.md",
+    "fix": "Use when a fast, cheap typed judgment beats a full reasoning pass: yes/no (noul), picking among named options (choice), a rubric score (score), or screening evidence against a criterion, through the shared System One client on Laya (local) or TypeSafe (remote, consent required), including ladder, probe and consent grant or revoke. Advisory only: needs_fallback means you decide that item yourself, and no answer is a verdict or gate. Not for building TypeSafe into an app (typesafe-ai) or for editing code.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "Key sources, in order: TYPESAFE_API_KEY, JEV_API_KEY, the first line of the file JEV_API_KEY_FILE names, a TYPESAFE_API_KEY= or JEV_API_KEY= line in secrets.env, then the first line of the state api_key.",
+    "file": "skills/jev-fast-decision/backends/typesafe.md",
+    "fix": "Copy the order from scripts/jev_review.py _typesafe_key: env names, then the whole first non-empty line of JEV_API_KEY_FILE, then a secrets.env assignment, then the state file's first non-empty line, and last a ~/.mycreds assignment. Say the state file is not assignment-parsed.",
+    "id": "D5-1",
+    "line": 18,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "The TYPESAFE_API_KEY cell lists six sources in one row, including a transitional ~/.mycreds path, while backends/typesafe.md stops at the state file.",
+    "file": "skills/jev-fast-decision/reference.md",
+    "fix": "Keep one ordered default in backends/typesafe.md and make the environment table point at that list instead of restating a longer order.",
+    "id": "D6-1",
+    "line": 114,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The casual-flaky-ci assertion requires an item of type noul that has an id, instructions and context, while the prompt supplies a CI summary to screen against a criterion, which the skill's own shorthand shape is {id, criterion, evidence}.",
+    "file": "skills/jev-fast-decision/evals/evals.json",
+    "fix": "Split the assertion so a shorthand screen item (id, criterion, evidence) and a noul item (id, type, instructions, context) are both acceptable when the evidence stays value-free.",
+    "id": "D7-1",
+    "line": 7,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "eval_cases.py is a tracked script with structured JSON output, but its main() builds the parser with no --help text beyond argparse defaults, unlike jev_review.py.",
+    "file": "skills/jev-fast-decision/scripts/eval_cases.py",
+    "fix": "Give eval_cases.py an ArgumentParser description and flag help that names --record and --calibrate, matching the module docstring.",
+    "id": "D7-2",
+    "line": 223,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "An agent that follows this file puts the key only in the state file's first line and never tries ~/.mycreds, while reference.md line 114 and _typesafe_key try ~/.mycreds last and read the state file as a raw first non-empty line, not an assignment.",
+    "file": "skills/jev-fast-decision/backends/typesafe.md",
+    "fix": "State one key order, the one _typesafe_key implements, in backends/typesafe.md and point reference.md at it: env, JEV_API_KEY_FILE (whole first non-empty line), secrets.env assignment, state file (whole first non-empty line), ~/.mycreds assignment.",
+    "id": "D8-1",
+    "line": 18,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 86.4,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 17,
+   "D2": 13,
+   "D3": 13,
+   "D4": 14,
+   "D5": 13,
+   "D6": 13,
+   "D7": 13,
+   "D8": 12
+  },
+  "skill": "jev-fast-decision",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 108
+ }
+}

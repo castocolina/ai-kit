@@ -1,0 +1,184 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=39s out=64685 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"ai-kit-usage-metrics\",\"judge\":\"opencode:router-env/my-referee-three\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":15,\"D2\":12,\"D3\":14,\"D4\":14,\"D5\":12,\"D6\":14,\"D7\":13,\"D8\":12},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":106,\"max_total\":125,\"percent\":84.8,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-usage-metrics/SKILL.md\",\"line\":247,\"evidence\":\"The Dashboard section (lines 238-281) spends about 45 lines on UI layout: filter-bar order, the two-line clamp, chart types and the 150ms debounce. An agent running the pipeline and reporting results does not act on these details.\",\"fix\":\"Keep only the rules that change what the agent reports (the em dash for an unknown price or date, the conditional badge, the inferred-family rendering, chart dedup). Move the rest of the UI description into a reference file, or delete it.\"},{\"id\":\"D1-2\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-usage-metrics/SKILL.md\",\"line\":212,\"evidence\":\"\\\"The PRD's own intended trigger is ... not something this phase's own automated delivery performs on the user's behalf.\\\"\",\"fix\":\"Replace the PRD and phase narrative with one behavioural line: 'Run classify only when the user asks for it, after real history has been captured.'\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-usage-metrics/SKILL.md\",\"line\":69,\"evidence\":\"Subcommands are listed with a single `run` example. Nothing helps the agent pick a partial run (capture, refine or dashboard alone) from the user's request.\",\"fix\":\"Add a short decision list: new data wanted -> run; only a UI refresh -> dashboard; inferred families wanted -> classify then dashboard; empty page -> refine then dashboard.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-usage-metrics/SKILL.md\",\"line\":244,\"evidence\":\"\\\"Both the `run` and `dashboard` subcommands open the generated file in the default browser automatically ... there is no opt-out flag.\\\" The NEVER list does not cover the side effect this causes in headless or SSH sessions.\",\"fix\":\"Add to NEVER: 'Never run `run` or `dashboard` in a headless or CI shell expecting no side effect: both launch the default browser, and there is no opt-out flag.'\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-usage-metrics/SKILL.md\",\"line\":3,\"evidence\":\"The description is declarative (\\\"Run the local ... pipeline\\\"), has no near-miss boundary against general token-billing or cost questions, and ends on internal jargon (\\\"never a hosted-database Artifact\\\").\",\"fix\":\"Run the local capture-refine-dashboard pipeline over Claude Code, opencode, Codex, Cursor and rtk session logs, and open the static HTML usage-metrics dashboard. Use this skill when the user asks about usage metrics, a usage dashboard, how they use their AI CLIs, which runtime, model or command family they run most, per-session token or price totals from local logs, grep-family counts by session, or a filterable, sortable view of shell commands their coding agents ran, even without naming the dashboard. Not for exporting or sharing data with a hosted service, external billing pages, or explaining what a single shell command does.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-usage-metrics/SKILL.md\",\"line\":100,\"evidence\":\"SKILL.md is 324 lines and has no references/. The 29-line schema list, the Dashboard UI detail and the Codex tool-name enumeration load on every run, though only queries or debugging need them.\",\"fix\":\"Move the refined_commands schema, the dashboard UI detail and the Codex tool-name enumeration into references/schema.md and references/dashboard.md. Add gated reads, for example 'Read references/schema.md before writing any SQL against refined.db.'\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-usage-metrics/SKILL.md\",\"line\":97,\"evidence\":\"The SQL guidance mandates two-branch dedup, but the skill gives an exact query only for a plain row count. Agents must hand-write the dedup SQL, which is the fragile operation.\",\"fix\":\"Add one exact deduplicated token or price SUM query, using (session_id, turn_id) and the (session_id, raw_ref) fallback for null turn_id, to copy verbatim.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-usage-metrics/ai-kit-usage-metrics.py\",\"line\":null,\"evidence\":\"`--help` prints only `usage: ai-kit-usage-metrics.py {capture|refine|dashboard|classify|run}`, with no description, outputs or exit codes. The run summary is not structured output, so the agent needs a separate sqlite one-liner to count rows. The evals and trigger queries (6 evals, 20 queries split 10/10) and tests/test_ai_kit_usage_metrics.py are solid.\",\"fix\":\"Make --help describe each subcommand, its outputs and its exit codes. Have run print a JSON summary to stdout (dashboard path, rows per runtime, failed sources), and add an eval that asserts on it.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-usage-metrics/SKILL.md\",\"line\":227,\"evidence\":\"The classify sequence is written as bare `ai-kit-usage-metrics.py classify` / `ai-kit-usage-metrics.py dashboard`. As written it is not runnable, and it breaks from the `python3 \\\"$TOOLS_PY\\\"` form the skill requires elsewhere.\",\"fix\":\"Use ```bash\\\\npython3 \\\"$TOOLS_PY\\\" classify\\\\npython3 \\\"$TOOLS_PY\\\" dashboard\\\\n```\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/ai-kit-usage-metrics/SKILL.md\",\"line\":92,\"evidence\":\"\\\"`refined.db` missing (a `dashboard` run on its own shows an empty page): run `refine` before `dashboard`.\\\" The skill does not cover refine itself having nothing to read because no capture ran, or the sqlite count query failing when refined.db does not exist.\",\"fix\":\"State the order explicitly: if raw/*.jsonl is also missing, run capture (or plain run) first. Check that refined.db exists before running the count query, and report zero rows otherwise.\"}]}"
+  }
+ ],
+ "digest": "260776257472016eb1cd5756b712605181d179dde6f8c5f46ab3bd906179a4e9",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-three",
+ "loop": "32.1",
+ "modules": [
+  "tests/test_ai_kit_usage_metrics.py",
+  "tests/test_arch.py",
+  "tests/test_banned_tool_mentions.py",
+  "tests/test_gate_scope.py"
+ ],
+ "prompt_sha256": "6a413cf61de87681be6a2ba4ec70a33f184acb30f3593bb01695b9dfebc03804",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "ai-kit-usage-metrics",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "The Dashboard section (lines 238-281) spends about 45 lines on UI layout: filter-bar order, the two-line clamp, chart types and the 150ms debounce. An agent running the pipeline and reporting results does not act on these details.",
+    "file": "skills/ai-kit-usage-metrics/SKILL.md",
+    "fix": "Keep only the rules that change what the agent reports (the em dash for an unknown price or date, the conditional badge, the inferred-family rendering, chart dedup). Move the rest of the UI description into a reference file, or delete it.",
+    "id": "D1-1",
+    "line": 247,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "\"The PRD's own intended trigger is ... not something this phase's own automated delivery performs on the user's behalf.\"",
+    "file": "skills/ai-kit-usage-metrics/SKILL.md",
+    "fix": "Replace the PRD and phase narrative with one behavioural line: 'Run classify only when the user asks for it, after real history has been captured.'",
+    "id": "D1-2",
+    "line": 212,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "Subcommands are listed with a single `run` example. Nothing helps the agent pick a partial run (capture, refine or dashboard alone) from the user's request.",
+    "file": "skills/ai-kit-usage-metrics/SKILL.md",
+    "fix": "Add a short decision list: new data wanted -> run; only a UI refresh -> dashboard; inferred families wanted -> classify then dashboard; empty page -> refine then dashboard.",
+    "id": "D2-1",
+    "line": 69,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "\"Both the `run` and `dashboard` subcommands open the generated file in the default browser automatically ... there is no opt-out flag.\" The NEVER list does not cover the side effect this causes in headless or SSH sessions.",
+    "file": "skills/ai-kit-usage-metrics/SKILL.md",
+    "fix": "Add to NEVER: 'Never run `run` or `dashboard` in a headless or CI shell expecting no side effect: both launch the default browser, and there is no opt-out flag.'",
+    "id": "D3-1",
+    "line": 244,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description is declarative (\"Run the local ... pipeline\"), has no near-miss boundary against general token-billing or cost questions, and ends on internal jargon (\"never a hosted-database Artifact\").",
+    "file": "skills/ai-kit-usage-metrics/SKILL.md",
+    "fix": "Run the local capture-refine-dashboard pipeline over Claude Code, opencode, Codex, Cursor and rtk session logs, and open the static HTML usage-metrics dashboard. Use this skill when the user asks about usage metrics, a usage dashboard, how they use their AI CLIs, which runtime, model or command family they run most, per-session token or price totals from local logs, grep-family counts by session, or a filterable, sortable view of shell commands their coding agents ran, even without naming the dashboard. Not for exporting or sharing data with a hosted service, external billing pages, or explaining what a single shell command does.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "SKILL.md is 324 lines and has no references/. The 29-line schema list, the Dashboard UI detail and the Codex tool-name enumeration load on every run, though only queries or debugging need them.",
+    "file": "skills/ai-kit-usage-metrics/SKILL.md",
+    "fix": "Move the refined_commands schema, the dashboard UI detail and the Codex tool-name enumeration into references/schema.md and references/dashboard.md. Add gated reads, for example 'Read references/schema.md before writing any SQL against refined.db.'",
+    "id": "D5-1",
+    "line": 100,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "The SQL guidance mandates two-branch dedup, but the skill gives an exact query only for a plain row count. Agents must hand-write the dedup SQL, which is the fragile operation.",
+    "file": "skills/ai-kit-usage-metrics/SKILL.md",
+    "fix": "Add one exact deduplicated token or price SUM query, using (session_id, turn_id) and the (session_id, raw_ref) fallback for null turn_id, to copy verbatim.",
+    "id": "D6-1",
+    "line": 97,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "`--help` prints only `usage: ai-kit-usage-metrics.py {capture|refine|dashboard|classify|run}`, with no description, outputs or exit codes. The run summary is not structured output, so the agent needs a separate sqlite one-liner to count rows. The evals and trigger queries (6 evals, 20 queries split 10/10) and tests/test_ai_kit_usage_metrics.py are solid.",
+    "file": "skills/ai-kit-usage-metrics/ai-kit-usage-metrics.py",
+    "fix": "Make --help describe each subcommand, its outputs and its exit codes. Have run print a JSON summary to stdout (dashboard path, rows per runtime, failed sources), and add an eval that asserts on it.",
+    "id": "D7-1",
+    "line": null,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The classify sequence is written as bare `ai-kit-usage-metrics.py classify` / `ai-kit-usage-metrics.py dashboard`. As written it is not runnable, and it breaks from the `python3 \"$TOOLS_PY\"` form the skill requires elsewhere.",
+    "file": "skills/ai-kit-usage-metrics/SKILL.md",
+    "fix": "Use ```bash\\npython3 \"$TOOLS_PY\" classify\\npython3 \"$TOOLS_PY\" dashboard\\n```",
+    "id": "D8-1",
+    "line": 227,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "\"`refined.db` missing (a `dashboard` run on its own shows an empty page): run `refine` before `dashboard`.\" The skill does not cover refine itself having nothing to read because no capture ran, or the sqlite count query failing when refined.db does not exist.",
+    "file": "skills/ai-kit-usage-metrics/SKILL.md",
+    "fix": "State the order explicitly: if raw/*.jsonl is also missing, run capture (or plain run) first. Check that refined.db exists before running the count query, and report zero rows otherwise.",
+    "id": "D8-2",
+    "line": 92,
+    "severity": "low"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-three",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 84.8,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 15,
+   "D2": 12,
+   "D3": 14,
+   "D4": 14,
+   "D5": 12,
+   "D6": 14,
+   "D7": 13,
+   "D8": 12
+  },
+  "skill": "ai-kit-usage-metrics",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 106
+ }
+}

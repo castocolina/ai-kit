@@ -1,0 +1,175 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=36s out=42847 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"markdown-to-pdf\",\"judge\":\"opencode:router-env/my-referee-three\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":17,\"D2\":13,\"D3\":14,\"D4\":14,\"D5\":13,\"D6\":14,\"D7\":13,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":111,\"max_total\":125,\"percent\":88.8,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":16,\"evidence\":\"Intro paragraph restates the description: 'Turn a Markdown document with embedded mermaid diagrams into a PDF (or a marp deck) in one non-destructive command...'\",\"fix\":\"Cut the intro to one line naming the one fact the description lacks: rendering runs on a temp copy and feeds the best complete pipeline.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":23,\"evidence\":\"'Draft or final? Iterating → any installed backend is fine. Final → let the quality-ranked auto-selection pick' gives the same action (run the script with no flags) for both branches\",\"fix\":\"Replace the draft/final question with one that changes what the agent does, for example 'Does the user name a backend? Only then pass --backend', or delete the question.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":101,\"evidence\":\"'NEVER nag for an install when a complete pipeline already works. All four backends are \\\"good enough\\\"' gives a preference, not a failure mode learned in practice\",\"fix\":\"Swap it for a concrete gotcha, for example how mmdc/puppeteer behaves in sandboxed containers or how pandoc-latex handles relative image paths.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":3,\"evidence\":\"Description has no boundary against near misses such as DOCX/HTML to PDF, editing an existing PDF, or theming an existing marp deck; the phrasing is declarative\",\"fix\":\"Use when the user wants to turn a .md file into a PDF or a marp slide deck (pdf, pptx, html), including Markdown with ```mermaid diagrams: \\\"export markdown to pdf\\\", \\\"md to pdf\\\", \\\"render mermaid and make a PDF\\\", \\\"build a deck from this markdown\\\". Renders every mermaid block with mmdc on a temp copy (the source is never edited) and picks the best installed backend (Pandoc+LaTeX > Typst > WeasyPrint > Chromium); never auto-installs. Not for converting DOCX or HTML to PDF, editing, merging or compressing existing PDFs, rendering a lone mermaid diagram, or restyling an existing marp deck. Keywords: markdown to pdf, md to pdf, mermaid, marp deck, slide deck, pandoc, typst.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/examples/sample-with-mermaid.md\",\"line\":null,\"evidence\":\"examples/sample-with-mermaid.md is tracked, but neither SKILL.md nor references/backends.md references it\",\"fix\":\"Reference it from SKILL.md with a condition ('to smoke-test the installed toolchain, run the primary flow on examples/sample-with-mermaid.md'), or delete it.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":79,\"evidence\":\"'Hand the .rendered.md to marp-slide for themes/polish/export' does not say how to clean up the .rendered.md and .rendered-assets/ that it writes beside the source\",\"fix\":\"State where --render-only writes its output, and whether the agent removes the .rendered.md and .rendered-assets/ after the hand-off or leaves them for the user.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"tests/test_markdown_to_pdf_e2e.py\",\"line\":null,\"evidence\":\"The e2e module has 1 test. The scripts print free-form text ('Wrote ... (backend: ..., diagrams: ...)'), and detect_backends.py prints nothing when run directly\",\"fix\":\"Add e2e coverage for the deck and --render-only paths. Add a structured output option (for example --json) to markdown_to_pdf.py and detect_backends.py, and assert on it in tests/test_markdown_to_pdf.py.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":105,\"evidence\":\"Trigger query 'Which PDF backend is installed for markdown conversion on this machine?' should trigger, but no branch answers it without converting: scripts/detect_backends.py exits 0 with no output, and backends.md is reserved for 'which backend is best'\",\"fix\":\"Add a decision row 'User asks which backend is installed' that runs a detection command printing the backend it would choose (give detect_backends.py a main that prints it), and say no file is written.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":43,\"evidence\":\"The flow ends at reporting the 'Wrote ...' line; there is no check that the PDF exists, is non-empty, or has its diagrams embedded\",\"fix\":\"Add a validation step after exit 0: confirm the output file exists and is non-empty (for example with pdfinfo when installed), and re-run with --format png if diagrams are missing.\"}]}"
+  }
+ ],
+ "digest": "1bab1e2471ce282ffb1c8a1de5a952bf382a3502589a3c2916c9f0543016454e",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-three",
+ "loop": "32.1",
+ "modules": [
+  "tests/test_markdown_to_pdf.py",
+  "tests/test_markdown_to_pdf_e2e.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "83067e78e60e5fd0374d1b1a29a635497e4e83fba20773089e0354377d26e209",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "markdown-to-pdf",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "Intro paragraph restates the description: 'Turn a Markdown document with embedded mermaid diagrams into a PDF (or a marp deck) in one non-destructive command...'",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Cut the intro to one line naming the one fact the description lacks: rendering runs on a temp copy and feeds the best complete pipeline.",
+    "id": "D1-1",
+    "line": 16,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "'Draft or final? Iterating → any installed backend is fine. Final → let the quality-ranked auto-selection pick' gives the same action (run the script with no flags) for both branches",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Replace the draft/final question with one that changes what the agent does, for example 'Does the user name a backend? Only then pass --backend', or delete the question.",
+    "id": "D2-1",
+    "line": 23,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "'NEVER nag for an install when a complete pipeline already works. All four backends are \"good enough\"' gives a preference, not a failure mode learned in practice",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Swap it for a concrete gotcha, for example how mmdc/puppeteer behaves in sandboxed containers or how pandoc-latex handles relative image paths.",
+    "id": "D3-1",
+    "line": 101,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "Description has no boundary against near misses such as DOCX/HTML to PDF, editing an existing PDF, or theming an existing marp deck; the phrasing is declarative",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Use when the user wants to turn a .md file into a PDF or a marp slide deck (pdf, pptx, html), including Markdown with ```mermaid diagrams: \"export markdown to pdf\", \"md to pdf\", \"render mermaid and make a PDF\", \"build a deck from this markdown\". Renders every mermaid block with mmdc on a temp copy (the source is never edited) and picks the best installed backend (Pandoc+LaTeX > Typst > WeasyPrint > Chromium); never auto-installs. Not for converting DOCX or HTML to PDF, editing, merging or compressing existing PDFs, rendering a lone mermaid diagram, or restyling an existing marp deck. Keywords: markdown to pdf, md to pdf, mermaid, marp deck, slide deck, pandoc, typst.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "examples/sample-with-mermaid.md is tracked, but neither SKILL.md nor references/backends.md references it",
+    "file": "skills/markdown-to-pdf/examples/sample-with-mermaid.md",
+    "fix": "Reference it from SKILL.md with a condition ('to smoke-test the installed toolchain, run the primary flow on examples/sample-with-mermaid.md'), or delete it.",
+    "id": "D5-1",
+    "line": null,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "'Hand the .rendered.md to marp-slide for themes/polish/export' does not say how to clean up the .rendered.md and .rendered-assets/ that it writes beside the source",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "State where --render-only writes its output, and whether the agent removes the .rendered.md and .rendered-assets/ after the hand-off or leaves them for the user.",
+    "id": "D6-1",
+    "line": 79,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The e2e module has 1 test. The scripts print free-form text ('Wrote ... (backend: ..., diagrams: ...)'), and detect_backends.py prints nothing when run directly",
+    "file": "tests/test_markdown_to_pdf_e2e.py",
+    "fix": "Add e2e coverage for the deck and --render-only paths. Add a structured output option (for example --json) to markdown_to_pdf.py and detect_backends.py, and assert on it in tests/test_markdown_to_pdf.py.",
+    "id": "D7-1",
+    "line": null,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "Trigger query 'Which PDF backend is installed for markdown conversion on this machine?' should trigger, but no branch answers it without converting: scripts/detect_backends.py exits 0 with no output, and backends.md is reserved for 'which backend is best'",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add a decision row 'User asks which backend is installed' that runs a detection command printing the backend it would choose (give detect_backends.py a main that prints it), and say no file is written.",
+    "id": "D8-1",
+    "line": 105,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The flow ends at reporting the 'Wrote ...' line; there is no check that the PDF exists, is non-empty, or has its diagrams embedded",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add a validation step after exit 0: confirm the output file exists and is non-empty (for example with pdfinfo when installed), and re-run with --format png if diagrams are missing.",
+    "id": "D8-2",
+    "line": 43,
+    "severity": "low"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-three",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 88.8,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 17,
+   "D2": 13,
+   "D3": 14,
+   "D4": 14,
+   "D5": 13,
+   "D6": 14,
+   "D7": 13,
+   "D8": 13
+  },
+  "skill": "markdown-to-pdf",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 111
+ }
+}

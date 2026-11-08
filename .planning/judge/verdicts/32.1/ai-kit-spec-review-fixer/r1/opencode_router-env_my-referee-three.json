@@ -1,0 +1,182 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=41s out=56630 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"ai-kit-spec-review-fixer\",\"judge\":\"opencode:router-env/my-referee-three\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":15,\"D2\":12,\"D3\":12,\"D4\":12,\"D5\":15,\"D6\":13,\"D7\":11,\"D8\":12},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":102,\"max_total\":125,\"percent\":81.6,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":105,\"evidence\":\"Common Mistakes table repeats the Editing rules almost row for row, e.g. 'Rewriting unflagged sections | Stop. Only edit what `Location:` names.' and 'Editing the review report | Never.' (already in lines 44 and 47)\",\"fix\":\"Keep only the Common Mistakes rows that add something new (the Title Case reformat failure, reading the referenced file first) and delete the rows that restate lines 42-48.\"},{\"id\":\"D1-2\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":50,\"evidence\":\"'Preserve existing formatting conventions (heading levels, list style, code fences) of the document. | The author chose them.' is generic editing advice the model already follows\",\"fix\":\"Fold it into the line 46 reformat rule or delete it.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":31,\"evidence\":\"The process runs read → checklist → edit and stops there, with no step to re-read each edited section after editing, even though line 17 names a codebase root 'for any `Read`-back verification'\",\"fix\":\"Add a step after editing: 'Re-read each edited Location from disk and check it against the finding's Required: text before you write the Fix Summary.'\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":105,\"evidence\":\"There is no Gotchas section of environment facts. The one real gotcha (worktree codebase root vs CWD, line 35) is buried in a procedure step, and the Common Mistakes rows mostly lack a stated WHY\",\"fix\":\"Add a '## Gotchas' section listing: the codebase root is often a worktree, not your CWD; edits to inline content vanish when the subagent ends; the orchestrator parses the Status line literally, so it must use one of the four exact values.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":3,\"evidence\":\"The description gives no 'not for' boundary against its near neighbours (writing the review itself with ai-kit-spec-review-checklist, the GSD plan revise flow) and has thin user-intent keywords\",\"fix\":\"Apply findings from an ai-kit-spec-review-checklist report (or similar structured review feedback) to a design or plan document: edit it in place to satisfy each finding's Required: outcome, address every CRITICAL and HIGH finding, escalate strategy decisions, keep the conventions of the framework profile (EARS, Given/When/Then, task checkboxes), and emit a per-finding Fix Summary. Use when a reviewer flagged a spec, design doc, plan or tasks file and the findings need fixing, including as the clean-context fixer subagent of /ai-kit-spec-review, even when the user only says 'address the review' or 'fix what the reviewer flagged'. Not for writing the review report (ai-kit-spec-review-checklist), general proofreading or reformatting, or GSD plan-checker revisions.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":36,\"evidence\":\"'A MEDIUM or LOW finding is a task if trivial; otherwise defer it' never defines 'trivial', so two runs can sort the same finding differently\",\"fix\":\"Define it: 'trivial = an edit confined to the finding's Location that needs no file read beyond the document and changes no claim'; defer everything else.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-fixer/evals/trigger-queries.json\",\"line\":2,\"evidence\":\"The queries are terse and context-free (e.g. 'produce a Fix Summary after editing the plan', 'fix the CRITICAL and HIGH items in this spec review'). None has a file path, backstory or casual phrasing, and several should-trigger queries quote the skill's own vocabulary\",\"fix\":\"Rewrite about half of the queries with realistic context, for example 'my reviewer left 3 HIGH notes on docs/plans/auth-plan.md (report in tmp/review.md), can you sort them out without touching the rest', plus near-miss negatives that carry the same kind of context.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-fixer/evals/evals.json\",\"line\":75,\"evidence\":\"'edge-medium-only-skipped' has \\\"files\\\": [] and names no report or plan on disk, so it cannot be run reproducibly\",\"fix\":\"Add an evals/files/medium-only-review.md fixture with one MEDIUM finding against plan-bad.md and list both files in the eval.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":22,\"evidence\":\"'If any input is missing, stop and ask.' conflicts with the clean-context subagent role (line 3), which cannot ask anyone mid-run. Following the missing-report branch leads to no defined Status, because Failure is reserved for 'a document not on disk' (line 91)\",\"fix\":\"Replace it with: 'If any required input is missing, emit a Fix Summary with ### Status: Failure — missing <input>, make no edits, and name the input the caller must supply'; widen the Failure rule on line 91 to match.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":68,\"evidence\":\"The Fix Summary template shows one '## Fix Summary: <doc path>' block, with no rule for cross-document fixes that edit several documents (line 49)\",\"fix\":\"State that a multi-document run emits one Fix Summary per document, or one summary that lists every edited path under ### Document, with a single Status line.\"}]}"
+  }
+ ],
+ "digest": "24d00cb1e70b605eec0ccd57faeacc43cbffd24afb7d93f88122ae680e7052e7",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-three",
+ "loop": "32.1",
+ "modules": [
+  "tests/test_ai_kit_spec_review_fixer.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "fea91a22abff3671283ac3974c3a1800409b7c9e1b0b2da80e3df31c9d932dbb",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-spec-review-fixer",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "Common Mistakes table repeats the Editing rules almost row for row, e.g. 'Rewriting unflagged sections | Stop. Only edit what `Location:` names.' and 'Editing the review report | Never.' (already in lines 44 and 47)",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Keep only the Common Mistakes rows that add something new (the Title Case reformat failure, reading the referenced file first) and delete the rows that restate lines 42-48.",
+    "id": "D1-1",
+    "line": 105,
+    "severity": "low"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "'Preserve existing formatting conventions (heading levels, list style, code fences) of the document. | The author chose them.' is generic editing advice the model already follows",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Fold it into the line 46 reformat rule or delete it.",
+    "id": "D1-2",
+    "line": 50,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "The process runs read → checklist → edit and stops there, with no step to re-read each edited section after editing, even though line 17 names a codebase root 'for any `Read`-back verification'",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Add a step after editing: 'Re-read each edited Location from disk and check it against the finding's Required: text before you write the Fix Summary.'",
+    "id": "D2-1",
+    "line": 31,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "There is no Gotchas section of environment facts. The one real gotcha (worktree codebase root vs CWD, line 35) is buried in a procedure step, and the Common Mistakes rows mostly lack a stated WHY",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Add a '## Gotchas' section listing: the codebase root is often a worktree, not your CWD; edits to inline content vanish when the subagent ends; the orchestrator parses the Status line literally, so it must use one of the four exact values.",
+    "id": "D3-1",
+    "line": 105,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description gives no 'not for' boundary against its near neighbours (writing the review itself with ai-kit-spec-review-checklist, the GSD plan revise flow) and has thin user-intent keywords",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Apply findings from an ai-kit-spec-review-checklist report (or similar structured review feedback) to a design or plan document: edit it in place to satisfy each finding's Required: outcome, address every CRITICAL and HIGH finding, escalate strategy decisions, keep the conventions of the framework profile (EARS, Given/When/Then, task checkboxes), and emit a per-finding Fix Summary. Use when a reviewer flagged a spec, design doc, plan or tasks file and the findings need fixing, including as the clean-context fixer subagent of /ai-kit-spec-review, even when the user only says 'address the review' or 'fix what the reviewer flagged'. Not for writing the review report (ai-kit-spec-review-checklist), general proofreading or reformatting, or GSD plan-checker revisions.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "'A MEDIUM or LOW finding is a task if trivial; otherwise defer it' never defines 'trivial', so two runs can sort the same finding differently",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Define it: 'trivial = an edit confined to the finding's Location that needs no file read beyond the document and changes no claim'; defer everything else.",
+    "id": "D6-1",
+    "line": 36,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The queries are terse and context-free (e.g. 'produce a Fix Summary after editing the plan', 'fix the CRITICAL and HIGH items in this spec review'). None has a file path, backstory or casual phrasing, and several should-trigger queries quote the skill's own vocabulary",
+    "file": "skills/ai-kit-spec-review-fixer/evals/trigger-queries.json",
+    "fix": "Rewrite about half of the queries with realistic context, for example 'my reviewer left 3 HIGH notes on docs/plans/auth-plan.md (report in tmp/review.md), can you sort them out without touching the rest', plus near-miss negatives that carry the same kind of context.",
+    "id": "D7-1",
+    "line": 2,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "'edge-medium-only-skipped' has \"files\": [] and names no report or plan on disk, so it cannot be run reproducibly",
+    "file": "skills/ai-kit-spec-review-fixer/evals/evals.json",
+    "fix": "Add an evals/files/medium-only-review.md fixture with one MEDIUM finding against plan-bad.md and list both files in the eval.",
+    "id": "D7-2",
+    "line": 75,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'If any input is missing, stop and ask.' conflicts with the clean-context subagent role (line 3), which cannot ask anyone mid-run. Following the missing-report branch leads to no defined Status, because Failure is reserved for 'a document not on disk' (line 91)",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Replace it with: 'If any required input is missing, emit a Fix Summary with ### Status: Failure — missing <input>, make no edits, and name the input the caller must supply'; widen the Failure rule on line 91 to match.",
+    "id": "D8-1",
+    "line": 22,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The Fix Summary template shows one '## Fix Summary: <doc path>' block, with no rule for cross-document fixes that edit several documents (line 49)",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "State that a multi-document run emits one Fix Summary per document, or one summary that lists every edited path under ### Document, with a single Status line.",
+    "id": "D8-2",
+    "line": 68,
+    "severity": "low"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-three",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 81.6,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 15,
+   "D2": 12,
+   "D3": 12,
+   "D4": 12,
+   "D5": 15,
+   "D6": 13,
+   "D7": 11,
+   "D8": 12
+  },
+  "skill": "ai-kit-spec-review-fixer",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 102
+ }
+}
