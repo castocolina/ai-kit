@@ -90,8 +90,9 @@ TESTS_DIR = REPO_ROOT / "tests"
 
 # arch-test tier: the AST architecture-fitness module.
 ARCH_MODULES = frozenset({"tests.test_arch"})
-# Needs PyYAML, which only the uv env provides.
+# Needs PyYAML or LibCST, which only the uv env provides.
 UNIT_UV_MODULES = frozenset({
+    "tests.test_cst_refactor_codemods",  # needs LibCST from the uv dev group (32.1)
     "tests.test_framework_profiles",
     "tests.test_skill_frontmatter_pyyaml",
 })

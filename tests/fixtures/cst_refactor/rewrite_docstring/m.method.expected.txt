@@ -1,0 +1,15 @@
+class Box:
+    """Old box doc."""
+
+    def run(self):
+        """New run doc."""
+        return 1
+
+    def fs(self):
+        f"""Old {self} fstring doc."""
+        return 2
+
+
+def run():
+    """Old run doc."""
+    return 3

@@ -125,7 +125,7 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   intentionally unicode-rich UI), `pylint~=4.0` (`max-args=5`,
   `max-locals=15`, `max-branches=12`, `max-returns=6`, `max-statements=50`),
   `pyright~=1.1` (`basic` mode), `vulture~=2.14` (`min_confidence=80`),
-  `pre-commit~=4.4`, `textual>=8.0,<9.0` (dev/wizard-only).
+  `pre-commit~=4.4`, `textual>=8.0,<9.0` (dev/wizard-only), `libcst>=1.5,<2` (dev-only: cst-refactor's behaviour tests in `unit-uv`).
 - `tools/install.sh` and `tests/test_install.sh` are checked with
   `shellcheck` — fix findings, don't suppress without a documented reason.
 - Don't add a new dev dependency without checking whether an existing
