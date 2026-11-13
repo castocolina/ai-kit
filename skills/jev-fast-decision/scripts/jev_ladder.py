@@ -63,7 +63,7 @@ def _load_secret_shapes() -> Any:
     from copied skill folders, so its own folder is not always on the import path."""
     path = Path(__file__).resolve().parent / "secret_shapes.py"
     spec = importlib.util.spec_from_file_location("jev_secret_shapes", path)
-    if spec is None or spec.loader is None:
+    if spec is None or spec.loader is None or not path.is_file():
         raise ImportError(f"jev-fast-decision: cannot load {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

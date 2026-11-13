@@ -91,6 +91,20 @@ class TestCopyInstall(unittest.TestCase):
         result = self._caught(["jev-fast-decision"], "jev-fast-decision/scripts", ENTRIES["jev"])
         self.assertEqual("secret_pattern_context", result)
 
+    def test_jev_ladder_copied_without_its_sibling_fails_with_import_error(self):
+        tmp = Path(tempfile.mkdtemp(prefix="ai-kit-shapes-lone-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        shutil.copy2(SKILLS / "jev-fast-decision" / "scripts" / "jev_ladder.py", tmp)
+        proc = subprocess.run(
+            [sys.executable, "-I", "-B", "-c",
+             "import sys\nsys.path.insert(0, sys.argv[1])\nimport jev_ladder\n", str(tmp)],
+            capture_output=True, text=True, env={"PATH": os.environ.get("PATH", "")},
+            cwd=tmp, timeout=60, check=False,
+        )
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("ImportError", proc.stderr)
+        self.assertIn("secret_shapes.py", proc.stderr)
+
     def test_commit_fold_copy_redacts_a_new_shape(self):
         result = self._caught(["ai-kit-commit-fold"], "ai-kit-commit-fold/scripts",
                               ENTRIES["commit-fold"])
