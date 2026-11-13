@@ -115,7 +115,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 31: Removals and small defects** - Three skills and rtk gone, seven small known defects fixed *(amended 2026-11-03, 31 spec: seven items per DEF-01)* (completed 2026-11-06)
 - [x] **Phase 32: Re-judge baseline** - One current-judge report for every kept skill, plus strict frontmatter and text checks (completed 2026-11-07)
 - [x] **Phase 32.1: Batch 1, general small skills** - cst-refactor, markdown-to-pdf, spec-review-fixer and usage-metrics reach the bar; jev-fast-decision gets its JEV fixes and keeps its bar *(amended 2026-11-07, 32.1 D-01: owner batch scope "Narrow")* (completed 2026-11-08)
-- [ ] **Phase 32.2: Batch 2, spec review family** - checklist reaches the bar; spec-config and spec-execute get their fixes; spec-review deferred to Phases 39-40 *(amended 2026-11-07, 32.1 D-01)*
+- [x] **Phase 32.2: Batch 2, spec review family** - checklist reaches the bar; spec-config and spec-execute get their fixes; spec-review deferred to Phases 39-40 *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
 - [ ] **Phase 32.3: Batch 3, execution and session skills** - spec-execute-superpowers and session-wake keep their bar; one shared secret scanner; cross-ai deferred to Phases 37-38 *(amended 2026-11-07, 32.1 D-01)*
 - [ ] **Phase 32.4: Batch 4, planning skills and the closing report** - goal-prompt, spec-discuss and curated-config keep their bar with their fixes; the closing report shows all 15 judged skills *(amended 2026-11-07, 32.1 D-01)*
 - [ ] **Phase 33: One config design** - One documented config for every ai-kit setting; review-spec.toml migrates on its own
@@ -463,7 +463,7 @@ Plans:
 
 ### Phase 32.2: Batch 2, spec review family
 
-**Goal**: `ai-kit-spec-review`, `ai-kit-spec-review-checklist`, `ai-kit-spec-config` and `ai-kit-spec-execute` reach the judge bar with new-shape evals and tests, and the cheap-execution ranking works again. *(amended 2026-11-07, 32.1 D-01, owner batch scope "Narrow": only `ai-kit-spec-review-checklist` (75.2 C) reaches the bar here, with its Markdown scenarios converted to new-shape evals; `ai-kit-spec-review` (75.2 C) is deferred to Phases 39-40, which change its SKILL.md, together with converting its Markdown scenarios; `ai-kit-spec-config` and `ai-kit-spec-execute`, already at the bar, get only the HUB-04 and DEF-09 fixes)*
+**Goal**: `ai-kit-spec-review`, `ai-kit-spec-review-checklist`, `ai-kit-spec-config` and `ai-kit-spec-execute` reach the judge bar with new-shape evals and tests, and the cheap-execution ranking works again. *(amended 2026-11-07, 32.1 D-01, owner batch scope "Narrow": only `ai-kit-spec-review-checklist` (75.2 C) reaches the bar here, with its Markdown scenarios converted to new-shape evals; `ai-kit-spec-review` (75.2 C) is deferred to Phases 39-40, which change its SKILL.md, together with converting its Markdown scenarios; `ai-kit-spec-config` and `ai-kit-spec-execute`, already at the bar, get only the HUB-04 and DEF-09 fixes)* *(amended 2026-11-08, 32.2 spec: live check: the HUB-04 and DEF-09 changes live in `ai-kit-spec-review`'s package and in other skills' Python, none inside `ai-kit-spec-config` or `ai-kit-spec-execute`, so both stay unchanged in this phase)*
 **Depends on**: Phase 32
 **Requirements**: HUB-04, DEF-09
 *(DEF-09 was added 2026-11-07 at the Phase 32 close-out.)*
@@ -472,9 +472,21 @@ Plans:
   1. Each of the four skills has `evals/evals.json`, about 20 trigger queries (half near-misses) and tests that run in the unit tier. *(amended 2026-11-07, 32.1 D-01: `ai-kit-spec-review-checklist` gains them; `ai-kit-spec-config` and `ai-kit-spec-execute` keep theirs passing; `ai-kit-spec-review` gains them in Phases 39-40)*
   2. The re-judge report shows each of the four with no critical or high finding, or grade B or better, and no regression beyond judge variation. *(amended 2026-11-07, 32 spec: this criterion is the judge bar, JDG-04)* *(amended 2026-11-07, 32.1 D-01: the loop 32.2 re-judge covers only the skills whose SKILL.md this phase adds or materially changes, as JDG-04 reads; `ai-kit-spec-review-checklist` reaches the bar, and `ai-kit-spec-config` or `ai-kit-spec-execute`, when its SKILL.md changes, keeps it with no regression beyond judge variation; the HUB-04 and DEF-09 code changes inside `ai-kit-spec-review`'s package do not bring `ai-kit-spec-review` into the loop, and it is not brought to the bar here)*
   3. The cheap-execution ranking returns candidates from a catalog fixture where Artificial Analysis gives null coding and agentic indexes.
-  4. No runtime label or docstring in `skills/ai-kit-spec-review/ai_kit_spec/detection.py` names a planning file (today `20-SMOKE-OPENCODE.md`, `21-SMOKE-CURSOR.md` and `20-SMOKE-CODEX.md`, with `tests/test_ai_kit_spec_runtimes_table.py` pinning `21-SMOKE-CURSOR.md`), and a test fails when a string literal in shipped skill Python code names a file under a planning folder, which the Markdown-only history-text check of Phase 32 does not cover (DEF-09). *(added 2026-11-07, Phase 32 close-out)*
+  4. No runtime label or docstring in `skills/ai-kit-spec-review/ai_kit_spec/detection.py` names a planning file (today `20-SMOKE-OPENCODE.md`, `21-SMOKE-CURSOR.md` and `20-SMOKE-CODEX.md`, with `tests/test_ai_kit_spec_runtimes_table.py` pinning `21-SMOKE-CURSOR.md`), and a test fails when a string literal in shipped skill Python code names a file under a planning folder, which the Markdown-only history-text check of Phase 32 does not cover (DEF-09). *(added 2026-11-07, Phase 32 close-out)* *(amended 2026-11-08, 32.2 D-05: the guard reads string literals and comments in every tracked skill Python file, the project-rules skills included; live scan: 24 literal hits in 10 files across spec-review, curated-config, goal-prompt and project-rules-makefile, and 5 comment hits, all fixed in this phase)* *(amended 2026-11-08, 32.2 planning recount: 25 literal matches (24 file names, 1 folder name) in 11 files and 5 comment hits in 3 files; two plan and summary file names in `ai-kit-usage-metrics` that the shared patterns miss are fixed by hand)*
 
-**Plans**: TBD
+**Plans**: 5/5 plans complete
+
+Plans:
+**Wave 1**
+- [x] 32.2-01-PLAN.md — per-call `mechanical` floor so a null-index catalog ranks (HUB-04), wave 1
+- [x] 32.2-02-PLAN.md — detection.py labels and every shipped-Python planning-file name fixed, AST and tokenize guard (DEF-09), wave 1
+- [x] 32.2-03-PLAN.md — checklist marker table, never-ask rule, archetype Failure line, bare Issues Found template, doc-contract test module, wave 1
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 32.2-04-PLAN.md — checklist new-shape evals and trigger queries, wave 2
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 32.2-05-PLAN.md — loop 32.2 re-judge of the checklist and the bar record (JDG-04), wave 3
 
 ### Phase 32.3: Batch 3, execution and session skills
 
@@ -921,7 +933,7 @@ Plans:
 | 31. Removals and small defects | 6/6 | Complete    | 2026-11-06 |
 | 32. Re-judge baseline | 9/9 | Complete    | 2026-11-07 |
 | 32.1. Batch 1, general small skills | 9/9 | Complete    | 2026-11-08 |
-| 32.2. Batch 2, spec review family | 0/TBD | Not started | - |
+| 32.2. Batch 2, spec review family | 5/5 | Complete    | 2026-11-13 |
 | 32.3. Batch 3, execution and session skills | 0/TBD | Not started | - |
 | 32.4. Batch 4, planning skills and the closing report | 0/TBD | Not started | - |
 | 33. One config design | 0/TBD | Not started | - |
@@ -956,7 +968,7 @@ Open entries only. An entry a v2.0 requirement absorbs moves to **Absorbed into 
 (moved there 2026-11-07: 999.2, 999.5, 999.7 to 999.17 and 999.19), with the requirement and phase
 that track it. 999.6 stays open (secondary runtime); 999.20 (Claude extra-usage segment) was added
 2026-11-07, 999.21 (runner temp directories) at the Phase 32 close-out, and 999.22 (headless installer agents) at the
-32.1 discuss. The Playwright MCP Chrome path row in 999.1 is
+32.1 discuss, and 999.23 (the checklist's open judge notes) at the 32.2 close-out. The Playwright MCP Chrome path row in 999.1 is
 the FEAT-06 owner decision; the whole-tree layering suite once named 999.3 is ARCH-01 (Phase 52).
 Finished entries move to **Done** at the end of this section, with the date and what delivered them.
 
@@ -1020,6 +1032,39 @@ the README says which install paths link which categories; a scratch-HOME test s
 run. No DIST requirement covers it (DIST-02 syncs skills through `npx skills`, which installs no agents), so whichever
 phase settles agent install under copy installs (likely Phase 53) takes it. Found 2026-11-07 at the Phase 32
 close-out (scratch-HOME install check) and recorded at the 32.1 discuss (32.1 D-02).
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.23: The spec-review checklist's open judge notes (BACKLOG)
+
+**Goal:** [Captured for future planning] `ai-kit-spec-review-checklist` met the judge bar in loop 32.2, and
+five medium notes stayed open; none blocked the bar. Each is fixed in the checklist's SKILL.md (or its evals),
+with a doc-contract test in `tests/test_ai_kit_spec_review_checklist.py` where the fix is a stated rule, and the
+skill keeps the bar in the re-judge of the phase that changes it:
+(1) both judges: the audit-only paragraph allows persisting an in-context document to disk, which contradicts
+Phase 1 step 1's Failure stop for inline input; one rule wins and the other goes;
+(2) the description draws no line against its neighbours (`ai-kit-spec-review`, the orchestrator, and
+`ai-kit-spec-review-fixer`); it says when to use the orchestrator or the fixer instead;
+(3) the Workflow overview's phase order does not match the order a run follows;
+(4) the plan checklist's superpowers-style bar (exact files, exact code, exact commands) is applied to every
+framework, although plans in other frameworks are coarser; the bar follows the profile;
+(5) no eval expects an Approved outcome; at least one eval passes a clean document and expects Approved;
+(6) the 32.2 code review (WR-03): `evals/files/sample-review-report.md` lists
+`$HOME/.claude/skills/commit-message/SKILL.md` under Files Read, so a reviewer could ground against a real home
+file instead of `evals/files/commit-message-skill.md`; the line names the eval file (the fixer's copy of the same
+report and its `design-good.md` carry the same home path), and the shape test's machine-path pattern catches
+`$HOME/` once the deliberately bad design input is reworded. Deferred because any eval file change makes the
+checklist's judged digest stale. *(checklist part DONE 2026-11-13: b2ef2fc names `evals/files/commit-message-skill.md`,
+rewords the bad design input to `tools/commit-helper.sh` and leaves no home-rooted path under the checklist's
+`evals/`; loop 32.2 round 2 (0297ec4) re-judged it at the bar. Still open: the fixer's two copies, then `$HOME/`
+in the shape test's machine-path pattern, which would fail on those copies today.)*
+The native judge alone raised (2) to (5). Phases 39-40 change the spec-review family but name only
+`ai-kit-spec-review` and the fixer, so this entry is their natural home when either changes the checklist; a
+promoted entry lands there. Found 2026-11-13 at the Phase 32.2 close-out (loop 32.2 round 1 verdicts).
 **Requirements:** TBD
 **Plans:** 0 plans
 

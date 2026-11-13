@@ -4,8 +4,8 @@ TDD record for the `/ai-kit-spec-review` slash command. The component subagents 
 
 ## Component evidence (already verified)
 
-- **Reviewer** — `~/.claude/skills/ai-kit-spec-review-checklist/evals/test-scenarios.md` records 5 baseline RED scenarios + 2 REFACTOR verifications (grounding rule + no-downgrade clause). All passed.
-- **Fixer** — `~/.claude/skills/ai-kit-spec-review-fixer/evals/test-scenarios.md` records 3 baseline RED scenarios + 1 REFACTOR verification (all-or-nothing-per-finding). All passed.
+- **Reviewer** — `skills/ai-kit-spec-review-checklist/evals/test-scenarios.md` records 5 baseline RED scenarios + 2 REFACTOR verifications (grounding rule + no-downgrade clause). All passed.
+- **Fixer** — `skills/ai-kit-spec-review-fixer/evals/test-scenarios.md` records 3 baseline RED scenarios + 1 REFACTOR verification (all-or-nothing-per-finding). All passed.
 
 ## End-to-end attempt
 

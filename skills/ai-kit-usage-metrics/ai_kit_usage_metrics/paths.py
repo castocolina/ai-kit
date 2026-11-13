@@ -90,7 +90,7 @@ def cursor_projects_dir(env: dict) -> str:
     """`${CURSOR_CONFIG_DIR:-$HOME/.cursor}/projects`.
 
     Two-step only: CURSOR_CONFIG_DIR then $HOME/.cursor. The
-    XDG_CONFIG_HOME/cursor leg of 04-01-PLAN.md's cli-config.json
+    XDG_CONFIG_HOME/cursor leg of Phase 4's cli-config.json
     precedence is deliberately not ported — no live evidence confirms
     Cursor relocates SESSION data (projects/chats) the same way it
     relocates its config file.

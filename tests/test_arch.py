@@ -184,10 +184,11 @@ LISTS = {
 
 
 def _dump_hide_empty(node):
-    """ast.dump(show_empty=False) for interpreters that always print empty fields.
+    """Python 3.14's ast.dump(show_empty=False) output, on every interpreter.
 
     The audit hashes were taken on Python 3.14, whose dump omits None defaults
-    and empty lists. The uv test runner is 3.12 and has no show_empty flag.
+    and empty lists. Python 3.12 has no show_empty flag, and Python 3.15's dump
+    also omits a default ctx=Load(), so no interpreter's own dump is used.
     """
 
     def _format(node):
@@ -212,11 +213,7 @@ def _dump_hide_empty(node):
 
 
 def ast_hash(node):
-    if sys.version_info >= (3, 14):
-        dumped = ast.dump(node, show_empty=False)
-    else:
-        dumped = _dump_hide_empty(node)
-    return hashlib.sha256(dumped.encode()).hexdigest()[:12]
+    return hashlib.sha256(_dump_hide_empty(node).encode()).hexdigest()[:12]
 
 
 def taint_map(source):

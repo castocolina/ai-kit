@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CLI for the goal-prompt skill (GPS-01..04; SPEC R1, R2; D-04, D-05).
 
-`detect` reads a project and prints the contract object (27-PATTERNS.md, schema 1) on stdout.
+`detect` reads a project and prints the contract object (Phase 27 patterns, schema 1) on stdout.
 `render` writes one goal file from a detect result and an answers file, then prints its contract.
 Neither subcommand prompts. stdout is JSON; bad input prints a JSON error on stderr and exits 2.
 Sibling skills are reached only through their CLIs (D-03); GSD only through the three read-only

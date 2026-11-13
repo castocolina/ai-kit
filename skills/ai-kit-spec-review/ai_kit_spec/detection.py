@@ -46,18 +46,16 @@ _LABEL_PI = (
 )
 _LABEL_OPENCODE = (
     "live-verified (01.2 on opencode 1.x; Phase 20 on v2.0.31 via a headless opencode run "
-    "--standalone env dump, names only; 20-SMOKE-OPENCODE.md)."
+    "--standalone env dump, names only)."
 )
 _LABEL_CURSOR = (
     "live-verified (Phase 21) via a headless cursor-agent 2026.10.14-941492e session's env dump "
-    "(names only; 21-SMOKE-CURSOR.md) — TUI confirmation pending "
-    "21-INTERACTIVE-CURSOR.md step 2."
+    "(names only) — TUI confirmation pending (an interactive session check)."
 )
 # One label for both codex signals (D-05 keeps both names; the evidence is the same run).
 _LABEL_CODEX = (
     "live-verified (Phase 20) via a headless codex exec 0.162.1 session's env dump "
-    "(names only; 20-SMOKE-CODEX.md) — TUI confirmation pending "
-    "20-INTERACTIVE-CODEX.md step 2."
+    "(names only) — TUI confirmation pending (an interactive session check)."
 )
 _LABEL_CLAUDE = "live-verified (01.2) via the process's own env dump."
 
@@ -133,7 +131,7 @@ KNOWN_CLIS = tuple(RUNTIMES)
 CLAUDE_MODEL_ALIASES = RUNTIMES["claude"].native_selectors
 
 # 16 D-04: DATED FALLBACK, not a live list -- these four ids were verified present in
-# models.dev's `anthropic` provider on 2026-09-23 (16-RESEARCH.md), one per current family
+# models.dev's `anthropic` provider on 2026-09-23 (Phase 16 research), one per current family
 # (Fable 5.1, Opus 5.5, Sonnet 5, Haiku 4.5). Used only when model-catalog.json has no
 # recorded anthropic ids; refresh the ids and the date together when a new generation ships.
 CLAUDE_FALLBACK_MODEL_IDS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5",
@@ -249,25 +247,23 @@ def detect_current_runtime(env: Mapping[str, object] | None = None) -> str:
     (16 D-01, amended by Phase 20 D-02).
 
     Signal verification is NOT uniform — never treat all six as equally
-    confirmed (AGENTS.md certainty-labeling; 01.2-RESEARCH.md Common Pitfall 2):
+    confirmed (AGENTS.md certainty-labeling):
 
     - pi (`PI_CODING_AGENT`): source-inspected-only — confirmed in the
       installed `@earendil-works/pi-coding-agent` package's
       `dist/config.js`, not live-verified from a real pi session (16 D-03;
       live validation is Phase 22).
     - opencode (`OPENCODE`): live-verified (01.2 on opencode 1.x; Phase 20
-      on v2.0.31 via a headless opencode run --standalone env dump, names only;
-      20-SMOKE-OPENCODE.md).
+      on v2.0.31 via a headless opencode run --standalone env dump, names only).
     - cursor (`CURSOR_AGENT`): live-verified (Phase 21) via a headless
-      cursor-agent 2026.10.14-941492e session's env dump (names only;
-      21-SMOKE-CURSOR.md) — TUI confirmation pending
-      21-INTERACTIVE-CURSOR.md step 2.
+      cursor-agent 2026.10.14-941492e session's env dump (names only) —
+      TUI confirmation pending (an interactive session check).
     - codex (`CODEX_THREAD_ID`): live-verified (Phase 20) via a headless
-      codex exec 0.162.1 session's env dump (names only; 20-SMOKE-CODEX.md) —
-      TUI confirmation pending 20-INTERACTIVE-CODEX.md step 2.
+      codex exec 0.162.1 session's env dump (names only) —
+      TUI confirmation pending (an interactive session check).
     - codex (`CODEX_VERSION`): live-verified (Phase 20) via a headless
-      codex exec 0.162.1 session's env dump (names only; 20-SMOKE-CODEX.md) —
-      TUI confirmation pending 20-INTERACTIVE-CODEX.md step 2.
+      codex exec 0.162.1 session's env dump (names only) —
+      TUI confirmation pending (an interactive session check).
     - claude (`CLAUDECODE`): live-verified (01.2) via the process's own
       env dump.
     """

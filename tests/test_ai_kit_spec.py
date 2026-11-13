@@ -173,6 +173,10 @@ PI_RPC_FIXTURE_PATH = os.path.join(
 PI_RPC_REAL_FIXTURE_PATH = os.path.join(
     os.path.dirname(__file__), "fixtures", "pi_rpc_get_available_models_real.json"
 )
+# Synthetic catalog whose every coding and agentic index is null (no Artificial Analysis data).
+NULL_INDEX_CATALOG_PATH = os.path.join(
+    os.path.dirname(__file__), "fixtures", "model_catalog_null_index.json"
+)
 
 def _read_bytes(path: str) -> bytes:
     with open(path, "rb") as handle:
@@ -6843,6 +6847,80 @@ class TestRankerPurposeFloor(unittest.TestCase):
         model_ranker.score_candidates(entries, "mechanical", w)
         # entries should not be mutated (same object structure, no added keys)
         self.assertEqual(entries, entries_copy)
+
+    def _null_index_entries(self):
+        with open(NULL_INDEX_CATALOG_PATH, encoding="utf-8") as handle:
+            raw = json.load(handle)
+        entries, meta = model_catalog.split_catalog_meta(raw)
+        self.assertEqual(meta.get("schema_version"), 3)
+        return [{**entry, "key": key} for key, entry in entries.items()]
+
+    def test_null_index_catalog_ranks_mechanical_by_price(self):
+        entries = self._null_index_entries()
+        before = copy.deepcopy(entries)
+        w = model_ranker.load_ranking_weights()
+        ranked = model_ranker.score_candidates(entries, "mechanical", w)
+        self.assertEqual(
+            [e["key"] for e in ranked],
+            ["example/alpha", "example/beta", "example/gamma", "example/delta"],
+        )
+        self.assertEqual(entries, before)
+
+    def test_null_index_catalog_ranks_every_purpose(self):
+        entries = self._null_index_entries()
+        w = model_ranker.load_ranking_weights()
+        for purpose in model_ranker.CANONICAL_PURPOSES:
+            with self.subTest(purpose=purpose):
+                ranked = model_ranker.score_candidates(entries, purpose, w)
+                self.assertEqual(len(ranked), 4)
+
+    def test_single_null_index_entry_is_ranked(self):
+        entries = self._null_index_entries()[:1]
+        w = model_ranker.load_ranking_weights()
+        ranked = model_ranker.score_candidates(entries, "mechanical", w)
+        self.assertEqual([e["key"] for e in ranked], ["example/alpha"])
+
+    def test_entries_without_scores_are_ranked(self):
+        entries = [
+            {"key": "example/n1", "pricing": {"input_per_1m": 1}},
+            {"key": "example/n2", "pricing": {"input_per_1m": 10}},
+        ]
+        w = model_ranker.load_ranking_weights()
+        ranked = model_ranker.score_candidates(entries, "mechanical", w)
+        self.assertEqual([e["key"] for e in ranked], ["example/n1", "example/n2"])
+
+    def test_empty_entry_list_ranks_nothing(self):
+        w = model_ranker.load_ranking_weights()
+        self.assertEqual(model_ranker.score_candidates([], "mechanical", w), [])
+
+    def test_mixed_catalog_keeps_the_floor(self):
+        def mixed_entry(key, coding):
+            return {
+                "key": key,
+                "scores": {"coding_index": coding, "intelligence_index": 50,
+                           "agentic_index": 50},
+                "pricing": {"input_per_1m": 1},
+            }
+
+        entries = [
+            mixed_entry("m20", 20),
+            mixed_entry("m40", 40),
+            mixed_entry("m35", 35),
+            mixed_entry("m349", 34.9),
+            mixed_entry("mnull", None),
+        ]
+        w = model_ranker.load_ranking_weights()
+        ranked = model_ranker.score_candidates(entries, "mechanical", w)
+        self.assertEqual(sorted(e["key"] for e in ranked), ["m35", "m40"])
+
+    def test_one_scored_entry_below_the_floor_empties_mechanical(self):
+        # D-01 per-call rule: one finite coding index arms the floor for the whole call, so the
+        # null entries beside a below-floor score are excluded and the ranking is empty.
+        entries = self._null_index_entries()
+        entries[0]["scores"]["coding_index"] = 20
+        w = model_ranker.load_ranking_weights()
+        self.assertEqual(model_ranker.score_candidates(entries, "mechanical", w), [])
+        self.assertEqual(len(model_ranker.score_candidates(entries, "execution", w)), 4)
 
 
 class TestLoadSecret(unittest.TestCase):

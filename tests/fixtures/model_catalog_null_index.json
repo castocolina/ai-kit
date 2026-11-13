@@ -1,0 +1,62 @@
+{
+  "_meta": {
+    "schema_version": 3,
+    "fixture_note": "synthetic: no Artificial Analysis data; every coding_index and agentic_index is null"
+  },
+  "example/alpha": {
+    "provider": "example",
+    "pricing": {"input_per_1m": 1, "output_per_1m": 4},
+    "runtimes": {"opencode": {"ctx_window": 200000, "model_id": "alpha"}},
+    "scores": {"intelligence_index": 40, "coding_index": null, "agentic_index": null},
+    "tokens_per_sec": 100,
+    "tool_calling": true,
+    "batch_mode": false,
+    "fallback_quota": false,
+    "is_router": false,
+    "confidence": "low",
+    "last_verified": "2026-11-08",
+    "source": {"artificial_analysis": false, "manual": true, "models_dev": false}
+  },
+  "example/beta": {
+    "provider": "example",
+    "pricing": {"input_per_1m": 5, "output_per_1m": 20},
+    "runtimes": {"opencode": {"ctx_window": 200000, "model_id": "beta"}},
+    "scores": {"intelligence_index": null, "coding_index": null, "agentic_index": null},
+    "tokens_per_sec": 100,
+    "tool_calling": true,
+    "batch_mode": false,
+    "fallback_quota": false,
+    "is_router": false,
+    "confidence": "low",
+    "last_verified": "2026-11-08",
+    "source": {"artificial_analysis": false, "manual": true, "models_dev": false}
+  },
+  "example/gamma": {
+    "provider": "example",
+    "pricing": {"input_per_1m": 10, "output_per_1m": 40},
+    "runtimes": {"opencode": {"ctx_window": 200000, "model_id": "gamma"}},
+    "scores": {"intelligence_index": 30, "coding_index": null, "agentic_index": null},
+    "tokens_per_sec": 100,
+    "tool_calling": true,
+    "batch_mode": false,
+    "fallback_quota": false,
+    "is_router": false,
+    "confidence": "low",
+    "last_verified": "2026-11-08",
+    "source": {"artificial_analysis": false, "manual": true, "models_dev": false}
+  },
+  "example/delta": {
+    "provider": "example",
+    "pricing": {"input_per_1m": 20, "output_per_1m": 80},
+    "runtimes": {"opencode": {"ctx_window": 200000, "model_id": "delta"}},
+    "scores": {"intelligence_index": null, "coding_index": null, "agentic_index": null},
+    "tokens_per_sec": 100,
+    "tool_calling": true,
+    "batch_mode": false,
+    "fallback_quota": false,
+    "is_router": false,
+    "confidence": "low",
+    "last_verified": "2026-11-08",
+    "source": {"artificial_analysis": false, "manual": true, "models_dev": false}
+  }
+}

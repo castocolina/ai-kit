@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: "32.2"
-current_phase_name: Batch 2, spec review family
+current_phase: "32.3"
+current_phase_name: Batch 3, execution and session skills
 status: planning
-stopped_at: "Phase 32.1 complete (close-out part 1: review, security, validation, judge round 2, re-verification); next: fold and push (part 2), then phase 32.2"
-last_updated: "2026-11-08T03:56:56.181Z"
-last_activity: 2026-11-08
-last_activity_desc: Phase 32.1 complete (review, security, validation, judge round 2, re-verification)
-state_head: 1cb60d83cfdb3c30385d0471a0daf2407225e1e9
+stopped_at: Phase 32.2 complete, ready to plan Phase 32.3
+last_updated: "2026-11-13T05:27:29.618Z"
+last_activity: 2026-11-13
+last_activity_desc: Phase 32.2 complete, transitioned to Phase 32.3
+state_head: cb4fa68527aae7ab368cf080d07b30f716c0db9e
 progress:
   total_phases: 37
-  completed_phases: 9
-  total_plans: 73
-  completed_plans: 73
-  percent: 24
+  completed_phases: 10
+  total_plans: 78
+  completed_plans: 78
+  percent: 27
 ---
 
 # Project State
@@ -25,22 +25,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 32.1 — Batch 1, general small skills
+**Current focus:** Phase 32.2 — Batch 2, spec review family
 
 ## Current Position
 
-Phase: 32.2 — Batch 2, spec review family
+Phase: 32.3 — Batch 3, execution and session skills
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-11-08 — Phase 32.1 complete (review, security, validation, judge round 2, re-verification)
+Last activity: 2026-11-13 — Phase 32.2 complete, transitioned to Phase 32.3
 
-Progress: [██░░░░░░░░] 24%
+Progress: [███░░░░░░░] 27%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 227
+- Total plans completed: 232
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -91,6 +91,7 @@ Progress: [██░░░░░░░░] 24%
 | 31 | 6 | - | - |
 | 32 | 9 | - | - |
 | 32.1 | 9 | - | - |
+| 32.2 | 5 | - | - |
 
 **Recent Trend:**
 
@@ -684,8 +685,8 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-08T03:56:55.752Z
-Stopped at: Phase 32.1 complete (close-out part 1: review, security, validation, judge round 2, re-verification); next: fold and push (part 2), then phase 32.2
+Last session: 2026-11-13T04:14:37.949Z
+Stopped at: Phase 32.2 complete, ready to plan Phase 32.3
 Resume file: None
 
 ## Operator Next Steps

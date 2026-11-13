@@ -1,4 +1,4 @@
-"""D-07 workflow-flag defaults bundle (07-CONTEXT.md). `WORKFLOW_DEFAULTS` is a fixed, literal
+"""D-07 workflow-flag defaults bundle (Phase 7). `WORKFLOW_DEFAULTS` is a fixed, literal
 dict sourced from THIS project's own `.planning/config.json` `workflow.*` section as it stood on
 2026-09-10 (D-07's "point-in-time baseline, not a live lookup" -- re-confirm the literal values
 below still match if this plan is re-run later; they are not re-derived from that file at run

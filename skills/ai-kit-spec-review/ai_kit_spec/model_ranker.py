@@ -46,6 +46,8 @@ DEFAULT_WEIGHTS = {
 # data-free candidates dominate the top ranks over real flagships. The 49.0 default applies
 # only when scoring survivors (after optional per-purpose floors); a purpose floor is checked
 # on raw scores values before normalization, so the default can never satisfy a floor (16 D-11).
+# A floor axis counts per call (_call_floor): it is skipped only when no entry of the call has a
+# finite value for it, so a null-index catalog still ranks while a mixed one keeps the floor.
 _MISSING_AXIS_DEFAULT = 49.0
 
 _REQUIRED_AXES = {"intelligence_index", "coding_index", "agentic_index", "context_window",
@@ -123,6 +125,17 @@ def _passes_floor(entry: dict, floor: dict) -> bool:
         if not _is_finite_number(value) or value < minimum:
             return False
     return True
+
+
+def _call_floor(entries: list, floor: dict) -> dict:
+    """The floor axes that count for this call: an axis counts only when at least one entry
+    carries a finite raw value for it. With none (null coding indexes, or no scores at all),
+    every entry would fail it and the ranking would be empty, so the axis is skipped for this
+    call; in a call where any entry has it, _passes_floor still excludes an entry that misses
+    it or is below the minimum."""
+    return {axis: minimum for axis, minimum in floor.items()
+            if any(isinstance(e.get("scores"), dict) and _is_finite_number(e["scores"].get(axis))
+                   for e in entries)}
 
 
 def _is_valid_weights_structure(weights) -> bool:
@@ -257,6 +270,9 @@ def score_candidates(entries: list, purpose: str, weights: dict) -> list:
     normalized scale); the weighted sum is divided by the sum of ALL the purpose's axis
     weights; and a purpose floor (if present) is checked on the candidate's RAW scores values
     before any normalization, so the 49.0 default can never satisfy a floor.
+    The floor applies per call: an axis no entry of this call carries a finite value for is
+    skipped, so a catalog with null coding indexes, or with no scores at all, still ranks; in a
+    call where any entry has the axis, an entry missing it or below the minimum is excluded.
     price and context_window/speed are normalized RELATIVE TO THIS CALL'S entries (never a
     fixed global ceiling) -- price inverted (cheaper scores higher). Returns shallow copies of
     `entries`, each with an added "score" (0-100, rounded to 1 decimal) and "score_exact"
@@ -271,7 +287,7 @@ def score_candidates(entries: list, purpose: str, weights: dict) -> list:
     axis_weights = weights[canonical] if canonical in weights else weights[purpose]
 
     # Apply floor filter BEFORE normalization so excluded candidates don't affect scoring
-    floor = axis_weights.get(_FLOOR_KEY) or {}
+    floor = _call_floor(entries, axis_weights.get(_FLOOR_KEY) or {})
     survivors = [e for e in entries if _passes_floor(e, floor)]
 
     norm_maps = _axis_norm_maps(survivors)

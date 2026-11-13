@@ -1,0 +1,22 @@
+[
+  {"query": "review this design doc against the checklist before I write the plan", "should_trigger": true},
+  {"query": "check my Kiro requirements.md and flag anything that is not in EARS shape", "should_trigger": true},
+  {"query": "audit this OpenSpec change proposal and its delta spec, but do not edit anything", "should_trigger": true},
+  {"query": "are the [P] tasks in this Spec Kit tasks.md really safe to run in parallel?", "should_trigger": true},
+  {"query": "give me a severity-rated review of this implementation plan with exact locations", "should_trigger": true},
+  {"query": "look for contradictions and undefined terms in this requirements document", "should_trigger": true},
+  {"query": "review the GSD phase CONTEXT.md and tell me whether the intent is clear enough", "should_trigger": true},
+  {"query": "give this spec a clean-context review and end your report with a Status line", "should_trigger": true},
+  {"query": "this design claims it reuses an existing helper; verify that against the code and review the rest", "should_trigger": true},
+  {"query": "review this BMAD PRD for untestable requirements and unstated assumptions", "should_trigger": true},
+  {"query": "fix the findings in this review report by editing the spec in place", "should_trigger": false},
+  {"query": "review and fix my design spec in a loop until the reviewer approves it", "should_trigger": false},
+  {"query": "review this pull request diff for bugs before I merge it", "should_trigger": false},
+  {"query": "write a design spec for a CSV export feature from these meeting notes", "should_trigger": false},
+  {"query": "draft an implementation plan from the approved design document", "should_trigger": false},
+  {"query": "lint this markdown file and fix the heading levels and list spacing", "should_trigger": false},
+  {"query": "run the GSD plan-checker on this phase's plans before execution starts", "should_trigger": false},
+  {"query": "do a security-focused code review of the changes under src/export", "should_trigger": false},
+  {"query": "apply the HIGH findings from the checklist report to my plan document", "should_trigger": false},
+  {"query": "set up which AI CLIs act as reviewers for my spec reviews", "should_trigger": false}
+]
