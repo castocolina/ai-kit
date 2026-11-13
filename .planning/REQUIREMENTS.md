@@ -195,7 +195,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   or more, effort-aware), class, relative cost, modalities and strengths, each value labeled measured or judged,
   with cache times; it shows each source's required attribution, never commits or ships Artificial Analysis data
   (its free tier forbids redistribution), and takes Arena data from the official dataset under its CC-BY-4.0 terms.
-- [ ] **HUB-04**: The cheap-execution ranking still yields candidates although Artificial Analysis returns its coding
+- [x] **HUB-04**: The cheap-execution ranking still yields candidates although Artificial Analysis returns its coding
   and agentic indexes as null.
 - [ ] **HUB-05**: The config separates reviewers from executors, each with priorities, effort per model and opt-in
   runtime and model escalation flags (off by default); an effort is passed only when the model supports it (detected
@@ -775,7 +775,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **DEF-08**: Before an auto-mode run starts, spec-discuss shows the owner a short summary of every requested
   item in the range and how it plans to resolve each one, and waits for the owner's go-ahead before it runs; a
   doc-contract test pins it. *(added 2026-11-07, owner decision)*
-- [ ] **DEF-09**: No runtime label or docstring in spec-review's `detection.py` names a planning file (today
+- [x] **DEF-09**: No runtime label or docstring in spec-review's `detection.py` names a planning file (today
   `20-SMOKE-OPENCODE.md`, `21-SMOKE-CURSOR.md`, `20-SMOKE-CODEX.md`, one pinned by
   `tests/test_ai_kit_spec_runtimes_table.py`), and a test fails when a string literal in shipped skill Python code
   names a file under a planning folder; Phase 32's history-text check reads Markdown only. *(added 2026-11-07,
@@ -848,7 +848,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | HUB-01 | Phase 36 | Pending |
 | HUB-02 | Phase 35 | Pending |
 | HUB-03 | Phase 35 | Pending |
-| HUB-04 | Phase 32.2 | Pending |
+| HUB-04 | Phase 32.2 | Complete |
 | HUB-05 | Phase 36 | Pending |
 | HUB-06 | Phase 35 | Pending |
 | HUB-07 | Phase 36 | Pending |
@@ -981,7 +981,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | DEF-06 | Phase 32.4 | Pending |
 | DEF-07 | Phase 32.4 | Pending |
 | DEF-08 | Phase 32.4 | Pending |
-| DEF-09 | Phase 32.2 | Pending |
+| DEF-09 | Phase 32.2 | Complete |
 | DEF-10 | Phase 32.4 | Pending |
 
 **Coverage:**

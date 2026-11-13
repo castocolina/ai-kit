@@ -51,7 +51,7 @@
     {
       "number": "32.2",
       "name": "Batch 2, spec review family",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "32.3",
@@ -191,8 +191,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step",
-    "reason": "Phase 10 of 37 · 24% · executing"
+    "label": "Advance to the next step (plan phase 32.3)",
+    "reason": "Phase 11 of 37 — needs a plan"
   },
-  "updated_at": "2026-11-13T03:23:12.789Z"
+  "updated_at": "2026-11-13T05:27:29.629Z"
 }

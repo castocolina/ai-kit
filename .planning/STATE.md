@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: "32.2"
-current_phase_name: Batch 2, spec review family
-status: executing
-stopped_at: "Phase 32.2 spec and context gathered (auto path: SPEC c0032c9, CONTEXT 45d9f2d); next: plan-phase 32.2"
-last_updated: "2026-11-13T03:23:12.778Z"
+current_phase: "32.3"
+current_phase_name: Batch 3, execution and session skills
+status: planning
+stopped_at: Phase 32.2 complete, ready to plan Phase 32.3
+last_updated: "2026-11-13T05:27:29.618Z"
 last_activity: 2026-11-13
-last_activity_desc: Phase 32.2 execution started
-state_head: 31c70b1bcc36c4ffb4fb7bdeec83db897432eddb
+last_activity_desc: Phase 32.2 complete, transitioned to Phase 32.3
+state_head: cb4fa68527aae7ab368cf080d07b30f716c0db9e
 progress:
   total_phases: 37
-  completed_phases: 9
+  completed_phases: 10
   total_plans: 78
-  completed_plans: 73
-  percent: 24
+  completed_plans: 78
+  percent: 27
 ---
 
 # Project State
@@ -29,18 +29,18 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 32.2 (Batch 2, spec review family) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 32.2
-Last activity: 2026-11-13 — Phase 32.2 execution started
+Phase: 32.3 — Batch 3, execution and session skills
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-11-13 — Phase 32.2 complete, transitioned to Phase 32.3
 
-Progress: [██░░░░░░░░] 24%
+Progress: [███░░░░░░░] 27%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 227
+- Total plans completed: 232
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -91,6 +91,7 @@ Progress: [██░░░░░░░░] 24%
 | 31 | 6 | - | - |
 | 32 | 9 | - | - |
 | 32.1 | 9 | - | - |
+| 32.2 | 5 | - | - |
 
 **Recent Trend:**
 
@@ -684,9 +685,9 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-08T05:18:44.161Z
-Stopped at: Phase 32.2 spec and context gathered (auto path: SPEC c0032c9, CONTEXT 45d9f2d); next: plan-phase 32.2
-Resume file: /var/home/bazzite/git/personal/ai-kit/.planning/phases/32.2-batch-2-spec-review-family/32.2-CONTEXT.md
+Last session: 2026-11-13T04:14:37.949Z
+Stopped at: Phase 32.2 complete, ready to plan Phase 32.3
+Resume file: None
 
 ## Operator Next Steps
 
