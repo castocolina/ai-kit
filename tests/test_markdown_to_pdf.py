@@ -1,5 +1,9 @@
 # tests/test_markdown_to_pdf.py
+import contextlib
+import io
 import os
+import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -112,7 +116,12 @@ class TestBuildCommand(unittest.TestCase):
 
     def test_chromium_is_standalone(self):
         cmd = m2p.build_command("chromium", "in.md", "out.pdf")
-        self.assertEqual(cmd, ["md-to-pdf", "in.md", "--output", "out.pdf"])
+        self.assertEqual(cmd, ["md-to-pdf", "in.md", "--basedir", "",
+                               "--launch-options", m2p.CHROME_LAUNCH_OPTIONS])
+        cmd = m2p.build_command("chromium", os.path.join("w", "doc.md"), "out.pdf")
+        self.assertEqual(cmd[3], "w")  # the server root is the folder of the copy, never "/"
+        self.assertEqual(m2p.CHROME_LAUNCH_OPTIONS,
+                         '{"args":["--no-sandbox","--disable-setuid-sandbox"]}')
 
     def test_resolve_engine_prefers_tectonic(self):
         which = lambda n: "/x/" + n if n in {"tectonic", "pdflatex"} else None
@@ -124,7 +133,10 @@ class TestConvert(unittest.TestCase):
     def _stub_run_writes_pdf(self):
         def run(cmd, capture_output=True, text=True, **kwargs):
             del capture_output, kwargs
-            out = cmd[cmd.index("-o") + 1] if "-o" in cmd else cmd[cmd.index("--output") + 1]
+            if cmd[0] == "md-to-pdf":  # md-to-pdf writes <stem>.pdf beside its input
+                out = os.path.splitext(cmd[1])[0] + ".pdf"
+            else:
+                out = cmd[cmd.index("-o") + 1] if "-o" in cmd else cmd[cmd.index("--output") + 1]
             with open(out, "wb") as fh:
                 fh.write(b"%PDF-1.7\n")
             return type("P", (), {"returncode": 0, "stderr": "", "stdout": ""})()
@@ -268,13 +280,415 @@ class TestDeckAndMain(unittest.TestCase):
             img = os.path.join(work_dir, "diagram-0." + fmt)
             with open(img, "wb") as fh:
                 fh.write(b"<svg/>")
-            return f"# deck\n![diagram]({img})\n"
+            return f"# deck\n![diagram](<{img}>)\n"
         out = m2p.render_only(src, m2p.ConvertOptions(render=fake_render))
         self.assertTrue(out.endswith(".rendered.md"))
         with open(out) as fh:
             body = fh.read()
         self.assertIn("![diagram](", body)
-        link = body.split("![diagram](")[1].split(")")[0]
+        link = body.split("![diagram](<")[1].split(">)")[0]
         self.assertTrue(os.path.exists(link))          # image persisted past the call
         with open(src) as fh:
             self.assertEqual(fh.read(), "# deck\n```mermaid\nA-->B\n```\n")  # source untouched
+
+
+class TestBackendFailure(unittest.TestCase):
+    def _tmp(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
+
+    def _recording_run(self, record, returncode=0, stderr=""):
+        def run(cmd, capture_output=True, text=True, **kwargs):
+            del capture_output, kwargs
+            record.append(cmd)
+            if returncode == 0:
+                out = cmd[cmd.index("-o") + 1]
+                with open(out, "wb") as fh:
+                    fh.write(b"%PDF-1.7\n")
+            return type("P", (), {"returncode": returncode, "stderr": stderr, "stdout": ""})()
+        return run
+
+    def _src(self, d):
+        src = os.path.join(d, "doc.md")
+        with open(src, "w", encoding="utf-8") as fh:
+            fh.write("# hi\n![a](img/a.svg)\n")
+        return src
+
+    def test_resource_path_appended_for_pandoc(self):
+        cmd = m2p.build_command("typst", "in.md", "out.pdf", engine="typst", resource_dir="/src")
+        self.assertEqual(cmd[-2:], ["--pdf-engine=typst", "--resource-path=/src"])
+
+    def test_convert_passes_the_source_folder(self):
+        d = self._tmp()
+        src = self._src(d)
+        record = []
+        which = lambda n: "/x/" + n if n in {"pandoc", "pdflatex"} else None
+        m2p.convert(src, m2p.ConvertOptions(which=which, run=self._recording_run(record),
+                                            render=lambda t, _w, fmt="png", run=None: t))
+        self.assertIn(f"--resource-path={d}", record[0])
+
+    def test_failing_backend_raises_backend_failed(self):
+        d = self._tmp()
+        src = self._src(d)
+        which = lambda n: "/x/" + n if n in {"pandoc", "pdflatex"} else None
+        opts = m2p.ConvertOptions(which=which, run=self._recording_run([], 1, "boom"),
+                                  render=lambda t, _w, fmt="png", run=None: t)
+        with self.assertRaises(m2p.BackendFailed) as cm:
+            m2p.convert(src, opts)
+        self.assertIn("pandoc-latex failed: boom", str(cm.exception))
+        self.assertFalse(os.path.exists(os.path.join(d, "doc.pdf")))
+
+    def test_main_backend_failed_returns_4_with_stderr(self):
+        from unittest import mock
+        src = self._src(self._tmp())
+        err = io.StringIO()
+        with mock.patch.object(m2p, "convert",
+                               side_effect=m2p.BackendFailed("pandoc-latex failed: boom")), \
+                contextlib.redirect_stderr(err):
+            code = m2p.main([src])
+        self.assertEqual(code, 4)
+        self.assertIn("boom", err.getvalue())
+
+    def test_main_does_not_catch_a_bare_runtime_error(self):
+        from unittest import mock
+        src = self._src(self._tmp())
+        with mock.patch.object(m2p, "convert", side_effect=RuntimeError("x")), \
+                self.assertRaises(RuntimeError):
+            m2p.main([src])
+
+    def test_backend_failed_is_a_runtime_error(self):
+        self.assertTrue(issubclass(m2p.BackendFailed, RuntimeError))
+
+
+class TestLocalAssets(unittest.TestCase):
+    def _tmp(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
+
+    # The stubs read the copy while it still exists: the work folder is removed on return.
+    def _pdf_run(self, record):
+        def run(cmd, capture_output=True, text=True, **kwargs):
+            del capture_output, kwargs
+            with open(cmd[1], encoding="utf-8") as fh:
+                record.append((cmd, fh.read()))
+            out = (os.path.splitext(cmd[1])[0] + ".pdf") if cmd[0] == "md-to-pdf" \
+                else cmd[cmd.index("-o") + 1]
+            with open(out, "wb") as fh:
+                fh.write(b"%PDF-1.7\n")
+            return type("P", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+        return run
+
+    def _deck_run(self, record):
+        def run(cmd, capture_output=True, text=True, **kwargs):
+            del capture_output, kwargs
+            with open(cmd[1], encoding="utf-8") as fh:
+                record.append((cmd, fh.read()))
+            with open(cmd[cmd.index("-o") + 1], "w", encoding="utf-8") as fh:
+                fh.write(record[-1][1])
+            return type("P", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+        return run
+
+    def _write(self, path, text):
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def _mermaid_render(self, text, work_dir, fmt="svg", run=None):
+        img = os.path.join(work_dir, "diagram-0." + fmt)
+        with open(img, "wb") as fh:
+            fh.write(b"<svg/>")
+        return text.replace("```mermaid\nA-->B\n```\n", f"![diagram](<{img}>)\n")
+
+    def test_absolutize_images_rewrites_relative_links_only(self):
+        d = self._tmp()
+        text = ("![a](img/a.svg)\n![b](./b.png)\n![c](sub/deep/c.png \"T\")\n"
+                "![s](<my img.png>)\n![u](https://example.com/x.png)\n"
+                "![x](data:image/png;base64,AA)\n![z](/already/abs.png)\n")
+        want = ("![a](" + os.path.join(d, "img", "a.svg") + ")\n"
+                "![b](" + os.path.join(d, "b.png") + ")\n"
+                "![c](" + os.path.join(d, "sub", "deep", "c.png") + " \"T\")\n"
+                "![s](<" + os.path.join(d, "my img.png") + ">)\n"
+                "![u](https://example.com/x.png)\n"
+                "![x](data:image/png;base64,AA)\n"
+                "![z](/already/abs.png)\n")
+        self.assertEqual(m2p._absolutize_images(text, d), want)
+        self.assertEqual(m2p._absolutize_images("no image here\n", d), "no image here\n")
+
+    def _chromium(self, d, text, files=(), render=None):
+        """Run the chromium path on `text`; return (cmd, copy text, copied names, work dir)."""
+        for rel in files:
+            os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True)
+            self._write(os.path.join(d, rel), rel)
+        src = self._write(os.path.join(d, "doc.md"), text)
+        seen = []
+
+        def run(cmd, **kwargs):
+            work = os.path.dirname(cmd[1])
+            seen.append((cmd, sorted(os.listdir(work)), work))
+            return self._pdf_run(record)(cmd, **kwargs)
+        record = []
+        which = lambda n: "/x/md-to-pdf" if n == "md-to-pdf" else None
+        m2p.convert(src, m2p.ConvertOptions(
+            out_path=os.path.join(d, "out.pdf"), which=which, run=run,
+            render=render or (lambda t, _w, fmt="png", run=None: t)))
+        return record[0][0], record[0][1], seen[0][1], seen[0][2]
+
+    def test_chromium_serves_only_the_work_folder_with_images_copied_in(self):
+        d = self._tmp()
+        cmd, copy_text, names, work = self._chromium(
+            d, "# hi\n![a](img/a.svg)\n![b](img/a.svg)\n![m](<my pic.png>)\n![x](gone.png)\n",
+            files=("img/a.svg", "my pic.png"))
+        self.assertEqual(cmd[cmd.index("--basedir") + 1], work)
+        self.assertNotEqual(work, os.path.abspath(os.sep))
+        self.assertEqual(copy_text,
+                         "# hi\n![a](asset-0.svg)\n![b](asset-0.svg)\n![m](asset-1.png)\n"
+                         "![x](gone.png)\n")  # one copy per file; a missing file stays as written
+        self.assertEqual(names, ["asset-0.svg", "asset-1.png", "doc.md"])
+        self.assertEqual(sorted(os.listdir(d)), ["doc.md", "img", "my pic.png", "out.pdf"])
+
+    def test_chromium_localizes_reference_and_html_images_and_skips_code(self):
+        d = self._tmp()
+        text = ("![l][r]\n\n[r]: img/a.svg\n[^1]: a note\n\n<img src=\"img/b.png\" width=\"9\">\n"
+                "`![c](img/a.svg)`\n```md\n![f](img/a.svg)\n[r]: img/a.svg\n```\n")
+        _, copy_text, names, _ = self._chromium(d, text, files=("img/a.svg", "img/b.png"))
+        self.assertEqual(copy_text,
+                         "![l][r]\n\n[r]: asset-0.svg\n[^1]: a note\n\n"
+                         "<img src=\"asset-1.png\" width=\"9\">\n"
+                         "`![c](img/a.svg)`\n```md\n![f](img/a.svg)\n[r]: img/a.svg\n```\n")
+        self.assertEqual(names, ["asset-0.svg", "asset-1.png", "doc.md"])
+
+    def test_chromium_decodes_percent_links_and_keeps_the_fragment(self):
+        d = self._tmp()
+        _, copy_text, names, _ = self._chromium(
+            d, "![p](my%20pic.png)\n![i](icon.svg#a)\n![q](icon.svg?v=1)\n",
+            files=("my pic.png", "icon.svg"))
+        self.assertEqual(copy_text, "![p](asset-0.png)\n![i](asset-1.svg#a)\n![q](asset-1.svg)\n")
+        self.assertEqual(names, ["asset-0.png", "asset-1.svg", "doc.md"])
+
+    PROSE_AND_DEFS = ("[Update]: the API changed last week\n\nSee [the readme][r].\n\n"
+                      "[r]: README.md\n![l][i]\n\n[i]: img/a.svg \"Title\"\n"
+                      "a `b`[i]: img/b.svg\n")
+
+    def test_only_image_reference_definitions_are_rewritten(self):
+        d = self._tmp()
+        _, copy_text, names, _ = self._chromium(
+            d, self.PROSE_AND_DEFS, files=("README.md", "img/a.svg", "img/b.svg"))
+        self.assertEqual(copy_text, self.PROSE_AND_DEFS.replace(
+            "img/a.svg \"Title\"", "asset-0.svg \"Title\""))
+        self.assertEqual(names, ["asset-0.svg", "doc.md"])
+        self.assertEqual(
+            m2p._absolutize_images(self.PROSE_AND_DEFS, d),
+            self.PROSE_AND_DEFS.replace("img/a.svg", os.path.join(d, "img", "a.svg")))
+
+    def test_definition_on_the_next_line_and_code_in_the_alt_text(self):
+        d = self._tmp()
+        text = "![l][i]\n![`x`][j]\n\n[i]:\n  img/a.svg\n[j]: img/b.svg\n[Note]:\nthe API changed\n"
+        _, copy_text, names, _ = self._chromium(d, text, files=("img/a.svg", "img/b.svg"))
+        self.assertEqual(copy_text, text.replace("img/a.svg", "asset-0.svg")
+                         .replace("img/b.svg", "asset-1.svg"))
+        self.assertEqual(names, ["asset-0.svg", "asset-1.svg", "doc.md"])
+
+    def test_a_code_span_never_crosses_a_blank_line(self):
+        d = self._tmp()
+        text = "Press the ` key.\n\n![p](icon.svg)\n\nRun `ls`.\n"
+        self.assertEqual(m2p._absolutize_images(text, d),
+                         text.replace("icon.svg", os.path.join(d, "icon.svg")))
+
+    def test_chromium_diagram_links_become_relative_names(self):
+        d = self._tmp()
+        _, copy_text, names, work = self._chromium(
+            d, "# deck\n```mermaid\nA-->B\n```\n", render=self._mermaid_render)
+        self.assertEqual(copy_text, "# deck\n![diagram](diagram-0.svg)\n")
+        self.assertNotIn(work, copy_text)
+        self.assertIn("diagram-0.svg", names)
+
+    def test_a_backend_that_wrote_no_output_is_backend_failed(self):
+        d = self._tmp()
+        src = self._write(os.path.join(d, "doc.md"), "hi\n")
+        run = lambda cmd, **kwargs: type(
+            "P", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+        which = lambda n: "/x/md-to-pdf" if n == "md-to-pdf" else None
+        with self.assertRaises(m2p.BackendFailed):
+            m2p.convert(src, m2p.ConvertOptions(
+                which=which, run=run, render=lambda t, _w, fmt="png", run=None: t))
+        self.assertEqual(os.listdir(d), ["doc.md"])
+
+    def test_absolutize_skips_code_and_covers_reference_and_html_forms(self):
+        d = self._tmp()
+        text = ("![l][r]\n[r]: img/a.svg\n<img class=\"x\" src='b.png'>\n[^1]: note\n"
+                "`![c](c.png)` and ``![e](e.png)``\n"
+                "```markdown\n![f](f.png)\n```\n~~~\n![t](t.png)\n~~~\n![out](o.png)\n")
+        want = (f"![l][r]\n[r]: {os.path.join(d, 'img', 'a.svg')}\n"
+                f"<img class=\"x\" src='{os.path.join(d, 'b.png')}'>\n[^1]: note\n"
+                "`![c](c.png)` and ``![e](e.png)``\n"
+                "```markdown\n![f](f.png)\n```\n~~~\n![t](t.png)\n~~~\n"
+                f"![out]({os.path.join(d, 'o.png')})\n")
+        self.assertEqual(m2p._absolutize_images(text, d), want)
+
+    def test_every_deck_call_allows_local_files(self):
+        d = self._tmp()
+        src = self._write(os.path.join(d, "s.md"), "# slide\n")
+        which = lambda n: "/x/marp" if n == "marp" else None
+        for to in ("pdf", "pptx", "html"):
+            record = []
+            m2p.convert_deck(src, m2p.ConvertOptions(
+                out_path=os.path.join(d, "s." + to), deck_to=to, which=which,
+                run=self._deck_run(record), render=lambda t, _w, fmt="svg", run=None: t))
+            self.assertIn("--allow-local-files", record[0][0])
+
+    def test_pdf_and_pptx_decks_get_absolute_image_links_html_keeps_relative(self):
+        d = self._tmp()
+        src = self._write(os.path.join(d, "s.md"), "# slide\n![a](img/a.svg)\n")
+        which = lambda n: "/x/marp" if n == "marp" else None
+        for to in ("pdf", "pptx"):
+            out = os.path.join(d, "s." + to)
+            m2p.convert_deck(src, m2p.ConvertOptions(
+                out_path=out, deck_to=to, which=which, run=self._deck_run([]),
+                render=lambda t, _w, fmt="svg", run=None: t))
+            with open(out, encoding="utf-8") as fh:
+                self.assertIn(f"![a]({os.path.join(d, 'img', 'a.svg')})", fh.read())
+        out = os.path.join(d, "s.html")
+        m2p.convert_deck(src, m2p.ConvertOptions(
+            out_path=out, deck_to="html", which=which, run=self._deck_run([]),
+            render=lambda t, _w, fmt="svg", run=None: t))
+        with open(out, encoding="utf-8") as fh:
+            self.assertIn("![a](img/a.svg)", fh.read())
+
+    def test_html_deck_diagrams_survive_next_to_the_output(self):
+        d = self._tmp()
+        src = self._write(os.path.join(d, "s.md"), "# deck\n```mermaid\nA-->B\n```\n")
+        out = os.path.join(d, "s.html")
+        which = lambda n: "/x/marp" if n == "marp" else None
+        m2p.convert_deck(src, m2p.ConvertOptions(
+            out_path=out, deck_to="html", which=which, run=self._deck_run([]),
+            render=self._mermaid_render))
+        with open(out, encoding="utf-8") as fh:
+            self.assertIn("s-assets/diagram-0.svg", fh.read())
+        self.assertTrue(os.path.exists(os.path.join(d, "s-assets", "diagram-0.svg")))
+        self.assertEqual(sorted(os.listdir(d)), sorted(["s.md", "s.html", "s-assets"]))
+
+    def test_html_deck_without_diagrams_creates_no_assets(self):
+        d = self._tmp()
+        src = self._write(os.path.join(d, "s.md"), "# slide\n")
+        which = lambda n: "/x/marp" if n == "marp" else None
+        for to in ("html", "pdf"):
+            m2p.convert_deck(src, m2p.ConvertOptions(
+                out_path=os.path.join(d, "s." + to), deck_to=to, which=which,
+                run=self._deck_run([]), render=lambda t, _w, fmt="svg", run=None: t))
+        self.assertEqual(sorted(os.listdir(d)), sorted(["s.md", "s.html", "s.pdf"]))
+
+    def test_two_html_decks_keep_separate_assets(self):
+        d = self._tmp()
+        src = self._write(os.path.join(d, "s.md"), "# deck\n```mermaid\nA-->B\n```\n")
+        which = lambda n: "/x/marp" if n == "marp" else None
+        for name in ("a", "b"):
+            m2p.convert_deck(src, m2p.ConvertOptions(
+                out_path=os.path.join(d, name + ".html"), deck_to="html", which=which,
+                run=self._deck_run([]), render=self._mermaid_render))
+        for name, other in (("a", "b"), ("b", "a")):
+            self.assertTrue(os.path.exists(os.path.join(d, name + "-assets", "diagram-0.svg")))
+            with open(os.path.join(d, name + ".html"), encoding="utf-8") as fh:
+                body = fh.read()
+            self.assertIn(f"{name}-assets/diagram-0.svg", body)
+            self.assertNotIn(f"{other}-assets", body)
+
+    def _html_deck(self, d, out_name, run, text="# deck\n```mermaid\nA-->B\n```\n"):
+        src = self._write(os.path.join(d, "s.md"), text)
+        which = lambda n: "/x/marp" if n == "marp" else None
+        return m2p.convert_deck(src, m2p.ConvertOptions(
+            out_path=os.path.join(d, out_name), deck_to="html", which=which, run=run,
+            render=self._mermaid_render))
+
+    def test_html_deck_link_survives_a_space_in_the_output_name(self):
+        d = self._tmp()
+        self._html_deck(d, "s s.html", self._deck_run([]))
+        with open(os.path.join(d, "s s.html"), encoding="utf-8") as fh:
+            self.assertIn("![diagram](<s s-assets/diagram-0.svg>)", fh.read())
+
+    def test_failed_html_deck_writes_nothing_and_a_new_one_replaces_stale_diagrams(self):
+        d = self._tmp()
+        failing = lambda cmd, **kwargs: type(
+            "P", (), {"returncode": 1, "stderr": "boom", "stdout": ""})()
+        with self.assertRaises(m2p.BackendFailed):
+            self._html_deck(d, "s.html", failing)
+        self.assertEqual(os.listdir(d), ["s.md"])  # no s-assets/ after a failure
+        os.makedirs(os.path.join(d, "s-assets"))
+        for stale in ("diagram-7.svg", "keep.txt"):
+            self._write(os.path.join(d, "s-assets", stale), "old")
+        self._html_deck(d, "s.html", self._deck_run([]))
+        self.assertEqual(sorted(os.listdir(os.path.join(d, "s-assets"))),
+                         ["diagram-0.svg", "keep.txt"])  # stale diagram gone, other files kept
+
+    def test_html_deck_diagram_links_skip_code(self):
+        d = self._tmp()
+        record = []
+        self._html_deck(d, "s.html", self._deck_run(record),
+                        text="# deck\n```mermaid\nA-->B\n```\n```md\n![x](y.png)\n```\n")
+        self.assertIn("```md\n![x](y.png)\n```\n", record[0][1])
+
+
+class TestDocContract(unittest.TestCase):
+    """The stated backend order and decision rows match the code they describe."""
+    ROOT = os.path.join(os.path.dirname(__file__), "..")
+    SKILL_DIR = os.path.join(ROOT, "skills", "markdown-to-pdf")
+    ORDER_RE = re.compile(r"([A-Za-z+]+(?: > [A-Za-z+]+){3})")
+    DISPLAY = {"LaTeX": "pandoc-latex", "Pandoc+LaTeX": "pandoc-latex", "Typst": "typst",
+               "WeasyPrint": "weasyprint", "Chromium": "chromium"}
+
+    def _read(self, *parts):
+        with open(os.path.join(self.SKILL_DIR, *parts), encoding="utf-8") as fh:
+            return fh.read()
+
+    def _expected(self):
+        return [b.name for b in sorted(db.BACKENDS, key=lambda b: -b.quality)]
+
+    def _names(self, chain):
+        return [self.DISPLAY.get(n, n) for n in chain.split(" > ")]
+
+    def test_every_stated_order_matches_detect_backends(self):
+        skill_chains = self.ORDER_RE.findall(self._read("SKILL.md"))
+        backend_chains = self.ORDER_RE.findall(self._read("references", "backends.md"))
+        self.assertGreaterEqual(len(skill_chains), 2)
+        self.assertGreaterEqual(len(backend_chains), 1)
+        for chain in skill_chains + backend_chains:
+            self.assertEqual(self._names(chain), self._expected())
+
+    def test_readme_row_states_the_same_order(self):
+        with open(os.path.join(self.ROOT, "README.md"), encoding="utf-8") as fh:
+            rows = [ln for ln in fh.read().splitlines() if ln.startswith("| [`markdown-to-pdf`]")]
+        self.assertEqual(len(rows), 1)
+        chains = self.ORDER_RE.findall(rows[0])
+        self.assertEqual(len(chains), 1)
+        self.assertEqual(self._names(chains[0]), self._expected())
+
+    def test_winner_is_only_the_install_recommendation(self):
+        text = self._read("references", "backends.md")
+        self.assertNotIn("Winner:", text)
+        self.assertNotIn("researched winner", text)
+        section = text.split("## Selection rule", 1)[1].split("\n## ", 1)[0]
+        lines = [ln for ln in section.splitlines()
+                 if ln.startswith("If no complete pipeline is installed")]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("install recommendation", lines[0])
+        winner = {v: k for k, v in self.DISPLAY.items()}[db.WINNER]
+        self.assertIn(winner, lines[0])
+
+    def test_decision_rows(self):
+        text = self._read("SKILL.md")
+        for needle in ("Exit code 0", "Exit code 2", "Could not find Chrome", "Exit code 3",
+                       "No backend available", "Exit code 4"):
+            self.assertIn(needle, text)
+        with open(os.path.join(self.SKILL_DIR, "scripts", "markdown_to_pdf.py"),
+                  encoding="utf-8") as fh:
+            self.assertIn("No backend available", fh.read())
+
+    def test_low_res_row_names_each_backend(self):
+        rows = [ln for ln in self._read("SKILL.md").splitlines()
+                if ln.startswith("| Diagram looks low-res")]
+        self.assertEqual(len(rows), 1)
+        for b in db.BACKENDS:
+            self.assertIn(f"`{b.name}`", rows[0])
+        for needle in ("PNG", "SVG", "--format svg", "rsvg-convert"):
+            self.assertIn(needle, rows[0])

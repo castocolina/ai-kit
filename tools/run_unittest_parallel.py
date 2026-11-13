@@ -90,8 +90,9 @@ TESTS_DIR = REPO_ROOT / "tests"
 
 # arch-test tier: the AST architecture-fitness module.
 ARCH_MODULES = frozenset({"tests.test_arch"})
-# Needs PyYAML, which only the uv env provides.
+# Needs PyYAML or LibCST, which only the uv env provides.
 UNIT_UV_MODULES = frozenset({
+    "tests.test_cst_refactor_codemods",  # needs LibCST from the uv dev group (32.1)
     "tests.test_framework_profiles",
     "tests.test_skill_frontmatter_pyyaml",
 })
@@ -219,8 +220,8 @@ HOME_OVERRIDE_VARS = frozenset({
     "AGENTS_TOOLING_PATH", "SHARED_TOOLING_PATH", "AI_KIT_DIR", "CLAUDE_JOB_DIR",
     "CLAUDE_PLUGIN_ROOT", "RUNTIME_DIR", "JEV_API_KEY_FILE",
 })
-# API keys and backend URLs product code reads: no test makes a credentialed call through the
-# caller's key.
+# API keys and backend URLs product code reads or used to read: no test makes a credentialed
+# call through the caller's key.
 CREDENTIAL_ENV_VARS = frozenset({
     "JEV_API_KEY", "JEV_API_URL", "TYPESAFE_API_KEY", "LAYA_API_KEY", "OPENCODE_ZEN_API_KEY",
     "ARTIFICIAL_ANALYSIS_API_KEY", "JEV_LAYA_URL", "JEV_OPENCODE_URL", "JEV_TYPESAFE_URL",

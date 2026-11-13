@@ -6,8 +6,8 @@ description: >-
   auto-rendered with mmdc and embedded. Use when the user wants to turn a .md
   file into a PDF or slide deck, "export markdown to pdf", "md to pdf", "render
   mermaid and make a PDF", "build a deck from this markdown", or "export as marp
-  deck". Auto-detects the best installed PDF backend (Typst+Pandoc, Pandoc+LaTeX,
-  WeasyPrint, headless-Chromium) and never auto-installs. Keywords: markdown to
+  deck". Auto-detects the best installed PDF backend by quality
+  (Pandoc+LaTeX > Typst > WeasyPrint > Chromium) and never auto-installs. Keywords: markdown to
   pdf, md to pdf, mermaid, marp deck, slide deck, export pdf, pandoc, typst.
 ---
 
@@ -49,11 +49,14 @@ Flags (defaults are tuned — reach for these only when the situation demands):
 |---|---|
 | Routine doc → PDF | Run the primary flow; report the result line. |
 | User wants slides | Use the marp deck path (below). |
-| Exit code 3 (no backend) | Show the printed install command as-is; never auto-install. |
-| Exit code 2 (mermaid failed) | Show mmdc's error; user fixes the source block at the named line. Nothing was emitted. |
-| Diagram looks low-res in the PDF | It's already `-s 3` (high-DPI PNG). For vector sharpness use `--format svg` — but ONLY if the backend is `typst` or `chromium`. |
+| Exit code 0 | Report the printed `Wrote ...` line verbatim. |
+| Exit code 3 (no backend) | stderr says `No backend available` and prints a `Recommended: install <name>:` line with its command; show that command as-is and never auto-install. Nothing was written. |
+| Exit code 2 (mermaid failed at a line) | Show mmdc's error; the user fixes the source block at the named line. Nothing was written. |
+| Exit code 2 and the error says `Could not find Chrome`, `Could not find chrome-headless-shell` or `Tried to find the browser at the configured path` | mmdc's headless browser is missing; the mermaid source is fine. Point `PUPPETEER_EXECUTABLE_PATH` at an installed Chrome or Chromium, or install the browser mmdc expects, then re-run. |
+| Exit code 4 (backend failed) | The backend ran and failed; stderr holds its error (`<backend> failed: ...` or `marp failed: ...`). Show it; fix what it names, or pick another backend with `--backend`. Nothing was written. |
+| Diagram looks low-res in the PDF | `pandoc-latex` and `weasyprint` embed PNG rendered at `-s 3`; for vector output use `--format svg`, on `pandoc-latex` only with `rsvg-convert` on PATH (SVG support on `weasyprint` is patchy). `typst` and `chromium` already embed SVG, so their diagrams are vector: check the source image instead. |
 | SVG render fails under `pandoc-latex` | That backend needs `rsvg-convert` on PATH. Re-run with `--format png` (the default) or install librsvg. |
-| Chromium/`md-to-pdf` won't launch (container/CI) | Headless Chrome needs `--no-sandbox`; use an environment that allows it or pick another backend. |
+| Chromium/`md-to-pdf` exits 4 in a container | The script already launches Chrome with `--no-sandbox`; read the backend error, or pick another backend with `--backend`. |
 
 ## Marp deck path — slides
 
@@ -72,6 +75,12 @@ you, not by any script — see the portability landmine):
   python3 scripts/markdown_to_pdf.py --deck <source.md> [--to pdf|pptx|html]
   ```
   Requires marp-cli (`pnpm add -g @marp-team/marp-cli`). Deck diagrams default to SVG.
+  The deck runs with marp's `--allow-local-files`. For `pdf` and `pptx` the script
+  rewrites relative image links (Markdown, reference-style and `<img>`, never code
+  samples) to absolute paths, so your local images and the diagrams are embedded. `--to html` keeps your relative image links as written, so
+  they resolve beside the output HTML (write the deck next to its images, or copy them
+  along), and writes its diagrams to `<output stem>-assets/` beside the HTML; keep that
+  folder with the file.
 
 ## Never
 

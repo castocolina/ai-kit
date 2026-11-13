@@ -55,7 +55,6 @@ _LOG = logging.getLogger("jev_review")
 
 LAYA_DEFAULT_URL = "http://127.0.0.1:8010"
 SYSTEMONE_PATH = "/v1/systemone"
-ZEN_KEY_FILE = "keys.json"  # pi's key file under PI_CODING_AGENT_DIR, read-only here
 USER_AGENT = "jev-fast-decision/2.0"
 _VALIDATION_MODEL = "x"  # request_body needs a model string to validate with; nothing is sent
 # A real answer is a few KiB; anything bigger is refused, never parsed (T-21.1-11).
@@ -65,8 +64,6 @@ _RETRY_AFTER_CAP = 2.0
 _LAYA_CALLER_CODES = (400, 413, 422)  # a caller bug fails remotely too, so it never escalates
 _UNAUTHORIZED_CODES = (401, 403)
 _TYPESAFE_CALLER_CODES = (400, 404, 413, 422)  # a 402 here is billing, so it is not a caller bug
-_QUOTA_CODES = (402, 429)  # Zen's budget signals: ask the row's next model id, not the user
-_OPENCODE_CALLER_CODES = (400,)  # the 2026-10-11 note: a 400 from Zen is a bad model id
 _WORLD_READABLE = 0o077  # the state-file key is unusable when group or other can read it
 _FORCED_FLAG = "forced_fallback"  # internal: popped in _finalize, never in the output
 _KILL_SWITCH = "GSD_PATH_JEV"
@@ -568,8 +565,8 @@ def _systemone_url(base):
 def _laya_url():
     """(endpoint, None) or (None, reason): loopback only.
 
-    A non-loopback `JEV_API_URL` is skipped, never refused — it is the live skill's Zen
-    endpoint, and a shell still exporting it must keep the Laya rung, as the pre-move
+    A non-loopback `JEV_API_URL` is skipped, never refused — it is a remote endpoint an older
+    shell may still export. A shell still exporting it must keep the Laya rung, as the pre-move
     spec-discuss ladder's `laya_url` did. A non-loopback `JEV_LAYA_URL`/`AI_KIT_LAYA_URL` is
     refused (D-08).
     """
@@ -825,69 +822,6 @@ def _typesafe_classify(error):
     return "escalate", f"http_{error.code}"
 
 
-def _opencode_url():
-    """Zen's OpenAI-compatible root: `JEV_OPENCODE_URL` replaces the whole base (D-11).
-
-    The POST target is this URL verbatim: the documented Jev endpoint
-    `https://opencode.ai/inference/systemone/v1/systemone` (opencode.ai/docs/zen, checked
-    2026-10-23). The bearer probe path is not documented and stays unverified until a live run.
-    """
-    default = "https://opencode.ai/inference/systemone/v1/systemone"  # the row's own endpoint
-    return _remote_url(os.environ.get("JEV_OPENCODE_URL", default).strip())
-
-
-def _opencode_key_file():
-    """(value, reason) from `opencode-zen.key` in pi's keys.json, 0600 enforced like TypeSafe's."""
-    agent = os.environ.get("PI_CODING_AGENT_DIR", "").strip() or "~/.pi/agent"
-    path = os.path.join(os.path.expanduser(agent), ZEN_KEY_FILE)
-    try:
-        if os.stat(path).st_mode & _WORLD_READABLE:
-            return None, "world_readable"
-        with open(path, encoding="utf-8") as handle:
-            parsed = json.load(handle)
-    except (OSError, ValueError, UnicodeError, RecursionError):
-        return None, "missing_file"
-    entry = parsed.get("opencode-zen") if isinstance(parsed, dict) else None
-    key = entry.get("key") if isinstance(entry, dict) else None
-    if isinstance(key, str) and key.strip():
-        return key.strip(), None
-    return None, "empty_file"
-
-
-def _opencode_key():
-    """`OPENCODE_ZEN_API_KEY` wins over `${PI_CODING_AGENT_DIR:-~/.pi/agent}/keys.json`'s
-    `opencode-zen.key` (D-11)."""
-    return _first_key(("OPENCODE_ZEN_API_KEY",), [(f"file:{ZEN_KEY_FILE}", _opencode_key_file)])
-
-
-def _opencode_probe(row, timeout, deadline=None):
-    """A bearer `GET /inference/v1/models` on the endpoint's origin: Zen's documented model
-    list (opencode.ai/docs/zen, 2026-10-23). The docs show it without auth, so a 200 proves
-    reachability only, not the key: the row's `key_check` is `unverified` (D-11)."""
-    return _get_probe(_origin(row["url"]()[0], "/inference/v1/models"), row["key"]()[0],
-                      timeout, deadline)
-
-
-def _opencode_classify(error):
-    """(action, reason) for one Zen failure (D-11).
-
-    401/403 → escalate + `unauthorized`; 402/429 → the row's next model id; 5xx → retry with
-    bounded backoff, escalating when the retries run out; every other 4xx → `caller_error`.
-    """
-    if not isinstance(error, urllib.error.HTTPError):
-        return "escalate", "network_error"
-    _error_body(error)
-    if error.code in _UNAUTHORIZED_CODES:
-        return "escalate", "unauthorized"
-    if error.code in _QUOTA_CODES:
-        return "next_model", f"http_{error.code}"
-    if 500 <= error.code < 600:
-        return "retry", f"http_{error.code}"
-    if error.code in _OPENCODE_CALLER_CODES:
-        return "caller_error", f"caller_error:http_{error.code}"
-    return "escalate", f"http_{error.code}"
-
-
 Row = dict[str, Any]
 
 # SPEC R5 / RESEARCH Pitfall 5: a remote answer names the versioned id that answered
@@ -950,35 +884,6 @@ TABLE: tuple[Row, ...] = (
                   IMAGE: ("documented", "docs.typesafe.ai images", "2026-10-18"),
                   IMAGES_COMPARED: ("documented", "docs.typesafe.ai images", "2026-10-18"),
                   LONG_CONTEXT: ("documented", "docs.typesafe.ai models", "2026-10-18")},
-    },
-    {
-        "name": "opencode",
-        "remote": True,
-        "batch": False,  # Zen answers one question per call: two ids, free tier first (D-11)
-        "min_confidence": 0.75,
-        "models": ("jev-1.13-free", "jev-1.13"),
-        "model_env": "JEV_OPENCODE_MODEL",
-        "response_model": _JEV_RESPONSE,
-        "retry_limit": 2,  # a 5xx gets bounded backoff, then the item escalates
-        "state_chars_limit": 8000,
-        "url": _opencode_url,
-        "key": _opencode_key,
-        "probe": _opencode_probe,
-        "key_check": "unverified",  # its model list is documented without auth
-        "classify": _opencode_classify,
-        "cells": {CHOICE: ("verified-live", "jev-1.13-free 14/14", "2026-10-11"),
-                  NOUL: ("verified-live", "jev-1.13-free 14/14", "2026-10-11"),
-                  BATCH: ("verified-live", "jev-1.13-free 14/14", "2026-10-11"),
-                  SCORE: ("unverified", "opencode.ai/docs/zen lists text ids only",
-                          "2026-10-18"),
-                  BOX: ("unverified", "opencode.ai/docs/zen lists text ids only",
-                        "2026-10-18"),
-                  IMAGE: ("unverified", "opencode.ai/docs/zen lists text ids only",
-                          "2026-10-18"),
-                  IMAGES_COMPARED: ("unverified", "opencode.ai/docs/zen lists text ids only",
-                                    "2026-10-18"),
-                  LONG_CONTEXT: ("unverified", "opencode.ai/docs/zen lists text ids only",
-                                 "2026-10-18")},
     },
 )
 
@@ -1112,6 +1017,18 @@ def write_consent(data):
         raise
 
 
+def leftover_entries():
+    """Backend names a consent record or `JEV_ALLOW_REMOTE` still lists that the table no longer
+    has: name and source only, never a value."""
+    entries = [{"name": name, "source": "consent_record"}
+               for name in sorted(read_consent()) if row_named(name) is None]
+    raw = os.environ.get("JEV_ALLOW_REMOTE", "").strip()
+    parts = [] if raw == "1" else dict.fromkeys(p.strip() for p in raw.split(",") if p.strip())
+    entries += [{"name": name, "source": "JEV_ALLOW_REMOTE"}
+                for name in parts if row_named(name) is None]
+    return entries
+
+
 def _row_host(row):
     """The host a consent record binds this row to right now: its url adapter's hostname."""
     endpoint, reason = row["url"]()
@@ -1172,6 +1089,8 @@ def consent_command(action, backend):
     grant the minimal announcement — TypeSafe's retention terms are unverified (RESEARCH 11)."""
     row = row_named(backend)
     if row is None:
+        if action in ("show", "revoke") and backend in {e["name"] for e in leftover_entries()}:
+            return _leftover_consent(action, backend)
         return {"ok": False, "reason": "unknown_backend"}
     if not row["remote"]:
         return {"ok": False, "reason": "not_remote"}  # laya stays local: no record to give
@@ -1190,7 +1109,21 @@ def consent_command(action, backend):
     if action == "grant":
         result["note"] = (f"questions go to {host}; retention terms unverified; revoke with: "
                           f"jev_review.py consent revoke {backend}")
+    if action == "show":
+        result["leftover"] = leftover_entries()
     return result
+
+
+def _leftover_consent(action, backend):
+    """`consent show|revoke <leftover>`: a name the table no longer has. Revoke deletes its record
+    key through `write_consent`; a `JEV_ALLOW_REMOTE` entry is edited in the environment instead."""
+    if action == "revoke":
+        data = read_consent()
+        if backend in data:
+            del data[backend]
+            write_consent(data)
+    return {"ok": True, "backend": backend, "leftover": leftover_entries(),
+            "file": consent_path()}
 
 
 def _parse_jev_min_confidence():
@@ -1329,6 +1262,7 @@ def probe_report():
               "selected": candidates[0] if candidates else None,
               "candidates": candidates, "unavailable": unavailable,
               "backends": entries}
+    report["leftover"] = leftover_entries()
     if candidates:
         return report
     consent = _consent_result(choice, unavailable, [], {})
@@ -1482,9 +1416,8 @@ def _send(row, body, timeout, deadline=None):
     key, _label = row["key"]()
     headers = {**({"Authorization": f"Bearer {key}"} if key else {}),
                "Content-Type": "application/json",
-               # Zen's edge (Cloudflare) blocks the bare "Python-urllib/x.y" default
-               # User-Agent with error 1010. This is the script's own UA; do not spoof the
-               # OpenCode client UA — reports say the free-tier gate keys on it.
+               # Some edges block the default "Python-urllib/x.y" User-Agent (Cloudflare 1010):
+               # this is the script's own UA, never another client's.
                "User-Agent": USER_AGENT}
     request = urllib.request.Request(url, data=encoded, headers=headers)
     timeout = _capped_timeout(deadline, timeout)
@@ -1521,7 +1454,7 @@ def _post(row, body, timeout, run):
     Returns `(response, state_chars, action, reason, sent_body)`; `sent_body` is the encoded
     body the row last saw, so every rung entry can name the bytes its outcome came from. A
     `next_model` row action re-sends this same group with the row's next model id; an
-    exhausted `retry` or `next_model` (a TypeSafe 402, a paid Zen 402/429) becomes an
+    exhausted `retry` or `next_model` (a TypeSafe 402) becomes an
     escalate-class error, so auto selection moves that item to
     the next usable row exactly as it moves a 500 (SPEC R1, the 2026-10-11 todo) while an
     explicit backend keeps it as the item error.

@@ -9,6 +9,10 @@ Usage (from a git checkout, or pass --root):
   judge_loop.py report RECORDS
   judge_loop.py pool --loop L --native ID --probe-dir DIR --records DIR [--judges J ...]
   judge_loop.py count --loop L --records DIR [--skill S ...] [--no-jev] [--client PATH]
+                [--judge-package DIR]
+  count bases each skill on its latest prior loop's lowest valid percent and worst verdict
+  (inputs.json only when no earlier loop judged it); report and check --gate fail a round whose
+  lowest percent is more than 7.0 points under that base.
 Exit codes: 0 ok, 1 an invalid, missing or mis-pinned verdict or a refused ingest, 2 usage.
 Stdlib only; the staged-test mapper is loaded beside this file by path.
 """
@@ -151,11 +155,15 @@ def skill_files(root, name):
     return files
 
 
+def _digest_lines(pairs):
+    """sha256 over `<sha256 of file bytes>  <path>\\n` of each (path, bytes) pair, in order."""
+    lines = "".join(hashlib.sha256(data).hexdigest() + "  " + rel + "\n" for rel, data in pairs)
+    return hashlib.sha256(lines.encode("utf-8")).hexdigest()
+
+
 def skill_digest(root, name):
     """sha256 over `<sha256 of file bytes>  <path>\\n` of each tracked file of the skill."""
-    lines = "".join(hashlib.sha256((Path(root) / rel).read_bytes()).hexdigest() + "  " + rel + "\n"
-                    for rel in skill_files(root, name))
-    return hashlib.sha256(lines.encode("utf-8")).hexdigest()
+    return _digest_lines((rel, (Path(root) / rel).read_bytes()) for rel in skill_files(root, name))
 
 
 def ships_code(root, name):
@@ -837,13 +845,13 @@ def _report_order(inputs):
     return sorted(inputs["skills"], key=lambda n: (loop_key(inputs["skills"][n]["batch"]), n))
 
 
-def _last_round(records, skill):
-    """The skill's latest loop and last round, shared by report and check; None without one.
+def _round_state(records, loop, skill):
+    """The skill's last round in one loop, with its order, valid verdicts and worst record.
 
     Only verdicts that validate are ranked (`valid`, `worst`); `scored` holds every verdict.
+    None when the loop has no round for the skill.
     """
-    loop = latest_loop(records, skill)
-    numbers = round_numbers(records, loop, skill) if loop is not None else []
+    numbers = round_numbers(records, loop, skill)
     if not numbers:
         return None
     data = read_loop_file(records, loop)
@@ -856,6 +864,131 @@ def _last_round(records, skill):
     return {"loop": loop, "numbers": numbers, "data": data, "recs": recs, "order": order,
             "refutations": refutations, "scored": scored, "valid": valid,
             "worst": worst_record(valid, refutations, order)}
+
+
+def _last_round(records, skill):
+    """The skill's latest loop and last round, shared by report and check; None without one."""
+    loop = latest_loop(records, skill)
+    return None if loop is None else _round_state(records, loop, skill)
+
+
+def _loop_pin(records, loop, skill):
+    """The (rubric_version, spec_sha) pin of the skill's last round in a loop, or None."""
+    numbers = round_numbers(records, loop, skill)
+    recs = load_round(records, loop, skill, numbers[-1]) if numbers else []
+    return (recs[0]["rubric_version"], recs[0]["spec_sha"]) if recs else None
+
+
+def prior_worst(records, skill, loop, pin=None):
+    """(prior loop, round state) of the newest loop below `loop` that ranked the skill, or None.
+
+    Only a loop judged on the same rubric pin gives a base: percents from another rubric
+    version are not comparable. `pin` is the rubric's own pin (count runs before the loop has
+    records); without it the loop's records give it."""
+    pin = pin or _loop_pin(records, loop, skill)
+    for prior in reversed(_loop_names(records)):
+        if loop_key(prior) >= loop_key(loop) or not _skill_dir(records, prior, skill).is_dir():
+            continue
+        state = _round_state(records, prior, skill)
+        if state is None or state["worst"] is None:
+            continue
+        worst = state["worst"]
+        if pin is None or (worst["rubric_version"], worst["spec_sha"]) == pin:
+            return prior, state
+    return None
+
+
+def lowest_percent(valid):
+    """The lowest percent of a non-empty list of valid scored records."""
+    return min(r["verdict"]["percent"] for r in valid)
+
+
+# the count base fields check compares; judged_at is provenance only
+BASE_COMPARED = ("percent", "critical", "high", "source")
+
+
+def _base_signals(skill, prior_loop, state):
+    """The count base a prior loop's round gives: its lowest percent and its worst verdict."""
+    worst = state["worst"]
+    source = (f"verdicts/{prior_loop}/{skill}/r{state['numbers'][-1]}/"
+              f"{judge_slug(worst['judge'])}.json")
+    return {"percent": lowest_percent(state["valid"]),
+            "critical": _count(worst["verdict"], "critical"),
+            "high": _count(worst["verdict"], "high"), "source": source}
+
+
+def _git_bytes(root, args, data=None):
+    """The stdout bytes of one git call, or None on a non-zero exit."""
+    proc = subprocess.run(["git", "-C", str(root), *args], input=data, capture_output=True,
+                          check=False)
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _blob_entries(listing):
+    """(path, sha) of each blob in a NUL-separated `git ls-tree -z` listing, in order."""
+    entries = []
+    for entry in listing.split(b"\0"):
+        meta, _tab, path = entry.partition(b"\t")
+        fields = meta.split()
+        if path and len(fields) == 3 and fields[1] == b"blob":
+            entries.append((os.fsdecode(path), fields[2].decode("ascii")))
+    return entries
+
+
+def _batch_bodies(out, count):
+    """The `count` object bodies of a `git cat-file --batch` output, or None when malformed."""
+    bodies, pos = [], 0
+    for _ in range(count):
+        end = out.find(b"\n", pos)
+        header = out[pos:end].split() if end >= 0 else []
+        if len(header) != 3 or header[1] != b"blob":
+            return None
+        size = int(header[2])
+        bodies.append(out[end + 1:end + 1 + size])
+        pos = end + 2 + size
+    return bodies
+
+
+def digest_at(root, commit, name):
+    """The skill digest of skills/<name>/ as committed at `commit`, or None when unreadable."""
+    if not (BASE_RE.fullmatch(commit) and SAFE_SKILL.fullmatch(name)):
+        return None
+    listing = _git_bytes(root, ["ls-tree", "-r", "-z", commit, "--", f"skills/{name}/"])
+    entries = _blob_entries(listing) if listing is not None else []
+    if not entries:
+        return None
+    request = "".join(sha + "\n" for _path, sha in entries).encode("ascii")
+    out = _git_bytes(root, ["cat-file", "--batch"], request)
+    bodies = _batch_bodies(out, len(entries)) if out is not None else None
+    if bodies is None:
+        return None
+    return _digest_lines(sorted(zip((path for path, _sha in entries), bodies, strict=True)))
+
+
+def base_commit(root, digest, name):
+    """The newest commit touching skills/<name>/ whose skill digest is `digest`, or None."""
+    if digest is None or not SAFE_SKILL.fullmatch(name):
+        return None
+    log = _git_bytes(root, ["log", "--format=%H", "--", f"skills/{name}/"]) or b""
+    for sha in log.decode("ascii", "replace").split():
+        if digest_at(root, sha, name) == digest:
+            return sha
+    return None
+
+
+def prior_base(root, records, skill, loop, pin=None):
+    """The count base for `skill` at `loop` from its prior loop's worst round, or None."""
+    found = prior_worst(records, skill, loop, pin)
+    if found is None:
+        return None
+    prior_loop, state = found
+    judged_at = base_commit(root, state["worst"]["digest"], skill)
+    return {**_base_signals(skill, prior_loop, state), "judged_at": judged_at}
+
+
+def with_base(entry, base):
+    """The skill's inputs entry, with last_v4 replaced by its prior loop's base when one exists."""
+    return entry if base is None else {**entry, "last_v4": base}
 
 
 def _judged_state(records, name, inputs):
@@ -871,7 +1004,8 @@ def _judged_state(records, name, inputs):
     return {"name": name, "batch": inputs["skills"][name]["batch"], "loop": last["loop"],
             "rounds": len(last["numbers"]), "number": last["numbers"][-1], "recs": last["recs"],
             "scored": last["valid"], "refutations": last["refutations"],
-            "count": counts[name], "worst": last["worst"]}
+            "count": counts[name], "worst": last["worst"],
+            "prior": prior_worst(records, name, last["loop"])}
 
 
 def _judged_row(state):
@@ -885,7 +1019,7 @@ def _judged_row(state):
     if worst is not None:
         pct, grade = worst["verdict"]["percent"], worst["verdict"]["grade"]
         digest = worst["digest"][:12]
-        bar = _record_bar(worst, state["refutations"])[1]
+        bar = bar_with_base(worst, state["refutations"], scored, state["prior"])[1]
     reasons = "; ".join(count["reasons"])
     refuted = sum(_refuted_serious(r, state["refutations"]) for r in scored)
     return [state["name"], state["batch"], state["loop"], state["number"], state["rounds"],
@@ -913,9 +1047,9 @@ def _verdict_row(state, record):
             score, _pct(pct), grade, crit, high]
 
 
-def _count_row(state, entry):
-    last = entry["last_v4"]
+def _count_row(state):
     count = state["count"]
+    last = count["last_v4"]
     jev = count.get("jev") or {}
     pct = crit = high = base = source = None
     if last is not None:
@@ -1012,7 +1146,7 @@ def render_report(records):
     inputs = load_inputs(records)
     states = [_judged_state(records, name, inputs) for name in _report_order(inputs)]
     verdict_rows = [_verdict_row(s, record) for s in states for record in s["recs"]]
-    count_rows = [_count_row(s, inputs["skills"][s["name"]]) for s in states]
+    count_rows = [_count_row(s) for s in states]
     excluded = [[name, reason] for name, reason in sorted(inputs["excluded"].items())]
     sections = [
         REPORT_HEADER,
@@ -1089,14 +1223,21 @@ def _loop_problems(records, loop, skill, judges):
 
 
 def _count_problems(records, loop, skill, inputs):
-    """The loop's count record matches inputs.json and the rule reproduces it."""
+    """The loop's count record matches its base and the rule reproduces it. Git-free by design."""
     counts = read_loop_file(records, loop).get("counts") or {}
     if skill not in counts:
         return [f"{skill}: no count record in loops/{loop}.json"]
     record = counts[skill]
-    last = inputs["skills"][skill]["last_v4"]
-    if record.get("last_v4") != last:
-        return [f"{skill}: count inputs differ from inputs.json"]
+    found = prior_worst(records, skill, loop)
+    if found is None:
+        last = inputs["skills"][skill]["last_v4"]
+        if record.get("last_v4") != last:
+            return [f"{skill}: count inputs differ from inputs.json"]
+    else:
+        expected_base = _base_signals(skill, *found)
+        last = record.get("last_v4") or {}
+        if any(last.get(key) != expected_base[key] for key in BASE_COMPARED):
+            return [f"{skill}: count inputs differ from the prior loop's base"]
     jev = record.get("jev") or {}
     expected = final_count(deterministic_count(last), jev.get("level"), jev.get("note", ""))
     if expected != (record.get("count"), record.get("reasons")):
@@ -1117,8 +1258,9 @@ def _check_latest(records, inputs, skill):
     worst = last["worst"]
     if worst is None:
         return None, problems
-    latest = _Latest(loop, numbers[-1], len(numbers), last["valid"], last["order"], worst,
-                     _record_bar(worst, last["refutations"]))
+    bar = bar_with_base(worst, last["refutations"], last["valid"],
+                        prior_worst(records, skill, loop))
+    latest = _Latest(loop, numbers[-1], len(numbers), last["valid"], last["order"], worst, bar)
     return latest, problems
 
 
@@ -1317,6 +1459,27 @@ JEV_LEVELS = ("no change likely to move the score",
               "a move past run-to-run variation is near certain")
 BAR_TENTHS = 800
 BAND_TENTHS = 70
+REGRESSION_TENTHS = 70  # a lowest percent more than 7.0 points under the prior base fails
+
+
+def bar_with_base(worst, refutations, valid, prior):
+    """(rank, clause) of a round's bar, with the regression limit when a prior loop judged it.
+
+    `valid` holds the round's valid verdicts; the limit compares the lowest of them with the
+    prior loop's lowest, in tenths.
+    """
+    rank, clause = _record_bar(worst, refutations)
+    if prior is None:
+        return rank, clause
+    prior_loop, state = prior
+    base = lowest_percent(state["valid"])
+    low = lowest_percent(valid)
+    if round(low * 10) < round(base * 10) - REGRESSION_TENTHS:
+        return 0, (f"not met: lowest percent {low:.1f} is more than "
+                   f"{REGRESSION_TENTHS / 10:.1f} points under the loop {prior_loop} "
+                   f"base {base:.1f}")
+    return rank, (f"{clause}; lowest percent {low:.1f}, "
+                  f"loop {prior_loop} base {base:.1f}")
 
 
 class JevUnavailable(Exception):
@@ -1587,9 +1750,12 @@ def _cmd_count(args, root):
     if not args.no_jev:
         override = _abs(root, args.client) if args.client else None
         ask = _ask_for(find_jev_client(root, os.environ, override))
+    package = _abs(root, args.judge_package) if args.judge_package else None
+    pin = read_pin(find_judge_package(root, os.environ, package))
     counts = dict(read_loop_file(records, args.loop).get("counts", {}))
     for name in names:
-        counts[name] = count_skill(root, name, inputs["skills"][name], ask)
+        entry = with_base(inputs["skills"][name], prior_base(root, records, name, args.loop, pin))
+        counts[name] = count_skill(root, name, entry, ask)
     update_loop_file(records, args.loop, "counts", counts)
     for name in names:
         reasons = "; ".join(counts[name]["reasons"])
@@ -1680,6 +1846,7 @@ def build_parser():
     count_p.add_argument("--skill", action="append", default=[])
     count_p.add_argument("--no-jev", action="store_true", help="keep the deterministic count")
     count_p.add_argument("--client", help="the jev client (default: the installed one)")
+    count_p.add_argument("--judge-package")
     return parser
 
 

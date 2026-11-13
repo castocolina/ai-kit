@@ -32,6 +32,7 @@ from ai_kit_usage_metrics import (
     refined_store,
 )
 from ai_kit_usage_metrics.classify_loop import (
+    DEFAULT_MIN_OCCURRENCES,
     infer_family_for_group,
     mine_recurring_shapes,
     normalize_skeleton,
@@ -5282,6 +5283,14 @@ _REFINED_STORE_PY = os.path.join(
     "ai_kit_usage_metrics",
     "refined_store.py",
 )
+_CLI_PY = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "skills",
+    "ai-kit-usage-metrics",
+    "ai_kit_usage_metrics",
+    "cli.py",
+)
 
 
 def _schema_column_names():
@@ -5338,6 +5347,115 @@ class TestSkillDocumentation(unittest.TestCase):
         self.assertIn("from/to date range", dashboard_section)
         self.assertNotIn("current month", dashboard_section.lower())
         self.assertNotIn("browser-clock", dashboard_section.lower())
+
+
+class TestFailureBranch(unittest.TestCase):
+    """SKILL.md's `## After run` text and threshold line, pinned against the code (SPEC R5)."""
+
+    def setUp(self):
+        with open(_SKILL_MD, encoding="utf-8") as handle:
+            self.text = handle.read()
+        with open(_CLI_PY, encoding="utf-8") as handle:
+            self.cli_source = handle.read()
+
+    def test_after_run_section_names_each_failure_case(self):
+        self.assertIn("## After run", self.text)
+        section = self.text.split("## After run", 1)[1].split("\n## ", 1)[0]
+        for phrase in (
+            "non-zero",
+            "stderr",
+            "`refine` before `dashboard`",
+            "`refined.db`",
+            "`capture[<name>] failed:`",
+            "`capture[<name>] persist failed:`",
+            "not current",
+            "zero rows",
+            "${XDG_DATA_HOME:-$HOME/.local/share}/ai-kit/usage-metrics/dashboard.html",
+            "per runtime",
+            "source_confidence",
+        ):
+            self.assertIn(phrase, section, f"`## After run` missing {phrase!r}")
+
+    def test_failure_strings_track_cli(self):
+        self.assertIn("capture[{name}] failed:", self.cli_source)
+        self.assertIn("capture[{name}] persist failed:", self.cli_source)
+        self.assertIn("`capture[<name>] failed:`", self.text)
+        self.assertIn("`capture[<name>] persist failed:`", self.text)
+
+    def test_threshold_is_the_code_constant(self):
+        self.assertIn(
+            f"`DEFAULT_MIN_OCCURRENCES` is {DEFAULT_MIN_OCCURRENCES} in `classify_loop.py`",
+            self.text,
+        )
+        self.assertNotIn("TBD", self.text)
+
+
+class TestResolveEntrypoint(unittest.TestCase):
+    """SKILL.md's `## Resolve the entrypoint` block, run under bash in a scratch layout (D-17)."""
+
+    def setUp(self):
+        bash = shutil.which("bash")
+        if bash is None:
+            self.skipTest("bash not found")
+        self.bash: str = bash
+        self.root = tempfile.mkdtemp(prefix="ai-kit-p321-usage-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        with open(_SKILL_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        section = text.split("## Resolve the entrypoint", 1)[1]
+        match = re.search(r"```bash\n(.*?)```", section, re.DOTALL)
+        if match is None:
+            self.fail("no bash block under `## Resolve the entrypoint`")
+        self.block: str = match.group(1)
+
+    def _install(self, home):
+        entry = os.path.join(
+            home, ".agents", "skills", "ai-kit-usage-metrics", "ai-kit-usage-metrics.py"
+        )
+        os.makedirs(os.path.dirname(entry))
+        with open(entry, "w", encoding="utf-8") as handle:
+            handle.write("")
+        return entry
+
+    def _run(self, home):
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": home,
+            "CLAUDE_CONFIG_DIR": os.path.join(self.root, "claude"),
+            "XDG_CONFIG_HOME": os.path.join(self.root, "config"),
+            "CURSOR_CONFIG_DIR": os.path.join(self.root, "cursor"),
+            "PI_CODING_AGENT_DIR": os.path.join(self.root, "pi"),
+            "AI_KIT_REFUSE_REAL_HOME": "1",
+        }
+        return subprocess.run(
+            [self.bash, "-c", self.block],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+    def test_prints_the_installed_entrypoint(self):
+        home = os.path.join(self.root, "home")
+        entry = self._install(home)
+        result = self._run(home)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(entry + "\n", result.stdout)
+
+    def test_stops_when_not_installed(self):
+        home = os.path.join(self.root, "home")
+        os.makedirs(home)
+        result = self._run(home)
+        self.assertEqual(1, result.returncode)
+        self.assertIn("ai-kit-usage-metrics is not installed", result.stdout)
+
+    def test_path_with_a_space_is_printed_whole(self):
+        home = os.path.join(self.root, "home dir")
+        entry = self._install(home)
+        result = self._run(home)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(entry + "\n", result.stdout)
 
 
 if __name__ == "__main__":

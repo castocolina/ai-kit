@@ -1,0 +1,11 @@
+[
+ {
+  "skill": "cst-refactor",
+  "round": 1,
+  "judge": "opencode:router-env/my-referee-two",
+  "finding": "D8-1",
+  "location": "skills/cst-refactor/SKILL.md:42",
+  "command": "cp skills/cst-refactor/codemod_template.py.txt <scratch>/codemod_template.py; in <scratch> with a.py 'def f(x, *args)', b.py 'def f(x=1)', c.py 'def f(x)': uv run python codemod_template.py add-parameter --function f --param y --paths a.py b.py c.py",
+  "output": "rc 1; last stderr line: libcst._nodes.base.CSTValidationError: Cannot have param without defaults following a param with defaults.; a.py rewritten to 'def f(x, y, *args)' (new parameter before *args); b.py unchanged; c.py unchanged (the run stopped at b.py). LibCST validates the parameter order and the parameter lands before *args, as SKILL.md line 42 states."
+ }
+]

@@ -1,0 +1,9 @@
+def greet(person, greeting="hi"):
+    """Say hi to name."""
+    return f"{greeting} {person}"
+
+
+greet(person="a")
+greet("b", greeting="yo")
+other(name="keep")
+obj.name = 1

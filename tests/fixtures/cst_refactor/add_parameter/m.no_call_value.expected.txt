@@ -1,0 +1,8 @@
+def f(a, b=1, flag = False):
+    return a + b
+
+
+f(1)
+f(1, b=2)
+obj.f(3)
+g(4)

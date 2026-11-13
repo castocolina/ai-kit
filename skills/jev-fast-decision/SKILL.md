@@ -1,23 +1,22 @@
 ---
 name: jev-fast-decision
-description: "Use when a fast, cheap typed judgment beats a full reasoning pass: yes/no (noul), picking among named options (choice), a rubric score (score), or screening evidence against a criterion, through the shared System One client on Laya (local), TypeSafe or OpenCode Zen (remote, consent required). Advisory only: needs_fallback means you decide that item yourself, and no answer is a verdict or gate. Not for building TypeSafe into an app (typesafe-ai) or for editing code."
+description: "Use when a fast, cheap typed judgment beats a full reasoning pass: yes/no (noul), picking among named options (choice), a rubric score (score), or screening evidence against a criterion, through the shared System One client on Laya (local), TypeSafe (remote, consent required). Advisory only: needs_fallback means you decide that item yourself, and no answer is a verdict or gate. Not for building TypeSafe into an app (typesafe-ai) or for editing code."
 ---
 
 # Jev fast-decision (shared System One client)
 
-Advisory typed judgments from local Laya or a consented remote (TypeSafe, OpenCode Zen). Every answer feeds your reasoning; none is a verdict or gate.
+Advisory typed judgments from local Laya or a consented remote (TypeSafe). Every answer feeds your reasoning; none is a verdict or gate.
 
 ## Pick the backend
 
-From this skill's directory, run `python3 -B scripts/jev_review.py --probe` before the first call of a session; read `backends/<selected>.md` before the first call with that backend.
+From this skill's directory, run `GSD_PATH_JEV=1 python3 -B scripts/jev_review.py --probe` before the first call of a session (`disabled` means the switch is off); read `backends/<selected>.md` before the first call with that backend.
 
 | Backend | When chosen | Batching | Consent needed |
 |---|---|---|---|
 | `laya` | local, probed first | one call per item (state-bleed measured) | no |
 | `typesafe` | direct API; needs `TYPESAFE_API_KEY` from the environment | one batch | yes |
-| `opencode` | OpenCode Zen (`jev-1.13-free`→`jev-1.13`) | one call per item | yes |
 
-`JEV_BACKEND=<name>` overrides auto, never falls back. Without consent, auto uses laya only. `typesafe` and `opencode` are different routes: "use TypeSafe" is not "use Zen"; a missing key makes `typesafe` unavailable.
+`JEV_BACKEND=<name>` overrides auto, never falls back. Without consent, auto uses laya only; a missing key makes `typesafe` unavailable.
 
 ## Callers (other skills and hooks)
 
@@ -33,7 +32,7 @@ An installed copy without `ladder` exits 2 with `invalid choice`: treat it as no
 
 ## Call it
 
-Screen calls: request shape in `reference.md` (`## Request shape`).
+Screen calls: request shape in `reference.md` (`## Request shape`). Read `reference.md` before `choice` (≥2 options), `score` or receipt.
 
 ## Read the result
 
@@ -53,15 +52,6 @@ A remote row at `consent_required_for_remote` (a `--probe` row's `reason`, a `de
 - NEVER auto-dismiss on one low or `unsupported` answer — investigate yourself.
 - NEVER wrap several items into one Laya call yourself.
 
-## Red Flags
+## When the docs matter
 
-"The key is set." / "The ladder says TypeSafe next." / "The user said use Jev today." — none is consent; ask. Full text: `reference.md`.
-
-## Required reading
-
-- [Jev release notes](https://typesafe.ai/blog/jev-1-14)
-- [Primitives](https://docs.typesafe.ai/primitives)
-- [Images](https://docs.typesafe.ai/images)
-- [Confidence](https://docs.typesafe.ai/confidence)
-
-Read `reference.md` before `choice` (≥2 options), `score` or receipt.
+When you design a new item shape, meet an uncovered TypeSafe feature, or a capability fact looks stale: follow the `typesafe:typesafe-ai` skill's live-docs flow if installed (also as `typesafe-ai`); else start at `https://docs.typesafe.ai/llms.txt`, then `changelog.md`, then `models.md` (links: `reference.md`, `## Docs flow`). Never install or copy that skill.

@@ -1,0 +1,197 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": "native, xhigh (frontmatter, documented; not observed)",
+   "status_line": null,
+   "verdict_line": "{\"skill\":\"cst-refactor\",\"judge\":\"native:opus-xhigh\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":12,\"D2\":12,\"D3\":13,\"D4\":12,\"D5\":13,\"D6\":13,\"D7\":10,\"D8\":11},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":96,\"max_total\":125,\"percent\":76.8,\"grade\":\"C\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":8,\"evidence\":\"Overview defines the tool: 'LibCST parses source into a Concrete Syntax Tree, matches syntax nodes (not raw text), transforms them, and serializes back'. Lines 77-90 then give three rename-symbol examples (class, method, constant) that differ only in their argument values.\",\"fix\":\"Delete the Overview paragraph, since the model knows what LibCST is. Merge the three rename-symbol examples into one and keep the method example with its 'a name no imported library uses' caveat.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":49,\"evidence\":\"'1. Run the subcommand on a narrow --paths (one file or one module).' No step finds where the old name occurs before --paths is chosen. rg comes only at step 6, so a collision such as sqlite3.connect shows up only after files have been rewritten.\",\"fix\":\"Add a step before step 1: run rg -nw '<old name>' over the target tree, list the files where the name belongs to another library or object, and pick --paths that leave them out before the first run. Keep step 6 for dynamic references.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":32,\"evidence\":\"'The small subset first rule is non-negotiable' (line 32) and 'Touch string literals or comments in the codemod unless the task explicitly requires it' (line 36) give no reason. The skill also never warns about the string-held names that rename-symbol leaves behind.\",\"fix\":\"Give each item its reason. Line 32: the template has no --dry-run and writes file by file, so the first narrow run is the only preview. Line 36: strings hold log keys, config keys and public names (LOG_KEY in the eval fixture) that outside systems read, so changing them changes behavior. Add a gotcha: quoted forward-reference annotations ('OldName') and __all__ entries are string literals that rename-symbol keeps, and they then break type checks and star imports.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":3,\"evidence\":\"The description opens with 'Use when refactoring Python with LibCST codemods', which ties triggering to the tool name. It mentions add/remove parameter and docstring rewrites only as subcommand names, never as user intents. It has no 'Not for' boundary for single-file edits, non-Python code or formatter and lint runs.\",\"fix\":\"Rename or re-sign Python symbols across many files with a bundled LibCST codemod (codemod_template.py.txt, copied into the project as tools/codemod_template.py): rename a class, function, method, constant or parameter, add or remove a function parameter at its definitions and call sites, or rewrite a scoped docstring, keeping comments and formatting intact. Use when a Python rename or signature change spans several files and sed or search-and-replace would also hit strings, comments or longer identifiers, even if the user never says LibCST or codemod. Matching is by name only, with no scope or type resolution. Not for single-file edits (use the editor), non-Python code, renaming files, folders or database columns, or formatting and lint fixes (ruff, black).\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":119,\"evidence\":\"The Notes section repeats earlier content. 'Do not alter string literals or comments unless explicitly required' repeats line 36. 'Validate changes with tests after codemod runs' repeats validation loop step 3. Line 122 on QualifiedNameProvider repeats the table row at line 18.\",\"fix\":\"Delete lines 119, 120, 122 and 124. Move the context7 pointer and the .py-only scope note into the preconditions, then remove the Notes section.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":27,\"evidence\":\"'Tests exist for the symbol being changed, OR you accept the risk.' sits in a list titled MANDATORY preconditions, so the agent decides on its own whether to waive the gate. Line 15 also offers 'IDE refactor', a tool an agent does not have.\",\"fix\":\"Replace line 27 with: 'If no test covers the symbol, tell the user before running and get their go-ahead; do not waive this yourself.' Change line 15's Use cell to 'Edit tool'.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/evals/evals.json\",\"line\":19,\"evidence\":\"Four evals have files: [] but point at code that does not exist: add-parameter-at-call-sites and remove-parameter-positional need a src/ tree, edge-shared-library-name needs SessionPool and edge-single-line-edit needs parser.py. Their diff and test assertions therefore cannot be graded. Eval 1 has one module although its prompt says 'a few places call it'. Its expected output says 'copies the template if it is missing', but no assertion checks that.\",\"fix\":\"Add fixtures under evals/files/: a two-module src with run_migration and deploy_release called both positionally and by keyword, a session_pool.py.txt that also calls sqlite3.connect, and a parser.py.txt. List each in its eval's files. Give eval 1 a second caller module and an assertion that the template is copied to tools/codemod_template.py when it is missing.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/evals/trigger-queries.json\",\"line\":2,\"evidence\":\"All 20 queries are single formal sentences with no file paths, typos or personal context. The negative 'Write unit tests for the CSV parser module...' (line 21) shares no concept with the skill and tests nothing.\",\"fix\":\"Rewrite about half the positives in a casual voice with real paths, for example 'ugh rename OrderLedger -> SalesLedger in src/billing/ and tests/, theres a ton of comments mentioning it'. Replace line 21 with a near miss, such as renaming a local variable inside one Python function or asking how PyCharm's rename works.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":45,\"evidence\":\"The skill says 'a missing path or a non-.py file stops the run', which reads as an up-front check. In fact iter_python_files is a generator, so a bad path is checked only when the loop reaches it. With --paths src --include-tests and no tests/ directory, every file under src is rewritten before 'Path does not exist: tests' is raised. add-parameter is also not idempotent: _add_param_to_params appends the parameter without checking for an existing one, so a rerun without git restore gives def run_migration(..., debug=False, debug=False).\",\"fix\":\"Replace the clause with: 'a missing path or a non-.py file stops the run when it is reached, after the files in earlier paths were already rewritten: run git restore <paths> before running again. add-parameter is not idempotent: a second run adds the parameter twice.'\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":79,\"evidence\":\"Every example uses '--paths src --include-tests', the widest scope. Validation loop step 1 (line 49) says 'Run the subcommand on a narrow --paths (one file or one module)', and NEVER line 32 requires a small subset first. Agents copy the examples, not the loop.\",\"fix\":\"Write each example with a narrow first path, such as --paths src/billing/invoice_service.py. Add one line after them: 'Widen to --paths src --include-tests only after the narrow diff is clean.'\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":24,\"evidence\":\"'Working tree clean (git status shows nothing).' There is no instruction for the common case of a dirty tree, so the agent may stash, commit or discard the user's work on its own.\",\"fix\":\"Add: 'If the tree is dirty, stop and ask the user to commit or stash; never stash, commit or discard their changes yourself.'\"}]}"
+  }
+ ],
+ "digest": "75bf49842855484e77bee4f378cedeac9c2d9b58d56ee54265e27f20d3ff57db",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "native:opus-xhigh",
+ "loop": "32.1",
+ "modules": [
+  "tests/test_cst_refactor.py",
+  "tests/test_cst_refactor_codemods.py",
+  "tests/test_gate_scope.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_app_1.py"
+ ],
+ "prompt_sha256": "a5946673ed4a1fa6cab29813157f136048ff682b63e55731cd1d55dd1bd36e69",
+ "round": 2,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "cst-refactor",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": {
+  "reason": "failed: AIKIT-XAI status=transient cli=opencode model=router-env/my-referee-two exit=75 cli_rc=1 elapsed=1055s out=4142 tree=clean action=stop route=unknown rule=omniroute-model-unavailable pattern=verified attempts=12 cycles=0 retry_after_s=600 cycle=0; orchestrator stopped the 600 s hard-tier wait after 12 attempts (jev native_substitute 0.97)",
+  "replaces": "opencode:router-env/my-referee-two"
+ },
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "Overview defines the tool: 'LibCST parses source into a Concrete Syntax Tree, matches syntax nodes (not raw text), transforms them, and serializes back'. Lines 77-90 then give three rename-symbol examples (class, method, constant) that differ only in their argument values.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Delete the Overview paragraph, since the model knows what LibCST is. Merge the three rename-symbol examples into one and keep the method example with its 'a name no imported library uses' caveat.",
+    "id": "D1-1",
+    "line": 8,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "'1. Run the subcommand on a narrow --paths (one file or one module).' No step finds where the old name occurs before --paths is chosen. rg comes only at step 6, so a collision such as sqlite3.connect shows up only after files have been rewritten.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Add a step before step 1: run rg -nw '<old name>' over the target tree, list the files where the name belongs to another library or object, and pick --paths that leave them out before the first run. Keep step 6 for dynamic references.",
+    "id": "D2-1",
+    "line": 49,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "'The small subset first rule is non-negotiable' (line 32) and 'Touch string literals or comments in the codemod unless the task explicitly requires it' (line 36) give no reason. The skill also never warns about the string-held names that rename-symbol leaves behind.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Give each item its reason. Line 32: the template has no --dry-run and writes file by file, so the first narrow run is the only preview. Line 36: strings hold log keys, config keys and public names (LOG_KEY in the eval fixture) that outside systems read, so changing them changes behavior. Add a gotcha: quoted forward-reference annotations ('OldName') and __all__ entries are string literals that rename-symbol keeps, and they then break type checks and star imports.",
+    "id": "D3-1",
+    "line": 32,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description opens with 'Use when refactoring Python with LibCST codemods', which ties triggering to the tool name. It mentions add/remove parameter and docstring rewrites only as subcommand names, never as user intents. It has no 'Not for' boundary for single-file edits, non-Python code or formatter and lint runs.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Rename or re-sign Python symbols across many files with a bundled LibCST codemod (codemod_template.py.txt, copied into the project as tools/codemod_template.py): rename a class, function, method, constant or parameter, add or remove a function parameter at its definitions and call sites, or rewrite a scoped docstring, keeping comments and formatting intact. Use when a Python rename or signature change spans several files and sed or search-and-replace would also hit strings, comments or longer identifiers, even if the user never says LibCST or codemod. Matching is by name only, with no scope or type resolution. Not for single-file edits (use the editor), non-Python code, renaming files, folders or database columns, or formatting and lint fixes (ruff, black).",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "The Notes section repeats earlier content. 'Do not alter string literals or comments unless explicitly required' repeats line 36. 'Validate changes with tests after codemod runs' repeats validation loop step 3. Line 122 on QualifiedNameProvider repeats the table row at line 18.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Delete lines 119, 120, 122 and 124. Move the context7 pointer and the .py-only scope note into the preconditions, then remove the Notes section.",
+    "id": "D5-1",
+    "line": 119,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "'Tests exist for the symbol being changed, OR you accept the risk.' sits in a list titled MANDATORY preconditions, so the agent decides on its own whether to waive the gate. Line 15 also offers 'IDE refactor', a tool an agent does not have.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Replace line 27 with: 'If no test covers the symbol, tell the user before running and get their go-ahead; do not waive this yourself.' Change line 15's Use cell to 'Edit tool'.",
+    "id": "D6-1",
+    "line": 27,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "Four evals have files: [] but point at code that does not exist: add-parameter-at-call-sites and remove-parameter-positional need a src/ tree, edge-shared-library-name needs SessionPool and edge-single-line-edit needs parser.py. Their diff and test assertions therefore cannot be graded. Eval 1 has one module although its prompt says 'a few places call it'. Its expected output says 'copies the template if it is missing', but no assertion checks that.",
+    "file": "skills/cst-refactor/evals/evals.json",
+    "fix": "Add fixtures under evals/files/: a two-module src with run_migration and deploy_release called both positionally and by keyword, a session_pool.py.txt that also calls sqlite3.connect, and a parser.py.txt. List each in its eval's files. Give eval 1 a second caller module and an assertion that the template is copied to tools/codemod_template.py when it is missing.",
+    "id": "D7-1",
+    "line": 19,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "All 20 queries are single formal sentences with no file paths, typos or personal context. The negative 'Write unit tests for the CSV parser module...' (line 21) shares no concept with the skill and tests nothing.",
+    "file": "skills/cst-refactor/evals/trigger-queries.json",
+    "fix": "Rewrite about half the positives in a casual voice with real paths, for example 'ugh rename OrderLedger -> SalesLedger in src/billing/ and tests/, theres a ton of comments mentioning it'. Replace line 21 with a near miss, such as renaming a local variable inside one Python function or asking how PyCharm's rename works.",
+    "id": "D7-2",
+    "line": 2,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The skill says 'a missing path or a non-.py file stops the run', which reads as an up-front check. In fact iter_python_files is a generator, so a bad path is checked only when the loop reaches it. With --paths src --include-tests and no tests/ directory, every file under src is rewritten before 'Path does not exist: tests' is raised. add-parameter is also not idempotent: _add_param_to_params appends the parameter without checking for an existing one, so a rerun without git restore gives def run_migration(..., debug=False, debug=False).",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Replace the clause with: 'a missing path or a non-.py file stops the run when it is reached, after the files in earlier paths were already rewritten: run git restore <paths> before running again. add-parameter is not idempotent: a second run adds the parameter twice.'",
+    "id": "D8-1",
+    "line": 45,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "Every example uses '--paths src --include-tests', the widest scope. Validation loop step 1 (line 49) says 'Run the subcommand on a narrow --paths (one file or one module)', and NEVER line 32 requires a small subset first. Agents copy the examples, not the loop.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Write each example with a narrow first path, such as --paths src/billing/invoice_service.py. Add one line after them: 'Widen to --paths src --include-tests only after the narrow diff is clean.'",
+    "id": "D8-2",
+    "line": 79,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'Working tree clean (git status shows nothing).' There is no instruction for the common case of a dirty tree, so the agent may stash, commit or discard the user's work on its own.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Add: 'If the tree is dirty, stop and ask the user to commit or stash; never stash, commit or discard their changes yourself.'",
+    "id": "D8-3",
+    "line": 24,
+    "severity": "low"
+   }
+  ],
+  "grade": "C",
+  "judge": "native:opus-xhigh",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 76.8,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 12,
+   "D2": 12,
+   "D3": 13,
+   "D4": 12,
+   "D5": 13,
+   "D6": 13,
+   "D7": 10,
+   "D8": 11
+  },
+  "skill": "cst-refactor",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 96
+ }
+}

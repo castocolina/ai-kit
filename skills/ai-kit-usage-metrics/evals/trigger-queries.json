@@ -1,0 +1,22 @@
+[
+  {"query": "Show me the usage dashboard for my AI CLI sessions across all the tools I use.", "should_trigger": true},
+  {"query": "How often do I run grep-family commands per session across my coding agents?", "should_trigger": true},
+  {"query": "Pull together the command history across Claude Code, opencode and Codex for me.", "should_trigger": true},
+  {"query": "Refresh the static usage HTML so it shows my latest sessions from this week.", "should_trigger": true},
+  {"query": "Which runtime did I use most this month? Show the usage numbers from my logs.", "should_trigger": true},
+  {"query": "Include the Cursor transcript commands in the usage dashboard, with their caveats.", "should_trigger": true},
+  {"query": "Can you show the rtk history inside my usage metrics dashboard page?", "should_trigger": true},
+  {"query": "Regenerate the usage dashboard after I ran the classify step on my history.", "should_trigger": true},
+  {"query": "Capture my latest AI CLI sessions into the refined usage database, then tell me.", "should_trigger": true},
+  {"query": "I want a filterable view of every shell command I ran through my coding agents.", "should_trigger": true},
+  {"query": "Summarize my token spend from an external billing site into a short table for me.", "should_trigger": false},
+  {"query": "Export my AI coding sessions to a hosted dashboard service that a teammate can open.", "should_trigger": false},
+  {"query": "Explain what the rg command does and when I should prefer it over grep.", "should_trigger": false},
+  {"query": "Set up a nightly cron job that emails me a weekly report of my spending.", "should_trigger": false},
+  {"query": "Read one transcript from a scratch config folder by hand and quote its first line.", "should_trigger": false},
+  {"query": "Chart a CSV file of monthly sales figures as a bar graph for the quarterly review.", "should_trigger": false},
+  {"query": "Count the lines of code in this repository by language and print the totals.", "should_trigger": false},
+  {"query": "Show my git commit history for this repo as a line chart of commits per week.", "should_trigger": false},
+  {"query": "Profile why my shell startup takes so long and suggest which plugin to disable.", "should_trigger": false},
+  {"query": "Build a Grafana panel that charts CPU and memory metrics from our server fleet.", "should_trigger": false}
+]

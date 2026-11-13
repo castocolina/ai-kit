@@ -2726,6 +2726,20 @@ class TestHeadlessInstall(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("ghost", buf.getvalue())
 
+    def test_setup_links_no_typesafe_ai_skill(self):
+        # SPEC R8 / D-09: ai-kit never installs the official skill, so the entries built from
+        # this repo's skills/ hold no typesafe-ai name, and a headless --skills typesafe-ai
+        # warns about an unknown skill and exits 0.
+        entries = setup.enumerate_entries(_REPO_ROOT)
+        self.assertNotIn("typesafe-ai", {name for name, _ in entries["skills"]})
+        self.assertEqual(setup.resolve_skills_flag("typesafe-ai", entries),
+                         (set(), ["typesafe-ai"]))
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = setup.cmd_install_headless(self.env, False, "typesafe-ai", False, False)
+        self.assertEqual(rc, 0)
+        self.assertIn("typesafe-ai", buf.getvalue())
+
     def test_headless_all_unknown_skills_is_not_reported_as_bare(self):
         # --skills ghost (no valid names at all) must say so distinctly, not
         # print the same "nothing requested" line bare --headless prints.

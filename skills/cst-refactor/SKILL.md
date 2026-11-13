@@ -35,6 +35,24 @@ LibCST parses source into a Concrete Syntax Tree, matches syntax nodes (not raw 
 - Point a subcommand at a name another library also defines unless every match is yours. Matching is by name only, with no scope or type resolution: `rename-symbol` renames every `Name` node with that value, attribute access included (renaming a `connect` method also turns `sqlite3.connect(...)` into `sqlite3.open(...)`), and the parameter subcommands edit every function def named `--function` and every call ending in `.<function>(...)` (`--function run` also hits `subprocess.run(...)`). `rename-parameter` renames the name only inside the target def's body (nested defs included, unless one declares its own parameter of that name) and in keywords of calls to `--function`; attribute names (`self.timeout`) and keywords of other calls (`requests.get(url, timeout=...)`) keep their spelling. Restrict `--paths`, then read the whole diff.
 - Touch string literals or comments in the codemod unless the task explicitly requires it.
 
+## What each subcommand changes
+
+- `rename-symbol`: renames every `Name` with that value: the definition, calls, imports, attribute access (`module.old_name`) and keyword-argument names (`call(old_name=1)`); comments and string literals keep the old text; equal old and new names stop the run with a `ValueError`.
+- `rename-parameter`: renames the parameter in each def named `--function`, its uses inside that body (f-strings included) and the keyword at calls to `--function`; docstrings, other calls' keywords and attributes keep their spelling; a `*args` or `**kwargs` parameter is renamed too.
+- `add-parameter`: adds `<param> = <default>` to each def named `--function`, before any `*args` (which changes positional binding); without `--call-value` call sites are left alone; with it every call to `--function`, method calls included, gains the keyword; a parameter with no `--default` after a defaulted one fails LibCST validation, which leaves that file untouched and stops the run there.
+- `remove-parameter`: removes the parameter from each def and its keyword from calls; positional call arguments stay, so check each call in the diff; a trailing comma can remain; `*args` and `**kwargs` parameters are never removed.
+- `rewrite-docstring`: replaces `--match` with `--replace` in the docstring of `--class`, of `--function`, or of that method when both are given; an f-string docstring is skipped silently; with neither flag the run stops with a `ValueError`.
+- Every subcommand: files are rewritten one by one with no dry run, and a file is written only when its text changes; directories are walked in filesystem order; `--include-tests` adds `tests` relative to the working directory and stops with `Path does not exist: tests` when there is none; a missing path or a non-`.py` file stops the run; a file that fails to parse, or whose rewrite fails LibCST validation, aborts the run after the files before it were already rewritten and leaves the files after it unvisited: run `git restore <paths>`, fix or leave out that file, and run again.
+
+## Validation loop
+
+1. Run the subcommand on a narrow `--paths` (one file or one module).
+2. Read `git diff`.
+3. Run the tests.
+4. If the diff holds an unrelated match (a library name such as `connect`) or a test fails, run `git restore <paths>` and narrow `--paths`.
+5. Repeat until the diff holds only intended changes, then widen `--paths` and go back to step 2; a path with no matching symbol changes nothing.
+6. Run `rg -n "<old name>"` for dynamic references the codemod cannot reach (strings, `getattr`, configs, templates); a second run of the same rename changes nothing.
+
 ## Bootstrapping the Template
 
 The codemod script lives at `tools/codemod_template.py` in any project that has it. If the
@@ -76,9 +94,14 @@ Rename a parameter and update keyword call sites:
 uv run python tools/codemod_template.py rename-parameter --function fetch_invoice_rows --old-name timeout --new-name request_timeout --paths src --include-tests
 ```
 
-Add a parameter with a default (add `--call-value <expr>` to also pass it as a keyword at every call site that lacks it):
+Add a parameter with a default (call sites stay as they are):
 ```bash
 uv run python tools/codemod_template.py add-parameter --function run_migration --param debug --default False --paths src --include-tests
+```
+
+Add it and pass it at every call site:
+```bash
+uv run python tools/codemod_template.py add-parameter --function run_migration --param debug --default False --call-value False --paths src --include-tests
 ```
 
 Remove a parameter and drop keyword usage:
@@ -96,7 +119,7 @@ uv run python tools/codemod_template.py rewrite-docstring --class Person --funct
 - Do not alter string literals or comments unless explicitly required.
 - Validate changes with tests after codemod runs.
 - Use the `context7:query-docs` skill (or `mcp__context7__query-docs`) to confirm LibCST APIs when needed.
-- Tighten matchers or use LibCST metadata when you need to avoid false positives.
+- For a name another library also defines, restrict `--paths` and audit the diff (the default); write a custom codemod with `QualifiedNameProvider` only when narrowing cannot separate the two names.
 - Run from the project root and ensure dev dependencies are installed (LibCST).
 - Prefer `uv run python` unless your venv is already active.
 - Codemods only touch `.py` files in the given paths. Check other docs only if the refactor scope demands it.
