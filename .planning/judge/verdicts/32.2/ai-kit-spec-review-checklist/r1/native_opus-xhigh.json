@@ -1,0 +1,192 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": "native, xhigh (frontmatter, documented; not observed)",
+   "status_line": null,
+   "verdict_line": "{\"skill\":\"ai-kit-spec-review-checklist\",\"judge\":\"native:opus-xhigh\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":15,\"D2\":12,\"D3\":13,\"D4\":12,\"D5\":14,\"D6\":13,\"D7\":12,\"D8\":12},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":103,\"max_total\":125,\"percent\":82.4,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":211,\"evidence\":\"'## Linter-silencing exceptions (`# nosec`, `# noqa`, `type: ignore`) ... Required for functionality or no comment → HIGH.' is a generic code-review rule the model already applies, outside the four archetype checklists\",\"fix\":\"Delete the section; if suppressions inside plans matter, add one bullet under Plan checklist HIGH: 'a task that adds # nosec / # noqa / type: ignore without saying why the rule does not apply'\"},{\"id\":\"D1-2\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":321,\"evidence\":\"Common Mistakes rows restate rules already given in the body: audit only (line 12), folder-name trap (lines 174-175), [NEEDS CLARIFICATION] → HIGH (lines 122, 171), read content not existence (lines 201-203), constitution/state are context (lines 89-90), clean-context reviewer (lines 16-18)\",\"fix\":\"Keep only rows that add something not stated elsewhere (plan-level strictness on design/intent, correcting declared worktree paths) and move each duplicate row's reason into the rule it repeats\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":240,\"evidence\":\"'## Tool preference during review' says to Read SHARED_TOOLING_PATH 'once before your first search/listing/edit-adjacent tool call', and '## Operating under a turn/token budget' governs the whole run, yet both sit after the Phase 2 checklists just before '## Phase 3 — Output'; '## Phase 2 — Apply the checklist' (line 92) is a 3-line stub\",\"fix\":\"Put every before-review step in Phase 1 in execution order (on-disk check, budget rules when dispatched headless, Read SHARED_TOOLING_PATH and TOOL_AVAILABILITY, Read the documents, resolve framework and archetype) and nest the four checklists, framework conventions and codebase grounding under Phase 2, so phase order matches run order\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":329,\"evidence\":\"'| Ignoring the framework's requirement syntax | A non-EARS Kiro requirement / SHALL-less OpenSpec requirement is a real finding. |' and '| Reviewing a constitution/state doc as if it were a spec | Those are context — read, don't review. |' state the rule without its consequence; there is no Gotchas list\",\"fix\":\"Give each row the consequence for the next step when the mistake is made, and gather the environment facts scattered through the body (orchestrator parses finding-shaped bullets as issues, seed profiles resolve against the skill dir not the CWD, the worktree root is not the CWD, Spec Kit plan.md is a design) into a short ## Gotchas list\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":3,\"evidence\":\"The description draws no boundary against near-miss neighbours (ai-kit-spec-review-fixer, the /ai-kit-spec-review loop, code or PR review), spends its last sentence on mechanics ('Accepts a pre-resolved FRAMEWORK_PROFILE_PATH + ARCHETYPE from the orchestrator; falls back to its own framework detection + archetype heuristics'), and the do-not-invoke-if-you-wrote-it rule exists only in the body (lines 16-18)\",\"fix\":\"Audit a spec-driven-development document (intent, requirements, design or plan) with a severity-rated checklist plus its framework's own rules: EARS, RFC-2119 SHALL, Given/When/Then, OpenSpec ADDED/MODIFIED/REMOVED deltas, Spec Kit [NEEDS CLARIFICATION] and [P] markers, constitutional gates. Use when a design doc, spec, PRD, requirements.md, tasks.md, phase CONTEXT.md or implementation plan from superpowers, OpenSpec, GitHub Spec Kit, Kiro, BMAD, GSD or a generic docs/ folder needs a clean-context review before the next step, or when asked to check one for contradictions, untestable requirements, undefined terms, unsafe parallel tasks or false claims about existing code, even without the word spec. Honors FRAMEWORK_PROFILE_PATH and ARCHETYPE when /ai-kit-spec-review passes them. Audit only: not for fixing the document (ai-kit-spec-review-fixer), not for the review-and-fix loop (/ai-kit-spec-review), not for code or PR review, and not for a document you wrote in this context.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":216,\"evidence\":\"'## Operating under a turn/token budget (external CLI dispatch)' (lines 216-238) applies only to headless dispatch but loads on every native-subagent run too, and its failure narrative repeats ## Evidence (line 337); the body sits at roughly the 5,000-token ceiling\",\"fix\":\"Compress lines 216-238 to the two rules plus the 'prioritize reaching ### Status:' line (about 6 lines), dropping the narrative already kept in ## Evidence\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":145,\"evidence\":\"'A plan must be executable by an engineer with zero project context: exact files, exact code, exact commands.' applies superpowers' plan bar (references/frameworks/superpowers.md line 52: the checklists were written for it) to every framework, so a Spec Kit or Kiro '- [ ] <desc>' tasks.md such as evals/files/speckit-tasks.md invites missing-code findings its format never carries\",\"fix\":\"Replace lines 145-146 with: 'A plan must name exact files and an order an engineer with zero project context can follow; demand exact code and commands only where the profile's plan format carries them (superpowers plans do); a - [ ] <desc> tasks.md (Spec Kit, Kiro) is judged on files, ordering and [P] safety.'\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/evals/evals.json\",\"line\":null,\"evidence\":\"All nine evals end in Issues Found or Failure; none expects '### Status: Approved', so over-flagging, the Non-blocking notes shape and the LOW-only-stays-Approved rule (SKILL.md lines 313-316) are untested, as are OpenSpec MODIFIED/REMOVED delta checks and fused archetypes\",\"fix\":\"Add an eval with a clean design (a copy of design-good.md whose Context matches commit-message-skill.md) asserting '### Status: Approved', no severity headings and at most three plain '- ' bullets under Non-blocking notes; and an OpenSpec delta fixture whose MODIFIED requirement names no existing requirement, asserting a CRITICAL finding and the Document Type line 'openspec · requirements'\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/evals/trigger-queries.json\",\"line\":2,\"evidence\":\"The 20 queries carry no file paths, personal context or typos, and most positives name the task outright ('review this design doc against the checklist before I write the plan'), so they test little of the description's wording\",\"fix\":\"Rewrite four or five positives with realistic context and indirect phrasing, e.g. 'my teammate pushed docs/superpowers/specs/2026-11-02-export-design.md, can u sanity check it before i start writing tasks' and 'does .kiro/specs/csv-export/requirements.md hold up? the PM wants sign-off today'\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":13,\"evidence\":\"Lines 13-14 'The only write allowed is persisting an in-context document to disk verbatim so you can Read it.' contradict Phase 1 step 1 (lines 28-31): 'If the caller passed inline content or a chat description, STOP: ### Status: Failure — input not on disk.'\",\"fix\":\"Replace the sentence at lines 13-14 with 'Write nothing: inline content ends the run with the Phase 1 Failure status.' (or, if self-persisting is intended, make step 1 persist then review, never both)\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":34,\"evidence\":\"The normal branch fires only when both FRAMEWORK_PROFILE_PATH and ARCHETYPE are passed; a dispatch with only one falls to 'Else (fallback)', which re-detects and can override the orchestrator's value; and the Failure outcome (lines 30, 72) has no report template beside Approved and Issues Found\",\"fix\":\"Add 'If only one of the two lines is present, use it and resolve the other through the fallback.' to step 3, and add a Failure block to Phase 3: '## Review: <file(s)>' / '### Files Read' / '### Status: Failure — <reason>'\"}]}"
+  }
+ ],
+ "digest": "71bcef0cf1c2921c1f31281d596b77857ca1df9e7b9a1d79a88eb13e3a24df7f",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "native:opus-xhigh",
+ "loop": "32.2",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_review_checklist.py",
+  "tests/test_framework_profiles.py"
+ ],
+ "prompt_sha256": "786079be20326693677b288ba1fe62e2b0f94f67afa92e179ce9761a0a7d1066",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-spec-review-checklist",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "'## Linter-silencing exceptions (`# nosec`, `# noqa`, `type: ignore`) ... Required for functionality or no comment → HIGH.' is a generic code-review rule the model already applies, outside the four archetype checklists",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Delete the section; if suppressions inside plans matter, add one bullet under Plan checklist HIGH: 'a task that adds # nosec / # noqa / type: ignore without saying why the rule does not apply'",
+    "id": "D1-1",
+    "line": 211,
+    "severity": "low"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "Common Mistakes rows restate rules already given in the body: audit only (line 12), folder-name trap (lines 174-175), [NEEDS CLARIFICATION] → HIGH (lines 122, 171), read content not existence (lines 201-203), constitution/state are context (lines 89-90), clean-context reviewer (lines 16-18)",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Keep only rows that add something not stated elsewhere (plan-level strictness on design/intent, correcting declared worktree paths) and move each duplicate row's reason into the rule it repeats",
+    "id": "D1-2",
+    "line": 321,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "'## Tool preference during review' says to Read SHARED_TOOLING_PATH 'once before your first search/listing/edit-adjacent tool call', and '## Operating under a turn/token budget' governs the whole run, yet both sit after the Phase 2 checklists just before '## Phase 3 — Output'; '## Phase 2 — Apply the checklist' (line 92) is a 3-line stub",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Put every before-review step in Phase 1 in execution order (on-disk check, budget rules when dispatched headless, Read SHARED_TOOLING_PATH and TOOL_AVAILABILITY, Read the documents, resolve framework and archetype) and nest the four checklists, framework conventions and codebase grounding under Phase 2, so phase order matches run order",
+    "id": "D2-1",
+    "line": 240,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "'| Ignoring the framework's requirement syntax | A non-EARS Kiro requirement / SHALL-less OpenSpec requirement is a real finding. |' and '| Reviewing a constitution/state doc as if it were a spec | Those are context — read, don't review. |' state the rule without its consequence; there is no Gotchas list",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Give each row the consequence for the next step when the mistake is made, and gather the environment facts scattered through the body (orchestrator parses finding-shaped bullets as issues, seed profiles resolve against the skill dir not the CWD, the worktree root is not the CWD, Spec Kit plan.md is a design) into a short ## Gotchas list",
+    "id": "D3-1",
+    "line": 329,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description draws no boundary against near-miss neighbours (ai-kit-spec-review-fixer, the /ai-kit-spec-review loop, code or PR review), spends its last sentence on mechanics ('Accepts a pre-resolved FRAMEWORK_PROFILE_PATH + ARCHETYPE from the orchestrator; falls back to its own framework detection + archetype heuristics'), and the do-not-invoke-if-you-wrote-it rule exists only in the body (lines 16-18)",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Audit a spec-driven-development document (intent, requirements, design or plan) with a severity-rated checklist plus its framework's own rules: EARS, RFC-2119 SHALL, Given/When/Then, OpenSpec ADDED/MODIFIED/REMOVED deltas, Spec Kit [NEEDS CLARIFICATION] and [P] markers, constitutional gates. Use when a design doc, spec, PRD, requirements.md, tasks.md, phase CONTEXT.md or implementation plan from superpowers, OpenSpec, GitHub Spec Kit, Kiro, BMAD, GSD or a generic docs/ folder needs a clean-context review before the next step, or when asked to check one for contradictions, untestable requirements, undefined terms, unsafe parallel tasks or false claims about existing code, even without the word spec. Honors FRAMEWORK_PROFILE_PATH and ARCHETYPE when /ai-kit-spec-review passes them. Audit only: not for fixing the document (ai-kit-spec-review-fixer), not for the review-and-fix loop (/ai-kit-spec-review), not for code or PR review, and not for a document you wrote in this context.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "'## Operating under a turn/token budget (external CLI dispatch)' (lines 216-238) applies only to headless dispatch but loads on every native-subagent run too, and its failure narrative repeats ## Evidence (line 337); the body sits at roughly the 5,000-token ceiling",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Compress lines 216-238 to the two rules plus the 'prioritize reaching ### Status:' line (about 6 lines), dropping the narrative already kept in ## Evidence",
+    "id": "D5-1",
+    "line": 216,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "'A plan must be executable by an engineer with zero project context: exact files, exact code, exact commands.' applies superpowers' plan bar (references/frameworks/superpowers.md line 52: the checklists were written for it) to every framework, so a Spec Kit or Kiro '- [ ] <desc>' tasks.md such as evals/files/speckit-tasks.md invites missing-code findings its format never carries",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Replace lines 145-146 with: 'A plan must name exact files and an order an engineer with zero project context can follow; demand exact code and commands only where the profile's plan format carries them (superpowers plans do); a - [ ] <desc> tasks.md (Spec Kit, Kiro) is judged on files, ordering and [P] safety.'",
+    "id": "D6-1",
+    "line": 145,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "All nine evals end in Issues Found or Failure; none expects '### Status: Approved', so over-flagging, the Non-blocking notes shape and the LOW-only-stays-Approved rule (SKILL.md lines 313-316) are untested, as are OpenSpec MODIFIED/REMOVED delta checks and fused archetypes",
+    "file": "skills/ai-kit-spec-review-checklist/evals/evals.json",
+    "fix": "Add an eval with a clean design (a copy of design-good.md whose Context matches commit-message-skill.md) asserting '### Status: Approved', no severity headings and at most three plain '- ' bullets under Non-blocking notes; and an OpenSpec delta fixture whose MODIFIED requirement names no existing requirement, asserting a CRITICAL finding and the Document Type line 'openspec · requirements'",
+    "id": "D7-1",
+    "line": null,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The 20 queries carry no file paths, personal context or typos, and most positives name the task outright ('review this design doc against the checklist before I write the plan'), so they test little of the description's wording",
+    "file": "skills/ai-kit-spec-review-checklist/evals/trigger-queries.json",
+    "fix": "Rewrite four or five positives with realistic context and indirect phrasing, e.g. 'my teammate pushed docs/superpowers/specs/2026-11-02-export-design.md, can u sanity check it before i start writing tasks' and 'does .kiro/specs/csv-export/requirements.md hold up? the PM wants sign-off today'",
+    "id": "D7-2",
+    "line": 2,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "Lines 13-14 'The only write allowed is persisting an in-context document to disk verbatim so you can Read it.' contradict Phase 1 step 1 (lines 28-31): 'If the caller passed inline content or a chat description, STOP: ### Status: Failure — input not on disk.'",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Replace the sentence at lines 13-14 with 'Write nothing: inline content ends the run with the Phase 1 Failure status.' (or, if self-persisting is intended, make step 1 persist then review, never both)",
+    "id": "D8-1",
+    "line": 13,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The normal branch fires only when both FRAMEWORK_PROFILE_PATH and ARCHETYPE are passed; a dispatch with only one falls to 'Else (fallback)', which re-detects and can override the orchestrator's value; and the Failure outcome (lines 30, 72) has no report template beside Approved and Issues Found",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Add 'If only one of the two lines is present, use it and resolve the other through the fallback.' to step 3, and add a Failure block to Phase 3: '## Review: <file(s)>' / '### Files Read' / '### Status: Failure — <reason>'",
+    "id": "D8-2",
+    "line": 34,
+    "severity": "low"
+   }
+  ],
+  "grade": "B",
+  "judge": "native:opus-xhigh",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 82.4,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 15,
+   "D2": 12,
+   "D3": 13,
+   "D4": 12,
+   "D5": 14,
+   "D6": 13,
+   "D7": 12,
+   "D8": 12
+  },
+  "skill": "ai-kit-spec-review-checklist",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 103
+ }
+}

@@ -6,6 +6,7 @@ Each judged skill's verdict here is its base for the batch phases' regression ch
 
 Rubric: loop 32: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 Rubric: loop 32.1: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
+Rubric: loop 32.2: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 
 ## Judged skills
 | Skill | Batch | Loop | Round | Rounds | Judges | Why this many | Worst percent | Worst grade | Critical | High | Refuted | Bar | Spread | Digest |
@@ -18,7 +19,7 @@ Rubric: loop 32.1: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 | ai-kit-spec-config | 32.2 | 32 | 1 | 1 | 2 | 2: last percent 77.6 is within 7.0 points of 80 | 79.2 | C | 0 | 0 | 0 | met: no critical or high finding | 2.4 | cb095c506f76 |
 | ai-kit-spec-execute | 32.2 | 32 | 1 | 1 | 2 | 2: last verdict had a critical or high finding; last percent 80.8 is within 7.0 points of 80 | 85.6 | B | 0 | 1 | 0 | met: grade B or better | 1.6 | 5811a9263ec9 |
 | ai-kit-spec-review | 32.2 | 32 | 1 | 1 | 2 | 2: no rubric-v4 verdict | 75.2 | C | 0 | 2 | 0 | not met | 7.2 | 538598a3fc0b |
-| ai-kit-spec-review-checklist | 32.2 | 32 | 1 | 1 | 2 | 2: no rubric-v4 verdict | 75.2 | C | 0 | 2 | 0 | not met | 0.8 | badfd951f940 |
+| ai-kit-spec-review-checklist | 32.2 | 32.2 | 1 | 1 | 2 | 2: last verdict had a critical or high finding; last percent 74.4 is within 7.0 points of 80 | 82.4 | B | 0 | 0 | 0 | met: no critical or high finding; lowest percent 82.4, loop 32 base 74.4 | 11.2 | 71bcef0cf1c2 |
 | ai-kit-cross-ai | 32.3 | 32 | 1 | 1 | 2 | 2: no rubric-v4 verdict | 76.8 | C | 0 | 1 | 0 | not met | 1.6 | 7fee6ff03ba1 |
 | ai-kit-session-wake | 32.3 | 32 | 1 | 1 | 2 | 2: no rubric-v4 verdict | 87.2 | B | 0 | 1 | 0 | met: grade B or better | 5.6 | 7168e10acb80 |
 | ai-kit-spec-execute-superpowers | 32.3 | 32 | 1 | 1 | 2 | 2: last percent 83.2 is within 7.0 points of 80 | 86.4 | B | 0 | 0 | 0 | met: no critical or high finding | 0.8 | 76d60cb299d7 |
@@ -45,9 +46,8 @@ Rubric: loop 32.1: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 | ai-kit-spec-execute | 32 | 1 | opencode:router-env/my-referee-three | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=41s out=40257 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 105/125 | 84.0 | B | 0 | 0 |
 | ai-kit-spec-review | 32 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=67s out=284609 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 103/125 | 82.4 | B | 0 | 1 |
 | ai-kit-spec-review | 32 | 1 | opencode:router-env/my-referee-three | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=43s out=111540 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 94/125 | 75.2 | C | 0 | 2 |
-| ai-kit-spec-review-checklist | 32 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=43s out=204525 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0; error: finding D5-1 line 156 is beyond the file's 150 lines | - | not judged | - | - | - | - |
-| ai-kit-spec-review-checklist | 32 | 1 | opencode:router-env/my-referee-three | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=41s out=59138 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 94/125 | 75.2 | C | 0 | 2 |
-| ai-kit-spec-review-checklist | 32 | 1 | native:opus-xhigh | native, xhigh (frontmatter, documented; not observed) | replaces opencode:router-env/my-referee-two: failed: AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=43s out=204525 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | 93/125 | 74.4 | C | 0 | 0 |
+| ai-kit-spec-review-checklist | 32.2 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=172s out=174807 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 117/125 | 93.6 | A | 0 | 0 |
+| ai-kit-spec-review-checklist | 32.2 | 1 | native:opus-xhigh | native, xhigh (frontmatter, documented; not observed) | - | 103/125 | 82.4 | B | 0 | 0 |
 | ai-kit-cross-ai | 32 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=52s out=189670 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 96/125 | 76.8 | C | 0 | 1 |
 | ai-kit-cross-ai | 32 | 1 | opencode:router-env/my-referee-three | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=39s out=46887 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 98/125 | 78.4 | C | 0 | 1 |
 | ai-kit-session-wake | 32 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=38s out=148825 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 109/125 | 87.2 | B | 0 | 1 |
@@ -72,7 +72,7 @@ Rubric: loop 32.1: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 | ai-kit-spec-config | 32 | 77.6 | 0 | 0 | - | .planning/phases/31-removals-and-small-defects/31-VERIFICATION.md:70 | not asked (deterministic two) | 2 | last percent 77.6 is within 7.0 points of 80 |
 | ai-kit-spec-execute | 32 | 80.8 | 0 | 1 | - | .planning/phases/31-removals-and-small-defects/31-VERIFICATION.md:69 | not asked (deterministic two) | 2 | last verdict had a critical or high finding; last percent 80.8 is within 7.0 points of 80 |
 | ai-kit-spec-review | 32 | - | - | - | - | - | not asked (deterministic two) | 2 | no rubric-v4 verdict |
-| ai-kit-spec-review-checklist | 32 | - | - | - | - | - | not asked (deterministic two) | 2 | no rubric-v4 verdict |
+| ai-kit-spec-review-checklist | 32.2 | 74.4 | 0 | 2 | 59d463657195b00bcaa1caead8aaff0cfa84f04a | verdicts/32/ai-kit-spec-review-checklist/r1/opencode_router-env_my-referee-three.json | not asked (deterministic two) | 2 | last verdict had a critical or high finding; last percent 74.4 is within 7.0 points of 80 |
 | ai-kit-cross-ai | 32 | - | - | - | - | - | not asked (deterministic two) | 2 | no rubric-v4 verdict |
 | ai-kit-session-wake | 32 | - | - | - | - | - | not asked (deterministic two) | 2 | no rubric-v4 verdict |
 | ai-kit-spec-execute-superpowers | 32 | 83.2 | 0 | 0 | 76fa531 | .planning/phases/30-phase-boundary-index-refresh-code-exploration-rules-and-lens/30-JUDGE.md:55 | not asked (deterministic two) | 2 | last percent 83.2 is within 7.0 points of 80 |
@@ -101,6 +101,16 @@ Substitutes: none
 
 Members: opencode:router-env/my-referee-two, opencode:router-env/my-referee-three
 Substitutes: none
+
+### Loop 32.2
+
+| Judge | Probe | Status line | Reason |
+|---|---|---|---|
+| opencode:router-env/my-referee-two | usable | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=11s out=689 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - |
+| opencode:router-env/my-referee-three | unusable | AIKIT-XAI status=timeout cli=opencode model=router-env/my-referee-three exit=124 cli_rc=130 elapsed=510s out=566 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | status timeout exit 124 tree clean |
+
+Members: opencode:router-env/my-referee-two, native:opus-xhigh
+Substitutes: native:opus-xhigh: only one configured judge passed its probe
 
 ## Excluded skills
 | Skill | Reason |

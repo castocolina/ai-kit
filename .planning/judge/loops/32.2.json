@@ -1,0 +1,56 @@
+{
+ "counts": {
+  "ai-kit-spec-review-checklist": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": {
+    "critical": 0,
+    "high": 2,
+    "judged_at": "59d463657195b00bcaa1caead8aaff0cfa84f04a",
+    "percent": 74.4,
+    "source": "verdicts/32/ai-kit-spec-review-checklist/r1/opencode_router-env_my-referee-three.json"
+   },
+   "reasons": [
+    "last verdict had a critical or high finding",
+    "last percent 74.4 is within 7.0 points of 80"
+   ]
+  }
+ },
+ "loop": "32.2",
+ "pool": {
+  "judges": [
+   "opencode:router-env/my-referee-two",
+   "opencode:router-env/my-referee-three"
+  ],
+  "members": [
+   "opencode:router-env/my-referee-two",
+   "native:opus-xhigh"
+  ],
+  "native": "native:opus-xhigh",
+  "probes": [
+   {
+    "judge": "opencode:router-env/my-referee-two",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=11s out=689 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "usable": true
+   },
+   {
+    "judge": "opencode:router-env/my-referee-three",
+    "reason": "status timeout exit 124 tree clean",
+    "status_line": "AIKIT-XAI status=timeout cli=opencode model=router-env/my-referee-three exit=124 cli_rc=130 elapsed=510s out=566 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "usable": false
+   }
+  ],
+  "substitutes": [
+   {
+    "judge": "native:opus-xhigh",
+    "reason": "only one configured judge passed its probe"
+   }
+  ]
+ }
+}
