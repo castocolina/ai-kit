@@ -36,6 +36,25 @@ from tests import (
 FOLD = _REPO / "skills" / "ai-kit-commit-fold" / "scripts" / "fold.py"
 BRANCH = "demo/unit-a"
 
+# One synthetic sample per shared key shape, built at run time from a prefix and filler (no whole
+# key literal in this file), in the shared table's order.
+KEY_SHAPE_SAMPLES = (
+    ("github_token", "ghp_" + "x" * 36),
+    ("github_pat", "github_pat_" + "x" * 40),
+    ("google_api_key", "AIza" + "x" * 35),
+    ("slack_token", "xoxb-" + "x" * 24),
+    ("pem_private_key", "-----BEGIN " + "RSA PRIVATE KEY" + "-----"),
+    ("aws_access_key_id", "AKIA" + "X" * 16),
+    ("gitlab_token", "glpat-" + "x" * 20),
+    ("xai_api_key", "xai-" + "x" * 32),
+    ("jwt", "eyJ" + "x" * 12 + ".eyJ" + "x" * 12 + "." + "x" * 12),
+    ("stripe_key", "sk_live_" + "x" * 24),
+    ("huggingface_token", "hf_" + "x" * 34),
+    ("npm_token", "npm_" + "x" * 36),
+    ("groq_key", "gsk_" + "x" * 52),
+    ("sk_rk_key", "sk-" + "x" * 24),
+)
+
 
 class _FlowCase(unittest.TestCase):
     """One copy of the template per test, with its own remote, forge, log and consent."""
@@ -476,6 +495,20 @@ class TestNoToken(_FlowCase):
         _code, text = self.fold("consent", "status", env=env)
         self.assertNotIn(token, text)
         self.assertEqual(text.strip(), "consent: yes")
+
+
+class TestRedactSharedShapes(unittest.TestCase):
+    """flow_pr.redact replaces every shared key shape with its own marker."""
+
+    def test_every_shared_key_shape_is_redacted(self):
+        for name, sample in KEY_SHAPE_SAMPLES:
+            with self.subTest(shape=name):
+                got = flow_pr.redact(f"gh said {sample} here")
+                self.assertEqual("gh said [redacted] here", got)
+
+    def test_text_without_a_key_is_unchanged(self):
+        text = "gh: pull request #12 merged into main (risk-assessment, sk-learn)"
+        self.assertEqual(text, flow_pr.redact(text))
 
 
 class TestForgeFake(_FlowCase):

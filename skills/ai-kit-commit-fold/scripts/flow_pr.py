@@ -10,16 +10,16 @@ import re
 import subprocess
 import tempfile
 
+import secret_shapes
 from flow_git import github_repo, is_github, primary_remote
 from flow_record import FlowError, Unit
 
-_TOKEN = re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}")
 _BACKEND_ENV = "AI_KIT_FLOW_PR_BACKEND"
 _PR_URL = re.compile(r"/pull/(\d+)\s*$", re.MULTILINE)
 
 
 def redact(text):
-    return _TOKEN.sub("[redacted]", text)
+    return secret_shapes.redact(text, "[redacted]")
 
 
 def run_gh_split(repo, *args):
