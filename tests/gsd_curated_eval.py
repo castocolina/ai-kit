@@ -58,7 +58,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from ai_kit_gsd_curated_config import config_backup, plan_io, presets
-from ai_kit_spec import gsd_tools
+from ai_kit_spec import gsd_tools, secret_shapes
 from ai_kit_spec.vendor import infer_vendor_from_model
 
 from tests.test_curated_config_apply_e2e import (
@@ -1090,17 +1090,16 @@ QUOTE_NEEDLES = (
     "instead",
 )
 RUNNER_CONFIG_RX = re.compile(r"// <config>\s*const CONFIG = (\{.*?\});\s*// </config>", re.S)
-# The value-shaped secret patterns (T-19-10): secret values, never words about credentials.
-# Review CR-02 added the provider-key prefixes, `*_TOKEN=`/`*_SECRET=` and JSON key names in
-# any case; a bare `"key"` is left out because every diff row has one.
+# The value-shaped secret patterns (T-19-10): secret values, never words about credentials. The
+# shared key shapes (ai_kit_spec/secret_shapes.py) come first, then this helper's own key-name
+# rules: bearer values, JSON key names in any case, `*_API_KEY/TOKEN/SECRET=` and `api_key`
+# assignments; a bare `"key"` is left out because every diff row has one.
 SECRET_RX = re.compile(
-    r"sk-[A-Za-z0-9_-]{16,}"
-    r"|(?i:bearer) [A-Za-z0-9._~+/-]{16,}"
+    "|".join(source for _name, source in secret_shapes.SHAPES)
+    + r"|(?i:bearer) [A-Za-z0-9._~+/-]{16,}"
     r'|"(?i:(access|refresh)_?token|api_?key|token|secret|password)"\s*:\s*"[^"]{8,}"'
     r"|[A-Z0-9_]*(API_KEY|TOKEN|SECRET)\s*[=:]\s*\S{8,}"
     r"|(?i:api[_-]?key)[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9_-]{16,}"
-    r"|\b(ghp|gho|ghs|ghu)_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{16,}"
-    r"|xai-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{30,}"
 )
 ROUTER_MODEL = "router-env/my-coding"
 ROUTER_REVIEW = "router-env/my-plan-review"
