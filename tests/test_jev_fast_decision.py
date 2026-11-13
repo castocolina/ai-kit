@@ -2918,13 +2918,34 @@ def score_item_ladder(identifier, levels=None, context="The refund is duplicated
             "context": context, "criteria": levels or ["low", "mid", "high"]}
 
 
+# One synthetic sample per shared key shape, built at run time from a prefix and filler (no whole
+# key literal in this file), in the shared table's order.
+KEY_SHAPE_SAMPLES = (
+    ("github_token", "ghp_" + "x" * 36),
+    ("github_pat", "github_pat_" + "x" * 40),
+    ("google_api_key", "AIza" + "x" * 35),
+    ("slack_token", "xoxb-" + "x" * 24),
+    ("pem_private_key", "-----BEGIN " + "RSA PRIVATE KEY" + "-----"),
+    ("aws_access_key_id", "AKIA" + "X" * 16),
+    ("gitlab_token", "glpat-" + "x" * 20),
+    ("xai_api_key", "xai-" + "x" * 32),
+    ("jwt", "eyJ" + "x" * 12 + ".eyJ" + "x" * 12 + "." + "x" * 12),
+    ("stripe_key", "sk_live_" + "x" * 24),
+    ("huggingface_token", "hf_" + "x" * 34),
+    ("npm_token", "npm_" + "x" * 36),
+    ("groq_key", "gsk_" + "x" * 52),
+    ("sk_rk_key", "sk-" + "x" * 24),
+)
+
+
 def _isolated_ladder(tmp):
-    """A copy of the jev entry point and its ladder caller, in a skills root that holds no
-    client (the repo's own skills root always does)."""
+    """A copy of the jev entry point, its ladder caller and the caller's key-shape sibling, in a
+    skills root that holds no client (the repo's own skills root always does)."""
     scripts = Path(tmp) / "skills" / "other-skill" / "scripts"
     scripts.mkdir(parents=True)
     shutil.copy2(SCRIPT, scripts / "jev_review.py")
     shutil.copy2(JEV_LADDER, scripts / "jev_ladder.py")
+    shutil.copy2(JEV_LADDER.with_name("secret_shapes.py"), scripts / "secret_shapes.py")
     return scripts
 
 
@@ -3003,6 +3024,25 @@ class TestItemError(unittest.TestCase):
         for reason, item in cases:
             with self.subTest(reason=reason, id=item["id"]):
                 self.assertEqual(jev_ladder.item_error(item), reason)
+
+    def test_every_shared_key_shape_is_refused(self):
+        for name, sample in KEY_SHAPE_SAMPLES:
+            with self.subTest(shape=name):
+                self.assertEqual("secret_pattern_context", jev_ladder.item_error(
+                    noul_item_ladder("n", f"evidence {sample} end")))
+                # the id is checked before the context: the first failing reason wins
+                self.assertEqual("secret_pattern_id", jev_ladder.item_error(
+                    noul_item_ladder(sample, f"evidence {sample} end")))
+
+    def test_sample_table_names_equal_the_shared_table(self):
+        self.assertEqual([name for name, _ in jev_ladder._SECRET_SHAPES.SHAPES],
+                         [name for name, _ in KEY_SHAPE_SAMPLES])
+
+    def test_base64_run_rule_is_kept(self):
+        self.assertEqual("secret_pattern_context", jev_ladder.item_error(
+            noul_item_ladder("n", "blob " + "Ab1/" * 12)))
+        short = noul_item_ladder("n", "blob " + "Ab1/" * 11 + "Ab1")
+        self.assertIsNone(jev_ladder.item_error(short))
 
 
 class TestPartitionIds(unittest.TestCase):

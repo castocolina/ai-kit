@@ -2896,6 +2896,26 @@ class TestScenarioPredicates(unittest.TestCase):
         )
 
 
+# One synthetic sample per shared key shape, built at run time from a prefix and filler (no whole
+# key literal in this file), in the shared table's order.
+KEY_SHAPE_SAMPLES = (
+    ("github_token", "ghp_" + "x" * 36),
+    ("github_pat", "github_pat_" + "x" * 40),
+    ("google_api_key", "AIza" + "x" * 35),
+    ("slack_token", "xoxb-" + "x" * 24),
+    ("pem_private_key", "-----BEGIN " + "RSA PRIVATE KEY" + "-----"),
+    ("aws_access_key_id", "AKIA" + "X" * 16),
+    ("gitlab_token", "glpat-" + "x" * 20),
+    ("xai_api_key", "xai-" + "x" * 32),
+    ("jwt", "eyJ" + "x" * 12 + ".eyJ" + "x" * 12 + "." + "x" * 12),
+    ("stripe_key", "sk_live_" + "x" * 24),
+    ("huggingface_token", "hf_" + "x" * 34),
+    ("npm_token", "npm_" + "x" * 36),
+    ("groq_key", "gsk_" + "x" * 52),
+    ("sk_rk_key", "sk-" + "x" * 24),
+)
+
+
 class TestSecretScan(unittest.TestCase):
     def setUp(self) -> None:
         self.scratch = tempfile.mkdtemp(prefix="xai-secret-")
@@ -2922,6 +2942,11 @@ class TestSecretScan(unittest.TestCase):
     def test_canary_self_check_fails_when_scanner_misses(self) -> None:
         with mock.patch.object(ev, "secret_scan", return_value=[]):
             self.assertFalse(ev.secret_scan_self_check())
+
+    def test_every_shared_key_shape_is_caught(self) -> None:
+        for name, sample in KEY_SHAPE_SAMPLES:
+            with self.subTest(shape=name):
+                self.assertTrue(ev.SECRET_RX.search(f"evidence {sample} end"))
 
     def test_missing_path_is_skipped(self) -> None:
         out = io.StringIO()

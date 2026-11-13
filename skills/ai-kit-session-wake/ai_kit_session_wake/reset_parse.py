@@ -15,6 +15,8 @@ from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .secret_shapes import redact as redact_key_shapes
+
 MAX_RESET_AHEAD_S = 604800  # 7 days, the recurring-job expiry (spike 004)
 RESET_MARGIN_S = 60  # absorbs the timer's 1-minute AccuracySec (D-28)
 EVIDENCE_MAX = 2000
@@ -52,19 +54,19 @@ class ResetResult(NamedTuple):
 # ── evidence redaction (the runner's policy, ported) ────────────────────────
 
 # Child text can echo credentials and identifiers. Key rules preserve the key
-# and replace only its complete quoted or delimited value; shape rules replace
-# the whole match. The alternatives are the runner's, kept exactly.
-_SECRET_SHAPE_RES = [
-    re.compile(r"(?:sk|rk)-[A-Za-z0-9_-]{8,}", re.IGNORECASE),
+# and replace only its complete quoted or delimited value; the Bearer and Basic
+# rules, the shared key shapes (the sibling secret_shapes.py) and the broad
+# rules replace the whole match, in the runner's order. The rules are the
+# runner's, kept exactly, plus one ai-kit addition.
+_BEARER_BASIC_RES = [
     re.compile(r"(?<=\bBearer )[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE),
     re.compile(r"(?<=\bBasic )[A-Za-z0-9+/=]{8,}", re.IGNORECASE),
-    re.compile(r"\bAIza[0-9A-Za-z_-]{20,}"),
+]
+_BROAD_RES = [
     re.compile(r"conn:[0-9a-f]{8,}", re.IGNORECASE),
     re.compile(
         r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE
     ),
-    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b", re.IGNORECASE),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b", re.IGNORECASE),
     # ai-kit addition (review round 1, T-26-20): any run of 32+ hex characters.
     re.compile(r"[0-9a-fA-F]{32,}"),
 ]
@@ -128,15 +130,19 @@ def _keep_prefix(match: re.Match[str]) -> str:
 
 def redact(text: str) -> str:
     """The runner's `redactSecrets`: key rules (plain, quoted and
-    backslash-escaped-quote keys) keep their key and quote; shape rules
-    replace the whole match; every value a key rule removed is also replaced
-    wherever else it appears."""
+    backslash-escaped-quote keys) keep their key and quote; the Bearer and
+    Basic rules, then the shared key shapes, then the broad rules replace the
+    whole match; every value a key rule removed is also replaced wherever
+    else it appears."""
     out = text
     copies = _redacted_values(out)
     for pattern in (KEY_VALUE_RE, ID_VALUE_RE):
         out = pattern.sub(_keep_prefix, out)
-    for shape in _SECRET_SHAPE_RES:
-        out = shape.sub("<redacted>", out)
+    for rule in _BEARER_BASIC_RES:
+        out = rule.sub("<redacted>", out)
+    out = redact_key_shapes(out, "<redacted>")
+    for rule in _BROAD_RES:
+        out = rule.sub("<redacted>", out)
     return _replace_copies(out, copies)
 
 

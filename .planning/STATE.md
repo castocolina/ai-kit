@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: "32.3"
-current_phase_name: Batch 3, execution and session skills
+current_phase: "32.4"
+current_phase_name: Batch 4, planning skills and the closing report
 status: planning
-stopped_at: Phase 32.2 complete, ready to plan Phase 32.3
-last_updated: "2026-11-13T05:27:29.618Z"
+stopped_at: Phase 32.3 complete, ready to plan Phase 32.4
+last_updated: "2026-11-13T14:37:23.461Z"
 last_activity: 2026-11-13
-last_activity_desc: Phase 32.2 complete, transitioned to Phase 32.3
-state_head: cb4fa68527aae7ab368cf080d07b30f716c0db9e
+last_activity_desc: Phase 32.3 complete, transitioned to Phase 32.4
+state_head: f46555ca64a7ae61fdf1ec14eb9cf9c957293f10
 progress:
   total_phases: 37
-  completed_phases: 10
-  total_plans: 78
-  completed_plans: 78
-  percent: 27
+  completed_phases: 11
+  total_plans: 83
+  completed_plans: 83
+  percent: 30
 ---
 
 # Project State
@@ -25,22 +25,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 32.2 — Batch 2, spec review family
+**Current focus:** Phase 32.3 — Batch 3, execution and session skills
 
 ## Current Position
 
-Phase: 32.3 — Batch 3, execution and session skills
+Phase: 32.4 — Batch 4, planning skills and the closing report
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-11-13 — Phase 32.2 complete, transitioned to Phase 32.3
+Last activity: 2026-11-13 — Phase 32.3 complete, transitioned to Phase 32.4
 
-Progress: [███░░░░░░░] 27%
+Progress: [███░░░░░░░] 30%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 232
+- Total plans completed: 237
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -92,6 +92,7 @@ Progress: [███░░░░░░░] 27%
 | 32 | 9 | - | - |
 | 32.1 | 9 | - | - |
 | 32.2 | 5 | - | - |
+| 32.3 | 5 | - | - |
 
 **Recent Trend:**
 
@@ -685,8 +686,8 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-13T04:14:37.949Z
-Stopped at: Phase 32.2 complete, ready to plan Phase 32.3
+Last session: 2026-11-13T14:02:34.648Z
+Stopped at: Phase 32.3 complete, ready to plan Phase 32.4
 Resume file: None
 
 ## Operator Next Steps

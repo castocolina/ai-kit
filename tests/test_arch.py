@@ -1411,25 +1411,26 @@ def skill_folders(repo_root):
 
 
 def skill_modules(repo_root):
-    """Top-level importable name -> skill folder: a package dir with __init__.py directly under
-    skills/<s>/, or a .py stem directly under skills/<s>/ or skills/<s>/scripts/. First owner
-    of a name wins."""
+    """Top-level importable name -> the frozenset of skill folders that provide it: a package
+    dir with __init__.py directly under skills/<s>/, or a .py stem directly under skills/<s>/
+    or skills/<s>/scripts/. A byte-identical copy held by several skills gives its name
+    several owners."""
     base = os.path.join(repo_root, "skills")
-    modules = {}
+    modules: dict[str, set[str]] = {}
     for skill in skill_folders(repo_root):
         skill_dir = os.path.join(base, skill)
         for name in sorted(os.listdir(skill_dir)):
             path = os.path.join(skill_dir, name)
             if os.path.isdir(path) and os.path.isfile(os.path.join(path, "__init__.py")):
-                modules.setdefault(name, skill)
+                modules.setdefault(name, set()).add(skill)
             elif name.endswith(".py"):
-                modules.setdefault(name[:-3], skill)
+                modules.setdefault(name[:-3], set()).add(skill)
         scripts = os.path.join(skill_dir, "scripts")
         if os.path.isdir(scripts):
             for name in sorted(os.listdir(scripts)):
                 if name.endswith(".py"):
-                    modules.setdefault(name[:-3], skill)
-    return {name: skill for name, skill in modules.items() if name.isidentifier()}
+                    modules.setdefault(name[:-3], set()).add(skill)
+    return {name: frozenset(owners) for name, owners in modules.items() if name.isidentifier()}
 
 
 def _lookup_value(node):
@@ -1496,7 +1497,9 @@ def check_cross_skill_refs(relpath, tree, modules, skills):
     reach into another skill: an import of its module (also `import_module("pkg.x")` or an
     f-string starting with the module), a sys.path call naming its folder, any
     string holding `<other>/`, a bare folder name passed to a path join or used in a `/`
-    expression, or a decide.py name. Docstrings and the JEV_ENTRY_REL lookup are not read."""
+    expression, or a decide.py name. Docstrings and the JEV_ENTRY_REL lookup are not read.
+    An import of a name the file's own skill also provides resolves to the own copy and is
+    not a reach."""
     parts = relpath.split("/")
     own = parts[1] if parts[0] == "skills" and len(parts) > 2 else None
     others = [name for name in skills if name != own]
@@ -1507,14 +1510,14 @@ def check_cross_skill_refs(relpath, tree, modules, skills):
             continue
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             for root in _import_roots(node):
-                owner = modules.get(root)
-                if owner is not None and owner != own:
-                    hits.append((relpath, owner, node.lineno))
+                owners = modules.get(root)
+                if owners and own not in owners:
+                    hits.append((relpath, min(owners), node.lineno))
         if isinstance(node, ast.Call) and _dotted_name(node.func) in _IMPORT_CALLS and node.args:
             head = _leading_literal(node.args[0])
-            owner = modules.get(head.split(".")[0]) if head else None
-            if owner is not None and owner != own:
-                hits.append((relpath, owner, node.lineno))
+            owners = modules.get(head.split(".")[0]) if head else None
+            if owners and own not in owners:
+                hits.append((relpath, min(owners), node.lineno))
         if _is_text(node):
             if _DECIDE_NAME in str(node.value):
                 hits.append((relpath, _DECIDE_NAME, node.lineno))
@@ -1794,6 +1797,109 @@ def _assigns_lookup_name(tree):
 def uncompared_lookup_files(assigners, copies):
     """Files that assign a lookup name but are not one of the compared copies."""
     return sorted(set(assigners) - set(copies))
+
+
+# The shared key-shape scanner: one canonical file, a byte-identical copy in each skill that
+# cannot import across skill folders, and the runner template, whose one KEY_SHAPES JSON line
+# must equal the canonical SHAPES as data. Any other key-shape pattern in shipped code is a new
+# copy: a known key prefix followed right away by regex syntax (a [ class, a ( group or a {n
+# quantifier), or such a prefix closing an alternation group. Copies are read, never imported.
+SHAPES_CANONICAL = "skills/ai-kit-spec-review/ai_kit_spec/secret_shapes.py"
+SHAPE_COPIES = (
+    "skills/ai-kit-spec-goal-prompt/scripts/secret_shapes.py",
+    "skills/jev-fast-decision/scripts/secret_shapes.py",
+    "skills/ai-kit-commit-fold/scripts/secret_shapes.py",
+    "skills/ai-kit-session-wake/ai_kit_session_wake/secret_shapes.py",
+)
+SHAPES_RUNNER = "skills/ai-kit-spec-review/references/cross-ai.mjs"
+_JS_KEY_SHAPES = re.compile(r"^const KEY_SHAPES = (\[.*\]);$", re.MULTILINE)
+
+
+def python_shapes(tree):
+    """The module-level SHAPES literal (ast.literal_eval) as [name, source] lists, or None."""
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "SHAPES" for t in node.targets
+        ):
+            return [list(row) for row in ast.literal_eval(node.value)]
+    return None
+
+
+def js_key_shapes(text):
+    """The one `const KEY_SHAPES = [...];` line of a JS file, JSON-decoded, or None."""
+    match = _JS_KEY_SHAPES.search(text)
+    if match is None:
+        return None
+    return json.loads(match.group(1))
+
+
+def shape_copy_problems(canonical, copies):
+    """Problems where a listed copy (path -> bytes, None when missing from disk) is absent or
+    differs from the canonical bytes, sorted by path."""
+    problems = []
+    for relpath, data in sorted(copies.items()):
+        if data is None:
+            problems.append(f"{relpath}: missing")
+        elif data != canonical:
+            problems.append(f"{relpath}: differs from {SHAPES_CANONICAL}")
+    return problems
+
+
+def runner_shape_problems(shapes, runner_text):
+    """Problems where the runner's KEY_SHAPES line is absent or differs from SHAPES as data."""
+    rows = js_key_shapes(runner_text)
+    if rows is None:
+        return [f"{SHAPES_RUNNER}: no KEY_SHAPES line"]
+    if rows != shapes:
+        return [f"{SHAPES_RUNNER}: KEY_SHAPES differs from {SHAPES_CANONICAL}"]
+    return []
+
+
+def _repo_bytes(relpath):
+    """A repo file's bytes, or None when it is missing from disk."""
+    path = os.path.join(_REPO_ROOT, relpath)
+    if not os.path.isfile(path):
+        return None
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+_KEY_PREFIX = (
+    r"(?:sk|rk)-|gh(?:\[[a-z]+\]|[pousr])_|github_pat_|AIza|AKIA|ASIA|ABIA|ACCA|"
+    r"(?:glpat|gloas|gldt|glrtr?|glcbt|glptt|glft|glimt|glagent|glwt|glsoat|glffct)-|xai-|"
+    r"xox(?:\[[a-z]+\]|[a-z])-|xapp-|xwfp-|hf_|npm_|gsk_|(?:sk|rk)_(?:live|test)_|eyJ|"
+    r"-----BEGIN ?"
+)
+_KEY_STEM = (
+    r"(?:sk|rk|pk|gh\[[a-z]+\]|gh[pousr]|gho|AKIA|ASIA|ABIA|ACCA|gl[a-z]+\??|xox\[[a-z]+\]"
+    r"|xox[a-z]|xapp|xwfp)"
+)
+_REGEX_SYNTAX = r"(?:\[|\(|\{\d|\\[wWdDsS]|\.[*+{])"
+KEY_SHAPE_COPY_RX = re.compile(
+    "(?:" + _KEY_PREFIX + ")" + _REGEX_SYNTAX
+    + "|(?:" + _KEY_STEM + r"\|[^()\s]*|[^()\s]*\|" + _KEY_STEM + r")\)[-_]?" + _REGEX_SYNTAX
+)
+_SHAPE_SCAN_ROOTS = ("skills/", "tools/")
+_SHAPE_SCAN_SUFFIXES = (".py", ".mjs", ".cjs", ".js", ".sh")
+
+
+def key_shape_copy_hits(files):
+    """`path:line: match` for each line of the (relpath, text) pairs, in a code file under skills/
+    or tools/, that holds a key-shape pattern outside the sanctioned scanner files; the runner
+    template is sanctioned through its KEY_SHAPES line only. Sorted by path and line."""
+    sanctioned = {SHAPES_CANONICAL, *SHAPE_COPIES}
+    hits = []
+    for relpath, text in files:
+        if (relpath in sanctioned or not relpath.startswith(_SHAPE_SCAN_ROOTS)
+                or not relpath.endswith(_SHAPE_SCAN_SUFFIXES)):
+            continue
+        for number, line in enumerate(text.splitlines(), 1):
+            if relpath == SHAPES_RUNNER and _JS_KEY_SHAPES.match(line):
+                continue
+            match = KEY_SHAPE_COPY_RX.search(line)
+            if match:
+                hits.append((relpath, number, match.group(0)))
+    return [f"{path}:{number}: {found}" for path, number, found in sorted(hits)]
 
 
 # Rule 9: the only places allowed to swallow every exception. Each is a documented
@@ -2249,6 +2355,41 @@ class TestArchitecture(unittest.TestCase):
         self.assertGreater(scanned, 0)
         self.assertGreater(len(assigners), 0)
         self.assertEqual([], uncompared_lookup_files(assigners, LOOKUP_COPIES))
+
+    def test_shape_copies_equal_the_canonical_file(self):
+        """Every listed copy of the shared key-shape scanner equals the canonical file byte for
+        byte; a copy missing from disk fails with its path."""
+        canonical = _repo_bytes(SHAPES_CANONICAL)
+        self.assertIsNotNone(canonical, SHAPES_CANONICAL)
+        copies = {relpath: _repo_bytes(relpath) for relpath in SHAPE_COPIES}
+        self.assertEqual([], shape_copy_problems(canonical, copies))
+
+    def test_runner_key_shapes_equal_the_canonical_table(self):
+        """The runner template's KEY_SHAPES line equals the canonical SHAPES as data."""
+        shapes = python_shapes(_parse_path(os.path.join(_REPO_ROOT, SHAPES_CANONICAL)))
+        self.assertIsNotNone(shapes)
+        assert shapes is not None
+        self.assertEqual(14, len(shapes))
+        with open(os.path.join(_REPO_ROOT, SHAPES_RUNNER), encoding="utf-8") as handle:
+            self.assertEqual([], runner_shape_problems(shapes, handle.read()))
+
+    def test_no_key_shape_list_outside_the_shared_scanner(self):
+        """No tracked code file under skills/ or tools/ holds a key-shape pattern outside the
+        sanctioned scanner files; tests and Markdown are not scanned."""
+        if not GIT_WORK_TREE_AVAILABLE:
+            self.skipTest(GIT_WORK_TREE_SKIP)
+        listed = subprocess.run(
+            ["git", "ls-files", "-z", "--", "skills", "tools"],
+            cwd=_REPO_ROOT, check=True, capture_output=True,
+        ).stdout.decode("utf-8").split("\0")
+        files = []
+        for relpath in sorted(name for name in listed if name.endswith(_SHAPE_SCAN_SUFFIXES)):
+            path = os.path.join(_REPO_ROOT, relpath)
+            if os.path.isfile(path) and not os.path.islink(path):
+                with open(path, encoding="utf-8", errors="replace") as handle:
+                    files.append((relpath, handle.read()))
+        self.assertGreater(len(files), 0)
+        self.assertEqual([], key_shape_copy_hits(files))
 
 
 # --------------------------------------------------------------------------- #
@@ -3078,8 +3219,14 @@ class TestArchNonVacuity(unittest.TestCase):
 
     @staticmethod
     def _xs_hits(source):
-        """Hits of the ruling-2 rule for a synthetic skills/alpha/x.py; beta is the other skill."""
-        modules = {"beta_pkg": "beta", "alpha_mod": "alpha"}
+        """Hits of the ruling-2 rule for a synthetic skills/alpha/x.py; beta is the other skill,
+        shared_mod is provided by alpha and beta, pair_mod by beta and gamma."""
+        modules = {
+            "beta_pkg": frozenset({"beta"}),
+            "alpha_mod": frozenset({"alpha"}),
+            "shared_mod": frozenset({"alpha", "beta"}),
+            "pair_mod": frozenset({"beta", "gamma"}),
+        }
         return check_cross_skill_refs(
             "skills/alpha/x.py", ast.parse(source), modules, ["alpha", "beta"]
         )
@@ -3099,6 +3246,7 @@ class TestArchNonVacuity(unittest.TestCase):
             "Path segment": ('p = Path(root, "beta")\n', "beta"),
             "slash expression": ('p = Path(root) / "beta"\n', "beta"),
             "decide.py name": ('p = "scripts/decide.py"\n', "decide.py"),
+            "import of a name only other skills provide": ("import pair_mod\n", "beta"),
             "import_module f-string": (
                 'import importlib\nimportlib.import_module(f"beta_pkg.{name}")\n',
                 "beta",
@@ -3121,6 +3269,8 @@ class TestArchNonVacuity(unittest.TestCase):
             "stdlib import": "import json\n",
             "own-skill import_module": 'import_module(f"alpha_mod.{name}")\n',
             "computed import_module": "import_module(name)\n",
+            "name the own skill also provides": "import shared_mod\n",
+            "own-skill import_module of a shared name": 'import_module("shared_mod.sub")\n',
         }
         for form, source in clean.items():
             with self.subTest(form=form):
@@ -3180,6 +3330,84 @@ class TestArchNonVacuity(unittest.TestCase):
             uncompared_lookup_files(["skills/new-skill/x.py"], LOOKUP_COPIES),
         )
         self.assertEqual([], uncompared_lookup_files([LOOKUP_COPIES[0]], LOOKUP_COPIES))
+
+    def test_shape_copy_drift_is_flagged(self):
+        canonical = b'SHAPES = (("demo", r"x"),)\n'
+        copy = "skills/a/secret_shapes.py"
+        self.assertEqual([], shape_copy_problems(canonical, {copy: canonical}))
+        self.assertEqual([f"{copy}: differs from {SHAPES_CANONICAL}"],
+                         shape_copy_problems(canonical, {copy: canonical + b"#\n"}))
+        self.assertEqual([f"{copy}: missing"], shape_copy_problems(canonical, {copy: None}))
+
+    def test_runner_key_shapes_drift_is_flagged(self):
+        shapes = [["demo_key", "demo_[a-z]{4,}"]]
+        good = "const A = 1;\nconst KEY_SHAPES = " + json.dumps(shapes) + ";\nconst B = 2;\n"
+        self.assertEqual(shapes, js_key_shapes(good))
+        self.assertEqual([], runner_shape_problems(shapes, good))
+        self.assertEqual([f"{SHAPES_RUNNER}: KEY_SHAPES differs from {SHAPES_CANONICAL}"],
+                         runner_shape_problems(shapes, good.replace("{4,}", "{5,}")))
+        self.assertEqual([f"{SHAPES_RUNNER}: no KEY_SHAPES line"],
+                         runner_shape_problems(shapes, "const A = 1;\n"))
+        tree = ast.parse('SHAPES = (("demo_key", r"demo_[a-z]{4,}"),)\n')
+        self.assertEqual(shapes, python_shapes(tree))
+        self.assertIsNone(python_shapes(ast.parse("OTHER = 1\n")))
+
+    def test_new_key_shape_list_is_flagged(self):
+        # Each sample is built from pieces, so this file holds no whole pattern of its own.
+        plain = 'RX = r"' + "sk" + '-[A-Za-z0-9]{20,}"\n'
+        group = 'RX = r"(?:AK' + 'IA|ASIA)[A-Z0-9]{15}"\n'
+        gitlab = "const RX = /(?:glpat|gldt)" + "-[A-Za-z0-9_-]{16,}/g;\n"
+        pem = "grep -E '" + "-----BEGIN" + " [A-Z ]+'\n"
+        jwt = 'RX = r"' + "eyJ" + '[A-Za-z0-9_-]{10,}"\n'
+        runner = "const KEY_SHAPES = [];\nconst RX = /" + "gh" + "[pousr]_[A-Za-z0-9]{20,}/g;\n"
+        json_line = 'const KEY_SHAPES = [["sk_rk_key","(?:sk|rk)' + '-[A-Za-z0-9_-]{8,}"]];\n'
+        sample = 'TOKEN = "' + "ghp" + '_" + "a" * 36\n'
+        broad = "const RX = /(?<=\\bBearer )[A-Za-z0-9._~+/=-]{8,}/gi;\n"
+        dropped = 'RX = r"' + "gh" + '[pous]_[A-Za-z0-9]{20,}"\n'
+        reordered = 'RX = r"' + "gh" + '[sropu]_[A-Za-z0-9]{20,}"\n'
+        short_gh = 'RX = r"' + "ghp" + '_\\w{36}"\n'
+        short_aws = 'RX = r"' + "AK" + 'IA\\w{16}"\n'
+        short_xai = 'RX = r"' + "xai" + '-\\S{16,}"\n'
+        short_sk = 'RX = r"' + "sk" + '-.{20,}"\n'
+        short_pat = 'RX = r"' + "github" + '_pat_\\w+"\n'
+        cases = (
+            ("shorthand github", [("skills/demo/s1.py", short_gh)],
+             ["skills/demo/s1.py:1: ghp_\\w"]),
+            ("shorthand aws", [("skills/demo/s2.py", short_aws)], ["skills/demo/s2.py:1: AKIA\\w"]),
+            ("shorthand xai", [("skills/demo/s3.py", short_xai)], ["skills/demo/s3.py:1: xai-\\S"]),
+            ("shorthand sk dot", [("skills/demo/s4.py", short_sk)], ["skills/demo/s4.py:1: sk-.{"]),
+            ("shorthand pat", [("skills/demo/s5.py", short_pat)],
+             ["skills/demo/s5.py:1: github_pat_\\w"]),
+            ("plain prefix", [("skills/demo/plain.py", plain)], ["skills/demo/plain.py:1: sk-["]),
+            ("group one character off", [("skills/demo/group.py", group)],
+             ["skills/demo/group.py:1: ?:AKIA|ASIA)["]),
+            ("github class one letter dropped", [("skills/demo/dropped.py", dropped)],
+             ["skills/demo/dropped.py:1: gh[pous]_["]),
+            ("github class reordered", [("skills/demo/reordered.py", reordered)],
+             ["skills/demo/reordered.py:1: gh[sropu]_["]),
+            ("gitlab group", [("skills/demo/gitlab.mjs", gitlab)],
+             ["skills/demo/gitlab.mjs:1: ?:glpat|gldt)-["]),
+            ("pem line", [("skills/demo/pem.sh", pem)], ["skills/demo/pem.sh:1: -----BEGIN ["]),
+            ("tools file", [("tools/demo.py", jwt)], ["tools/demo.py:1: eyJ["]),
+            ("runner outside KEY_SHAPES", [(SHAPES_RUNNER, runner)],
+             [f"{SHAPES_RUNNER}:2: gh[pousr]_["]),
+            ("KEY_SHAPES line elsewhere", [("skills/demo/copy.mjs", json_line)],
+             ["skills/demo/copy.mjs:1: ?:sk|rk)-["]),
+            ("sanctioned copy", [(SHAPE_COPIES[0], plain)], []),
+            ("canonical file", [(SHAPES_CANONICAL, plain)], []),
+            ("test file", [("tests/test_demo.py", plain)], []),
+            ("markdown", [("skills/demo/README.md", plain)], []),
+            ("run-time sample", [("skills/demo/sample.py", sample)], []),
+            ("broad rule", [("skills/demo/broad.mjs", broad)], []),
+            ("empty file", [("skills/demo/empty.py", "")], []),
+            ("sorted by path and line",
+             [("skills/demo/b.py", plain),
+              ("skills/demo/a.py", "x = 1\n" + plain + "x = 1\n" * 7 + plain)],
+             ["skills/demo/a.py:2: sk-[", "skills/demo/a.py:10: sk-[", "skills/demo/b.py:1: sk-["]),
+        )
+        for name, files, expected in cases:
+            with self.subTest(case=name):
+                self.assertEqual(expected, key_shape_copy_hits(files))
 
 
 class TestSessionWakeIsolation(unittest.TestCase):

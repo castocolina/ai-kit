@@ -28,6 +28,25 @@ FAKE_HOME = fx.FAKE_HOME
 SENTINEL = "SENTINEL-KEY-0123456789abcdef"
 _COUNTER = itertools.count()
 
+# One synthetic sample per shared key shape, built at run time from a prefix and filler (no whole
+# key literal in this file), in the shared table's order.
+KEY_SHAPE_SAMPLES = (
+    ("github_token", "ghp_" + "x" * 36),
+    ("github_pat", "github_pat_" + "x" * 40),
+    ("google_api_key", "AIza" + "x" * 35),
+    ("slack_token", "xoxb-" + "x" * 24),
+    ("pem_private_key", "-----BEGIN " + "RSA PRIVATE KEY" + "-----"),
+    ("aws_access_key_id", "AKIA" + "X" * 16),
+    ("gitlab_token", "glpat-" + "x" * 20),
+    ("xai_api_key", "xai-" + "x" * 32),
+    ("jwt", "eyJ" + "x" * 12 + ".eyJ" + "x" * 12 + "." + "x" * 12),
+    ("stripe_key", "sk_live_" + "x" * 24),
+    ("huggingface_token", "hf_" + "x" * 34),
+    ("npm_token", "npm_" + "x" * 36),
+    ("groq_key", "gsk_" + "x" * 52),
+    ("sk_rk_key", "sk-" + "x" * 24),
+)
+
 
 def load_original(relpath):
     """Load a repo file by path under a fresh module name (never cached, never the real home)."""
@@ -202,6 +221,38 @@ class TestScanText(unittest.TestCase):
     def test_empty_secret_is_ignored(self):
         self.assertEqual(gp_common.scan_text("anything", home=FAKE_HOME, secrets=[""]), [])
 
+    def test_every_shared_key_shape_is_named(self):
+        legacy = {"sk_rk_key": "API-key-shaped token present",
+                  "github_token": "GitHub-token-shaped token present"}
+        for name, sample in KEY_SHAPE_SAMPLES:
+            with self.subTest(shape=name):
+                problems = gp_common.scan_text(f"note {sample} end", home=FAKE_HOME,
+                                               secrets=[SENTINEL])
+                self.assertEqual([legacy.get(name, f"{name}-shaped token present")], problems)
+                self.assertNotIn(sample, " ".join(problems))
+
+    def test_sample_table_names_equal_the_shared_table(self):
+        self.assertEqual([name for name, _ in gp_common.secret_shapes.SHAPES],
+                         [name for name, _ in KEY_SHAPE_SAMPLES])
+
+    def test_key_after_a_json_escape_is_named(self):
+        for name, sample in KEY_SHAPE_SAMPLES:
+            if name == "pem_private_key":
+                continue
+            with self.subTest(shape=name):
+                text = json.dumps("x\n" + sample)
+                self.assertTrue(gp_common.scan_text(text, home=FAKE_HOME, secrets=[SENTINEL]))
+
+    def test_problem_order_is_home_secret_then_shapes(self):
+        samples = dict(KEY_SHAPE_SAMPLES)
+        text = (f"cd {FAKE_HOME}/repo token {SENTINEL} "
+                f"{samples['sk_rk_key']} {samples['aws_access_key_id']}")
+        self.assertEqual(
+            ["machine home path present", "secret value present",
+             "aws_access_key_id-shaped token present", "API-key-shaped token present"],
+            gp_common.scan_text(text, home=FAKE_HOME, secrets=[SENTINEL]),
+        )
+
 
 class TestSlugAndUnique(unittest.TestCase):
     def test_slugify_collapses_punctuation(self):
@@ -230,17 +281,21 @@ class TestStripAnsi(unittest.TestCase):
 
 class TestStdlibOnly(unittest.TestCase):
     def test_imports_are_stdlib_only(self):
-        tree = ast.parse(COMMON_PATH.read_text(encoding="utf-8"))
-        modules = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                modules.extend(alias.name.split(".")[0] for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                modules.append(node.module.split(".")[0])
-        self.assertTrue(modules)
-        for module in modules:
-            with self.subTest(module=module):
-                self.assertIn(module, sys.stdlib_module_names)
+        # gp_common's one non-stdlib import is its sibling copy of the shared key-shape scanner,
+        # which itself imports only the standard library.
+        checked = ((COMMON_PATH, {"secret_shapes"}), (SCRIPTS / "secret_shapes.py", set()))
+        for path, sibling in checked:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            modules = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    modules.extend(alias.name.split(".")[0] for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                    modules.append(node.module.split(".")[0])
+            self.assertTrue(modules)
+            for module in modules:
+                with self.subTest(path=path.name, module=module):
+                    self.assertTrue(module in sys.stdlib_module_names or module in sibling, module)
 
 
 class TestFixtures(unittest.TestCase):

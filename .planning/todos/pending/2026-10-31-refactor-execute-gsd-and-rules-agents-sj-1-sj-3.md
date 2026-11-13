@@ -43,6 +43,10 @@ Done: SJ-1, by RMV-01 in Phase 31 (d1f0f9f, 31-VERIFICATION): `ai-kit-spec-execu
 rubric and its spec sources embedded in the judge prompt; the refactor stays with Phases 32.3 and 41. SJ-3 stays
 with Phase 45 (the rules skills are excluded from the re-judge).*
 
+*Status 2026-11-13 (Phase 32.3 discuss): 32.3 does not refactor SJ-2. The owner's batch scope "Narrow" (32.1 D-01)
+keeps `ai-kit-spec-execute-superpowers` at its Phase 32 bar (86.4 B) with only the DEF-02 change, and that skill holds
+no scanner, so it is unchanged; the refactor stays with Phase 41.*
+
 ## SJ-2: ai-kit-spec-execute-superpowers (deferred by the owner, 2026-10-31)
 
 Round 24 scored 86/120 (72%, grade C), 1 Critical and 2 Important, under the original skill-judge

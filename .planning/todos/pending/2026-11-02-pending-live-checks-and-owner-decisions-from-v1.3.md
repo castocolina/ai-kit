@@ -130,7 +130,8 @@ None of these is taken. Each shows the options and what happens if nothing chang
   over several rule lines. Default: they stay refusals.
 - [ ] Should the secret-shape scanner be widened beyond two key shapes? It checks an API-key-shaped token
   and a GitHub-token-shaped token, and exists in four separate copies. Options: widen the set and share one
-  copy, widen each copy, or leave as is. Default: two shapes, four copies.
+  copy, widen each copy, or leave as is. Default: two shapes, four copies. *(folded into Phase 32.3, 2026-11-13:
+  DEF-02 widens the set and shares one scanner; live search found five shipped copies plus a test helper, 32.3-SPEC)*
 - [ ] Should the fixed time limits in the runner template be raised? Two end-to-end modules failed once under
   load (the template self-test with a 300 s budget, since raised to 900 s; the matrix and runner steps still
   keep fixed 60 s and 30 s budgets that a stalled, swapping host can exceed). Options: raise the remaining
