@@ -16,7 +16,7 @@ We will build a new tool from scratch that:
 6. Optionally updates the changelog
 7. Generates social media announcements about big commits
 
-The tool will be invoked as `~/.claude/tools/commit-helper.sh`. It supports both conventional commits and a new format we'll call "expressive commits" which we'll define later.
+The tool will be invoked as `tools/commit-helper.sh`. It supports both conventional commits and a new format we'll call "expressive commits" which we'll define later.
 
 ## Components
 

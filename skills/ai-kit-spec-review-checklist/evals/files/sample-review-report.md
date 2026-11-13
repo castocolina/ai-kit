@@ -5,7 +5,7 @@ design
 
 ### Files Read (fresh from disk)
 - design-good.md (50 lines)
-- $HOME/.claude/skills/commit-message/SKILL.md (66 lines)
+- evals/files/commit-message-skill.md (14 lines)
 
 ### CRITICAL
 
