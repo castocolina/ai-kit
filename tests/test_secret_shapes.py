@@ -244,6 +244,32 @@ class TestShapeTable(unittest.TestCase):
                 self.assertNotIn("\\b", source)
 
 
+class TestEscapesAndTails(unittest.TestCase):
+    def test_key_after_a_json_or_percent_escape_is_found_and_redacted(self):
+        # An escape letter or hex digit glued before the key must not hide it.
+        for lead in ("x\\n", "x\\r", "x\\t", "x%3D", "x%0a"):
+            for name in NAMES:
+                if name == "pem_private_key":
+                    continue
+                with self.subTest(lead=lead, shape=name):
+                    text = lead + SAMPLES[name]
+                    self.assertIn(name, shapes.detect(text))
+                    self.assertEqual(lead + MARKER, shapes.redact(text, MARKER))
+
+    def test_jwt_lookalike_repeat_finishes_quickly(self):
+        text = "eyJ-" * 16384
+        for call in (lambda: shapes.detect(text), lambda: shapes.redact(text, MARKER)):
+            start = time.perf_counter()
+            call()
+            self.assertLess(time.perf_counter() - start, 1.0)
+
+    def test_unclosed_pem_block_loses_its_body(self):
+        lines = ["MIIB" + "a" * 60] * 20
+        block = PEM_HEADER + "\n" + "\n".join(lines)
+        self.assertEqual("k " + MARKER + " v", shapes.redact("k " + block + " v", MARKER))
+        self.assertEqual(MARKER, shapes.redact(block, MARKER))
+
+
 class TestAdjacency(unittest.TestCase):
     def test_keys_joined_by_one_character_are_each_found(self):
         github, generic = SAMPLES["github_token"], SAMPLES["sk_rk_key"]

@@ -506,6 +506,17 @@ class TestRedactSharedShapes(unittest.TestCase):
                 got = flow_pr.redact(f"gh said {sample} here")
                 self.assertEqual("gh said [redacted] here", got)
 
+    def test_sample_table_names_equal_the_shared_table(self):
+        self.assertEqual([name for name, _ in flow_pr.secret_shapes.SHAPES],
+                         [name for name, _ in KEY_SHAPE_SAMPLES])
+
+    def test_key_after_a_json_escape_is_redacted(self):
+        for name, sample in KEY_SHAPE_SAMPLES:
+            if name == "pem_private_key":
+                continue
+            with self.subTest(shape=name):
+                self.assertNotIn(sample, flow_pr.redact(json.dumps("x\n" + sample)))
+
     def test_text_without_a_key_is_unchanged(self):
         text = "gh: pull request #12 merged into main (risk-assessment, sk-learn)"
         self.assertEqual(text, flow_pr.redact(text))

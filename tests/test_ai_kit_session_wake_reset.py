@@ -25,7 +25,7 @@ sys.path.insert(
     ),
 )
 
-from ai_kit_session_wake import cli, units
+from ai_kit_session_wake import cli, secret_shapes, units
 from ai_kit_session_wake.reset_parse import (
     MAX_RESET_AHEAD_S,
     calendar_line,
@@ -414,6 +414,18 @@ class TestResetEvidence(unittest.TestCase):
         for name, sample in KEY_SHAPE_SAMPLES:
             with self.subTest(shape=name):
                 self.assertEqual("evidence <redacted> end", redact(f"evidence {sample} end"))
+
+    def test_sample_table_names_equal_the_shared_table(self):
+        self.assertEqual(
+            [name for name, _ in secret_shapes.SHAPES], [name for name, _ in KEY_SHAPE_SAMPLES]
+        )
+
+    def test_key_after_a_json_escape_is_replaced(self):
+        for name, sample in KEY_SHAPE_SAMPLES:
+            if name == "pem_private_key":
+                continue
+            with self.subTest(shape=name):
+                self.assertNotIn(sample, json.dumps(redact(json.dumps("x\n" + sample))))
 
     def test_key_rule_then_shape_leaves_one_marker(self):
         sample = dict(KEY_SHAPE_SAMPLES)["aws_access_key_id"]

@@ -231,6 +231,18 @@ class TestScanText(unittest.TestCase):
                 self.assertEqual([legacy.get(name, f"{name}-shaped token present")], problems)
                 self.assertNotIn(sample, " ".join(problems))
 
+    def test_sample_table_names_equal_the_shared_table(self):
+        self.assertEqual([name for name, _ in gp_common.secret_shapes.SHAPES],
+                         [name for name, _ in KEY_SHAPE_SAMPLES])
+
+    def test_key_after_a_json_escape_is_named(self):
+        for name, sample in KEY_SHAPE_SAMPLES:
+            if name == "pem_private_key":
+                continue
+            with self.subTest(shape=name):
+                text = json.dumps("x\n" + sample)
+                self.assertTrue(gp_common.scan_text(text, home=FAKE_HOME, secrets=[SENTINEL]))
+
     def test_problem_order_is_home_secret_then_shapes(self):
         samples = dict(KEY_SHAPE_SAMPLES)
         text = (f"cd {FAKE_HOME}/repo token {SENTINEL} "

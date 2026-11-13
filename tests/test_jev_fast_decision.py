@@ -3034,6 +3034,10 @@ class TestItemError(unittest.TestCase):
                 self.assertEqual("secret_pattern_id", jev_ladder.item_error(
                     noul_item_ladder(sample, f"evidence {sample} end")))
 
+    def test_sample_table_names_equal_the_shared_table(self):
+        self.assertEqual([name for name, _ in jev_ladder._SECRET_SHAPES.SHAPES],
+                         [name for name, _ in KEY_SHAPE_SAMPLES])
+
     def test_base64_run_rule_is_kept(self):
         self.assertEqual("secret_pattern_context", jev_ladder.item_error(
             noul_item_ladder("n", "blob " + "Ab1/" * 12)))

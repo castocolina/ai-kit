@@ -3,7 +3,8 @@
 Every copy of this file is byte-identical: a skill that cannot import across skill folders
 holds its own copy, and a test compares each copy, and the runner template's KEY_SHAPES
 line, with this one. Each source is case-sensitive, has no flag and no capture group, and
-guards its prefix with an explicit ASCII lookbehind, so Python and JavaScript read it the
+guards its prefix with an explicit ASCII lookbehind (a JSON or percent escape before the
+key counts as a boundary), so Python and JavaScript read it the
 same way. detect names the shapes found and never returns the matched text; redact
 replaces every match with the caller's marker, overlapping matches as one, and returns
 text with no match unchanged.
@@ -14,27 +15,77 @@ import re
 # Provider rows first and the generic sk-/rk- row last: detect names shapes in this order.
 # redact merges the matches of every row, so the order does not change what it removes.
 SHAPES = (
-    ("github_token", r"(?<![A-Za-z0-9_])gh[pousr]_[A-Za-z0-9]{20,}"),
-    ("github_pat", r"(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{20,}"),
-    ("google_api_key", r"(?<![A-Za-z0-9_])AIza[0-9A-Za-z_-]{20,}"),
-    ("slack_token", r"(?<![A-Za-z0-9_])(?:xox[abposre]|xapp|xwfp)-[A-Za-z0-9_-]{12,}"),
-    ("pem_private_key", r"-----BEGIN [A-Z0-9 ]+-----(?:[\s\S]{0,16384}?-----END [A-Z0-9 ]+-----)?"),
-    ("aws_access_key_id", r"(?<![A-Za-z0-9_])(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}"),
+    (
+        "github_token",
+        r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"gh[pousr]_[A-Za-z0-9]{20,}",
+    ),
+    (
+        "github_pat",
+        r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"github_pat_[A-Za-z0-9_]{20,}",
+    ),
+    (
+        "google_api_key",
+        r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"AIza[0-9A-Za-z_-]{20,}",
+    ),
+    (
+        "slack_token",
+        r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"(?:xox[abposre]|xapp|xwfp)-[A-Za-z0-9_-]{12,}",
+    ),
+    (
+        "pem_private_key",
+        r"-----BEGIN [A-Z0-9 ]+-----"
+        r"(?:[\s\S]{0,16384}?-----END [A-Z0-9 ]+-----|[A-Za-z0-9+/=\r\n]{0,16384})?",
+    ),
+    (
+        "aws_access_key_id",
+        r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}",
+    ),
     (
         "gitlab_token",
-        r"(?<![A-Za-z0-9_])(?:glpat|gloas|gldt|glrtr?|glcbt|glptt|glft|glimt|glagent|glwt"
+        r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"(?:glpat|gloas|gldt|glrtr?|glcbt|glptt|glft|glimt|glagent|glwt"
         r"|glsoat|glffct)-[A-Za-z0-9_-]{16,}",
     ),
-    ("xai_api_key", r"(?<![A-Za-z0-9_])xai-[A-Za-z0-9]{16,}"),
+    (
+        "xai_api_key",
+        r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"xai-[A-Za-z0-9]{16,}",
+    ),
     (
         "jwt",
-        r"(?<![A-Za-z0-9_])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
+        r"(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
     ),
-    ("stripe_key", r"(?<![A-Za-z0-9_])(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"),
-    ("huggingface_token", r"(?<![A-Za-z0-9_])hf_[A-Za-z0-9]{30,}"),
-    ("npm_token", r"(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{36,}"),
-    ("groq_key", r"(?<![A-Za-z0-9_])gsk_[A-Za-z0-9]{20,}"),
-    ("sk_rk_key", r"(?<![A-Za-z0-9_])(?:sk|rk)-[A-Za-z0-9_-]{8,}"),
+    (
+        "stripe_key",
+        r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}",
+    ),
+    (
+        "huggingface_token",
+        r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"hf_[A-Za-z0-9]{30,}",
+    ),
+    (
+        "npm_token",
+        r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"npm_[A-Za-z0-9]{36,}",
+    ),
+    (
+        "groq_key",
+        r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"gsk_[A-Za-z0-9]{20,}",
+    ),
+    (
+        "sk_rk_key",
+        r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt])|(?<=%[0-9A-Fa-f]{2}))"
+        r"(?:sk|rk)-[A-Za-z0-9_-]{8,}",
+    ),
 )
 
 _COMPILED = tuple((name, re.compile(source)) for name, source in SHAPES)
