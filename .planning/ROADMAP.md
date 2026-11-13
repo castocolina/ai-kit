@@ -116,7 +116,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 32: Re-judge baseline** - One current-judge report for every kept skill, plus strict frontmatter and text checks (completed 2026-11-07)
 - [x] **Phase 32.1: Batch 1, general small skills** - cst-refactor, markdown-to-pdf, spec-review-fixer and usage-metrics reach the bar; jev-fast-decision gets its JEV fixes and keeps its bar *(amended 2026-11-07, 32.1 D-01: owner batch scope "Narrow")* (completed 2026-11-08)
 - [x] **Phase 32.2: Batch 2, spec review family** - checklist reaches the bar; spec-config and spec-execute get their fixes; spec-review deferred to Phases 39-40 *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
-- [ ] **Phase 32.3: Batch 3, execution and session skills** - spec-execute-superpowers and session-wake keep their bar; one shared secret scanner; cross-ai deferred to Phases 37-38 *(amended 2026-11-07, 32.1 D-01)*
+- [x] **Phase 32.3: Batch 3, execution and session skills** - spec-execute-superpowers and session-wake keep their bar; one shared secret scanner; cross-ai deferred to Phases 37-38 *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
 - [ ] **Phase 32.4: Batch 4, planning skills and the closing report** - goal-prompt, spec-discuss and curated-config keep their bar with their fixes; the closing report shows all 15 judged skills *(amended 2026-11-07, 32.1 D-01)*
 - [ ] **Phase 33: One config design** - One documented config for every ai-kit setting; review-spec.toml migrates on its own
 - [ ] **Phase 34: jev backends by host and Laya calibration** - jev picks its backend per host from ai-kit's config; Laya measured against its floor
@@ -499,7 +499,12 @@ Plans:
   2. The re-judge report shows each of the three with no critical or high finding, or grade B or better, and no regression beyond judge variation. *(amended 2026-11-07, 32 spec: this criterion is the judge bar, JDG-04)* *(amended 2026-11-07, 32.1 D-01: the loop 32.3 re-judge covers only the skills whose SKILL.md this phase adds or materially changes, as JDG-04 reads, each keeping its bar with no regression beyond judge variation; `ai-kit-cross-ai` is not brought to the bar here)*
   3. One shared secret-shape scanner with more key shapes replaces the four copies; tests show every former caller catches the new shapes, and a copy install of each caller still works. *(amended 2026-11-13, 32.3 spec: the former callers are the five shipped scanners and the curated-config eval test helper (DEF-02 amended); a copy install means each caller's folder copied as a real directory with only the sibling skills it already needs today, so session-wake is copied with `ai-kit-spec-review` (its existing reach, backlog 999.19); a guard test also fails on a drifted copy or a new key-shape list)*
 
-**Plans**: TBD
+**Plans**: 5/5 plans complete
+- [x] 32.3-01-PLAN.md
+- [x] 32.3-02-PLAN.md
+- [x] 32.3-03-PLAN.md
+- [x] 32.3-04-PLAN.md
+- [x] 32.3-05-PLAN.md
 
 ### Phase 32.4: Batch 4, planning skills and the closing report
 
@@ -934,7 +939,7 @@ Plans:
 | 32. Re-judge baseline | 9/9 | Complete    | 2026-11-07 |
 | 32.1. Batch 1, general small skills | 9/9 | Complete    | 2026-11-08 |
 | 32.2. Batch 2, spec review family | 5/5 | Complete    | 2026-11-13 |
-| 32.3. Batch 3, execution and session skills | 0/TBD | Not started | - |
+| 32.3. Batch 3, execution and session skills | 5/5 | Complete    | 2026-11-13 |
 | 32.4. Batch 4, planning skills and the closing report | 0/TBD | Not started | - |
 | 33. One config design | 0/TBD | Not started | - |
 | 34. jev backends by host and Laya calibration | 0/TBD | Not started | - |

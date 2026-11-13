@@ -750,7 +750,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   foreign, and `setup.py` run from a checkout uses that checkout unless `AI_KIT_DIR` is set; the pi variables item
   is reworded — pi 1.3.0 sets `PI_PROVIDER` and `PI_MODEL` only for the agent's own bash-tool commands, so the fix
   is the wording plus a herdr live check; the edge-floor item fixes 25.1 and adds a current-milestone guard)*
-- [ ] **DEF-02**: One shared secret-shape scanner with more key shapes replaces the four copies. *(amended
+- [x] **DEF-02**: One shared secret-shape scanner with more key shapes replaces the four copies. *(amended
   2026-11-13, 32.3 spec: live search finds five shipped key-shape scanners, not four — the runner template's
   `redactSecrets`, session-wake's `reset_parse.redact`, goal-prompt's `scan_text`, jev-fast-decision's ladder item
   guard (the fourth) and commit-fold's GitHub-token redactor — plus the curated-config eval test helper; all six take
@@ -979,7 +979,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | WIZ-04 | Phase 30.2 | Complete |
 | WIZ-05 | Phase 30.1 | Complete |
 | DEF-01 | Phase 31 | Complete |
-| DEF-02 | Phase 32.3 | Pending |
+| DEF-02 | Phase 32.3 | Complete |
 | DEF-03 | Phase 32.4 | Pending |
 | DEF-04 | Phase 32.4 | Pending |
 | DEF-05 | Phase 54 | Pending |
