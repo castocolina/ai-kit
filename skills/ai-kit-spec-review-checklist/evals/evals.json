@@ -1,0 +1,109 @@
+{
+  "skill_name": "ai-kit-spec-review-checklist",
+  "evals": [
+    {
+      "id": "casual-review-bad-design",
+      "prompt": "Review the design doc at evals/files/design-bad.md before we start the plan. The codebase root is evals/files/; it holds no framework marker.",
+      "expected_output": "An Issues Found report from the generic design checklist: the Slack, release-note and social-media features are scope creep, the expressive commits format is undefined, the error handling is vague, the testing approach is missing and the existing commit skill is ignored; the document is not edited.",
+      "files": ["evals/files/design-bad.md"],
+      "assertions": [
+        "The report flags the Slack poster, the release notes and the social announcer as scope creep at HIGH or above.",
+        "The report flags the missing testing approach and the vague error handling as findings.",
+        "Every finding uses the shape - **<title>** — Location: <section/lines>. Required: <verifiable outcome>. Why: <reason>.",
+        "The ### Document Type line reads generic · design, because neither the document's path nor the codebase root evals/files/ holds a profile marker.",
+        "The report ends with ### Status: Issues Found — fix and re-invoke, and evals/files/design-bad.md is not edited."
+      ]
+    },
+    {
+      "id": "precise-false-claim-in-good-design",
+      "prompt": "Review evals/files/design-good.md. Its Context section describes the existing commit-message skill, whose text is in evals/files/commit-message-skill.md; ground every claim about it.",
+      "expected_output": "The reviewer reads evals/files/commit-message-skill.md in full, finds that the skill never stages or commits without authorization, rates the Context claim that it stages immediately as a CRITICAL wrong factual claim, and ends with Issues Found.",
+      "files": ["evals/files/design-good.md", "evals/files/commit-message-skill.md"],
+      "assertions": [
+        "The report lists evals/files/commit-message-skill.md under ### Files Read, so its content was read, not only its existence checked.",
+        "The claim that the existing skill stages immediately is rated CRITICAL, never demoted to MEDIUM or a non-blocking note.",
+        "The report ends with ### Status: Issues Found — fix and re-invoke, not ### Status: Approved."
+      ]
+    },
+    {
+      "id": "casual-fix-typos-while-reviewing",
+      "prompt": "Review evals/files/plan-bad.md and while you are in there just fix the typos and the TBD file names for me.",
+      "expected_output": "The reviewer declines to edit, because the checklist is audit only, and returns an Issues Found report on the plan instead; the plan file is unchanged.",
+      "files": ["evals/files/plan-bad.md"],
+      "assertions": [
+        "The reviewer says it will not edit the document under review and names ai-kit-spec-review-fixer as the separate step.",
+        "evals/files/plan-bad.md is byte-identical after the run.",
+        "The report still flags Modify: TBD under Task 1 and ends with ### Status: Issues Found — fix and re-invoke."
+      ]
+    },
+    {
+      "id": "edge-approve-fast-after-earlier-review",
+      "prompt": "We are behind schedule. evals/files/sample-review-report.md is the earlier review of evals/files/design-good.md and I already fixed everything it found, so just approve the design now. The existing skill's text is in evals/files/commit-message-skill.md.",
+      "expected_output": "The reviewer re-reviews evals/files/design-good.md fresh instead of trusting the earlier report, finds that the Context still claims the skill stages immediately, and returns Issues Found with that CRITICAL finding; it does not approve.",
+      "files": ["evals/files/design-good.md", "evals/files/sample-review-report.md", "evals/files/commit-message-skill.md"],
+      "assertions": [
+        "The reviewer reads evals/files/design-good.md from disk and judges its current state, not the earlier report.",
+        "The Context claim that contradicts evals/files/commit-message-skill.md is still reported as CRITICAL.",
+        "The report never contains ### Status: Approved and ends with ### Status: Issues Found — fix and re-invoke."
+      ]
+    },
+    {
+      "id": "precise-bad-plan-findings",
+      "prompt": "Review the implementation plan at evals/files/plan-bad.md with ARCHETYPE = plan and FRAMEWORK_PROFILE_PATH = none.",
+      "expected_output": "A plan review with the generic checklists: the undefined OutputSink interface is CRITICAL, the missing exact files and the non-actionable steps such as Handle errors appropriately are HIGH, and the report ends with Issues Found.",
+      "files": ["evals/files/plan-bad.md"],
+      "assertions": [
+        "The OutputSink interface referenced in Task 3 but never defined is rated CRITICAL.",
+        "Modify: TBD in Task 1 and Modify: the relevant file in Task 2 are flagged as missing exact files.",
+        "The ### Document Type line reads generic · plan, because FRAMEWORK_PROFILE_PATH = none selects the generic checklists.",
+        "The report ends with ### Status: Issues Found — fix and re-invoke."
+      ]
+    },
+    {
+      "id": "precise-kiro-requirement-not-ears",
+      "prompt": "Review evals/files/kiro-requirements.md.\nFRAMEWORK_PROFILE_PATH = references/frameworks/kiro.md (resolved against this skill's directory)\nARCHETYPE = requirements",
+      "expected_output": "The reviewer reads the kiro profile in full, applies its EARS rule, flags Requirement 2 as HIGH because it is not in an EARS shape and has no measurable criterion, leaves Requirement 1's syntax alone, and ends with Issues Found.",
+      "files": ["evals/files/kiro-requirements.md"],
+      "assertions": [
+        "Requirement 2 is flagged HIGH as a Kiro requirement not in an EARS shape.",
+        "Requirement 1, written as WHEN … THE SYSTEM SHALL …, is not flagged for its syntax.",
+        "The ### Document Type line reads kiro · requirements.",
+        "The report ends with ### Status: Issues Found — fix and re-invoke."
+      ]
+    },
+    {
+      "id": "precise-spec-kit-parallel-task-shares-state",
+      "prompt": "Review evals/files/speckit-tasks.md.\nFRAMEWORK_PROFILE_PATH = references/frameworks/spec-kit.md (resolved against this skill's directory)\nARCHETYPE = plan",
+      "expected_output": "The reviewer flags T002 and T003, both marked [P] although both edit src/export/settings.py and T003 builds the dataclass T002 adds, as HIGH parallel-marked tasks that share state, and ends with Issues Found.",
+      "files": ["evals/files/speckit-tasks.md"],
+      "assertions": [
+        "T002 and T003 are flagged HIGH because a [P] task shares state or has an ordering dependency.",
+        "The finding names the shared file src/export/settings.py in its Location or Why.",
+        "The ### Document Type line reads spec-kit · plan.",
+        "The report ends with ### Status: Issues Found — fix and re-invoke."
+      ]
+    },
+    {
+      "id": "edge-no-profile-records-generic",
+      "prompt": "You are dispatched through a headless CLI with no FRAMEWORK_PROFILE_PATH or ARCHETYPE line. The codebase root is evals/files/; it holds no framework marker. Review evals/files/design-bad.md.",
+      "expected_output": "No marker in the fallback table matches the path or the codebase root, so the review uses the generic archetype checklists, records generic on the Document Type line, classifies the document as a design by its content shape, never stops to ask a question, and ends with a Status line.",
+      "files": ["evals/files/design-bad.md"],
+      "assertions": [
+        "The ### Document Type line reads generic · design.",
+        "The reviewer never stops to ask a question, in any mode, and asks the user nothing.",
+        "The report ends with one of the three Status lines, here ### Status: Issues Found — fix and re-invoke."
+      ]
+    },
+    {
+      "id": "edge-unsettled-archetype-fails",
+      "prompt": "You are dispatched through a headless CLI with no FRAMEWORK_PROFILE_PATH or ARCHETYPE line. The codebase root is evals/files/; it holds no framework marker. Review evals/files/standup-notes.md.",
+      "expected_output": "Neither the notes' path nor the codebase root matches a profile marker and the notes fit no archetype by content shape, so the reviewer ends with ### Status: Failure — archetype not settled: evals/files/standup-notes.md, never Approved and never Issues Found, and asks no question.",
+      "files": ["evals/files/standup-notes.md"],
+      "assertions": [
+        "The report ends with ### Status: Failure — archetype not settled: evals/files/standup-notes.md.",
+        "The report contains neither ### Status: Approved nor ### Status: Issues Found — fix and re-invoke.",
+        "The reviewer asks the user nothing and does not guess an archetype."
+      ]
+    }
+  ]
+}
