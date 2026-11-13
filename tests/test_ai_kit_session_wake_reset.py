@@ -44,6 +44,25 @@ _ZONE = "America/Santiago"
 _LIMIT_TEXT = "You've hit your session limit · resets 1pm (America/Santiago)"
 _WEEKLY_TEXT = "You've hit your weekly limit · resets Oct 27, 10pm (America/Santiago)"
 
+# One synthetic sample per shared key shape, built at run time from a prefix and filler (no whole
+# key literal in this file), in the shared table's order.
+KEY_SHAPE_SAMPLES = (
+    ("github_token", "ghp_" + "x" * 36),
+    ("github_pat", "github_pat_" + "x" * 40),
+    ("google_api_key", "AIza" + "x" * 35),
+    ("slack_token", "xoxb-" + "x" * 24),
+    ("pem_private_key", "-----BEGIN " + "RSA PRIVATE KEY" + "-----"),
+    ("aws_access_key_id", "AKIA" + "X" * 16),
+    ("gitlab_token", "glpat-" + "x" * 20),
+    ("xai_api_key", "xai-" + "x" * 32),
+    ("jwt", "eyJ" + "x" * 12 + ".eyJ" + "x" * 12 + "." + "x" * 12),
+    ("stripe_key", "sk_live_" + "x" * 24),
+    ("huggingface_token", "hf_" + "x" * 34),
+    ("npm_token", "npm_" + "x" * 36),
+    ("groq_key", "gsk_" + "x" * 52),
+    ("sk_rk_key", "sk-" + "x" * 24),
+)
+
 
 def _zone_available() -> bool:
     try:
@@ -390,6 +409,23 @@ class TestResetEvidence(unittest.TestCase):
         self.assertIn("<redacted>", out)
         short = "a" * 31
         self.assertIn(short, redact(f"state digest {short} recorded"))
+
+    def test_every_shared_key_shape_is_replaced(self):
+        for name, sample in KEY_SHAPE_SAMPLES:
+            with self.subTest(shape=name):
+                self.assertEqual("evidence <redacted> end", redact(f"evidence {sample} end"))
+
+    def test_key_rule_then_shape_leaves_one_marker(self):
+        sample = dict(KEY_SHAPE_SAMPLES)["aws_access_key_id"]
+        self.assertEqual('{"token": "<redacted>"}', redact(json.dumps({"token": sample})))
+        self.assertEqual('{"note": "<redacted>"}', redact(json.dumps({"note": sample})))
+
+    def test_bearer_value_holding_a_key_shape_is_one_marker(self):
+        # Bearer and Basic run before the shared shapes, as in the runner, so a key-shaped run
+        # inside an opaque Bearer value cannot stop the Bearer rule early.
+        out = redact("Bearer abc-" + "AKIA" + "Z" * 16 + "q" * 64)
+        self.assertEqual("Bearer <redacted>", out)
+        self.assertNotIn("q" * 64, out)
 
     def test_long_text_is_capped_whole(self):
         emoji = "\U0001f600"
