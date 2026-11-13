@@ -106,7 +106,7 @@ class TestRuntimeTable(unittest.TestCase):
         self.assertEqual(set(labels), {"CURSOR_AGENT"})
         label = labels["CURSOR_AGENT"]
         self.assertTrue(label.startswith("live-verified (Phase 21)"), label)
-        self.assertIn("21-SMOKE-CURSOR.md", label)
+        self.assertIn("names only", label)
         self.assertIn("TUI confirmation pending", label)
         self.assertNotIn("source-inspected-only", label)
         doc = " ".join((detection.detect_current_runtime.__doc__ or "").split())

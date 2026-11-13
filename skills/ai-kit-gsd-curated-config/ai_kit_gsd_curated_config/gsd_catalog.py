@@ -4,7 +4,7 @@ RUNTIME_PROFILE_MAP, MODEL_PROFILES (stored profile-first), AGENT_TO_PHASE_TYPE 
 `isValidConfigKey` probes in one call.
 
 The gsd-tools path resolution itself is delegated to the one shared resolver in
-`ai_kit_spec.gsd_tools` (D-18, 16.1-CONTEXT.md), which searches the PROJECT-LOCAL gsd-core
+`ai_kit_spec.gsd_tools` (Phase 16.1 D-18), which searches the PROJECT-LOCAL gsd-core
 installs first (in GSD's own launcher order) before any per-host global one, and returns
 `None` when this skill's ai-kit-spec-review sibling is not importable.
 """

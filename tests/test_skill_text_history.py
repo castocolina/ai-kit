@@ -3,10 +3,16 @@
 Each kept skill's SKILL.md main flow (everything above its trailing `## Evidence`
 section) holds no ISO date, no "as of" phrase, no run log and no tool version outside a
 conditional or constraint. The seven `ai-kit-project-rules-*` skills are exempt by name.
+It also guards shipped skill Python: no string literal or comment in a tracked skills/**/*.py
+names a phase file or a phase folder (the Markdown check's own patterns).
 """
 
+import ast
+import io
 import re
+import subprocess
 import tempfile
+import tokenize
 import unittest
 from pathlib import Path
 
@@ -146,6 +152,63 @@ def pointer_hits(text, rel):
             if not _bold_example(line, match):
                 hits.append(f"{rel}:{number}: decision id {match.group(0)}")
     return hits
+
+
+def _file_name_matches(text):
+    """(kind, name, offset) for each phase-folder or phase-file name in one string."""
+    return [
+        (kind, match.group(0), match.start())
+        for pattern, kind in POINTER_RULES[:2]
+        for match in pattern.finditer(text)
+    ]
+
+
+def python_pointer_hits(source, rel):
+    """Phase-folder and phase-file names in one Python source's string literals (docstrings
+    and f-string constant parts included, bytes skipped) and comments, as sorted
+    "path:line: kind name" strings; a source that does not parse is itself a hit.
+    """
+    try:
+        tree = ast.parse(source)
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (SyntaxError, tokenize.TokenError) as exc:
+        return [f"{rel}:1: unparsable source {type(exc).__name__}"]
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # shortcut: escaped newlines or line continuations shift the reported line.
+            for kind, name, offset in _file_name_matches(node.value):
+                line = node.lineno + node.value[:offset].count("\n")
+                found.append((line, kind, name))
+    for token in tokens:
+        if token.type == tokenize.COMMENT:
+            for kind, name, _offset in _file_name_matches(token.string):
+                found.append((token.start[0], kind, name))
+    return [f"{rel}:{line}: {kind} {name}" for line, kind, name in sorted(found)]
+
+
+def tracked_skill_python(repo):
+    """Every tracked .py under skills/, from git ls-files.
+
+    Untracked scratch and __pycache__ are never listed.
+    """
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "ls-files", "-z", "--", "skills"],
+        capture_output=True,
+        check=True,
+    )
+    names = proc.stdout.decode("utf-8").split("\0")
+    return sorted(name for name in names if name.endswith(".py"))
+
+
+def _in_work_tree():
+    proc = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0 and proc.stdout.strip() == "true"
 
 
 def _units(lines):
@@ -425,6 +488,81 @@ class TestHistoryRulesNonVacuity(unittest.TestCase):
             "evals/files/deep/x.md": "router-env/my-referee-two\n",
         }
         self.assertEqual(self._tree_hits(files), [])
+
+
+class TestShippedPythonNamesNoPlanningFile(unittest.TestCase):
+    def setUp(self):
+        if not _in_work_tree():
+            self.skipTest("not inside a git work tree")
+
+    def test_tracked_skill_python_names_no_planning_file(self):
+        hits = []
+        for name in tracked_skill_python(REPO_ROOT):
+            if not (REPO_ROOT / name).is_file():
+                continue
+            text = (REPO_ROOT / name).read_text(encoding="utf-8")
+            hits.extend(python_pointer_hits(text, name))
+        self.assertEqual([], hits)
+
+
+class TestPythonGuardNonVacuity(unittest.TestCase):
+    def test_docstring_hit_fails(self):
+        self.assertEqual(
+            python_pointer_hits('"""Detection (07-CONTEXT.md D-06)."""\n', "demo.py"),
+            ["demo.py:1: phase file 07-CONTEXT.md"],
+        )
+
+    def test_label_hit_fails(self):
+        source = 'LABEL = (\n    "live-verified (names only; 21-SMOKE-CURSOR.md)."\n)\n'
+        self.assertEqual(
+            python_pointer_hits(source, "demo.py"),
+            ["demo.py:2: phase file 21-SMOKE-CURSOR.md"],
+        )
+
+    def test_comment_hit_fails(self):
+        self.assertEqual(
+            python_pointer_hits("# evidence: 16.1-RESEARCH.md\nX = 1\n", "demo.py"),
+            ["demo.py:1: phase file 16.1-RESEARCH.md"],
+        )
+
+    def test_phase_folder_hit_fails(self):
+        source = 'PATH = ".planning/phases/18.1-one-runtime-model/notes"\n'
+        self.assertEqual(
+            python_pointer_hits(source, "demo.py"),
+            ["demo.py:1: phase folder 18.1-one-runtime-model/"],
+        )
+
+    def test_f_string_constant_part_fails(self):
+        source = 'name = "x"\nMSG = f"see 20-SMOKE-CODEX.md for {name}"\n'
+        self.assertEqual(
+            python_pointer_hits(source, "demo.py"),
+            ["demo.py:2: phase file 20-SMOKE-CODEX.md"],
+        )
+
+    def test_bytes_literal_is_skipped(self):
+        self.assertEqual(python_pointer_hits('DATA = b"21-SMOKE-CURSOR.md"\n', "demo.py"), [])
+
+    def test_unparsable_source_is_a_hit(self):
+        self.assertEqual(
+            python_pointer_hits("def broken(:\n", "demo.py"),
+            ["demo.py:1: unparsable source SyntaxError"],
+        )
+
+    def test_generic_pointers_pass(self):
+        source = (
+            '"""Read `.planning/config.json`, `.planning/phases/<phase>/` and write `NN-SPEC.md`'
+            ' (16 D-11)."""\n# see .planning/ROADMAP.md\n'
+        )
+        self.assertEqual(python_pointer_hits(source, "demo.py"), [])
+
+    def test_hits_sort_by_line(self):
+        self.assertEqual(
+            python_pointer_hits('# 20-SMOKE-CODEX.md\n"""21-SMOKE-CURSOR.md"""\n', "demo.py"),
+            ["demo.py:1: phase file 20-SMOKE-CODEX.md", "demo.py:2: phase file 21-SMOKE-CURSOR.md"],
+        )
+
+    def test_empty_source_has_no_hit(self):
+        self.assertEqual(python_pointer_hits("", "demo.py"), [])
 
 
 if __name__ == "__main__":

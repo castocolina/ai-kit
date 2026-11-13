@@ -1,5 +1,5 @@
 """The one gsd-tools resolver and the only gsd-tools config write wrappers in ai-kit
-(D-18, 16.1-CONTEXT.md).
+(Phase 16.1 D-18).
 
 The resolver finds the installed gsd-core's `gsd-tools.cjs` in GSD's own launcher order
 (R17): `<root>/gsd-core`, `<root>/.claude/gsd-core`, `<root>/.codex/gsd-core`, then the

@@ -61,7 +61,7 @@ _EXIT_FALLBACK: dict[int | None, str | None] = {
 }
 
 # auth/entitlement/setup signals — checked BEFORE quota so "not logged in ... quota" reads
-# auth, never the (retryable) quota. cursor-agent evidence, 16.1-RESEARCH.md: stderr
+# auth, never the (retryable) quota. cursor-agent evidence, Phase 16.1 research: stderr
 # "Warning: The provided API key is invalid" / "ActionRequiredError: Named models
 # unavailable", exit 1 (the ActionRequiredError channel itself is marked [ASSUMED] stderr).
 _AUTH_SIGNALS = (

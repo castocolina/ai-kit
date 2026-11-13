@@ -1,4 +1,4 @@
-"""Frontend-stack presence detection (07-CONTEXT.md D-08, Claude's Discretion) -- decides the
+"""Frontend-stack presence detection (Phase 7 D-08, Claude's Discretion) -- decides the
 boolean `workflow.ui_phase`/`workflow.ui_review` get written with. A concrete, testable
 heuristic: a `package.json` dependency-manifest scan (exact key match against a fixed
 framework-package set) OR a bounded, word-boundary `README.md` text scan. Never raises on
