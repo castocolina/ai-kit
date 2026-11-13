@@ -68,6 +68,10 @@ class _RealGsdTestCase(unittest.TestCase):
         tools = gsd_catalog.resolve_gsd_tools_path(self.resolve_env, start=project_dir)
         if self.node_bin is None or tools is None:
             self.skipTest("no node, or no gsd-tools the CLI resolves for a temp project")
+        # A gsd-tools found elsewhere (PATH, a host home) is not this checkout's: a linked
+        # worktree or a fresh clone has no git-ignored .claude/, so these runs prove nothing there.
+        if not (REPO_ROOT / ".claude" / "gsd-core" / "VERSION").is_file():
+            self.skipTest("no checkout-local .claude/gsd-core")
 
     def run_cli(self, argv):
         child_env, resolve_env, node_bin = self.child_env, self.resolve_env, self.node_bin
