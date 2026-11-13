@@ -1874,7 +1874,7 @@ _KEY_STEM = (
     r"(?:sk|rk|pk|gh\[[a-z]+\]|gh[pousr]|gho|AKIA|ASIA|ABIA|ACCA|gl[a-z]+\??|xox\[[a-z]+\]"
     r"|xox[a-z]|xapp|xwfp)"
 )
-_REGEX_SYNTAX = r"(?:\[|\(|\{\d)"
+_REGEX_SYNTAX = r"(?:\[|\(|\{\d|\\[wWdDsS]|\.[*+{])"
 KEY_SHAPE_COPY_RX = re.compile(
     "(?:" + _KEY_PREFIX + ")" + _REGEX_SYNTAX
     + "|(?:" + _KEY_STEM + r"\|[^()\s]*|[^()\s]*\|" + _KEY_STEM + r")\)[-_]?" + _REGEX_SYNTAX
@@ -3365,7 +3365,19 @@ class TestArchNonVacuity(unittest.TestCase):
         broad = "const RX = /(?<=\\bBearer )[A-Za-z0-9._~+/=-]{8,}/gi;\n"
         dropped = 'RX = r"' + "gh" + '[pous]_[A-Za-z0-9]{20,}"\n'
         reordered = 'RX = r"' + "gh" + '[sropu]_[A-Za-z0-9]{20,}"\n'
+        short_gh = 'RX = r"' + "ghp" + '_\\w{36}"\n'
+        short_aws = 'RX = r"' + "AK" + 'IA\\w{16}"\n'
+        short_xai = 'RX = r"' + "xai" + '-\\S{16,}"\n'
+        short_sk = 'RX = r"' + "sk" + '-.{20,}"\n'
+        short_pat = 'RX = r"' + "github" + '_pat_\\w+"\n'
         cases = (
+            ("shorthand github", [("skills/demo/s1.py", short_gh)],
+             ["skills/demo/s1.py:1: ghp_\\w"]),
+            ("shorthand aws", [("skills/demo/s2.py", short_aws)], ["skills/demo/s2.py:1: AKIA\\w"]),
+            ("shorthand xai", [("skills/demo/s3.py", short_xai)], ["skills/demo/s3.py:1: xai-\\S"]),
+            ("shorthand sk dot", [("skills/demo/s4.py", short_sk)], ["skills/demo/s4.py:1: sk-.{"]),
+            ("shorthand pat", [("skills/demo/s5.py", short_pat)],
+             ["skills/demo/s5.py:1: github_pat_\\w"]),
             ("plain prefix", [("skills/demo/plain.py", plain)], ["skills/demo/plain.py:1: sk-["]),
             ("group one character off", [("skills/demo/group.py", group)],
              ["skills/demo/group.py:1: ?:AKIA|ASIA)["]),
