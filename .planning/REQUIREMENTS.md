@@ -750,7 +750,12 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   foreign, and `setup.py` run from a checkout uses that checkout unless `AI_KIT_DIR` is set; the pi variables item
   is reworded — pi 1.3.0 sets `PI_PROVIDER` and `PI_MODEL` only for the agent's own bash-tool commands, so the fix
   is the wording plus a herdr live check; the edge-floor item fixes 25.1 and adds a current-milestone guard)*
-- [ ] **DEF-02**: One shared secret-shape scanner with more key shapes replaces the four copies.
+- [ ] **DEF-02**: One shared secret-shape scanner with more key shapes replaces the four copies. *(amended
+  2026-11-13, 32.3 spec: live search finds five shipped key-shape scanners, not four — the runner template's
+  `redactSecrets`, session-wake's `reset_parse.redact`, goal-prompt's `scan_text`, jev-fast-decision's ladder item
+  guard (the fourth) and commit-fold's GitHub-token redactor — plus the curated-config eval test helper; all six take
+  their key shapes from the one shared scanner, which holds distinctive token shapes only, while each caller keeps its
+  own broad rules; a guard test fails on a drifted copy or a new key-shape list (32.3 SPEC R1-R5))*
 - [ ] **DEF-03**: goal-prompt wraps long lists and commands instead of refusing them.
 - [ ] **DEF-04**: The eight spec-discuss polish items are fixed, each with a pinned doc-contract test: a forced
   local answer that matches no decision-table row; "one commit per phase" against the spec workflow's own commit;
@@ -1004,3 +1009,4 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *Amended 2026-11-07 at Phase 32's close-out: DEF-09 (Phase 32.2) and DEF-10 (Phase 32.4) added; RULE-29 amended (move `/tmp` leftovers into `tmp/` under a no-delete host rule; replaces the plan-rail scope script).*
 *Amended 2026-11-07 by Phase 32.1's spec and discuss (owner batch scope "Narrow"): JDG-03 and JDG-04 amended; ROADMAP goals and criteria 1-2 of 32.1-32.3, 32.1 criterion 5, 32.4's goal and criterion 4, and the JDG-04 criterion of Phases 37-40 amended; backlog 999.22 (headless installer agents) added.*
 *Amended 2026-11-08 by Phase 32.2's spec and discuss: DEF-09 amended (the guard also reads comments and covers every skill's Python); ROADMAP 32.2's goal note and criterion 4 amended.*
+*Amended 2026-11-13 by Phase 32.3's spec and discuss: DEF-02 amended (five shipped scanner copies plus the eval test helper, one shared token-shape scanner, a drift and new-copy guard); ROADMAP 32.3's code anchors and criterion 3 and Phase 47.1's code anchors amended.*
