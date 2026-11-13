@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=d9239f0f7c92009adb98f01c4a3cb6ee5627ab2d50ee35197f717df2e2c9ef19
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=9253673b4af332cdaddbb084dd1c983b89b1b55f5a74ffd8a44c4da9dcb44d26
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
@@ -1530,16 +1530,41 @@ const INPUT_CAP = 65536;
 const ANSI_RE = /\x1B\[[0-9;?]*[A-Za-z]|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g;
 // Child text can echo credentials and identifiers. Key rules preserve the key and replace
 // only its complete quoted or delimited value.
-const SECRET_RES = [
-  /(sk|rk)-[A-Za-z0-9_-]{8,}/gi,
+// Distinctive key shapes as one JSON line, kept equal to the shared Python table by a test.
+const KEY_SHAPES = [["github_token","(?<![A-Za-z0-9_])gh[pousr]_[A-Za-z0-9]{20,}"],["github_pat","(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{20,}"],["google_api_key","(?<![A-Za-z0-9_])AIza[0-9A-Za-z_-]{20,}"],["slack_token","(?<![A-Za-z0-9_])(?:xox[abposre]|xapp|xwfp)-[A-Za-z0-9_-]{12,}"],["pem_private_key","-----BEGIN [A-Z0-9 ]+-----(?:[\\s\\S]{0,16384}?-----END [A-Z0-9 ]+-----)?"],["aws_access_key_id","(?<![A-Za-z0-9_])(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}"],["gitlab_token","(?<![A-Za-z0-9_])(?:glpat|gloas|gldt|glrtr?|glcbt|glptt|glft|glimt|glagent|glwt|glsoat|glffct)-[A-Za-z0-9_-]{16,}"],["xai_api_key","(?<![A-Za-z0-9_])xai-[A-Za-z0-9]{16,}"],["jwt","(?<![A-Za-z0-9_])eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"],["stripe_key","(?<![A-Za-z0-9_])(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"],["huggingface_token","(?<![A-Za-z0-9_])hf_[A-Za-z0-9]{30,}"],["npm_token","(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{36,}"],["groq_key","(?<![A-Za-z0-9_])gsk_[A-Za-z0-9]{20,}"],["sk_rk_key","(?<![A-Za-z0-9_])(?:sk|rk)-[A-Za-z0-9_-]{8,}"]];
+const SECRET_RES = KEY_SHAPES.map(([, source]) => new RegExp(source, 'g'));
+// Bearer and Basic values go before the key shapes, so a key-shaped run inside one cannot
+// stop the rule early; the other broad rules go after them.
+const BEARER_BASIC_RES = [
   /(?<=\bBearer )[A-Za-z0-9._~+/=-]{8,}/gi,
   /(?<=\bBasic )[A-Za-z0-9+/=]{8,}/gi,
-  /\bAIza[0-9A-Za-z_-]{20,}/g,
+];
+const BROAD_RES = [
   /conn:[0-9a-f]{8,}/gi,
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/gi,
-  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/gi,
 ];
+
+// Every key shape is matched on the same text and overlapping matches merge into one span,
+// so no row cuts into a token another row matches; text outside the spans is kept.
+function redactKeyShapes(text) {
+  const spans = SECRET_RES.flatMap((re) => [...text.matchAll(re)])
+    .map((m) => [m.index, m.index + m[0].length])
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const merged = [];
+  for (const [start, end] of spans) {
+    const lastEnd = merged.length ? merged[merged.length - 1][1] : -1;
+    if (start < lastEnd) merged[merged.length - 1][1] = Math.max(lastEnd, end);
+    else merged.push([start, end]);
+  }
+  let out = '';
+  let pos = 0;
+  for (const [start, end] of merged) {
+    out += text.slice(pos, start) + '<redacted>';
+    pos = end;
+  }
+  return out + text.slice(pos);
+}
+
 const KEY_VALUE_RE = /((?:\\?["']?)(?:api[_-]?key|token|secret|password|passwd|(?<=[?&])key)(?:\\?["']?)\s*(?:=>|[:=])\s*)(?:\\?"(?:\\\\.|[^"\\])*\\?"|\\?'(?:\\\\.|[^'\\])*\\?'|[^\s,"'\]}\];&]+)/gi;
 const ID_VALUE_RE = /((?:\\?["']?)(?:account|connection|conn|org|organization|user|request|session|key)[_-]?id(?:\\?["']?)\s*(?:=>|[:=])\s*)(?:\\?"(?:\\\\.|[^"\\])*\\?"|\\?'(?:\\\\.|[^'\\])*\\?'|[^\s,"'\]}\];&]+)/gi;
 
@@ -1589,7 +1614,12 @@ function redactSecrets(line, extra = []) {
       return quote ? `${prefix}${quote}<redacted>${quote}` : `${prefix}<redacted>`;
     });
   }
-  for (const re of SECRET_RES) {
+  for (const re of BEARER_BASIC_RES) {
+    re.lastIndex = 0;
+    out = out.replace(re, '<redacted>');
+  }
+  out = redactKeyShapes(out);
+  for (const re of BROAD_RES) {
     re.lastIndex = 0;
     out = out.replace(re, '<redacted>');
   }
@@ -2880,6 +2910,55 @@ function classifyCases() {
       pure: () => {
         const once = redactSecrets('{"accountId":"acct-77","token":"secret"}');
         return redactSecrets(once) === once ? null : redactSecrets(once);
+      },
+    },
+    {
+      // Each KEY_SHAPES row redacts its own synthetic sample, built here from a prefix and
+      // filler; a token whose body holds another shape, or a key glued before a private-key
+      // block, becomes one marker; two keys joined by a comma stay two markers; a Bearer value
+      // holding a key shape loses its whole value; a key rule and a shape leave one marker in
+      // a quoted JSON value, key and quote kept.
+      name: 'pure-redact-key-shapes',
+      kind: 'logic',
+      pure: () => {
+        const samples = {
+          github_token: 'ghp_' + 'x'.repeat(36),
+          github_pat: 'github_pat_' + 'x'.repeat(40),
+          google_api_key: 'AIza' + 'x'.repeat(35),
+          slack_token: 'xoxb-' + 'x'.repeat(24),
+          pem_private_key: '-----BEGIN ' + 'RSA PRIVATE KEY' + '-----',
+          aws_access_key_id: 'AKIA' + 'X'.repeat(16),
+          gitlab_token: 'glpat-' + 'x'.repeat(20),
+          xai_api_key: 'xai-' + 'x'.repeat(32),
+          jwt: 'eyJ' + 'x'.repeat(12) + '.eyJ' + 'x'.repeat(12) + '.' + 'x'.repeat(12),
+          stripe_key: 'sk_live_' + 'x'.repeat(24),
+          huggingface_token: 'hf_' + 'x'.repeat(34),
+          npm_token: 'npm_' + 'x'.repeat(36),
+          groq_key: 'gsk_' + 'x'.repeat(52),
+          sk_rk_key: 'sk-' + 'x'.repeat(24),
+        };
+        for (const [name, sample] of Object.entries(samples)) {
+          if (redactSecrets(`note ${sample} end`) !== 'note <redacted> end') return `${name} not redacted`;
+        }
+        const rows = KEY_SHAPES.map(([name]) => name).join(',');
+        if (rows !== Object.keys(samples).join(',')) return 'KEY_SHAPES rows and samples differ';
+        const nested = {
+          gitlab_token: 'glpat-' + 'a'.repeat(8) + '-' + 'AKIA' + 'X'.repeat(16) + 'z'.repeat(64),
+          slack_token: 'xoxb-' + '1'.repeat(12) + '-ghp_' + 'b'.repeat(36) + '-' + 'c'.repeat(30),
+        };
+        for (const [name, sample] of Object.entries(nested)) {
+          if (redactSecrets(`note ${sample} end`) !== 'note <redacted> end') return `nested ${name} left a residue`;
+        }
+        const pemLabel = 'RSA PRIVATE KEY';
+        const pem = '-----BEGIN ' + pemLabel + '-----\n' + 'MIIB' + 'a'.repeat(60) + '\n-----END ' + pemLabel + '-----';
+        if (redactSecrets(`note ${'sk-' + 'a'.repeat(8) + pem} end`) !== 'note <redacted> end') return 'key glued before a PEM block left a residue';
+        const pair = samples.github_token + ',' + samples.xai_api_key;
+        if (redactSecrets(`note ${pair} end`) !== 'note <redacted>,<redacted> end') return 'two keys joined by a comma did not give two markers';
+        const bearer = redactSecrets('Bearer abc-' + 'AKIA' + 'Z'.repeat(16) + 'q'.repeat(64));
+        if (bearer !== 'Bearer <redacted>') return 'Bearer value left a suffix';
+        const keyed = redactSecrets(`{"token":"${samples.aws_access_key_id}"}`);
+        const bare = redactSecrets(`{"note":"${samples.jwt}"}`);
+        return keyed === '{"token":"<redacted>"}' && bare === '{"note":"<redacted>"}' ? null : 'quoted value lost its key or quote';
       },
     },
     {
