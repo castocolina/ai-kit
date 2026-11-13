@@ -4,16 +4,16 @@ milestone: v2.0
 milestone_name: Skill Refactor
 current_phase: "32.2"
 current_phase_name: Batch 2, spec review family
-status: planning
+status: executing
 stopped_at: "Phase 32.2 spec and context gathered (auto path: SPEC c0032c9, CONTEXT 45d9f2d); next: plan-phase 32.2"
-last_updated: "2026-11-08T05:18:44.589Z"
-last_activity: 2026-11-08
-last_activity_desc: Phase 32.1 complete (review, security, validation, judge round 2, re-verification)
-state_head: 45d9f2dcbd0cf516b3591d75a81c53192e1ffbdc
+last_updated: "2026-11-13T03:23:12.778Z"
+last_activity: 2026-11-13
+last_activity_desc: Phase 32.2 execution started
+state_head: 31c70b1bcc36c4ffb4fb7bdeec83db897432eddb
 progress:
   total_phases: 37
   completed_phases: 9
-  total_plans: 73
+  total_plans: 78
   completed_plans: 73
   percent: 24
 ---
@@ -25,14 +25,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 32.1 — Batch 1, general small skills
+**Current focus:** Phase 32.2 — Batch 2, spec review family
 
 ## Current Position
 
-Phase: 32.2 — Batch 2, spec review family
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-11-08 — Phase 32.1 complete (review, security, validation, judge round 2, re-verification)
+Phase: 32.2 (Batch 2, spec review family) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 32.2
+Last activity: 2026-11-13 — Phase 32.2 execution started
 
 Progress: [██░░░░░░░░] 24%
 

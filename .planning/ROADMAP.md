@@ -472,9 +472,21 @@ Plans:
   1. Each of the four skills has `evals/evals.json`, about 20 trigger queries (half near-misses) and tests that run in the unit tier. *(amended 2026-11-07, 32.1 D-01: `ai-kit-spec-review-checklist` gains them; `ai-kit-spec-config` and `ai-kit-spec-execute` keep theirs passing; `ai-kit-spec-review` gains them in Phases 39-40)*
   2. The re-judge report shows each of the four with no critical or high finding, or grade B or better, and no regression beyond judge variation. *(amended 2026-11-07, 32 spec: this criterion is the judge bar, JDG-04)* *(amended 2026-11-07, 32.1 D-01: the loop 32.2 re-judge covers only the skills whose SKILL.md this phase adds or materially changes, as JDG-04 reads; `ai-kit-spec-review-checklist` reaches the bar, and `ai-kit-spec-config` or `ai-kit-spec-execute`, when its SKILL.md changes, keeps it with no regression beyond judge variation; the HUB-04 and DEF-09 code changes inside `ai-kit-spec-review`'s package do not bring `ai-kit-spec-review` into the loop, and it is not brought to the bar here)*
   3. The cheap-execution ranking returns candidates from a catalog fixture where Artificial Analysis gives null coding and agentic indexes.
-  4. No runtime label or docstring in `skills/ai-kit-spec-review/ai_kit_spec/detection.py` names a planning file (today `20-SMOKE-OPENCODE.md`, `21-SMOKE-CURSOR.md` and `20-SMOKE-CODEX.md`, with `tests/test_ai_kit_spec_runtimes_table.py` pinning `21-SMOKE-CURSOR.md`), and a test fails when a string literal in shipped skill Python code names a file under a planning folder, which the Markdown-only history-text check of Phase 32 does not cover (DEF-09). *(added 2026-11-07, Phase 32 close-out)* *(amended 2026-11-08, 32.2 D-05: the guard reads string literals and comments in every tracked skill Python file, the project-rules skills included; live scan: 24 literal hits in 10 files across spec-review, curated-config, goal-prompt and project-rules-makefile, and 5 comment hits, all fixed in this phase)*
+  4. No runtime label or docstring in `skills/ai-kit-spec-review/ai_kit_spec/detection.py` names a planning file (today `20-SMOKE-OPENCODE.md`, `21-SMOKE-CURSOR.md` and `20-SMOKE-CODEX.md`, with `tests/test_ai_kit_spec_runtimes_table.py` pinning `21-SMOKE-CURSOR.md`), and a test fails when a string literal in shipped skill Python code names a file under a planning folder, which the Markdown-only history-text check of Phase 32 does not cover (DEF-09). *(added 2026-11-07, Phase 32 close-out)* *(amended 2026-11-08, 32.2 D-05: the guard reads string literals and comments in every tracked skill Python file, the project-rules skills included; live scan: 24 literal hits in 10 files across spec-review, curated-config, goal-prompt and project-rules-makefile, and 5 comment hits, all fixed in this phase)* *(amended 2026-11-08, 32.2 planning recount: 25 literal matches (24 file names, 1 folder name) in 11 files and 5 comment hits in 3 files; two plan and summary file names in `ai-kit-usage-metrics` that the shared patterns miss are fixed by hand)*
 
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+**Wave 1**
+- [ ] 32.2-01-PLAN.md — per-call `mechanical` floor so a null-index catalog ranks (HUB-04), wave 1
+- [ ] 32.2-02-PLAN.md — detection.py labels and every shipped-Python planning-file name fixed, AST and tokenize guard (DEF-09), wave 1
+- [ ] 32.2-03-PLAN.md — checklist marker table, never-ask rule, archetype Failure line, bare Issues Found template, doc-contract test module, wave 1
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 32.2-04-PLAN.md — checklist new-shape evals and trigger queries, wave 2
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 32.2-05-PLAN.md — loop 32.2 re-judge of the checklist and the bar record (JDG-04), wave 3
 
 ### Phase 32.3: Batch 3, execution and session skills
 
