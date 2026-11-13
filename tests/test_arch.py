@@ -1411,25 +1411,26 @@ def skill_folders(repo_root):
 
 
 def skill_modules(repo_root):
-    """Top-level importable name -> skill folder: a package dir with __init__.py directly under
-    skills/<s>/, or a .py stem directly under skills/<s>/ or skills/<s>/scripts/. First owner
-    of a name wins."""
+    """Top-level importable name -> the frozenset of skill folders that provide it: a package
+    dir with __init__.py directly under skills/<s>/, or a .py stem directly under skills/<s>/
+    or skills/<s>/scripts/. A byte-identical copy held by several skills gives its name
+    several owners."""
     base = os.path.join(repo_root, "skills")
-    modules = {}
+    modules: dict[str, set[str]] = {}
     for skill in skill_folders(repo_root):
         skill_dir = os.path.join(base, skill)
         for name in sorted(os.listdir(skill_dir)):
             path = os.path.join(skill_dir, name)
             if os.path.isdir(path) and os.path.isfile(os.path.join(path, "__init__.py")):
-                modules.setdefault(name, skill)
+                modules.setdefault(name, set()).add(skill)
             elif name.endswith(".py"):
-                modules.setdefault(name[:-3], skill)
+                modules.setdefault(name[:-3], set()).add(skill)
         scripts = os.path.join(skill_dir, "scripts")
         if os.path.isdir(scripts):
             for name in sorted(os.listdir(scripts)):
                 if name.endswith(".py"):
-                    modules.setdefault(name[:-3], skill)
-    return {name: skill for name, skill in modules.items() if name.isidentifier()}
+                    modules.setdefault(name[:-3], set()).add(skill)
+    return {name: frozenset(owners) for name, owners in modules.items() if name.isidentifier()}
 
 
 def _lookup_value(node):
@@ -1496,7 +1497,9 @@ def check_cross_skill_refs(relpath, tree, modules, skills):
     reach into another skill: an import of its module (also `import_module("pkg.x")` or an
     f-string starting with the module), a sys.path call naming its folder, any
     string holding `<other>/`, a bare folder name passed to a path join or used in a `/`
-    expression, or a decide.py name. Docstrings and the JEV_ENTRY_REL lookup are not read."""
+    expression, or a decide.py name. Docstrings and the JEV_ENTRY_REL lookup are not read.
+    An import of a name the file's own skill also provides resolves to the own copy and is
+    not a reach."""
     parts = relpath.split("/")
     own = parts[1] if parts[0] == "skills" and len(parts) > 2 else None
     others = [name for name in skills if name != own]
@@ -1507,14 +1510,14 @@ def check_cross_skill_refs(relpath, tree, modules, skills):
             continue
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             for root in _import_roots(node):
-                owner = modules.get(root)
-                if owner is not None and owner != own:
-                    hits.append((relpath, owner, node.lineno))
+                owners = modules.get(root)
+                if owners and own not in owners:
+                    hits.append((relpath, min(owners), node.lineno))
         if isinstance(node, ast.Call) and _dotted_name(node.func) in _IMPORT_CALLS and node.args:
             head = _leading_literal(node.args[0])
-            owner = modules.get(head.split(".")[0]) if head else None
-            if owner is not None and owner != own:
-                hits.append((relpath, owner, node.lineno))
+            owners = modules.get(head.split(".")[0]) if head else None
+            if owners and own not in owners:
+                hits.append((relpath, min(owners), node.lineno))
         if _is_text(node):
             if _DECIDE_NAME in str(node.value):
                 hits.append((relpath, _DECIDE_NAME, node.lineno))
@@ -3078,8 +3081,14 @@ class TestArchNonVacuity(unittest.TestCase):
 
     @staticmethod
     def _xs_hits(source):
-        """Hits of the ruling-2 rule for a synthetic skills/alpha/x.py; beta is the other skill."""
-        modules = {"beta_pkg": "beta", "alpha_mod": "alpha"}
+        """Hits of the ruling-2 rule for a synthetic skills/alpha/x.py; beta is the other skill,
+        shared_mod is provided by alpha and beta, pair_mod by beta and gamma."""
+        modules = {
+            "beta_pkg": frozenset({"beta"}),
+            "alpha_mod": frozenset({"alpha"}),
+            "shared_mod": frozenset({"alpha", "beta"}),
+            "pair_mod": frozenset({"beta", "gamma"}),
+        }
         return check_cross_skill_refs(
             "skills/alpha/x.py", ast.parse(source), modules, ["alpha", "beta"]
         )
@@ -3099,6 +3108,7 @@ class TestArchNonVacuity(unittest.TestCase):
             "Path segment": ('p = Path(root, "beta")\n', "beta"),
             "slash expression": ('p = Path(root) / "beta"\n', "beta"),
             "decide.py name": ('p = "scripts/decide.py"\n', "decide.py"),
+            "import of a name only other skills provide": ("import pair_mod\n", "beta"),
             "import_module f-string": (
                 'import importlib\nimportlib.import_module(f"beta_pkg.{name}")\n',
                 "beta",
@@ -3121,6 +3131,8 @@ class TestArchNonVacuity(unittest.TestCase):
             "stdlib import": "import json\n",
             "own-skill import_module": 'import_module(f"alpha_mod.{name}")\n',
             "computed import_module": "import_module(name)\n",
+            "name the own skill also provides": "import shared_mod\n",
+            "own-skill import_module of a shared name": 'import_module("shared_mod.sub")\n',
         }
         for form, source in clean.items():
             with self.subTest(form=form):
