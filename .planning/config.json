@@ -65,7 +65,7 @@
       }
     },
     "default_reviewers": [
-      "referee-two"
+      "referee-one"
     ],
     "timeouts": {
       "opencode": 1800
