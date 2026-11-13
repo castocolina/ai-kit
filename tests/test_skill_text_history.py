@@ -73,7 +73,9 @@ DOTTED_NUMBER_RE = re.compile(r"\d+(?:\.\d+)+")
 LINK_TARGET_RE = re.compile(r"\]\([^)]*\)")
 URL_RE = re.compile(r"https?://\S+")
 PHASE_DIR_RE = re.compile(r"(?<![\w.-])\d{1,2}(?:\.\d+)?-[a-z][a-z0-9]*(?:-[a-z0-9]+)*/")
-PHASE_FILE_RE = re.compile(r"(?<![\w.-])\d{1,2}(?:\.\d+)?-[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*\.md\b")
+PHASE_FILE_RE = re.compile(
+    r"(?<![\w.-])\d{1,2}(?:\.\d+)?(?:-\d{2})?-[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*\.md\b"
+)
 BACKLOG_RE = re.compile(r"(?<![\w.])999\.\d+(?!\d)")
 DECISION_RE = re.compile(r"(?<![A-Za-z0-9-])D-\d+(?!\w)")
 REFEREE_RE = re.compile(r"router-env/|\breferee-[a-z0-9]")
@@ -424,6 +426,15 @@ class TestHistoryRulesNonVacuity(unittest.TestCase):
         self.assertEqual(
             self._hits("Smoke result: see 21-SMOKE-CURSOR.md.\n"),
             ["demo-skill/SKILL.md:1: phase file 21-SMOKE-CURSOR.md"],
+        )
+
+    def test_plan_and_summary_file_names_fail(self):
+        self.assertEqual(
+            self._hits("Done in 04-01-PLAN.md and 15.1-02-SUMMARY.md.\n"),
+            [
+                "demo-skill/SKILL.md:1: phase file 04-01-PLAN.md",
+                "demo-skill/SKILL.md:1: phase file 15.1-02-SUMMARY.md",
+            ],
         )
 
     def test_backlog_id_fails(self):

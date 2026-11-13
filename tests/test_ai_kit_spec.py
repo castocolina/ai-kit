@@ -6913,6 +6913,15 @@ class TestRankerPurposeFloor(unittest.TestCase):
         ranked = model_ranker.score_candidates(entries, "mechanical", w)
         self.assertEqual(sorted(e["key"] for e in ranked), ["m35", "m40"])
 
+    def test_one_scored_entry_below_the_floor_empties_mechanical(self):
+        # D-01 per-call rule: one finite coding index arms the floor for the whole call, so the
+        # null entries beside a below-floor score are excluded and the ranking is empty.
+        entries = self._null_index_entries()
+        entries[0]["scores"]["coding_index"] = 20
+        w = model_ranker.load_ranking_weights()
+        self.assertEqual(model_ranker.score_candidates(entries, "mechanical", w), [])
+        self.assertEqual(len(model_ranker.score_candidates(entries, "execution", w)), 4)
+
 
 class TestLoadSecret(unittest.TestCase):
     def test_env_var_takes_precedence(self):

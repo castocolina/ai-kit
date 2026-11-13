@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 sys.path.insert(
     0,
@@ -70,8 +71,9 @@ class _RealGsdTestCase(unittest.TestCase):
             self.skipTest("no node, or no gsd-tools the CLI resolves for a temp project")
         # A gsd-tools found elsewhere (PATH, a host home) is not this checkout's: a linked
         # worktree or a fresh clone has no git-ignored .claude/, so these runs prove nothing there.
-        if not (REPO_ROOT / ".claude" / "gsd-core" / "VERSION").is_file():
-            self.skipTest("no checkout-local .claude/gsd-core")
+        local_core = (REPO_ROOT / ".claude" / "gsd-core").resolve()
+        if not Path(tools).resolve().is_relative_to(local_core):
+            self.skipTest(f"gsd-tools resolves outside the checkout-local {local_core}")
 
     def run_cli(self, argv):
         child_env, resolve_env, node_bin = self.child_env, self.resolve_env, self.node_bin

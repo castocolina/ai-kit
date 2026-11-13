@@ -59,6 +59,7 @@ speed = 0.10
 # candidate has a finite value for the axis, a candidate below the floor or without that score
 # is excluded, not zero-scored; when none has one (no ARTIFICIAL_ANALYSIS_API_KEY, or null
 # coding indexes from the API), the axis is skipped for that call and the ranking still fills.
+# So a call whose only scored candidate is below the floor ranks nothing for this purpose.
 coding_index = 35
 
 [bonuses]
