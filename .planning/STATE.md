@@ -5,11 +5,11 @@ milestone_name: Skill Refactor
 current_phase: "32.2"
 current_phase_name: Batch 2, spec review family
 status: planning
-stopped_at: "Phase 32.1 complete (close-out part 1: review, security, validation, judge round 2, re-verification); next: fold and push (part 2), then phase 32.2"
-last_updated: "2026-11-08T03:56:56.181Z"
+stopped_at: "Phase 32.2 spec and context gathered (auto path: SPEC c0032c9, CONTEXT 45d9f2d); next: plan-phase 32.2"
+last_updated: "2026-11-08T05:18:44.589Z"
 last_activity: 2026-11-08
 last_activity_desc: Phase 32.1 complete (review, security, validation, judge round 2, re-verification)
-state_head: 1cb60d83cfdb3c30385d0471a0daf2407225e1e9
+state_head: 45d9f2dcbd0cf516b3591d75a81c53192e1ffbdc
 progress:
   total_phases: 37
   completed_phases: 9
@@ -684,9 +684,9 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-08T03:56:55.752Z
-Stopped at: Phase 32.1 complete (close-out part 1: review, security, validation, judge round 2, re-verification); next: fold and push (part 2), then phase 32.2
-Resume file: None
+Last session: 2026-11-08T05:18:44.161Z
+Stopped at: Phase 32.2 spec and context gathered (auto path: SPEC c0032c9, CONTEXT 45d9f2d); next: plan-phase 32.2
+Resume file: /var/home/bazzite/git/personal/ai-kit/.planning/phases/32.2-batch-2-spec-review-family/32.2-CONTEXT.md
 
 ## Operator Next Steps
 

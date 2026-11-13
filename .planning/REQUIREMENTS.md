@@ -779,7 +779,9 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   `20-SMOKE-OPENCODE.md`, `21-SMOKE-CURSOR.md`, `20-SMOKE-CODEX.md`, one pinned by
   `tests/test_ai_kit_spec_runtimes_table.py`), and a test fails when a string literal in shipped skill Python code
   names a file under a planning folder; Phase 32's history-text check reads Markdown only. *(added 2026-11-07,
-  Phase 32 close-out)*
+  Phase 32 close-out)* *(amended 2026-11-08, 32.2 D-05: the test also reads comments and covers every tracked
+  skill Python file, the project-rules skills included; all 24 literal and 5 comment hits found by the live scan are
+  fixed in Phase 32.2)*
 - [ ] **DEF-10**: curated-config's real-gsd-tools tracer test passes with `TMPDIR` inside a GSD project checkout:
   the behaviour for a new project nested inside another project is decided and tested, and the six-environment
   custom-tmpdir row keeps `.planning/` in its clone so it catches the case. *(added 2026-11-07, Phase 32
@@ -1001,3 +1003,4 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *Amended 2026-11-07 by Phase 32's spec and discuss: JDG-01 (the flat test layout and the scripts reading) and JDG-06 (the bar-boundary reading, confirmed by the owner 2026-11-07) amended; ROADMAP 32 criterion 8, 32.1-32.3 criterion 2 and 34 criterion 3 cite JDG-04; the stale `decide.py` anchors of 32.4 and 34 corrected.*
 *Amended 2026-11-07 at Phase 32's close-out: DEF-09 (Phase 32.2) and DEF-10 (Phase 32.4) added; RULE-29 amended (move `/tmp` leftovers into `tmp/` under a no-delete host rule; replaces the plan-rail scope script).*
 *Amended 2026-11-07 by Phase 32.1's spec and discuss (owner batch scope "Narrow"): JDG-03 and JDG-04 amended; ROADMAP goals and criteria 1-2 of 32.1-32.3, 32.1 criterion 5, 32.4's goal and criterion 4, and the JDG-04 criterion of Phases 37-40 amended; backlog 999.22 (headless installer agents) added.*
+*Amended 2026-11-08 by Phase 32.2's spec and discuss: DEF-09 amended (the guard also reads comments and covers every skill's Python); ROADMAP 32.2's goal note and criterion 4 amended.*
