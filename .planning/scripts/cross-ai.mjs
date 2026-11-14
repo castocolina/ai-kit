@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=9d2f52ee7e567e152bf5600ecc3bac627be333d8203bb3303793fe268815866f
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=8cde9ef2542d6e8075e7fad5a2db1ce03ff346ab3abc87f36a132db8c7b1a1da
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
@@ -6119,7 +6119,9 @@ async function blackBoxSelfTest(listOnly = false) {
               }[rt];
               for (const f of must) if (!argv.includes(f)) return `exec argv missing ${f}`;
               if (!argv.includes(model)) return 'model missing from argv';
-              if (argv.some((t) => /\s/.test(t))) return 'whitespace token';
+              // A scratch path under a TMPDIR that holds a space is a legitimate token; any other
+              // whitespace token means an argv element was split or joined.
+              if (argv.some((t) => /\s/.test(t.startsWith(os.tmpdir()) ? t.slice(os.tmpdir().length) : t))) return 'whitespace token';
               return null;
             },
           },
@@ -8881,7 +8883,7 @@ async function blackBoxSelfTest(listOnly = false) {
           const reviewArgv = stdoutLine.split('\t')[2];
           const err = r.stderr || '';
           if (!err.includes('cross-ai: rung1 codex unavailable')) return 'rung 1 was available';
-          const m = err.match(/cross-ai: rung2 codex argv=(\S+)/);
+          const m = err.match(/cross-ai: rung2 codex argv=(.+)$/m);
           if (!m) return 'missing rung2 line';
           if (m[1] !== reviewArgv) return 'rung2 argv mismatch';
           const parsed = JSON.parse(m[1]);
@@ -8899,7 +8901,7 @@ async function blackBoxSelfTest(listOnly = false) {
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
         check: (r) => {
-          const m = (r.stderr || '').match(/cross-ai: rung1 codex argv=(\S+)/);
+          const m = (r.stderr || '').match(/cross-ai: rung1 codex argv=(.+)$/m);
           if (!m) return 'missing rung1 line';
           const parsed = JSON.parse(m[1]);
           if (!parsed.includes('resume')) return 'missing resume';
@@ -8921,8 +8923,8 @@ async function blackBoxSelfTest(listOnly = false) {
           const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
           const first = JSON.parse(line.split('\t')[2]);
           const err = r.stderr || '';
-          const one = err.match(/cross-ai: rung1 pi argv=(\S+)/);
-          const two = err.match(/cross-ai: rung2 pi argv=(\S+)/);
+          const one = err.match(/cross-ai: rung1 pi argv=(.+)$/m);
+          const two = err.match(/cross-ai: rung2 pi argv=(.+)$/m);
           if (!one || !two) return 'missing rung line';
           const rung1 = JSON.parse(one[1]);
           const rung2 = JSON.parse(two[1]);
@@ -8949,7 +8951,7 @@ async function blackBoxSelfTest(listOnly = false) {
           const stdoutLine = (r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
           if (!stdoutLine) return 'missing cursor stdout';
           const review = JSON.parse(stdoutLine.split('\t')[2]);
-          const m = (r.stderr || '').match(/cross-ai: rung1 cursor argv=(\S+)/);
+          const m = (r.stderr || '').match(/cross-ai: rung1 cursor argv=(.+)$/m);
           if (!m) return 'missing rung1 line';
           const parsed = JSON.parse(m[1]);
           if (!parsed.includes('--mode') || parsed[parsed.indexOf('--mode') + 1] !== 'ask') {
