@@ -16,6 +16,13 @@ from unittest import mock
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
 _TOOLS_DIR = os.path.join(_REPO, "tools")
+_SKILL_DIR = os.path.join(_REPO, "skills", "ai-kit-spec-review")
+if _SKILL_DIR not in sys.path:
+    sys.path.insert(0, _SKILL_DIR)
+
+from ai_kit_spec import detection
+
+from tests import host_fakes
 
 
 def load_readers():
@@ -829,13 +836,13 @@ class TestFullCatalogRegression(_ScratchRuntimes):
         env = self._env()
         env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
         catalog = checks.build_catalog(env, runner=subprocess.run)
-        self.assertEqual(len(checks.CONFIG_DOCTOR_ROWS), 26)
+        self.assertEqual(len(checks.CONFIG_DOCTOR_ROWS), 28)
         self.assertEqual(
             self._runtimes(catalog),
             ["claude", "opencode", "codex", "cursor", "cross"],
         )
         total = sum(len(section["rows"]) for section in catalog["sections"])
-        self.assertEqual(total, 25)
+        self.assertEqual(total, 27)
         for section in catalog["sections"]:
             for row in section["rows"]:
                 display = row["current_display"]
@@ -843,6 +850,149 @@ class TestFullCatalogRegression(_ScratchRuntimes):
                 self.assertTrue(display)
                 self.assertIsNot(row["current_value"], None)
                 self.assertNotIn("<object object", display)
+
+
+_CBM_FIXTURES = (
+    "all six hosts registered",
+    "opencode.json only",
+    "OPENCODE_CONFIG only",
+    "OPENCODE_CONFIG disables the user registration",
+    "disabled entries",
+    "malformed claude entry",
+    "unreadable files",
+    "no files",
+)
+
+
+def _write_cbm_fixture(name, home):
+    """Synthetic codebase-memory-mcp registration files for one shared fixture under a scratch
+    HOME. Returns the env the fixture runs under."""
+    env = {"HOME": home}
+    hosts = list(checks.CBM_HOSTS)
+    entry = {"type": "local", "command": ["codebase-memory-mcp"]}
+    if name == "all six hosts registered":
+        host_fakes.write_cbm_registration(home, hosts)
+    elif name == "opencode.json only":
+        opencode_json = os.path.join(home, ".config", "opencode", "opencode.json")
+        _write(opencode_json, json.dumps({"mcp": {"codebase-memory-mcp": entry}}))
+    elif name == "OPENCODE_CONFIG only":
+        env["OPENCODE_CONFIG"] = os.path.join(home, "custom.json")
+        _write(env["OPENCODE_CONFIG"], json.dumps({"mcp": {"codebase-memory-mcp": entry}}))
+    elif name == "OPENCODE_CONFIG disables the user registration":
+        host_fakes.write_cbm_registration(home, ["opencode"])
+        env["OPENCODE_CONFIG"] = os.path.join(home, "custom.json")
+        disabled = {**entry, "enabled": False}
+        _write(env["OPENCODE_CONFIG"], json.dumps({"mcp": {"codebase-memory-mcp": disabled}}))
+    elif name == "disabled entries":
+        host_fakes.write_cbm_registration(home, hosts, disabled=("claude", "opencode", "codex"))
+    elif name == "malformed claude entry":
+        claude_json = os.path.join(home, ".claude.json")
+        _write(claude_json, json.dumps({"mcpServers": {"codebase-memory-mcp": "x"}}))
+    elif name == "unreadable files":
+        host_fakes.write_cbm_registration(home, hosts, unreadable=("cursor", "codex"))
+    return env
+
+
+def _detection_word(host, env):
+    """detection.cbm_registration as the same four state words the doctor shows."""
+    result = detection.cbm_registration(host, env)
+    if result.registered is None:
+        return "unknown"
+    if result.registered:
+        return "registered"
+    return "disabled" if result.detail.startswith("disabled in ") else "not registered"
+
+
+def _write_executable(path):
+    _write(path, "#!/bin/sh\nexit 0\n")
+    os.chmod(path, 0o755)
+
+
+def _snapshot(root):
+    """Relative path -> (mtime_ns, bytes) for every file under root."""
+    out = {}
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            full = os.path.join(dirpath, name)
+            with open(full, "rb") as handle:
+                out[os.path.relpath(full, root)] = (os.stat(full).st_mtime_ns, handle.read())
+    return out
+
+
+class TestCodeIndexRows(unittest.TestCase):
+    """The codebase-memory-mcp rows, and the doctor's copy of detection's path and state rules."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="ai-kit-cd-cbm-")
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+        self.bin_dir = os.path.join(self.home, "bin")
+        os.makedirs(self.bin_dir)
+        self.env = {"HOME": self.home, "PATH": self.bin_dir}
+
+    def test_cross_section_places_cbm_rows_before_global_block(self):
+        catalog = checks.build_catalog(self.env)
+        cross = [section for section in catalog["sections"] if section["runtime"] == "cross"]
+        ids = [row["id"] for row in cross[0]["rows"]]
+        self.assertEqual(ids[-3:], ["cbm-binary", "cbm-registration", "cbm-global-block"])
+
+    def test_binary_row_reads_missing_then_present(self):
+        row = _row_by_id(checks.build_catalog(self.env), "cbm-binary")
+        self.assertEqual(row["current_display"],
+                         f"missing; install: {checks.CBM_INSTALL_COMMAND}")
+        _write_executable(os.path.join(self.bin_dir, "codebase-memory-mcp"))
+        row = _row_by_id(checks.build_catalog(self.env), "cbm-binary")
+        self.assertEqual(row["current_display"], "present")
+
+    def test_registration_row_reads_each_host_state(self):
+        # cursor must be among the written hosts: the helper writes only the hosts it is given
+        host_fakes.write_cbm_registration(
+            self.home, ["claude", "cursor", "codex", "pi"],
+            unreadable=("cursor",), disabled=("codex",))
+        row = _row_by_id(checks.build_catalog(self.env), "cbm-registration")
+        self.assertEqual(row["current_display"], (
+            "claude: registered; opencode: not registered; cursor: unknown; "
+            "copilot: not registered; codex: disabled; "
+            "pi: registered (inferred from its extension file)"))
+
+    def test_reading_the_registration_writes_nothing(self):
+        host_fakes.write_cbm_registration(
+            self.home, list(checks.CBM_HOSTS), unreadable=("cursor",))
+        before = _snapshot(self.home)
+        checks.build_catalog(self.env)
+        self.assertEqual(_snapshot(self.home), before)
+
+    def test_registration_keys_match_detection(self):
+        self.assertEqual(detection.CBM_REGISTRATION_KEYS, checks.CBM_REGISTRATION_KEYS)
+
+    def test_config_paths_match_detection_per_host(self):
+        home = self.home
+        envs = [
+            {"HOME": home},
+            {"HOME": home, "OPENCODE_CONFIG_DIR": os.path.join(home, "oc")},
+            {"HOME": home, "XDG_CONFIG_HOME": os.path.join(home, "xdg")},
+            {"HOME": home, "OPENCODE_CONFIG": os.path.join(home, "custom.json")},
+            {"HOME": home, "COPILOT_HOME": os.path.join(home, "cp"),
+             "CODEX_HOME": os.path.join(home, "cx"),
+             "PI_CODING_AGENT_DIR": os.path.join(home, "pa")},
+            {"HOME": home, "OPENCODE_CONFIG_DIR": "rel-oc", "OPENCODE_CONFIG": "rel-custom.json"},
+        ]
+        for env in envs:
+            for host in checks.CBM_HOSTS:
+                with self.subTest(env=env, host=host):
+                    self.assertEqual(checks._cbm_config_paths(host, env),
+                                     detection._cbm_config_paths(host, env))
+        # a relative base must never become a cwd-relative read
+        self.assertEqual(checks._cbm_config_paths("opencode", envs[-1]), [])
+
+    def test_registration_states_match_detection_on_shared_fixtures(self):
+        for name in _CBM_FIXTURES:
+            home = tempfile.mkdtemp(prefix="ai-kit-cd-cbm-")
+            self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+            env = _write_cbm_fixture(name, home)
+            for host in checks.CBM_HOSTS:
+                with self.subTest(fixture=name, host=host):
+                    doctor = checks._cbm_host_state(host, checks._cbm_config_paths(host, env))
+                    self.assertEqual(_detection_word(host, env), doctor)
 
 
 def _parse_jsonc_via_reader(text):

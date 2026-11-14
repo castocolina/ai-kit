@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import tomllib
 from collections.abc import Callable
@@ -606,6 +607,138 @@ def read_cbm_global_block(ctx):
     return global_rules.summary(ctx.env)
 
 
+# codebase-memory-mcp replaced codegraph in Phase 32.5. Its own installer owns client wiring: the
+# rows below only read, and CBM_INSTALL_COMMAND is shown to the user, never run.
+CBM_NAME = "codebase-memory-mcp"
+CBM_INSTALL_COMMAND = (
+    "curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh "
+    "| bash"
+)
+CBM_HOSTS = ("claude", "opencode", "cursor", "copilot", "codex", "pi")
+# copied from ai_kit_spec.detection (tools/ never imports skills/); a drift test keeps them equal
+CBM_REGISTRATION_KEYS: dict[str, str | None] = {
+    "claude": "mcpServers",
+    "opencode": "mcp",
+    "cursor": "mcpServers",
+    "copilot": "mcpServers",
+    "codex": "mcp_servers",
+    "pi": None,
+}
+# detection parses every JSON host through its JSONC stripper, so the doctor reads them all as JSONC
+_CBM_READERS = {
+    "claude": config_doctor_readers.read_jsonc_checked,
+    "opencode": config_doctor_readers.read_jsonc_checked,
+    "cursor": config_doctor_readers.read_jsonc_checked,
+    "copilot": config_doctor_readers.read_jsonc_checked,
+    "codex": config_doctor_readers.read_toml_checked,
+}
+
+
+def _cbm_opencode_user_paths(env):
+    """opencode.json, then opencode.jsonc: under OPENCODE_CONFIG_DIR, else XDG_CONFIG_HOME/opencode
+    when that is absolute, else ~/.config/opencode. A relative base gives a relative path the
+    caller drops, so it never falls back to a cwd-relative read."""
+    base = env.get("OPENCODE_CONFIG_DIR", "")
+    if not base:
+        xdg = env.get("XDG_CONFIG_HOME", "")
+        if not os.path.isabs(xdg):
+            xdg = os.path.join(env.get("HOME", ""), ".config")
+        base = os.path.join(xdg, "opencode")
+    return [os.path.join(base, "opencode.json"), os.path.join(base, "opencode.jsonc")]
+
+
+# mirrors ai_kit_spec.detection._cbm_config_paths (tools/ never imports skills/); the parity test
+# in tests/test_config_doctor.py TestCodeIndexRows compares both, host by host
+def _cbm_config_paths(host, env):
+    """Registration files for one host, lowest precedence first; relative paths are dropped."""
+    home = env.get("HOME", "")
+    if host == "claude":
+        paths = [os.path.join(home, ".claude.json")]
+    elif host == "opencode":
+        paths = [*_cbm_opencode_user_paths(env), env.get("OPENCODE_CONFIG", "")]
+    elif host == "cursor":
+        paths = [os.path.join(home, ".cursor", "mcp.json")]
+    elif host == "copilot":
+        copilot_home = env.get("COPILOT_HOME") or os.path.join(home, ".copilot")
+        paths = [os.path.join(copilot_home, "mcp-config.json")]
+    elif host == "codex":
+        codex_home = env.get("CODEX_HOME") or os.path.join(home, ".codex")
+        paths = [os.path.join(codex_home, "config.toml")]
+    else:
+        pi_home = env.get("PI_CODING_AGENT_DIR") or os.path.join(home, ".pi", "agent")
+        paths = [os.path.join(pi_home, "extensions", "cbmem.ts")]
+    return [path for path in paths if os.path.isabs(path)]
+
+
+def _cbm_entry(data, key):
+    """("ok", entry), ("no entry", None) or ("unknown", None) for the codebase-memory-mcp table
+    under `key`: a servers key or an entry that is not a table is unknown."""
+    servers = data.get(key)
+    if servers is None:
+        return "no entry", None
+    if not isinstance(servers, dict):
+        return "unknown", None
+    entry = servers.get(CBM_NAME)
+    if entry is None:
+        return "no entry", None
+    if not isinstance(entry, dict):
+        return "unknown", None
+    return "ok", entry
+
+
+def _cbm_file_state(reader, path, key):
+    """One file's state word, or None when the file does not decide (no file, or no entry).
+    Only the parsed entry is read here; the file text never leaves the reader."""
+    state, data = reader(path)
+    if state == CONFIG_STATE_ABSENT:
+        return None
+    if state != CONFIG_STATE_OK:
+        return "unknown"
+    entry_state, entry = _cbm_entry(data, key)
+    if entry_state == "unknown":
+        return "unknown"
+    if entry is None:
+        return None
+    # both spellings occur in MCP client configs; opencode uses `enabled`
+    if entry.get("enabled") is False or entry.get("disabled") is True:
+        return "disabled"
+    return "registered"
+
+
+def _cbm_host_state(host, paths):
+    """"registered", "not registered", "disabled" or "unknown". The highest-precedence file that
+    holds the entry or cannot be read decides, as detection._cbm_decide does."""
+    if host == "pi":
+        # inferred: the installer-chosen extension file name, not a documented contract
+        return "registered" if paths and os.path.isfile(paths[0]) else "not registered"
+    reader = _CBM_READERS[host]
+    decided = "not registered"
+    for path in paths:
+        state = _cbm_file_state(reader, path, CBM_REGISTRATION_KEYS[host])
+        if state is not None:
+            decided = state
+    return decided
+
+
+def read_cbm_binary(ctx):
+    """Whether codebase-memory-mcp is on PATH; the binary is never run."""
+    path = ctx.env.get("PATH", "")
+    if path and shutil.which(CBM_NAME, path=path):
+        return "present"
+    return f"missing; install: {CBM_INSTALL_COMMAND}"
+
+
+def read_cbm_registration(ctx):
+    """Each host's registration as `host: state`; reads the config as data, never prints it."""
+    parts = []
+    for host in CBM_HOSTS:
+        state = _cbm_host_state(host, _cbm_config_paths(host, ctx.env))
+        if host == "pi" and state == "registered":
+            state = "registered (inferred from its extension file)"
+        parts.append(f"{host}: {state}")
+    return "; ".join(parts)
+
+
 # Playwright MCP browser row (30.1 R7, D-15). Paths are distro-standard install
 # locations named by the SPEC; tests patch these constants to scratch paths.
 PLAYWRIGHT_PLUGIN_ID = "playwright@claude-plugins-official"
@@ -1121,6 +1254,42 @@ CONFIG_DOCTOR_ROWS = [
         confidence="HIGH",
         why=('Adds a "Made with Cursor" trailer/footer to commits/PRs. Apply: yes, low-stakes.'),
         source=_CURSOR_CONFIG_SOURCE,
+    ),
+    CheckRow(
+        id="cbm-binary",
+        runtime="cross",
+        scope="global",
+        check="codebase-memory-mcp on PATH",
+        read=read_cbm_binary,
+        recommended="present",
+        confidence="HIGH",
+        why=(
+            "ai-kit's boundary step, lane guidance and code-exploration rule use "
+            "codebase-memory-mcp (it replaced codegraph in Phase 32.5). Apply: none; its own "
+            "installer installs it and wires each AI CLI."
+        ),
+        source="github.com/DeusData/codebase-memory-mcp README",
+        reads_section_file=False,
+    ),
+    CheckRow(
+        id="cbm-registration",
+        runtime="cross",
+        scope="global",
+        check="codebase-memory-mcp MCP registration per host",
+        read=read_cbm_registration,
+        recommended="registered on the hosts you use",
+        confidence="MEDIUM",
+        why=(
+            "Reads each host's user-level MCP config as data, as codebase-memory-mcp 0.12.1's "
+            "installer writes it (Claude ~/.claude.json mcpServers, opencode opencode.json, "
+            "opencode.jsonc and $OPENCODE_CONFIG mcp, Cursor ~/.cursor/mcp.json, Copilot "
+            "mcp-config.json, Codex config.toml mcp_servers): verified on one machine; another "
+            "version may write elsewhere. A switched-off entry reads disabled; pi has no MCP "
+            "config, so its state is inferred from the installer's extension file. ai-kit never "
+            "runs `codebase-memory-mcp install`. Apply: none."
+        ),
+        source="github.com/DeusData/codebase-memory-mcp README (client table); 32.5-RESEARCH",
+        reads_section_file=False,
     ),
     CheckRow(
         id="cbm-global-block",
