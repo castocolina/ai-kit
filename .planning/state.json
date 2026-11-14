@@ -64,6 +64,11 @@
       "status": "complete"
     },
     {
+      "number": "32.5",
+      "name": "codebase-memory-mcp replaces codegraph",
+      "status": "pending"
+    },
+    {
       "number": "33",
       "name": "One config design",
       "status": "pending"
@@ -191,8 +196,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (plan phase 33)",
-    "reason": "Phase 13 of 37 — needs a plan"
+    "label": "Advance to the next step",
+    "reason": "Phase 13 of 38 · 32% · executing"
   },
-  "updated_at": "2026-11-14T00:40:36.194Z"
+  "updated_at": "2026-11-14T14:47:32.627Z"
 }

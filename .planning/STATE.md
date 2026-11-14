@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 33
-current_phase_name: One config design
-status: planning
+current_phase: "32.5"
+current_phase_name: codebase-memory-mcp replaces codegraph (INSERTED)
+status: executing
 stopped_at: Phase 32.4 complete, ready to plan Phase 33
-last_updated: "2026-11-14T00:40:36.181Z"
+last_updated: "2026-11-14T14:47:32.615Z"
 last_activity: 2026-11-13
 last_activity_desc: Phase 32.4 complete, transitioned to Phase 33
-state_head: 6cf74c81905fa17dc13b7dd987e4da8defcea5b7
+state_head: 1e614fd9deec9d5b93f1cb7272c65cba3a388c79
 progress:
-  total_phases: 37
+  total_phases: 38
   completed_phases: 12
-  total_plans: 92
+  total_plans: 102
   completed_plans: 92
   percent: 32
 ---
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 33 — One config design
+Phase: 32.5 (codebase-memory-mcp replaces codegraph (INSERTED)) — READY TO EXECUTE
 Plan: Not started
-Status: Ready to plan
+Status: Ready to execute
 Last activity: 2026-11-13 — Phase 32.4 complete, transitioned to Phase 33
 
 Progress: [███░░░░░░░] 32%
