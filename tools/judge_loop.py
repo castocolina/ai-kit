@@ -6,7 +6,8 @@ Usage (from a git checkout, or pass --root):
                 [--judge-package DIR]
   judge_loop.py ingest --lane-dir DIR --records DIR
   judge_loop.py check RECORDS [--skills S ...] [--judges J ...] [--gate] [--require-current]
-  judge_loop.py report RECORDS
+  judge_loop.py report RECORDS (also writes RECORDS/facts.json, the evals and test-module
+                snapshot the report reads)
   judge_loop.py pool --loop L --native ID --probe-dir DIR --records DIR [--judges J ...]
   judge_loop.py count --loop L --records DIR [--skill S ...] [--no-jev] [--client PATH]
                 [--judge-package DIR]
@@ -189,15 +190,79 @@ def _load_mapper():
     return module
 
 
-def module_list(root, name):
+def build_module_index(root):
+    """The staged-mapper index of the root's tests/ folder; building it is the slow part."""
+    mapper = _load_mapper()
+    try:
+        return mapper.build_index(Path(root))
+    except mapper.MapperError as exc:
+        raise JudgeLoopError(str(exc)) from exc
+
+
+def module_list(root, name, index=None):
     """The test modules the commit hook runs when the skill changes, as sorted tests/<stem>.py."""
     mapper = _load_mapper()
     try:
-        found = mapper.covering_modules(mapper.build_index(Path(root)),
-                                        f"skills/{name}/SKILL.md")
+        if index is None:
+            index = mapper.build_index(Path(root))
+        found = mapper.covering_modules(index, f"skills/{name}/SKILL.md")
     except mapper.MapperError as exc:
         raise JudgeLoopError(str(exc)) from exc
     return sorted("tests/" + module.removeprefix("tests.") + ".py" for module in found)
+
+
+def _json_file(root, rel):
+    """The parsed JSON of a repo-relative file, None when absent; malformed JSON is named."""
+    path = Path(root) / rel
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise JudgeLoopError(f"{rel}: malformed eval file") from exc
+
+
+def _queries_ok(queries):
+    return isinstance(queries, list) and all(
+        isinstance(item, dict) and isinstance(item.get("should_trigger"), bool)
+        for item in queries)
+
+
+def tree_facts(root, name, index):
+    """One skill's eval and test facts as the working tree holds them now."""
+    evals_rel = f"skills/{name}/evals/evals.json"
+    queries_rel = f"skills/{name}/evals/trigger-queries.json"
+    evals = _json_file(root, evals_rel)
+    queries = _json_file(root, queries_rel)
+    evals_ok = isinstance(evals, dict) and isinstance(evals.get("evals"), list)
+    if evals is not None and not evals_ok:
+        raise JudgeLoopError(f"{evals_rel}: malformed eval file")
+    if queries is not None and not _queries_ok(queries):
+        raise JudgeLoopError(f"{queries_rel}: malformed eval file")
+    return {
+        "evals": None if evals is None else len(evals["evals"]),
+        "queries": None if queries is None else len(queries),
+        "near_misses": None if queries is None else sum(not q["should_trigger"] for q in queries),
+        "modules": module_list(root, name, index=index),
+    }
+
+
+def facts_snapshot(root, inputs):
+    """The facts of every judged skill, read once from the tree; report writes them beside it."""
+    index = build_module_index(root)
+    return {"schema": 1, "skills": {name: tree_facts(root, name, index)
+                                    for name in _report_order(inputs)}}
+
+
+def load_facts(records):
+    """The facts snapshot beside the records, or None when report has not written one."""
+    path = Path(records) / FACTS_NAME
+    if not path.is_file():
+        return None
+    data = _load_json(path)
+    if not (isinstance(data, dict) and isinstance(data.get("skills"), dict)):
+        raise JudgeLoopError(f"{FACTS_NAME}: malformed; {REPORT_HINT}")
+    return data
 
 
 # ─── the prompt ───────────────────────────────────────────────────────────────
@@ -624,6 +689,9 @@ RECORD_TYPES = (("skill", str), ("judge", str), ("digest", str), ("round", int),
 REFUTATION_FIELDS = ("finding", "location", "command", "output")
 SERIOUS = ("critical", "high")
 REPORT_NAME = "REJUDGE.md"
+FACTS_NAME = "facts.json"
+EVALS_HEADER = ["Skill", "evals.json", "Trigger queries", "Near-misses", "Test modules",
+                "Brought to the bar by"]
 REPORT_HINT = "run: python3 tools/judge_loop.py report <records>"
 REPORT_HEADER = "\n".join([
     "# Re-judge report",
@@ -1140,6 +1208,42 @@ def _refuted_lines(records):
     return ["## Refuted findings", *_table(REFUTED_HEADER, rows)]
 
 
+def _brought_by(name, inputs, state, has_evals):
+    """The phase that brings a skill to the bar: '-' when it has evals and meets the bar."""
+    worst = state["worst"]
+    meets = worst is not None and bar_with_base(
+        worst, state["refutations"], state["scored"], state["prior"])[0] != 0
+    if has_evals and meets:
+        return "-"
+    return (inputs["skills"][name].get("deferred") or {}).get("text") or "not named"
+
+
+def _evals_row(name, row, deferred):
+    evals, queries, near_misses = row["evals"], row["queries"], row["near_misses"]
+    return [name,
+            "none" if evals is None else f"{evals} evals",
+            str(queries) if queries is not None else "none",
+            str(near_misses) if near_misses is not None else "none",
+            len(row["modules"]), deferred]
+
+
+def _evals_lines(records, states, inputs):
+    """The Evals and tests section, read from the facts snapshot beside the records."""
+    facts = load_facts(records)
+    if facts is None:
+        return ["## Evals and tests", "", f"No facts snapshot; {REPORT_HINT}"]
+    rows, module_lines = [], []
+    for state in states:
+        name = state["name"]
+        if name not in facts["skills"]:
+            raise JudgeLoopError(f"{FACTS_NAME} has no entry for {name}; {REPORT_HINT}")
+        row = facts["skills"][name]
+        deferred = _brought_by(name, inputs, state, row["evals"] is not None)
+        rows.append(_evals_row(name, row, deferred))
+        module_lines.append(f"- {name}: {', '.join(row['modules']) or NO_TEST_LINE}")
+    return ["## Evals and tests", *_table(EVALS_HEADER, rows), "", *module_lines]
+
+
 def render_report(records):
     """The report text, a pure function of the records folder (no git, no clock, no path)."""
     records = Path(records)
@@ -1155,6 +1259,7 @@ def render_report(records):
                    *_table(JUDGED_HEADER, [_judged_row(s) for s in states])]),
         "\n".join(["## Verdicts", *_table(VERDICT_HEADER, verdict_rows)]),
         "\n".join(["## Judge count inputs", *_table(COUNT_HEADER, count_rows)]),
+        "\n".join(_evals_lines(records, states, inputs)),
         "\n".join(_pool_lines(records)),
         "\n".join(["## Excluded skills", *_table(["Skill", "Reason"], excluded)]),
         "\n".join(_history_lines(states, inputs)),
@@ -1330,21 +1435,42 @@ def _report_problems(records, problems):
         problems.append(f"REJUDGE.md differs from the records; {REPORT_HINT}")
 
 
+def _facts_drift(root, records, names):
+    """(problems, notes): a moved tree is a note; a malformed eval file is a problem."""
+    try:
+        recorded = load_facts(records)
+        if recorded is None:
+            return [], []
+        index = build_module_index(root)
+        notes = []
+        for name in names:
+            if name not in recorded["skills"]:
+                continue  # a missing entry is a problem of the report check, not a drift note
+            if recorded["skills"][name] != tree_facts(root, name, index):
+                notes.append(f"{name}: facts drift (evals, trigger queries or test modules "
+                             f"changed after the last report; {REPORT_HINT})")
+        return [], notes
+    except JudgeLoopError as exc:
+        return [str(exc)], []
+
+
 def check(root, records, opts):
     """(lines, problems, notes) for the records: every round, each bar and digest, the report."""
     records = Path(records)
     inputs = load_inputs(records)
     judges = tuple(opts.judges) or tuple(_default_judges(records))
     opts = opts._replace(judges=judges)
+    names = tuple(opts.skills) or tuple(_report_order(inputs))
     lines, problems, notes = [], [], []
-    for skill in tuple(opts.skills) or tuple(_report_order(inputs)):
+    for skill in names:
         line, found, noted = _check_skill(root, records, inputs, skill, opts)
         if line is not None:
             lines.append(line)
         problems += found
         notes += noted
     _report_problems(records, problems)
-    return lines, problems, notes
+    drift_problems, drift_notes = _facts_drift(root, records, names)
+    return lines, problems + drift_problems, notes + drift_notes
 
 
 # ─── the judge pool ───────────────────────────────────────────────────────────
@@ -1686,6 +1812,12 @@ def _old_ok(old):
             and isinstance(old.get("source"), str))
 
 
+def _deferred_ok(deferred):
+    return (isinstance(deferred, dict)
+            and all(isinstance(deferred.get(key), str) and deferred[key]
+                    for key in ("text", "source")))
+
+
 def _entry_error(name, entry):
     """The shape problem of one skills entry, or None."""
     batch = entry.get("batch") if isinstance(entry, dict) else None
@@ -1698,6 +1830,8 @@ def _entry_error(name, entry):
         return f"skill {name} has a malformed last_v4"
     if entry.get("old_score") is not None and not _old_ok(entry["old_score"]):
         return f"skill {name} has a malformed old_score"
+    if entry.get("deferred") is not None and not _deferred_ok(entry["deferred"]):
+        return f"skill {name} has a malformed deferred"
     return None
 
 
@@ -1802,6 +1936,7 @@ def _cmd_check(args, root):
 def _cmd_report(args, root):
     records = _abs(root, args.records)
     path = records / REPORT_NAME
+    atomic_write_json(records / FACTS_NAME, facts_snapshot(root, load_inputs(records)))
     atomic_write_text(path, render_report(records))
     print(f"{PREFIX} report written: {path}")
     return 0

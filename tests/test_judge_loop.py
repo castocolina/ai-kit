@@ -326,7 +326,9 @@ class ReportFixture(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(prefix="judge-loop-report-")
         self.addCleanup(temp.cleanup)
         self.base = Path(temp.name)
-        self.repo = make_repo(self.base, {f"skills/{n}/SKILL.md": "demo\n" for n in DEMO_SKILLS})
+        files = {f"skills/{n}/SKILL.md": "demo\n" for n in DEMO_SKILLS}
+        files["tests/test_demo.py"] = 'SKILLS = ("demo-a", "demo-b")\n'
+        self.repo = make_repo(self.base, files)
         self.records = self.base / "rec"
         recs = [
             make_record("32", "demo-a", 1, "cli-a:model-a",
@@ -439,6 +441,107 @@ class TestReport(ReportFixture):
         with self.assertRaises(judge_loop.JudgeLoopError) as caught:
             self._render()
         self.assertEqual(str(caught.exception), "demo-d: no verdict records")
+
+
+class TestEvalsAndTests(ReportFixture):
+    def setUp(self):
+        super().setUp()
+        evals = self.repo / "skills" / "demo-a" / "evals"
+        evals.mkdir(parents=True, exist_ok=True)
+        (evals / "evals.json").write_text(
+            json.dumps({"skill_name": "demo-a", "evals": [{"id": 1}, {"id": 2}, {"id": 3}]}),
+            encoding="utf-8")
+        self._write_queries("demo-a", [True, True, False, False])
+        self._write_queries("demo-b", [True] * 16)
+        inputs = demo_inputs()
+        inputs["skills"]["demo-a"]["deferred"] = {"text": "Phase 98", "source": "fixture"}
+        inputs["skills"]["demo-c"]["deferred"] = {"text": "Phase 99", "source": "fixture"}
+        judge_loop.atomic_write_json(self.records / "inputs.json", inputs)
+
+    def _write_queries(self, skill, flags):
+        folder = self.repo / "skills" / skill / "evals"
+        folder.mkdir(parents=True, exist_ok=True)
+        queries = [{"query": f"q{i}", "should_trigger": flag}
+                   for i, flag in enumerate(flags, start=1)]
+        (folder / "trigger-queries.json").write_text(json.dumps(queries), encoding="utf-8")
+
+    def test_report_writes_facts_and_the_section(self):
+        code, out = self._report()
+        self.assertEqual(code, 0, out)
+        facts = json.loads((self.records / "facts.json").read_text(encoding="utf-8"))
+        self.assertEqual(facts, {"schema": 1, "skills": {
+            "demo-a": {"evals": 3, "queries": 4, "near_misses": 2,
+                       "modules": ["tests/test_demo.py"]},
+            "demo-b": {"evals": None, "queries": 16, "near_misses": 0,
+                       "modules": ["tests/test_demo.py"]},
+            "demo-c": {"evals": None, "queries": None, "near_misses": None, "modules": []}}})
+        text = (self.records / judge_loop.REPORT_NAME).read_text(encoding="utf-8")
+        self.assertIn("## Evals and tests", text)
+        self.assertIn("| Skill | evals.json | Trigger queries | Near-misses | Test modules | "
+                      "Brought to the bar by |", text)
+        self.assertIn("| demo-a | 3 evals | 4 | 2 | 1 | - |", text)
+        self.assertIn("| demo-c | none | none | none | 0 | Phase 99 |", text)
+        self.assertIn("| demo-b | none | 16 | 0 | 1 | not named |", text)
+        self.assertIn("- demo-a: tests/test_demo.py", text)
+        self.assertIn("- demo-c: no script test found", text)
+        self.assertLess(text.index("| demo-a | 3 evals"), text.index("| demo-c | none"))
+        self.assertLess(text.index("| demo-c | none"), text.index("| demo-b | none"))
+        section = text.split("## Evals and tests", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("aa-fold", section)
+        self.assertNotIn("zz-rules", section)
+
+    def test_render_is_byte_stable_and_check_passes(self):
+        self._report()
+        text = self._render()
+        self.assertEqual(text, self._render())
+        self.assertEqual((self.records / judge_loop.REPORT_NAME).read_text(encoding="utf-8"),
+                         text)
+        code, out = self._check("--skills", "demo-a", "demo-b", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 0, out)
+
+    def test_without_facts_the_section_says_how_to_create_them(self):
+        self.assertIn("No facts snapshot; run: python3 tools/judge_loop.py report <records>",
+                      self._render())
+
+    def test_a_malformed_deferred_entry_is_refused(self):
+        inputs = demo_inputs()
+        inputs["skills"]["demo-a"]["deferred"] = {"text": "", "source": "fixture"}
+        judge_loop.atomic_write_json(self.records / "inputs.json", inputs)
+        with self.assertRaises(judge_loop.JudgeLoopError) as caught:
+            judge_loop.load_inputs(self.records)
+        self.assertEqual(str(caught.exception),
+                         "inputs.json: skill demo-a has a malformed deferred")
+
+    def test_a_malformed_eval_file_fails_report_naming_its_path(self):
+        (self.repo / "skills" / "demo-a" / "evals" / "evals.json").write_text(
+            "{not json", encoding="utf-8")
+        code, out = self._report()
+        self.assertEqual(code, 1)
+        self.assertIn("skills/demo-a/evals/evals.json", out)
+
+    def test_a_tree_change_after_the_report_is_a_drift_note(self):
+        self._report()
+        self._write_queries("demo-b", [True] * 17)
+        code, out = self._check("--skills", "demo-a", "demo-b", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 0, out)
+        self.assertIn("demo-b: facts drift", out)
+
+    def test_a_malformed_eval_file_fails_check_naming_its_path(self):
+        self._report()
+        (self.repo / "skills" / "demo-a" / "evals" / "trigger-queries.json").write_text(
+            "{not json", encoding="utf-8")
+        code, out = self._check("--skills", "demo-a", "demo-b", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 1)
+        self.assertIn("skills/demo-a/evals/trigger-queries.json", out)
+
+    def test_drift_is_computed_only_for_the_checked_skills(self):
+        self._report()
+        self._write_queries("demo-b", [True] * 17)
+        _code, out = self._check("--skills", "demo-a")
+        self.assertNotIn("demo-b: facts drift", out)
 
 
 class TestCheck(ReportFixture):
