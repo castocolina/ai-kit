@@ -61,8 +61,7 @@ CBM = "codebase-memory-mcp"
 # printed, never run: the upstream installer owns the client wiring
 CBM_INSTALL = ("curl -fsSL https://raw.githubusercontent.com/DeusData/"
                "codebase-memory-mcp/main/install.sh | bash")
-# codegraph's old index folder (codebase-memory-mcp replaced it): left in place, never removed
-LEGACY_INDEX_DIR = ".codegraph"
+LEGACY_INDEX_DIR = ".codegraph"  # codebase-memory-mcp replaced codegraph; never removed
 _CBM_GAPS = (("not_indexed_files_count", "files not indexed"), ("skipped_count", "skipped"),
              ("parse_partial_count", "partly parsed"), ("parse_unusable_count", "unusable"))
 
@@ -116,9 +115,9 @@ def _cbm_projects(exe, top, run):
             data = json.loads(out) if rc == 0 else None
         except ValueError:
             data = None
-        page = data.get("projects") if isinstance(data, dict) else None
-        if not isinstance(page, list):
+        if not isinstance(data, dict) or not isinstance(data.get("projects"), list):
             break
+        page = data["projects"]
         page = [row for row in page if isinstance(row, dict)]
         rows += page
         if not data.get("has_more") or not page:

@@ -187,7 +187,7 @@ class TestDoctorRow(_ScratchHome):
         self.assertEqual(config_doctor_checks.read_cbm_global_block(self.ctx()),
                          "codebase-memory-mcp block")
 
-    def test_apply_is_offered_only_while_a_codegraph_block_can_change(self):
+    def test_apply_is_offered_only_while_a_legacy_block_can_change(self):
         row = next(r for r in config_doctor_checks.CONFIG_DOCTOR_ROWS if r.id == "cbm-global-block")
         self.assertFalse(config_doctor_checks.evaluate_row(row, self.ctx())["apply_eligible"])
         self.write_one("claude", global_rules.CBM_START + b"\nx\n" + global_rules.CBM_END)
@@ -325,8 +325,8 @@ class TestEdges(_ScratchHome):
                 ok, lines = global_rules.apply(self.env, False)
                 self.assertTrue(ok, lines)
                 self.assertEqual(self.read("claude"), expected)
-                self.assertTrue(any("removed the leftover codegraph block" in line
-                                    for line in lines), lines)
+                done = "removed the leftover codegraph block beside the codebase-memory-mcp block"
+                self.assertTrue(any(done in line for line in lines), lines)
         self.assertEqual(len(self.backups()), 4)
 
     def test_overlapping_blocks_are_skipped_byte_equal(self):

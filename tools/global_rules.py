@@ -172,8 +172,8 @@ def preview_lines(changes) -> list[str]:
             lines.extend(_old_block_lines(change.before))
             lines.extend(f"  + {line}" for line in AIKIT_BLOCK.decode("utf-8").splitlines())
         elif change.status == "remove":
-            lines.append(f"{head}: remove the leftover codegraph block "
-                         "(the codebase-memory-mcp block stays)")
+            lines.append(f"{head}: remove the leftover codegraph block (the codebase-memory-mcp "
+                         "block stays)")
             lines.extend(_old_block_lines(change.before))
         elif change.status == "already":
             lines.append(f"{head}: already holds the codebase-memory-mcp block")
@@ -300,7 +300,8 @@ def _write_change(change: Change, directory, when, before_replace) -> tuple[bool
         _replace_file(real, change.after)
     except OSError as exc:
         return False, f"{head}: write failed ({exc.strerror or exc}); not written"
-    done = ("removed the leftover codegraph block" if change.status == "remove"
+    done = ("removed the leftover codegraph block beside the codebase-memory-mcp block"
+            if change.status == "remove"
             else "replaced the codegraph block with the codebase-memory-mcp block")
     return True, f"{head}: {done} (backup {backup})"
 

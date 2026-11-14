@@ -789,7 +789,8 @@ def _playwright_apply_when(ctx):
 
 
 def _cbm_global_block_apply_when(ctx):
-    """True only while some global file holds a codegraph block Apply can replace or remove."""
+    """True only while a global file holds a codegraph block that the codebase-memory-mcp
+    migration can replace or remove."""
     return any(c.status in global_rules.WRITE_STATUSES for c in global_rules.plan_changes(ctx.env))
 
 
@@ -1310,8 +1311,8 @@ CONFIG_DOCTOR_ROWS = [
             "leftover codegraph 1.6.2 installer block with the codebase-memory-mcp block "
             "between the markers codebase-memory-mcp 0.12.1's installer uses "
             "(read from its binary, not its docs); a file that already holds that block keeps "
-            "it, and a complete codegraph block beside it is removed. "
-            "Apply: offered only while a codegraph block can be replaced or removed; "
+            "it, and a complete codegraph block beside codebase-memory-mcp's is removed. "
+            "Apply: offered only while a codegraph block can give way to codebase-memory-mcp; "
             "changes only that block, backup first."
         ),
         source="tools/global_rules.py",
