@@ -39,9 +39,10 @@ TOOLS = (
          "package manager)", False),
     Tool("gh-stack", "gh", "gh", ("gh", "extension", "install", "github/gh-stack"),
          "gh extension install github/gh-stack", True),
-    Tool("codegraph", None, "pnpm", ("pnpm", "add", "-g", "@colbymchenry/codegraph"),
-         "install codegraph (@colbymchenry/codegraph, github.com/colbymchenry/codegraph) "
-         "with its own installer", False),
+    Tool("codebase-memory-mcp", None, "", (),
+         "install it with its own installer, which also wires each AI CLI: "
+         "curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/"
+         "install.sh | bash (github.com/DeusData/codebase-memory-mcp)", False),
     Tool("graphify", None, "uv", ("uv", "tool", "install", "graphifyy"),
          "uv tool install graphifyy", True),
 )
@@ -116,6 +117,9 @@ def _tool_step(tool, env, runner, root, out):
     if _present(tool, env, runner, root):
         out(f"{tool.name}: present (left alone)")
         return "present"
+    if not tool.install:
+        out(f"{tool.name}: not installed; manual: {tool.manual}")
+        return "manual"
     if tool.needs and not _on_path(tool.needs, env):
         out(f"{tool.name}: skipped: {tool.needs} is not available; manual: {tool.manual}")
         return "manual"

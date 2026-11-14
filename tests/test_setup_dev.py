@@ -34,7 +34,7 @@ def _executable(path):
     os.chmod(path, 0o755)
 
 
-def _scratch_bin(root, with_tools=("uv", "brew", "pnpm")):
+def _scratch_bin(root, with_tools=("uv", "brew")):
     bin_dir = os.path.join(root, "bin dir")
     os.mkdir(bin_dir)
     for name in with_tools:
@@ -94,50 +94,58 @@ class TestSetupDevGuardedSteps(unittest.TestCase):
         rc = setup_dev.run(self.env, runner=runner, out=lines.append, root=self.root)
         return rc, lines
 
-    def test_fresh_run_installs_four_reports_one_and_exits_zero(self):
-        fake = _FakeInstallers(self.bin_dir, fail={("pnpm",): 1})
+    def test_fresh_run_installs_three_and_reports_two_manual_steps(self):
+        fake = _FakeInstallers(self.bin_dir, fail={("uv", "tool", "install", "graphifyy"): 1})
         rc, lines = self._run(fake)
         self.assertEqual(rc, 0)
-        self.assertTrue(any(line.startswith("codegraph: install failed (exit 1); manual:")
+        self.assertTrue(any(line.startswith("graphify: install failed (exit 1); manual:")
                             for line in lines), lines)
+        self.assertTrue(any(line.startswith(
+            "codebase-memory-mcp: not installed; manual: install it with its own installer")
+            for line in lines), lines)
         self.assertTrue(any(line.startswith("gh: installed") and "[unverified command]" in line
                             for line in lines), lines)
         self.assertIn("hooks: installed (uv run pre-commit install)", lines)
-        self.assertEqual(lines[-1], "setup-dev: 4 installed, 0 present, 1 need a manual step")
+        self.assertEqual(lines[-1], "setup-dev: 3 installed, 0 present, 2 need a manual step")
         installs = fake.installs()
         self.assertEqual(installs[0], "uv sync")
         self.assertEqual(installs[-1], "uv run pre-commit install")
         order = [item for item in installs if item.startswith(
-            ("uv tool install", "brew install", "gh extension install", "pnpm add"))]
+            ("uv tool install", "brew install", "gh extension install"))]
         self.assertEqual(order, ["uv tool install pre-commit", "brew install gh",
                                  "gh extension install github/gh-stack",
-                                 "pnpm add -g @colbymchenry/codegraph",
                                  "uv tool install graphifyy"])
+        self.assertFalse(any("codebase-memory-mcp" in item or "curl" in item
+                             for item in installs), installs)
         lock = os.path.join(self.root, ".git", "ai-kit-setup-dev.lock")
         self.assertTrue(os.path.exists(lock))
 
     def test_second_run_retries_only_the_failed_tool(self):
-        first = _FakeInstallers(self.bin_dir, fail={("pnpm",): 1})
+        fail = {("uv", "tool", "install", "graphifyy"): 1}
+        first = _FakeInstallers(self.bin_dir, fail=fail)
         self._run(first)
-        second = _FakeInstallers(self.bin_dir, fail={("pnpm",): 1})
+        second = _FakeInstallers(self.bin_dir, fail=fail)
+        second.extensions = first.extensions  # the extension installed by run one stays installed
         rc, lines = self._run(second)
         self.assertEqual(rc, 0)
-        self.assertEqual(second.installs()[-2:], ["pnpm add -g @colbymchenry/codegraph",
+        self.assertEqual(second.installs()[-2:], ["uv tool install graphifyy",
                                                   "uv run pre-commit install"])
-        self.assertFalse(any(item.startswith(("uv tool install", "brew install"))
+        self.assertFalse(any(item == "uv tool install pre-commit" or item.startswith("brew install")
+                             or item.startswith("gh extension install")
                              for item in second.installs()))
         self.assertIn("pre-commit: present (left alone)", lines)
-        self.assertTrue(any(line.startswith("codegraph: install failed") for line in lines))
+        self.assertTrue(any(line.startswith("graphify: install failed") for line in lines))
 
     def test_timeout_and_permission_are_reported_and_exit_zero(self):
         fake = _FakeInstallers(
             self.bin_dir,
-            raise_for={("pnpm",): subprocess.TimeoutExpired(["pnpm"], 600),
-                       ("brew",): OSError(errno.EACCES, "Permission denied")})
+            raise_for={
+                ("uv", "tool", "install", "graphifyy"): subprocess.TimeoutExpired(["uv"], 600),
+                ("brew",): OSError(errno.EACCES, "Permission denied")})
         rc, lines = self._run(fake)
         self.assertEqual(rc, 0)
         self.assertTrue(any(line.startswith(
-            "codegraph: install timed out after 600 s; manual:") for line in lines), lines)
+            "graphify: install timed out after 600 s; manual:") for line in lines), lines)
         self.assertTrue(any(line.startswith(
             "gh: install failed (Permission denied); manual:") for line in lines), lines)
         self.assertTrue(any(line.startswith("gh-stack: skipped: gh is not available")
@@ -153,7 +161,7 @@ class TestSetupDevGuardedSteps(unittest.TestCase):
         self.assertTrue(any(item.startswith("uv tool install") for item in fake.installs()))
 
     def test_no_uv_reports_manual_steps_without_running_anything(self):
-        for name in ("uv", "brew", "pnpm"):
+        for name in ("uv", "brew"):
             os.remove(os.path.join(self.bin_dir, name))
         fake = _FakeInstallers(self.bin_dir)
         rc, lines = self._run(fake)
@@ -162,6 +170,14 @@ class TestSetupDevGuardedSteps(unittest.TestCase):
         self.assertIn("hooks: not run: no uv; manual: make dev", lines)
         self.assertTrue(any(line.startswith("gh: not installed: no brew") for line in lines))
         self.assertEqual(fake.installs(), [])
+
+    def test_index_tool_on_path_is_left_alone(self):
+        _executable(os.path.join(self.bin_dir, "codebase-memory-mcp"))
+        fake = _FakeInstallers(self.bin_dir)
+        rc, lines = self._run(fake)
+        self.assertEqual(rc, 0)
+        self.assertIn("codebase-memory-mcp: present (left alone)", lines)
+        self.assertFalse(any("codebase-memory-mcp" in item for item in fake.installs()))
 
     def test_installer_argv_never_uses_sudo_or_a_shell(self):
         for tool in setup_dev.TOOLS:
@@ -243,8 +259,6 @@ if name == "uv" and argv[:2] == ["tool", "install"]:
     make({{"graphifyy": "graphify"}}.get(argv[2], argv[2]))
 elif name == "brew" and argv[:2] == ["install", "gh"]:
     make("gh")
-elif name == "pnpm" and argv[:3] == ["add", "-g", "@colbymchenry/codegraph"]:
-    make("codegraph")
 elif name == "gh" and argv[:2] == ["extension", "install"]:
     open(os.path.join(state, "gh-stack"), "w", encoding="utf-8").close()
 elif name == "gh" and argv[:2] == ["extension", "list"]:
@@ -257,7 +271,6 @@ INSTALLS = (
     "uv tool install pre-commit",
     "brew install gh",
     "gh extension install github/gh-stack",
-    "pnpm add -g @colbymchenry/codegraph",
     "uv tool install graphifyy",
 )
 
@@ -273,7 +286,7 @@ class TestSetupDevRealProcesses(unittest.TestCase):
         shutil.copy(os.path.join(_ROOT, "tools", "setup_dev.py"),
                     os.path.join(self.repo, "tools", "setup_dev.py"))
         self.bin_dir = _scratch_bin(self.repo, with_tools=())
-        for name in ("uv", "brew", "pnpm"):
+        for name in ("uv", "brew"):
             path = os.path.join(self.bin_dir, name)
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(FAKE_TOOL.format(python=sys.executable))
@@ -320,7 +333,7 @@ class TestSetupDevRealProcesses(unittest.TestCase):
                       completed.stdout)
         self.assertIn("gh: installed (brew install gh) [unverified command]", completed.stdout)
         self.assertEqual(completed.stdout.splitlines()[-1],
-                         "setup-dev: 5 installed, 0 present, 0 need a manual step")
+                         "setup-dev: 4 installed, 0 present, 1 need a manual step")
 
 
 if __name__ == "__main__":
