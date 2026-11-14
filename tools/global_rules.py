@@ -2,8 +2,8 @@
 
 Applies to the four global instruction files. A file that already holds a
 codebase-memory-mcp block keeps it and every other byte; a complete codegraph block
-beside it is removed with one adjacent blank-line separator. Bytes in and bytes out, with a backup
-written before each file. The only writer of those files in ai-kit (SPEC R11, D-11).
+beside it is removed (`_plan_remove` states the line rule). Bytes in and bytes out, with a
+backup written before each file. The only writer of those files in ai-kit (SPEC R11, D-11).
 Stdlib only; never imports setup.py.
 """
 
@@ -78,25 +78,25 @@ def _read(path: str) -> bytes:
 
 
 def _plan_remove(host: str, path: str, data: bytes, cbm, legacy) -> Change:
-    """A file with both blocks: drop the legacy block and one adjacent blank-line separator,
-    every other byte equal. A legacy block that overlaps the codebase-memory-mcp block is skipped
-    whole (ambiguous), never cut."""
+    """A file with both blocks: drop the legacy block's lines, every other byte equal.
+
+    The block's own line ending goes with it; a blank line left on both sides collapses to one
+    (or to none at the start of the file); a block that ended the file leaves the file ending the
+    way it ended before (one line ending, or none). A legacy block that overlaps the
+    codebase-memory-mcp block is skipped whole (ambiguous), never cut."""
     cbm_from, cbm_to = cbm[0] - len(CBM_START), cbm[1] + len(CBM_END)
     begin, end = legacy[0] - len(LEGACY_START), legacy[1] + len(LEGACY_END)
     if not (end <= cbm_from or begin >= cbm_to):
         return Change(host, path, "ambiguous", data, None)
     head, rest = data[:begin], data[end:]
-    blank = re.match(rb"(?:\r?\n){2}", rest)
-    if blank:
+    ending = re.match(rb"\r?\n", rest)
+    if ending:
+        rest = rest[ending.end() :]
+    blank = re.match(rb"\r?\n", rest)
+    if not rest:
+        head = head.rstrip(b"\r\n") + (ending.group(0) if ending and head.strip() else b"")
+    elif blank and (not head or re.search(rb"\r?\n\r?\n$", head)):
         rest = rest[blank.end() :]
-    else:
-        newline = re.match(rb"\r?\n", rest)
-        if newline:
-            rest = rest[newline.end() :]
-        if not rest:  # the block ended the file: its separator goes with it
-            trail = re.search(rb"\r?\n$", head)
-            if trail:
-                head = head[: trail.start()]
     return Change(host, path, "remove", data, head + rest)
 
 

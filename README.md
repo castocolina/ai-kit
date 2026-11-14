@@ -636,7 +636,8 @@ explicitly requested:
 - `--with-global-rules` — replaces a leftover codegraph block (`<!-- CODEGRAPH_START -->`, from before codebase-memory-mcp replaced codegraph)
   with ai-kit's codebase-memory-mcp block in the four global instruction files (Claude `CLAUDE.md`,
   Codex `AGENTS.md`, Gemini `GEMINI.md`, opencode `AGENTS.md`). A file that already holds a
-  codebase-memory-mcp block is left as it is; each file is backed up first
+  codebase-memory-mcp block keeps it and every other byte; a leftover codegraph block beside it is
+  removed (the codebase-memory-mcp block stays). Each file is backed up first
   to `${XDG_STATE_HOME:-~/.local/state}/ai-kit/backups/global-rules/`. A bare
   `--headless` never touches these files, and `--dry-run` only previews the change.
   The config doctor row `cbm-global-block` reports which block each file holds; the rows

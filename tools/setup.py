@@ -4818,7 +4818,7 @@ def _headless_replace(paths, entries, skills_flag, dry, counts):
 
 def _headless_apply_global_rules(env, dry):
     """--with-global-rules: replace a leftover codegraph block with the codebase-memory-mcp
-    block in the four global files.
+    block in the four global files, or remove it where a codebase-memory-mcp block is there.
 
     Prints one line per file (and the preview under --dry-run); False when a backup or
     write failed. Skips (missing file, no block) are not failures."""
@@ -5223,7 +5223,8 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
         "--with-global-rules", action="store_true",
         help=(
             "(--headless only) replace a leftover codegraph block with the codebase-memory-mcp "
-            "block in the global instruction files (backup first; --dry-run previews)"
+            "block in the global instruction files, or remove it beside an existing "
+            "codebase-memory-mcp block (backup first; --dry-run previews)"
         ),
     )
     parser.add_argument("--hooks", default=None, metavar="<id[:host],...>",

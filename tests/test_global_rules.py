@@ -318,6 +318,13 @@ class TestEdges(_ScratchHome):
                        b"top\n\n" + cbm + b"\ntail\n"),
             "at the end": (cbm + b"\n" + legacy, cbm),
             "tight": (b"top\n" + legacy + b"\n" + cbm, b"top\n" + cbm),
+            # an installer appends its block after a blank line: the final newline stays
+            "appended": (cbm + b"\n\n" + legacy + b"\n", cbm + b"\n"),
+            "appended crlf": (cbm + b"\r\n" + legacy + b"\r\n", cbm + b"\r\n"),
+            # paragraphs on both sides stay apart; blank lines on both sides collapse to one
+            "between paragraphs": (b"A\n" + legacy + b"\n\nB\n" + cbm, b"A\n\nB\n" + cbm),
+            "blank both sides": (b"A\n\n" + legacy + b"\n\nB\n" + cbm, b"A\n\nB\n" + cbm),
+            "at the start": (legacy + b"\n\n" + cbm + b"\n", cbm + b"\n"),
         }
         for name, (body, expected) in cases.items():
             with self.subTest(name):
@@ -327,7 +334,7 @@ class TestEdges(_ScratchHome):
                 self.assertEqual(self.read("claude"), expected)
                 done = "removed the leftover codegraph block beside the codebase-memory-mcp block"
                 self.assertTrue(any(done in line for line in lines), lines)
-        self.assertEqual(len(self.backups()), 4)
+        self.assertEqual(len(self.backups()), len(cases))
 
     def test_overlapping_blocks_are_skipped_byte_equal(self):
         body = (global_rules.CBM_START + b"\n" + LEGACY_START + b"\n" + global_rules.CBM_END
