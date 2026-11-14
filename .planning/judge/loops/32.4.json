@@ -1,0 +1,100 @@
+{
+ "counts": {
+  "ai-kit-gsd-curated-config": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": {
+    "critical": 0,
+    "high": 0,
+    "judged_at": "d7bca418ab90672b67116272a4a6022fc2dab2f8",
+    "percent": 82.4,
+    "source": "verdicts/32/ai-kit-gsd-curated-config/r1/opencode_router-env_my-referee-three.json"
+   },
+   "reasons": [
+    "last percent 82.4 is within 7.0 points of 80"
+   ]
+  },
+  "ai-kit-gsd-spec-discuss": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": {
+    "critical": 0,
+    "high": 0,
+    "judged_at": "d7bca418ab90672b67116272a4a6022fc2dab2f8",
+    "percent": 84.8,
+    "source": "verdicts/32/ai-kit-gsd-spec-discuss/r1/native_opus-xhigh.json"
+   },
+   "reasons": [
+    "last percent 84.8 is within 7.0 points of 80"
+   ]
+  },
+  "ai-kit-spec-goal-prompt": {
+   "count": 1,
+   "jev": {
+    "asked": true,
+    "item": {
+     "context": "the last score sat moderately far above the pass mark; no critical or high findings; a moderate SKILL.md change; reference files: one or two files; script files: several files; eval files: none.",
+     "criteria": [
+      "no change likely to move the score",
+      "a small move within run-to-run variation is possible",
+      "a move past run-to-run variation is likely",
+      "a move past run-to-run variation is near certain"
+     ],
+     "id": "judge-count",
+     "instructions": "How likely is it that the change since the last judged version moves a skill-judge score past normal run-to-run variation?",
+     "type": "score"
+    },
+    "level": null,
+    "note": "jev needs_fallback (own reasoning)"
+   },
+   "last_v4": {
+    "critical": 0,
+    "high": 0,
+    "judged_at": "1335764d95ece745db8bd3471b229fa41802d735",
+    "percent": 92.8,
+    "source": "verdicts/32/ai-kit-spec-goal-prompt/r1/opencode_router-env_my-referee-two.json"
+   },
+   "reasons": [
+    "no deterministic trigger",
+    "jev needs_fallback (own reasoning)"
+   ]
+  }
+ },
+ "loop": "32.4",
+ "pool": {
+  "judges": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "members": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "native": null,
+  "probes": [
+   {
+    "judge": "opencode:router-env/my-referee-one",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=8s out=689 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "usable": true
+   },
+   {
+    "judge": "opencode:router-env/my-referee-two",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=7s out=689 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "usable": true
+   }
+  ],
+  "substitutes": []
+ }
+}

@@ -61,7 +61,7 @@
     {
       "number": "32.4",
       "name": "Batch 4, planning skills and the closing report",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "33",
@@ -191,8 +191,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (plan phase 32.4)",
-    "reason": "Phase 12 of 37 — needs a plan"
+    "label": "Advance to the next step (plan phase 33)",
+    "reason": "Phase 13 of 37 — needs a plan"
   },
-  "updated_at": "2026-11-13T14:37:23.472Z"
+  "updated_at": "2026-11-14T00:40:36.194Z"
 }

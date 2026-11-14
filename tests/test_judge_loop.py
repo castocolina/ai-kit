@@ -326,7 +326,9 @@ class ReportFixture(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(prefix="judge-loop-report-")
         self.addCleanup(temp.cleanup)
         self.base = Path(temp.name)
-        self.repo = make_repo(self.base, {f"skills/{n}/SKILL.md": "demo\n" for n in DEMO_SKILLS})
+        files = {f"skills/{n}/SKILL.md": "demo\n" for n in DEMO_SKILLS}
+        files["tests/test_demo.py"] = 'SKILLS = ("demo-a", "demo-b")\n'
+        self.repo = make_repo(self.base, files)
         self.records = self.base / "rec"
         recs = [
             make_record("32", "demo-a", 1, "cli-a:model-a",
@@ -354,6 +356,29 @@ class ReportFixture(unittest.TestCase):
         judge_loop.atomic_write_json(judge_loop.record_path(
             self.records, record["loop"], record["skill"], record["round"], record["judge"]),
             record)
+
+    def _referee_only_loop(self):
+        """Loop 32's pool rewritten with no native id and only cli-a usable."""
+        probes = [{"judge": "cli-a:model-a", "usable": True, "status_line": STATUS_OK,
+                   "reason": ""},
+                  {"judge": "cli-b:model-b", "usable": False, "status_line": QUOTA_LINE,
+                   "reason": "status quota exit 75 tree clean"}]
+        pool = judge_loop.choose_pool(["cli-a:model-a", "cli-b:model-b"], None, probes)
+        judge_loop.update_loop_file(self.records, "32", "pool", pool)
+
+    def test_a_referee_only_pool_renders_its_note_and_checks_its_judges(self):
+        self._referee_only_loop()
+        self.assertIn("Notes: only one judge passed its probe", self._render())
+        _code, out = self._check()
+        self.assertNotIn("is not in the judge list", out)
+
+    def test_a_native_record_outside_a_referee_only_pool_is_named(self):
+        self._referee_only_loop()
+        self._put(make_record("32", "demo-b", 1, "native:fixture",
+                              full_verdict("demo-b", "native:fixture")))
+        _code, out = self._check()
+        self.assertIn("demo-b r1 native:fixture: judge native:fixture is not in the judge list",
+                      out)
 
     def _drop(self, skill, judge, rnd=1):
         os.remove(judge_loop.record_path(self.records, "32", skill, rnd, judge))
@@ -439,6 +464,107 @@ class TestReport(ReportFixture):
         with self.assertRaises(judge_loop.JudgeLoopError) as caught:
             self._render()
         self.assertEqual(str(caught.exception), "demo-d: no verdict records")
+
+
+class TestEvalsAndTests(ReportFixture):
+    def setUp(self):
+        super().setUp()
+        evals = self.repo / "skills" / "demo-a" / "evals"
+        evals.mkdir(parents=True, exist_ok=True)
+        (evals / "evals.json").write_text(
+            json.dumps({"skill_name": "demo-a", "evals": [{"id": 1}, {"id": 2}, {"id": 3}]}),
+            encoding="utf-8")
+        self._write_queries("demo-a", [True, True, False, False])
+        self._write_queries("demo-b", [True] * 16)
+        inputs = demo_inputs()
+        inputs["skills"]["demo-a"]["deferred"] = {"text": "Phase 98", "source": "fixture"}
+        inputs["skills"]["demo-c"]["deferred"] = {"text": "Phase 99", "source": "fixture"}
+        judge_loop.atomic_write_json(self.records / "inputs.json", inputs)
+
+    def _write_queries(self, skill, flags):
+        folder = self.repo / "skills" / skill / "evals"
+        folder.mkdir(parents=True, exist_ok=True)
+        queries = [{"query": f"q{i}", "should_trigger": flag}
+                   for i, flag in enumerate(flags, start=1)]
+        (folder / "trigger-queries.json").write_text(json.dumps(queries), encoding="utf-8")
+
+    def test_report_writes_facts_and_the_section(self):
+        code, out = self._report()
+        self.assertEqual(code, 0, out)
+        facts = json.loads((self.records / "facts.json").read_text(encoding="utf-8"))
+        self.assertEqual(facts, {"schema": 1, "skills": {
+            "demo-a": {"evals": 3, "queries": 4, "near_misses": 2,
+                       "modules": ["tests/test_demo.py"]},
+            "demo-b": {"evals": None, "queries": 16, "near_misses": 0,
+                       "modules": ["tests/test_demo.py"]},
+            "demo-c": {"evals": None, "queries": None, "near_misses": None, "modules": []}}})
+        text = (self.records / judge_loop.REPORT_NAME).read_text(encoding="utf-8")
+        self.assertIn("## Evals and tests", text)
+        self.assertIn("| Skill | evals.json | Trigger queries | Near-misses | Test modules | "
+                      "Brought to the bar by |", text)
+        self.assertIn("| demo-a | 3 evals | 4 | 2 | 1 | - |", text)
+        self.assertIn("| demo-c | none | none | none | 0 | Phase 99 |", text)
+        self.assertIn("| demo-b | none | 16 | 0 | 1 | not named |", text)
+        self.assertIn("- demo-a: tests/test_demo.py", text)
+        self.assertIn("- demo-c: no script test found", text)
+        self.assertLess(text.index("| demo-a | 3 evals"), text.index("| demo-c | none"))
+        self.assertLess(text.index("| demo-c | none"), text.index("| demo-b | none"))
+        section = text.split("## Evals and tests", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("aa-fold", section)
+        self.assertNotIn("zz-rules", section)
+
+    def test_render_is_byte_stable_and_check_passes(self):
+        self._report()
+        text = self._render()
+        self.assertEqual(text, self._render())
+        self.assertEqual((self.records / judge_loop.REPORT_NAME).read_text(encoding="utf-8"),
+                         text)
+        code, out = self._check("--skills", "demo-a", "demo-b", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 0, out)
+
+    def test_without_facts_the_section_says_how_to_create_them(self):
+        self.assertIn("No facts snapshot; run: python3 tools/judge_loop.py report <records>",
+                      self._render())
+
+    def test_a_malformed_deferred_entry_is_refused(self):
+        inputs = demo_inputs()
+        inputs["skills"]["demo-a"]["deferred"] = {"text": "", "source": "fixture"}
+        judge_loop.atomic_write_json(self.records / "inputs.json", inputs)
+        with self.assertRaises(judge_loop.JudgeLoopError) as caught:
+            judge_loop.load_inputs(self.records)
+        self.assertEqual(str(caught.exception),
+                         "inputs.json: skill demo-a has a malformed deferred")
+
+    def test_a_malformed_eval_file_fails_report_naming_its_path(self):
+        (self.repo / "skills" / "demo-a" / "evals" / "evals.json").write_text(
+            "{not json", encoding="utf-8")
+        code, out = self._report()
+        self.assertEqual(code, 1)
+        self.assertIn("skills/demo-a/evals/evals.json", out)
+
+    def test_a_tree_change_after_the_report_is_a_drift_note(self):
+        self._report()
+        self._write_queries("demo-b", [True] * 17)
+        code, out = self._check("--skills", "demo-a", "demo-b", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 0, out)
+        self.assertIn("demo-b: facts drift", out)
+
+    def test_a_malformed_eval_file_fails_check_naming_its_path(self):
+        self._report()
+        (self.repo / "skills" / "demo-a" / "evals" / "trigger-queries.json").write_text(
+            "{not json", encoding="utf-8")
+        code, out = self._check("--skills", "demo-a", "demo-b", "--judges", "cli-a:model-a",
+                                "cli-b:model-b")
+        self.assertEqual(code, 1)
+        self.assertIn("skills/demo-a/evals/trigger-queries.json", out)
+
+    def test_drift_is_computed_only_for_the_checked_skills(self):
+        self._report()
+        self._write_queries("demo-b", [True] * 17)
+        _code, out = self._check("--skills", "demo-a")
+        self.assertNotIn("demo-b: facts drift", out)
 
 
 class TestCheck(ReportFixture):
@@ -1260,6 +1386,65 @@ class TestPool(unittest.TestCase):
     def test_a_judge_listed_twice_is_refused(self):
         with self.assertRaisesRegex(judge_loop.JudgeLoopError, "appears twice"):
             self._pool(["cli-a:m", "cli-a:m"], usable=["cli-a:m"])
+
+    def _referee_pool(self, usable):
+        self._lanes(self.JUDGES, usable)
+        results = [judge_loop.probe_result(self.probes, judge) for judge in self.JUDGES]
+        return judge_loop.choose_pool(self.JUDGES, None, results)
+
+    def test_without_native_two_usable_referees_form_the_pool(self):
+        pool = self._referee_pool(usable=self.JUDGES)
+        self.assertEqual(pool["members"], ["cli-a:m", "cli-b:m"])
+        self.assertEqual(pool["substitutes"], [])
+        self.assertIsNone(pool["native"])
+        self.assertNotIn("notes", pool)
+
+    def test_without_native_the_third_referee_replaces_a_failed_primary(self):
+        pool = self._referee_pool(usable=["cli-a:m", "cli-c:m"])
+        self.assertEqual(pool["members"], ["cli-a:m", "cli-c:m"])
+        self.assertEqual(pool["substitutes"], [{
+            "judge": "cli-c:m", "reason": "replaces cli-b:m, which failed its probe"}])
+
+    def test_without_native_one_usable_referee_is_a_single_judge_pool(self):
+        pool = self._referee_pool(usable=["cli-c:m"])
+        self.assertEqual(pool["members"], ["cli-c:m"])
+        self.assertEqual(pool["notes"], ["only one judge passed its probe"])
+        self.assertNotIn(NATIVE, json.dumps(pool))
+
+    def test_without_native_no_usable_referee_names_each_probe(self):
+        self._lanes(self.JUDGES, usable=[])
+        results = [judge_loop.probe_result(self.probes, judge) for judge in self.JUDGES]
+        with self.assertRaises(judge_loop.JudgeLoopError) as caught:
+            judge_loop.choose_pool(self.JUDGES, None, results)
+        text = str(caught.exception)
+        self.assertIn("no judge passed its probe", text)
+        for judge in self.JUDGES:
+            self.assertIn(f"{judge} (status quota exit 75 tree clean)", text)
+
+    def test_without_native_an_empty_judge_list_is_refused(self):
+        with self.assertRaisesRegex(judge_loop.JudgeLoopError, "judge list empty"):
+            judge_loop.choose_pool([], None, [])
+
+    def test_cli_pool_without_native_writes_a_null_native_and_the_note(self):
+        self._lanes(self.JUDGES, usable=["cli-b:m"])
+        code, out = run_main(["--root", str(self.base), "pool", "--loop", "32", "--judges",
+                              *self.JUDGES, "--probe-dir", str(self.probes),
+                              "--records", str(self.records)])
+        self.assertEqual(code, 0)
+        self.assertIn("judge-loop: note: only one judge passed its probe", out)
+        self.assertIn("judge-loop: pool 32: cli-b:m", out)
+        loop = json.loads((self.records / "loops" / "32.json").read_text(encoding="utf-8"))
+        self.assertIsNone(loop["pool"]["native"])
+        self.assertEqual(loop["pool"]["members"], ["cli-b:m"])
+
+    def test_cli_pool_without_native_and_no_usable_judge_exits_1_without_writing(self):
+        self._lanes(["cli-a:m"], usable=[])
+        code, out = run_main(["--root", str(self.base), "pool", "--loop", "32", "--judges",
+                              "cli-a:m", "--probe-dir", str(self.probes),
+                              "--records", str(self.records)])
+        self.assertEqual(code, 1)
+        self.assertIn("no judge passed its probe", out)
+        self.assertFalse((self.records / "loops" / "32.json").exists())
 
     def test_usable_probe_reports_its_status_line_and_no_reason(self):
         write_probe(self.probes, "cli-a:m", ANSWER, ANSWER + "\n", _status())

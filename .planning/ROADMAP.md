@@ -117,7 +117,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 32.1: Batch 1, general small skills** - cst-refactor, markdown-to-pdf, spec-review-fixer and usage-metrics reach the bar; jev-fast-decision gets its JEV fixes and keeps its bar *(amended 2026-11-07, 32.1 D-01: owner batch scope "Narrow")* (completed 2026-11-08)
 - [x] **Phase 32.2: Batch 2, spec review family** - checklist reaches the bar; spec-config and spec-execute get their fixes; spec-review deferred to Phases 39-40 *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
 - [x] **Phase 32.3: Batch 3, execution and session skills** - spec-execute-superpowers and session-wake keep their bar; one shared secret scanner; cross-ai deferred to Phases 37-38 *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
-- [ ] **Phase 32.4: Batch 4, planning skills and the closing report** - goal-prompt, spec-discuss and curated-config keep their bar with their fixes; the closing report shows all 15 judged skills *(amended 2026-11-07, 32.1 D-01)*
+- [x] **Phase 32.4: Batch 4, planning skills and the closing report** - goal-prompt, spec-discuss and curated-config keep their bar with their fixes; the closing report shows all 15 judged skills *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
 - [ ] **Phase 33: One config design** - One documented config for every ai-kit setting; review-spec.toml migrates on its own
 - [ ] **Phase 34: jev backends by host and Laya calibration** - jev picks its backend per host from ai-kit's config; Laya measured against its floor
 - [ ] **Phase 35: Model discovery and catalog** - spec-config lists every model on every host with honest source, usability and tier labels
@@ -516,15 +516,31 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. goal-prompt wraps long lists and commands over several lines instead of refusing them.
   2. Each of the eight spec-discuss polish items has a fix and a pinned doc-contract test, including analyze-mode trade-offs written as one header per option with pros and cons bullets and interactive questions that first say what each named item is and who uses it.
-  3. curated-config no longer writes `review.effort.opencode = "high"`, and a test pins it.
+  3. curated-config no longer writes `review.effort.opencode = "high"`, and a test pins it. *(amended 2026-11-13, 32.4 spec S5: the v1 `apply-review` command's fixed write goes; the v2 planner's catalog-derived, model-paired and labelled effort row stays, since gsd-core 1.16.0 carries it as `#<variant>` on the model (CUR-06 amended))*
   4. The refreshed re-judge report shows all 15 kept skills with `evals/evals.json`, trigger queries and tests (JDG-03), each meeting the judge bar (JDG-04). *(amended 2026-11-07, owner decision: the 15 judged skills; `ai-kit-commit-fold` stays excluded as in Phase 32 criterion 1)* *(amended 2026-11-07, 32.1 D-01, owner batch scope "Narrow": the refreshed report shows all 15 judged skills, each with its bar result, its `evals/evals.json`, trigger-query and test state, and, for a skill not yet at the bar or without evals, the phase that brings it there: `ai-kit-cross-ai` Phases 37-38, `ai-kit-spec-review` Phases 39-40, `ai-kit-session-wake`'s evals the phase that next materially changes its SKILL.md; the goal-prompt, spec-discuss and curated-config SKILL.md files this phase changes keep their bar with no regression beyond judge variation)*
   5. In auto mode spec-discuss ends by preparing the autonomous-run prompt for the discussed range through goal-prompt, which stops only on a blocker; without goal-prompt it says so and stops.
   6. goal-prompt's rails say when a run may ask the owner, forbid ending a turn with a waiting message while independent work remains, and require the local time, running step and start time in every progress ping, each pinned by a doc-contract test within the prompt's length caps.
   7. spec-discuss lists the recommended run mode first with `(Recommended)`, and its text documents the one-subagent-per-phase interactive relay (questions out in batches, answers back to the same subagent); doc-contract tests pin both.
   8. Before an auto-mode run starts, spec-discuss shows the owner a short summary of every requested item in the range and how it plans to resolve each one, and waits for the owner's go-ahead; a doc-contract test pins it (DEF-08). *(added 2026-11-07, owner decision)*
-  9. `tests/test_curated_config_e2e.py`'s `test_tracer_against_real_installed_gsd_tools` passes when `TMPDIR` points inside a GSD project checkout (today its fresh project then sits inside the checkout's project and apply refuses with `applied: false`): curated-config's behaviour for a new project nested inside another project is decided and tested, and the six-environment custom-tmpdir row runs in a clone that keeps `.planning/`, so it catches this case (DEF-10). *(added 2026-11-07, Phase 32 close-out)*
+  9. `tests/test_curated_config_e2e.py`'s `test_tracer_against_real_installed_gsd_tools` passes when `TMPDIR` points inside a GSD project checkout (today its fresh project then sits inside the checkout's project and apply refuses with `applied: false`): curated-config's behaviour for a new project nested inside another project is decided and tested, and the six-environment custom-tmpdir row runs in a clone that keeps `.planning/`, so it catches this case (DEF-10). *(added 2026-11-07, Phase 32 close-out)* *(amended 2026-11-13, 32.4 D-15, D-16: the custom-tmpdir row has no clone; the fresh repository holding its TMPDIR gains a synthetic `.planning/`; the fix covers curated-config's v1 and v2 write flows (DEF-10 amended))*
 
-**Plans**: TBD
+**Plans**: 9/9 plans complete in 4 waves *(revised 2026-11-13 per cross-AI review cycle 1: 32.4-03 waits for 32.4-02, whose rendering it documents; the judge loop moves to wave 4)*
+- [x] 32.4-08-PLAN.md
+- [x] 32.4-09-PLAN.md
+**Wave 1**
+- [x] 32.4-01-PLAN.md — goal-prompt wraps long lists and the runner command; answers accept the six owner run-rule fields (wave 1)
+- [x] 32.4-04-PLAN.md — spec-discuss handoff, eight polish items, run-mode order, interactive relay, pre-run summary (wave 1)
+- [x] 32.4-05-PLAN.md — curated-config nested new project (v1 and v2), apply-review drops the fixed opencode effort, env-matrix synthetic .planning (wave 1) *(closed by gap plan 32.4-08: the custom-tmpdir matrix row is identical in 2 environments; see 32.4-05-SUMMARY.md and 32.4-08-SUMMARY.md)*
+- [x] 32.4-06-PLAN.md — re-judge report shows evals, trigger queries, test modules and deferred phases for all 15 skills (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 32.4-02-PLAN.md — goal-prompt FLOW-09 rails, merged lines, e2e list line, owner fields rendered, goldens regenerated, R4 caps fixture (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 32.4-03-PLAN.md — goal-prompt SKILL.md and READMEs document owner fields, caller answers, wrapping and the cross-AI limit (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [x] 32.4-07-PLAN.md — loop 32.4 judges goal-prompt, spec-discuss and curated-config (wave 4, checkpoint)
 
 ### Phase 33: One config design
 
@@ -940,7 +956,7 @@ Plans:
 | 32.1. Batch 1, general small skills | 9/9 | Complete    | 2026-11-08 |
 | 32.2. Batch 2, spec review family | 5/5 | Complete    | 2026-11-13 |
 | 32.3. Batch 3, execution and session skills | 5/5 | Complete    | 2026-11-13 |
-| 32.4. Batch 4, planning skills and the closing report | 0/TBD | Not started | - |
+| 32.4. Batch 4, planning skills and the closing report | 9/9 | Complete    | 2026-11-13 |
 | 33. One config design | 0/TBD | Not started | - |
 | 34. jev backends by host and Laya calibration | 0/TBD | Not started | - |
 | 35. Model discovery and catalog | 0/TBD | Not started | - |

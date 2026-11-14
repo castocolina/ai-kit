@@ -270,6 +270,54 @@ class TestWrappers(unittest.TestCase):
             )
         self.assertEqual(seen, [(120, {"A": "1"}), (120, {"A": "1"})])
 
+    def test_ensure_config_exists_makes_the_planning_folder_first(self):
+        """gsd-core takes a start folder holding .planning/ as its own root, so the folder must
+        exist before the call."""
+        seen = []
+
+        def run(cmd, **_kwargs):
+            seen.append(os.path.isdir(os.path.join(project, ".planning")))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with tempfile.TemporaryDirectory() as project:
+            self.assertTrue(gsd_tools.ensure_config_exists(self.TOOLS, project, run_fn=run))
+        self.assertEqual(seen, [True])
+
+    def test_ensure_config_exists_leaves_a_missing_folder_alone(self):
+        with tempfile.TemporaryDirectory() as parent:
+            missing = os.path.join(parent, "absent")
+            gsd_tools.ensure_config_exists(
+                self.TOOLS, missing, run_fn=recording_run([(1, "", "")])
+            )
+            self.assertFalse(os.path.exists(missing))
+
+    def test_ensure_config_exists_is_false_when_planning_cannot_be_created(self):
+        """A `.planning` that cannot be made (here a regular file) returns False, never raises,
+        and gsd-tools is never called."""
+        run = recording_run([(0, "ok", "")])
+        with tempfile.TemporaryDirectory() as project:
+            _write(os.path.join(project, ".planning"), "a file, not a folder\n")
+            self.assertFalse(gsd_tools.ensure_config_exists(self.TOOLS, project, run_fn=run))
+        self.assertEqual(run.calls, [])
+
+    def test_a_failed_run_removes_the_planning_folder_it_made(self):
+        """A failed, timed-out or unspawnable run leaves no empty `.planning/` that would turn the
+        folder into a project root without a config."""
+        def raiser(_cmd, **_kwargs):
+            raise subprocess.TimeoutExpired("node", 1)
+
+        for run in (recording_run([(1, "", "")]), raiser):
+            with tempfile.TemporaryDirectory() as project:
+                self.assertFalse(gsd_tools.ensure_config_exists(self.TOOLS, project, run_fn=run))
+                self.assertFalse(os.path.exists(os.path.join(project, ".planning")))
+
+    def test_a_failed_run_keeps_a_planning_folder_that_was_already_there(self):
+        with tempfile.TemporaryDirectory() as project:
+            os.makedirs(os.path.join(project, ".planning"))
+            self.assertFalse(gsd_tools.ensure_config_exists(
+                self.TOOLS, project, run_fn=recording_run([(1, "", "")])))
+            self.assertTrue(os.path.isdir(os.path.join(project, ".planning")))
+
 
 
 class TestStrictEncoder(unittest.TestCase):

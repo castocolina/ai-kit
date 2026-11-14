@@ -70,10 +70,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   the phase branch; local main moves only when the stacked PRs merge. AGENTS.md's Workflow section states this rule
   (it replaces the owner's earlier "merge every phase into local main" rule), ai-kit's GSD config (FLOW-05) matches
   it, and a doc-contract test pins the steps.
-- [ ] **FLOW-08**: In auto mode, spec-discuss ends by preparing the autonomous-run prompt for the discussed range
+- [x] **FLOW-08**: In auto mode, spec-discuss ends by preparing the autonomous-run prompt for the discussed range
   through `ai-kit-spec-goal-prompt`, which stops only on a blocker; when goal-prompt is not installed it says so and
   stops. A doc-contract test pins both paths.
-- [ ] **FLOW-09**: goal-prompt's rails tell an autonomous run to ask the owner only for a locked-decision ambiguity,
+- [x] **FLOW-09**: goal-prompt's rails tell an autonomous run to ask the owner only for a locked-decision ambiguity,
   a package or security gate, or a call only human eyes can make (otherwise it verifies, decides and reports); never
   to end a turn with a waiting message while independent work remains; and to give the local time, the running step
   and when it started in every progress or resume ping. A doc-contract test pins each rail, and the generated prompt
@@ -135,7 +135,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [x] **JDG-02**: The verdict checker is a tracked tool that takes the skill and judge lists as arguments and names
   no referee, resolves the repository root itself (the same digest when run from a sub-folder, proven by a test) and
   reports how many judge rounds ran.
-- [ ] **JDG-03**: Every kept skill has `evals/evals.json`, trigger queries (about 20, half near-misses) and tests,
+- [x] **JDG-03**: Every kept skill has `evals/evals.json`, trigger queries (about 20, half near-misses) and tests,
   written in the batch phase that improves it; the closing re-judge report shows them for every kept skill.
   *(amended 2026-11-07, owner decision: the report covers the 15 judged skills; `ai-kit-commit-fold` is excluded as
   in JDG-01)* *(amended 2026-11-07, 32.1 D-01, owner batch scope "Narrow": evals, trigger queries and tests are
@@ -552,7 +552,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   itself turns it off are stated from the installed GSD docs.
 - [ ] **CUR-05**: Skills are assigned to GSD agents by responsibility from the skills actually available, through the
   shared role-keyed table.
-- [ ] **CUR-06**: curated-config no longer writes `review.effort.opencode = "high"`.
+- [x] **CUR-06**: curated-config no longer writes `review.effort.opencode = "high"`. *(amended 2026-11-13, 32.4 spec S5: live check: the checkout-local gsd-core 1.16.0 no longer passes the effort as `--variant` (which opencode 2.x rejects) but appends it to the model as `#<variant>`, warning when no model is set; so the fix removes the v1 `apply-review` command's fixed write, which sets no model, and keeps the v2 planner's catalog-derived effort row, which is set with `review.models.opencode` and labelled with its unverified effect)*
 - [ ] **CUR-07**: When graphify is installed, curated-config turns on GSD's `graphify.enabled` and
   `graphify.auto_update` and says what they do; it never leaves the graph switched off silently.
 - [ ] **CUR-08**: After writing effort settings, curated-config runs `effort sync --apply` for the checkout and for
@@ -756,8 +756,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   guard (the fourth) and commit-fold's GitHub-token redactor — plus the curated-config eval test helper; all six take
   their key shapes from the one shared scanner, which holds distinctive token shapes only, while each caller keeps its
   own broad rules; a guard test fails on a drifted copy or a new key-shape list (32.3 SPEC R1-R5))*
-- [ ] **DEF-03**: goal-prompt wraps long lists and commands instead of refusing them.
-- [ ] **DEF-04**: The eight spec-discuss polish items are fixed, each with a pinned doc-contract test: a forced
+- [x] **DEF-03**: goal-prompt wraps long lists and commands instead of refusing them.
+- [x] **DEF-04**: The eight spec-discuss polish items are fixed, each with a pinned doc-contract test: a forced
   local answer that matches no decision-table row; "one commit per phase" against the spec workflow's own commit;
   the analyzer starting while the same phase's CONTEXT is being written; `state.record-session` on an early stop;
   trigger keywords late in the description; the agent's action on `no_client` and `incompatible_client`; analyze
@@ -768,16 +768,16 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   stale archived wording decided, Windows ledger entry 7 waived, and the v1.3 tag pushed with the owner's consent;
   the remaining archive tags (the Cursor proof-of-concept and host-split spec tags, and five older tags never
   discussed) are kept or dropped by recorded decision.
-- [ ] **DEF-06**: spec-discuss derives the run-mode recommendation (interactive unless the mode is yolo or MVP
+- [x] **DEF-06**: spec-discuss derives the run-mode recommendation (interactive unless the mode is yolo or MVP
   is active) before it builds the question, lists that option first and labels it `(Recommended)`; a remembered
   past choice may be mentioned in an option's text but never reorders the options. A doc-contract test pins it.
-- [ ] **DEF-07**: spec-discuss documents running each phase in its own subagent on the interactive path: the
+- [x] **DEF-07**: spec-discuss documents running each phase in its own subagent on the interactive path: the
   subagent verifies facts, drafts, and spawns the analyzer as a real subagent (hosts that nest subagents, such
   as Claude Code, verified 2026-11-03); because a subagent cannot ask the user, it stops with the owner's
   questions in batches of 2-5 (recommended option first, trade-offs as headers and bullets), the orchestrator
   asks them and resumes the same subagent with the answers. Hosts without nested subagents run the analyzer
   inline and say so.
-- [ ] **DEF-08**: Before an auto-mode run starts, spec-discuss shows the owner a short summary of every requested
+- [x] **DEF-08**: Before an auto-mode run starts, spec-discuss shows the owner a short summary of every requested
   item in the range and how it plans to resolve each one, and waits for the owner's go-ahead before it runs; a
   doc-contract test pins it. *(added 2026-11-07, owner decision)*
 - [x] **DEF-09**: No runtime label or docstring in spec-review's `detection.py` names a planning file (today
@@ -787,10 +787,13 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   Phase 32 close-out)* *(amended 2026-11-08, 32.2 D-05: the test also reads comments and covers every tracked
   skill Python file, the project-rules skills included; all 24 literal and 5 comment hits found by the live scan are
   fixed in Phase 32.2)*
-- [ ] **DEF-10**: curated-config's real-gsd-tools tracer test passes with `TMPDIR` inside a GSD project checkout:
+- [x] **DEF-10**: curated-config's real-gsd-tools tracer test passes with `TMPDIR` inside a GSD project checkout:
   the behaviour for a new project nested inside another project is decided and tested, and the six-environment
   custom-tmpdir row keeps `.planning/` in its clone so it catches the case. *(added 2026-11-07, Phase 32
-  close-out)*
+  close-out)* *(amended 2026-11-13, 32.4 D-15, D-16: live check: the custom-tmpdir row has no clone; its TMPDIR
+  sits in a fresh `git init` repository, which gains a synthetic `.planning/`; the nested-project fix covers the v1
+  `ensure-project` and the v2 inventory and apply, since gsd-tools resolves an empty nested folder to the outer
+  project's config)*
 
 ## Future Requirements
 
@@ -828,8 +831,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | FLOW-05 | Phase 29.1 | Complete |
 | FLOW-06 | Phase 30 | Complete |
 | FLOW-07 | Phase 29.1 | Complete |
-| FLOW-08 | Phase 32.4 | Pending |
-| FLOW-09 | Phase 32.4 | Pending |
+| FLOW-08 | Phase 32.4 | Complete |
+| FLOW-09 | Phase 32.4 | Complete |
 | FLOW-10 | Phase 29.1 | Complete |
 | FLOW-11 | Phase 29.1 | Complete |
 | FLOW-12 | Phase 30 | Complete |
@@ -840,7 +843,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RMV-04 | Phase 31 | Complete |
 | JDG-01 | Phase 32 | Complete |
 | JDG-02 | Phase 32 | Complete |
-| JDG-03 | Phase 32.4 | Pending |
+| JDG-03 | Phase 32.4 | Complete |
 | JDG-04 | Phase 31, Phase 32 | Pending |
 | JDG-05 | Phase 32 | Complete |
 | JDG-06 | Phase 32 | Complete |
@@ -935,7 +938,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | CUR-03 | Phase 44 | Pending |
 | CUR-04 | Phase 44 | Pending |
 | CUR-05 | Phase 44 | Pending |
-| CUR-06 | Phase 32.4 | Pending |
+| CUR-06 | Phase 32.4 | Complete |
 | CUR-07 | Phase 44 | Pending |
 | CUR-08 | Phase 44 | Pending |
 | CUR-09 | Phase 44 | Pending |
@@ -980,14 +983,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | WIZ-05 | Phase 30.1 | Complete |
 | DEF-01 | Phase 31 | Complete |
 | DEF-02 | Phase 32.3 | Complete |
-| DEF-03 | Phase 32.4 | Pending |
-| DEF-04 | Phase 32.4 | Pending |
+| DEF-03 | Phase 32.4 | Complete |
+| DEF-04 | Phase 32.4 | Complete |
 | DEF-05 | Phase 54 | Pending |
-| DEF-06 | Phase 32.4 | Pending |
-| DEF-07 | Phase 32.4 | Pending |
-| DEF-08 | Phase 32.4 | Pending |
+| DEF-06 | Phase 32.4 | Complete |
+| DEF-07 | Phase 32.4 | Complete |
+| DEF-08 | Phase 32.4 | Complete |
 | DEF-09 | Phase 32.2 | Complete |
-| DEF-10 | Phase 32.4 | Pending |
+| DEF-10 | Phase 32.4 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 172 total
@@ -1010,3 +1013,4 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *Amended 2026-11-07 by Phase 32.1's spec and discuss (owner batch scope "Narrow"): JDG-03 and JDG-04 amended; ROADMAP goals and criteria 1-2 of 32.1-32.3, 32.1 criterion 5, 32.4's goal and criterion 4, and the JDG-04 criterion of Phases 37-40 amended; backlog 999.22 (headless installer agents) added.*
 *Amended 2026-11-08 by Phase 32.2's spec and discuss: DEF-09 amended (the guard also reads comments and covers every skill's Python); ROADMAP 32.2's goal note and criterion 4 amended.*
 *Amended 2026-11-13 by Phase 32.3's spec and discuss: DEF-02 amended (five shipped scanner copies plus the eval test helper, one shared token-shape scanner, a drift and new-copy guard); ROADMAP 32.3's code anchors and criterion 3 and Phase 47.1's code anchors amended.*
+*Amended 2026-11-13 by Phase 32.4's spec and discuss: CUR-06 amended (only the v1 `apply-review` fixed effort write goes) and DEF-10 amended (no clone in the custom-tmpdir row; both curated-config write flows fixed); ROADMAP 32.4 criteria 3 and 9 amended.*

@@ -1,6 +1,6 @@
 ---
 name: ai-kit-gsd-spec-discuss
-description: "Chains GSD /gsd-spec-phase then /gsd-discuss-phase over a range of phases (SPEC.md, then CONTEXT.md + DISCUSSION-LOG.md), settling gray areas with advisory answers from the `jev-fast-decision` skill, with logged decisions, a deferred ledger, cross-phase amendments and a best-over-easy design rule. Two run modes, picked once: auto or interactive. Use when asked to spec and discuss several GSD phases unattended or in one run (\"spec/discuss phases 17-24\", \"run spec-phase and discuss-phase for every undiscussed phase\", \"--analyze --all --batch --assumptions\"), or to use jev for GSD planning decisions. Works without `jev-fast-decision` installed. Not for plan-phase or execute-phase."
+description: "Chains GSD /gsd-spec-phase then /gsd-discuss-phase over a range of phases (SPEC.md, then CONTEXT.md + DISCUSSION-LOG.md). Use when asked to spec and discuss several GSD phases unattended or in one run (\"spec/discuss phases 17-24\", \"run spec-phase and discuss-phase for every undiscussed phase\", \"--analyze --all --batch --assumptions\"), or to use jev for GSD planning decisions. Settles gray areas with advisory answers from the `jev-fast-decision` skill, with logged decisions, a deferred ledger, cross-phase amendments and a best-over-easy design rule. Two run modes, picked once: auto or interactive. Works without `jev-fast-decision` installed. Not for plan-phase or execute-phase."
 ---
 
 # ai-kit-gsd-spec-discuss
@@ -33,10 +33,13 @@ decided provisionally and shown at the end.
        [ -f "$c/phase_range.py" ] && { printf 'S=%s\n' "$c"; break 2; }; done; done
    FOLD_PY=""; for d in "${ROOTS[@]}"; do
      [ -f "$d/ai-kit-commit-fold/scripts/fold.py" ] && { FOLD_PY="$d/ai-kit-commit-fold/scripts/fold.py"; break; }; done
-   printf 'FOLD_PY=%s\nREPO=%s\n' "$FOLD_PY" "$(git rev-parse --show-toplevel)"
+   GOAL_MD=""; for d in "${ROOTS[@]}"; do
+     [ -f "$d/ai-kit-spec-goal-prompt/SKILL.md" ] && { GOAL_MD="$d/ai-kit-spec-goal-prompt/SKILL.md"; break; }; done
+   printf 'FOLD_PY=%s\nGOAL_MD=%s\nREPO=%s\n' "$FOLD_PY" "$GOAL_MD" "$(git rev-parse --show-toplevel)"
    ```
    If it prints no `S=` line, **stop the run** (fail closed, like `edge_floor` exit 2). An empty
-   `FOLD_PY` means the fold skill is not installed.
+   `FOLD_PY` means the fold skill is not installed. An empty `GOAL_MD` means
+   `ai-kit-spec-goal-prompt` is not installed.
 2. **Resolve gsd-core** with its standard resolver (`references/gsd-run-resolver.md` inside
    the gsd-core install; it finds the repo's own `.claude/gsd-core/bin/gsd-tools.cjs` before any
    user-level install). The workflows dir is `<dir of gsd-tools.cjs>/../workflows/`. No
@@ -72,14 +75,7 @@ decided provisionally and shown at the end.
    second way. If the per-phase query errors (an unresolvable phase), fall back to the
    resolved GSD command `query config-get workflow.mvp_mode --default false --raw`. Bare
    `config-get` exits "Key not found" when the key is unset.
-7. **Pick the run mode** (§1–§2). With the skill's `--auto` flag: auto path. Without it:
-   read the project mode — the resolved GSD command `query config-get mode`; a "Key not found"
-   exit means the
-   default (`interactive`) — then **ask the user once**: recommend the **auto path** when
-   `mode` is `yolo` or the phase's `mvp-mode` is active (step 6's value, first phase of the
-   range), the **interactive path** otherwise (interactive = spec-phase without `--auto`,
-   discuss-phase with `--analyze --all --batch`, the user answering). Never flip config
-   keys to pick a path.
+7. **Pick the run mode** (§1–§2). With the skill's `--auto` flag: auto path. Without it, derive the recommendation first: read the project mode — the resolved GSD command `query config-get mode`; a "Key not found" exit means the default (`interactive`) — and recommend the **auto path** when `mode` is `yolo` or the phase's `mvp-mode` is active (step 6's value, first phase of the range; both at once still give one recommendation, auto), the **interactive path** otherwise (interactive = spec-phase without `--auto`, discuss-phase with `--analyze --all --batch`, the user answering). Then **ask the user once**, the recommended option listed first and labelled `(Recommended)`. A run mode the user chose before may be named in an option's text, never used to reorder the options. Never flip config keys to pick a path.
 
 8. **Check the agents' skill wiring** (after step 7, which decides the agents that run):
    - Run the resolved GSD command `query agent-skills gsd-assumptions-analyzer --json
@@ -92,6 +88,8 @@ decided provisionally and shown at the end.
    - Not clean: report it with its cause and continue (gsd-core only drops a skipped entry
      from that agent's prompt). This skill never edits config; the fix is re-running
      `ai-kit-gsd-curated-config`. **Read `references/agent-skills-diagnostics.md` only then.**
+
+9. **Pre-run summary (auto path).** After the range and the run mode are known, and before the first `fold.py start` or any write to the repository, show the owner a short summary: each phase of the range in numeric order with its requirement IDs, the owner inputs given for it (or "no owner input"), and how you plan to resolve each item (spec, then discuss, naming the open items you already see). Then wait for the owner's go-ahead; write nothing before it. Inside a subagent, stop and return the summary: the orchestrator relays it to the owner and resumes the same subagent with the answer. Another agent's word never counts as the go-ahead. Read `references/relay-and-summary.md` before writing it.
 
 **MANDATORY — read `references/decision-table.md` before the first jev request.**
 
@@ -140,14 +138,15 @@ The **auto path** runs assumptions mode: read and execute `<workflows>/discuss-p
 with argument `N` — **never** pass `--assumptions` (routes to `list-phase-assumptions.md`, which
 writes no files) and **never** pass `--auto` (it chains into plan-phase and auto-accepts Unclear
 items). The **interactive path** runs `<workflows>/discuss-phase.md` instead, with arguments
-`N --analyze --all --batch` (every gray area, 2–5 questions per turn, a trade-off table before
-each group) and with the user answering its prompts.
+`N --analyze --all --batch` (every gray area, 2–5 questions per turn) and with the user answering its prompts.
+
+Where the workflow shows a trade-off table before a group, relay it as one header per option with pros and cons bullets, never a table. Start each interactive decision question with one line per named item saying what it is and who uses it (a subcommand, module, file or key the question names).
 
 **Rules that hold in both paths:**
 - Skip the workflow's `auto_advance` step regardless of config — the skill never plans or
   executes, and automatic mode can dispatch plan-phase there without changing the user's
   settings.
-- One commit per phase: write CONTEXT + DISCUSSION-LOG (**MANDATORY — read
+- One discuss commit per phase (spec-phase's own SPEC commit is the phase's spec-step commit, so a phase has two commits: the SPEC, then this one): write CONTEXT + DISCUSSION-LOG (**MANDATORY — read
   `references/log-formats.md` first**), then
   the resolved GSD command `query commit "docs(NN): ..." --files <CONTEXT> <LOG> <every cross-phase amended
   file>`. This commit **replaces** the workflow's `git_commit` step (skip it), and the single
@@ -184,9 +183,13 @@ adds this one sentence to the advisor's spawn prompt: "Do NOT call jev-fast-deci
 even when it is among your agent skills." In the interactive path the analyzer runs only when
 the user asks for it; otherwise the user answers the workflow's prompts directly.
 
+**Interactive relay (one subagent per phase).** On the interactive path a phase may run in its own subagent. The subagent verifies facts, drafts, and spawns the analyzer as a real subagent where the host nests subagents: Claude Code nests (a subagent may spawn subagents, three layers by default); opencode's default nesting depth is one and pi has no built-in subagents, so there the subagent runs the analyzer inline and says so. A subagent cannot ask the user: it stops and returns the owner's questions in batches of 2 to 5 for one phase (recommended option first, trade-offs as one header per option with pros and cons bullets, never a table). The orchestrator asks the owner and resumes the same subagent with the answers (Claude Code: `SendMessage` to the subagent's id or name; opencode documents continuing a child by its `sessionID`, unverified here). Where the host cannot resume a subagent, run the phase inline in the orchestrator and say so; never start a second subagent that re-derives the first one's work. A phase with no owner question runs to its commit without a stop. Read `references/relay-and-summary.md` before the first relay.
+
 After the range: the resolved GSD command `query state.record-session --stopped-at "..."
 --resume-file <last CONTEXT>` and a separate `docs(state)` commit of the `state_path` file
-(§0 step 2).
+(§0 step 2). An early stop (a blocking question, §4, or any other stop after the unit flow started) runs the same `state.record-session` with the stop reason in `--stopped-at` (`--resume-file` only when a CONTEXT was written), with its own `docs(state)` commit, even when no phase was committed. A `start` refusal that stops the run (§1) stops before any write: no `state.record-session` and no commit; show the report and the stop reason instead.
+
+**Hand off to goal-prompt (auto path only).** After the range's `docs(state)` commit, prepare the autonomous-run prompt for the discussed range. Read the SKILL.md at the §0 step 1 `GOAL_MD` literal and follow it (no skill-to-skill call, as in §1). Supply its answers instead of its four questions: the work set is the discussed phases in numeric order, the target host is the current host, `native_execution` comes from this run's decisions (default false), mockups are none, and its optional owner run-rule fields are set only where a source states them. Commit the rendered file in its own `docs` commit, then end the run; stop earlier only on a blocker. Empty `GOAL_MD`: say goal-prompt is not installed and stop. A range in which no phase was discussed prepares no prompt and says so.
 
 ## 3. Asking jev
 
@@ -240,9 +243,9 @@ amends the earlier phases whose requirements assumed the opposite.
 
 A phase's analyzer must never start before that phase's spec step has finished: its Locked WHAT
 input is this phase's committed SPEC, so the SPEC must exist and be current first. Where the
-host has background subagents with completion notices, start phase K's analyzer while you write
-phase K's CONTEXT (its SPEC already committed) when coupling is low; name any coupling in its
-brief. Never use a background result before its notification arrives. Elsewhere, run phases
+host has background subagents with completion notices, start phase K+1's analyzer while you write
+phase K's CONTEXT (phase K+1's SPEC already committed) when coupling is low; name any coupling in its
+brief. Phase K's own analyzer never runs while phase K's CONTEXT is being written: that CONTEXT is built from its result. Never use a background result before its notification arrives. Elsewhere, run phases
 strictly in sequence (flag that gap in the log).
 
 ## NEVER
@@ -279,6 +282,7 @@ strictly in sequence (flag that gap in the log).
 - `references/analyzer-brief.md` — before spawning (or running inline) the analyzer.
 - `references/log-formats.md` — before writing a SPEC Interview Log, CONTEXT, DISCUSSION-LOG,
   an amendment, or the ledger.
+- `references/relay-and-summary.md` — before the auto path's pre-run summary or the first interactive relay.
 - `references/agent-skills-diagnostics.md` — only when §0 step 8 finds an agent that is not clean.
 - `references/worked-examples.md` — only when a case is unclear: an override, a second
   opinion, a both-low item, an out-of-scope fix.

@@ -6,8 +6,11 @@ Usage (from a git checkout, or pass --root):
                 [--judge-package DIR]
   judge_loop.py ingest --lane-dir DIR --records DIR
   judge_loop.py check RECORDS [--skills S ...] [--judges J ...] [--gate] [--require-current]
-  judge_loop.py report RECORDS
-  judge_loop.py pool --loop L --native ID --probe-dir DIR --records DIR [--judges J ...]
+  judge_loop.py report RECORDS (also writes RECORDS/facts.json, the evals and test-module
+                snapshot the report reads)
+  judge_loop.py pool --loop L --probe-dir DIR --records DIR [--judges J ...] [--native ID]
+                (the first two usable judges in list order, or one with a note; no usable
+                judge exits 1; --native ID keeps the old native fallback for old loops)
   judge_loop.py count --loop L --records DIR [--skill S ...] [--no-jev] [--client PATH]
                 [--judge-package DIR]
   count bases each skill on its latest prior loop's lowest valid percent and worst verdict
@@ -189,15 +192,79 @@ def _load_mapper():
     return module
 
 
-def module_list(root, name):
-    """The test modules the commit hook runs when the skill changes, as sorted tests/<stem>.py."""
+def build_module_index(root):
+    """The staged-mapper index of the root's tests/ folder; building it is the slow part."""
     mapper = _load_mapper()
     try:
-        found = mapper.covering_modules(mapper.build_index(Path(root)),
-                                        f"skills/{name}/SKILL.md")
+        return mapper.build_index(Path(root))
+    except mapper.MapperError as exc:
+        raise JudgeLoopError(str(exc)) from exc
+
+
+def module_list(root, name, index=None):
+    """The test modules the commit hook runs when the skill changes, as sorted tests/<stem>.py."""
+    if index is None:
+        index = build_module_index(root)
+    mapper = _load_mapper()
+    try:
+        found = mapper.covering_modules(index, f"skills/{name}/SKILL.md")
     except mapper.MapperError as exc:
         raise JudgeLoopError(str(exc)) from exc
     return sorted("tests/" + module.removeprefix("tests.") + ".py" for module in found)
+
+
+def _json_file(root, rel):
+    """The parsed JSON of a repo-relative file, None when absent; malformed JSON is named."""
+    path = Path(root) / rel
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise JudgeLoopError(f"{rel}: malformed eval file") from exc
+
+
+def _queries_ok(queries):
+    return isinstance(queries, list) and all(
+        isinstance(item, dict) and isinstance(item.get("should_trigger"), bool)
+        for item in queries)
+
+
+def tree_facts(root, name, index):
+    """One skill's eval and test facts as the working tree holds them now."""
+    evals_rel = f"skills/{name}/evals/evals.json"
+    queries_rel = f"skills/{name}/evals/trigger-queries.json"
+    evals = _json_file(root, evals_rel)
+    queries = _json_file(root, queries_rel)
+    evals_ok = isinstance(evals, dict) and isinstance(evals.get("evals"), list)
+    if evals is not None and not evals_ok:
+        raise JudgeLoopError(f"{evals_rel}: malformed eval file")
+    if queries is not None and not _queries_ok(queries):
+        raise JudgeLoopError(f"{queries_rel}: malformed eval file")
+    return {
+        "evals": None if evals is None else len(evals["evals"]),
+        "queries": None if queries is None else len(queries),
+        "near_misses": None if queries is None else sum(not q["should_trigger"] for q in queries),
+        "modules": module_list(root, name, index=index),
+    }
+
+
+def facts_snapshot(root, inputs):
+    """The facts of every judged skill, read once from the tree; report writes them beside it."""
+    index = build_module_index(root)
+    return {"schema": 1, "skills": {name: tree_facts(root, name, index)
+                                    for name in _report_order(inputs)}}
+
+
+def load_facts(records):
+    """The facts snapshot beside the records, or None when report has not written one."""
+    path = Path(records) / FACTS_NAME
+    if not path.is_file():
+        return None
+    data = _load_json(path)
+    if not (isinstance(data, dict) and isinstance(data.get("skills"), dict)):
+        raise JudgeLoopError(f"{FACTS_NAME}: malformed; {REPORT_HINT}")
+    return data
 
 
 # ─── the prompt ───────────────────────────────────────────────────────────────
@@ -624,6 +691,9 @@ RECORD_TYPES = (("skill", str), ("judge", str), ("digest", str), ("round", int),
 REFUTATION_FIELDS = ("finding", "location", "command", "output")
 SERIOUS = ("critical", "high")
 REPORT_NAME = "REJUDGE.md"
+FACTS_NAME = "facts.json"
+EVALS_HEADER = ["Skill", "evals.json", "Trigger queries", "Near-misses", "Test modules",
+                "Brought to the bar by"]
 REPORT_HINT = "run: python3 tools/judge_loop.py report <records>"
 REPORT_HEADER = "\n".join([
     "# Re-judge report",
@@ -1087,6 +1157,8 @@ def _pool_lines(records):
         members = ", ".join(pool.get("members", []))
         lines += ["", f"### Loop {loop}", "", *_table(PROBE_HEADER, probes), "",
                   f"Members: {members}", f"Substitutes: {'; '.join(subs) or 'none'}"]
+        if pool.get("notes"):
+            lines.append(f"Notes: {'; '.join(pool['notes'])}")
     return lines
 
 
@@ -1140,6 +1212,42 @@ def _refuted_lines(records):
     return ["## Refuted findings", *_table(REFUTED_HEADER, rows)]
 
 
+def _brought_by(name, inputs, state, has_evals):
+    """The phase that brings a skill to the bar: '-' when it has evals and meets the bar."""
+    worst = state["worst"]
+    meets = worst is not None and bar_with_base(
+        worst, state["refutations"], state["scored"], state["prior"])[0] != 0
+    if has_evals and meets:
+        return "-"
+    return (inputs["skills"][name].get("deferred") or {}).get("text") or "not named"
+
+
+def _evals_row(name, row, deferred):
+    evals, queries, near_misses = row["evals"], row["queries"], row["near_misses"]
+    return [name,
+            "none" if evals is None else f"{evals} evals",
+            str(queries) if queries is not None else "none",
+            str(near_misses) if near_misses is not None else "none",
+            len(row["modules"]), deferred]
+
+
+def _evals_lines(records, states, inputs):
+    """The Evals and tests section, read from the facts snapshot beside the records."""
+    facts = load_facts(records)
+    if facts is None:
+        return ["## Evals and tests", "", f"No facts snapshot; {REPORT_HINT}"]
+    rows, module_lines = [], []
+    for state in states:
+        name = state["name"]
+        if name not in facts["skills"]:
+            raise JudgeLoopError(f"{FACTS_NAME} has no entry for {name}; {REPORT_HINT}")
+        row = facts["skills"][name]
+        deferred = _brought_by(name, inputs, state, row["evals"] is not None)
+        rows.append(_evals_row(name, row, deferred))
+        module_lines.append(f"- {name}: {', '.join(row['modules']) or NO_TEST_LINE}")
+    return ["## Evals and tests", *_table(EVALS_HEADER, rows), "", *module_lines]
+
+
 def render_report(records):
     """The report text, a pure function of the records folder (no git, no clock, no path)."""
     records = Path(records)
@@ -1155,6 +1263,7 @@ def render_report(records):
                    *_table(JUDGED_HEADER, [_judged_row(s) for s in states])]),
         "\n".join(["## Verdicts", *_table(VERDICT_HEADER, verdict_rows)]),
         "\n".join(["## Judge count inputs", *_table(COUNT_HEADER, count_rows)]),
+        "\n".join(_evals_lines(records, states, inputs)),
         "\n".join(_pool_lines(records)),
         "\n".join(["## Excluded skills", *_table(["Skill", "Reason"], excluded)]),
         "\n".join(_history_lines(states, inputs)),
@@ -1330,21 +1439,42 @@ def _report_problems(records, problems):
         problems.append(f"REJUDGE.md differs from the records; {REPORT_HINT}")
 
 
+def _facts_drift(root, records, names):
+    """(problems, notes): a moved tree is a note; a malformed eval file is a problem."""
+    try:
+        recorded = load_facts(records)
+        if recorded is None:
+            return [], []
+        index = build_module_index(root)
+        notes = []
+        for name in names:
+            if name not in recorded["skills"]:
+                continue  # a missing entry is a problem of the report check, not a drift note
+            if recorded["skills"][name] != tree_facts(root, name, index):
+                notes.append(f"{name}: facts drift (evals, trigger queries or test modules "
+                             f"changed after the last report; {REPORT_HINT})")
+        return [], notes
+    except JudgeLoopError as exc:
+        return [str(exc)], []
+
+
 def check(root, records, opts):
     """(lines, problems, notes) for the records: every round, each bar and digest, the report."""
     records = Path(records)
     inputs = load_inputs(records)
     judges = tuple(opts.judges) or tuple(_default_judges(records))
     opts = opts._replace(judges=judges)
+    names = tuple(opts.skills) or tuple(_report_order(inputs))
     lines, problems, notes = [], [], []
-    for skill in tuple(opts.skills) or tuple(_report_order(inputs)):
+    for skill in names:
         line, found, noted = _check_skill(root, records, inputs, skill, opts)
         if line is not None:
             lines.append(line)
         problems += found
         notes += noted
     _report_problems(records, problems)
-    return lines, problems, notes
+    drift_problems, drift_notes = _facts_drift(root, records, names)
+    return lines, problems + drift_problems, notes + drift_notes
 
 
 # ─── the judge pool ───────────────────────────────────────────────────────────
@@ -1353,6 +1483,7 @@ POOL_SIZE = 2
 SUBSTITUTE_ONE = "only one configured judge passed its probe"
 SUBSTITUTE_NONE = "no configured judge passed its probe"
 SUBSTITUTE_EMPTY = "judge list empty"
+SINGLE_JUDGE = "only one judge passed its probe"
 
 
 def _probe_files(lane):
@@ -1386,15 +1517,36 @@ def probe_result(probe_dir, judge):
     return _probe_verdict(judge, True, status, "")
 
 
+def _judge_pool(pool, judges, usable, results):
+    """No native judge: the first two usable judges in list order; one alone is valid."""
+    if not judges:
+        raise JudgeLoopError(f"{SUBSTITUTE_EMPTY}; a pool needs at least one judge")
+    if not usable:
+        probes = "; ".join(f"{r['judge']} ({r['reason']})" for r in results)
+        raise JudgeLoopError(f"no judge passed its probe: {probes}")
+    members = usable[:POOL_SIZE]
+    failed = [judge for judge in judges[:POOL_SIZE] if judge not in members]
+    extras = [judge for judge in members if judge not in judges[:POOL_SIZE]]
+    pool["members"] = members
+    pool["substitutes"] = [{"judge": extra, "reason": f"replaces {down}, which failed its probe"}
+                           for extra, down in zip(extras, failed, strict=False)]
+    if len(members) == 1:
+        pool["notes"] = [SINGLE_JUDGE]
+    return pool
+
+
 def choose_pool(judges, native, results):
-    """The pool: the first two usable judges; else one usable judge plus native; else native."""
-    if native in judges:
+    """The pool: the first two usable judges. With a native id (old loops), one usable judge plus
+    native, else native alone; without one, a single usable judge, else a refusal."""
+    if native is not None and native in judges:
         raise JudgeLoopError("the native id must not be in the judge list")
     if len(set(judges)) != len(judges):
         raise JudgeLoopError("a judge appears twice in the judge list")
     usable = [result["judge"] for result in results if result["usable"]]
     pool = {"judges": list(judges), "native": native, "probes": list(results),
             "members": [], "substitutes": []}
+    if native is None:
+        return _judge_pool(pool, judges, usable, results)
     if len(usable) >= POOL_SIZE:
         pool["members"] = usable[:POOL_SIZE]
         return pool
@@ -1445,6 +1597,8 @@ def _cmd_pool(args, root):
         print(f"{PREFIX} probe {result['judge']}: {state}")
     for substitute in pool["substitutes"]:
         print(f"{PREFIX} substitute {substitute['judge']}: {substitute['reason']}")
+    for note in pool.get("notes", []):
+        print(f"{PREFIX} note: {note}")
     print(f"{PREFIX} pool {args.loop}: {', '.join(pool['members'])}")
     return 0
 
@@ -1686,6 +1840,12 @@ def _old_ok(old):
             and isinstance(old.get("source"), str))
 
 
+def _deferred_ok(deferred):
+    return (isinstance(deferred, dict)
+            and all(isinstance(deferred.get(key), str) and deferred[key]
+                    for key in ("text", "source")))
+
+
 def _entry_error(name, entry):
     """The shape problem of one skills entry, or None."""
     batch = entry.get("batch") if isinstance(entry, dict) else None
@@ -1698,6 +1858,8 @@ def _entry_error(name, entry):
         return f"skill {name} has a malformed last_v4"
     if entry.get("old_score") is not None and not _old_ok(entry["old_score"]):
         return f"skill {name} has a malformed old_score"
+    if entry.get("deferred") is not None and not _deferred_ok(entry["deferred"]):
+        return f"skill {name} has a malformed deferred"
     return None
 
 
@@ -1802,6 +1964,7 @@ def _cmd_check(args, root):
 def _cmd_report(args, root):
     records = _abs(root, args.records)
     path = records / REPORT_NAME
+    atomic_write_json(records / FACTS_NAME, facts_snapshot(root, load_inputs(records)))
     atomic_write_text(path, render_report(records))
     print(f"{PREFIX} report written: {path}")
     return 0
@@ -1837,7 +2000,8 @@ def build_parser():
     pool_p = sub.add_parser("pool", help="choose the judge pool from the probe results")
     pool_p.add_argument("--loop", required=True)
     pool_p.add_argument("--judges", nargs="*", default=[])
-    pool_p.add_argument("--native", required=True, help="the native judge id, the fallback")
+    pool_p.add_argument("--native", help="a native judge id as the fallback (old loops only; "
+                        "without it the pool takes the first two usable judges, or one)")
     pool_p.add_argument("--probe-dir", required=True)
     pool_p.add_argument("--records", required=True)
     count_p = sub.add_parser("count", help="the judge count per skill: triggers, then jev")

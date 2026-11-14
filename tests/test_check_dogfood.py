@@ -303,7 +303,7 @@ class _FakeGsd:
         self.branching = branching
         healthy = {"status": "healthy", "errors": [], "warnings": []}
         self.health = healthy if health is None else health
-        self.caps = [{"id": "ai-kit-commit-fold"}] if caps is None else caps
+        self.caps = [{"id": "ai-kit-commit-fold", "status": "active"}] if caps is None else caps
         self.hooks = _healthy_hooks() if hooks is None else hooks
         self.calls = []
 
@@ -342,7 +342,15 @@ class TestFlowConfig(unittest.TestCase):
                                         "warnings": [{"code": "W019"}]}),
                        "validate health is degraded with warnings W019"),
             "capability": (_FakeGsd(caps=[]), "capability ai-kit-commit-fold is not installed"),
-            "capId": (_FakeGsd(hooks={**hooks, "discuss:pre": [
+            "inactive capability": (
+                _FakeGsd(caps=[{"id": "ai-kit-commit-fold", "status": "inactive",
+                                "reason": "discovered — no user consent record (inactive)"}]),
+                "capability ai-kit-commit-fold is inactive: discovered — no user consent record "
+                "(inactive)"),
+            "capability without a status": (
+                _FakeGsd(caps=[{"id": "ai-kit-commit-fold"}]),
+                "capability ai-kit-commit-fold is without a status: no reason given"),
+            "capId":(_FakeGsd(hooks={**hooks, "discuss:pre": [
                 {**_step("ai-kit-fold start"), "capId": "ai-kit-commit-fold-old"}]}),
                 "entry capId ai-kit-commit-fold-old is not ai-kit-commit-fold"),
             "kind": (_FakeGsd(hooks={**hooks, "discuss:pre": [
@@ -374,6 +382,15 @@ class TestFlowConfig(unittest.TestCase):
                 problems, _notes = self.check(fake)
                 self.assertEqual(len(problems), 1, problems)
                 self.assertIn(fragment, problems[0])
+
+    def test_an_inactive_capability_skips_the_hook_points(self):
+        fake = _FakeGsd(caps=[{"id": "ai-kit-commit-fold", "status": "inactive",
+                               "reason": "discovered — no user consent record (inactive)"}])
+        problems, notes = self.check(fake)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("GSD_HOME", problems[0])
+        self.assertEqual(notes, [])
+        self.assertFalse(any(args[:1] == ("loop",) for args in fake.calls))
 
     def test_absent_gsd_core_is_only_a_note(self):
         def boom(root, *args):

@@ -108,6 +108,28 @@ def recipe_lines(makefile: str, target: str) -> list[str]:
     return body
 
 
+def prerequisites(makefile: str, target: str) -> list[str]:
+    """Names after the colon on a target's rule line; none for a missing target."""
+    return (make_target_line(makefile, target) or "").split(":", 1)[-1].split()
+
+
+def tier_recipe(makefile: str, target: str) -> str:
+    """A tier's recipe lines plus those of its prerequisite targets, joined by newlines."""
+    names = [target, *prerequisites(makefile, target)]
+    return "\n".join(line for name in names for line in recipe_lines(makefile, name))
+
+
+def multi_line_recipes(makefile: str, targets: tuple[str, ...]) -> list[str]:
+    """Targets (and their prerequisites) whose recipe holds more than one command: under `make -k`
+    a failing command skips the rest of its recipe."""
+    found = []
+    for target in targets:
+        for name in (target, *prerequisites(makefile, target)):
+            if len([line for line in recipe_lines(makefile, name) if line.strip()]) > 1:
+                found.append(name)
+    return sorted(set(found))
+
+
 def hook_entries(text: str) -> dict[str, str]:
     """Map each hook id to its `entry:` line."""
     entries: dict[str, str] = {}
@@ -483,13 +505,13 @@ class TestGateScope(unittest.TestCase):
 
     def test_tiers_run_through_the_runner(self) -> None:
         for target in TIER_TARGETS:
-            recipe = "\n".join(recipe_lines(self.makefile, target))
+            recipe = tier_recipe(self.makefile, target)
             self.assertIn("tools/run_unittest_parallel.py --group", recipe, target)
         self.assertEqual(direct_unittest_lines(self.makefile), [])
 
     def test_uv_tiers_run_under_uv(self) -> None:
         for target in (*UV_TARGETS, "test-unit"):
-            recipe = "\n".join(recipe_lines(self.makefile, target))
+            recipe = tier_recipe(self.makefile, target)
             self.assertIn("uv run", recipe, target)
 
     def test_hooks_name_runner_groups(self) -> None:
@@ -512,8 +534,12 @@ class TestGateScope(unittest.TestCase):
     def test_hooks_cover_every_group_except_e2e(self) -> None:
         named = " ".join(hook_entries(self.hooks).values())
         self.assertEqual(hook_group_names(named), set(self.groups) - {"e2e"})
-        e2e = "\n".join(recipe_lines(self.makefile, "e2e-test"))
+        e2e = tier_recipe(self.makefile, "e2e-test")
         self.assertIn("--group e2e", e2e)
+
+    def test_tier_recipes_run_one_command_each(self) -> None:
+        self.assertEqual(multi_line_recipes(self.makefile, TIER_TARGETS), [])
+        self.assertIn("bash tests/test_install.sh", tier_recipe(self.makefile, "e2e-test"))
 
     def test_core_hook_precedes_wizard_hook(self) -> None:
         self.assertEqual(hook_order_errors(hook_ids(self.hooks)), [])
@@ -657,6 +683,15 @@ class TestGateScopeNonVacuity(unittest.TestCase):
     def test_flags_a_direct_unittest_recipe(self) -> None:
         text = "test-unit:\n\tpython3 -m unittest tests.test_x\n"
         self.assertEqual(direct_unittest_lines(text), ["\tpython3 -m unittest tests.test_x"])
+
+    def test_flags_a_two_command_tier_recipe(self) -> None:
+        self.assertEqual(
+            multi_line_recipes("test-unit:\n\tpython3 a\n\tuv run b\n", ("test-unit",)),
+            ["test-unit"],
+        )
+        split = ("test-unit: test-unit-core test-unit-uv\n\ntest-unit-core:\n\tpython3 a\n\n"
+                 "test-unit-uv:\n\tuv run b\n")
+        self.assertEqual(multi_line_recipes(split, ("test-unit",)), [])
 
     def test_flags_a_hardcoded_worker_count(self) -> None:
         self.assertEqual(hardcoded_worker_counts("entry: uv run python t.py --workers 8"),

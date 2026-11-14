@@ -361,6 +361,11 @@ class TestBackendFailure(unittest.TestCase):
         self.assertTrue(issubclass(m2p.BackendFailed, RuntimeError))
 
 
+def _dest(path):
+    """A Markdown link destination as the converter writes it: a path with a space in `<...>`."""
+    return f"<{path}>" if " " in path else path
+
+
 class TestLocalAssets(unittest.TestCase):
     def _tmp(self):
         d = tempfile.mkdtemp()
@@ -406,9 +411,9 @@ class TestLocalAssets(unittest.TestCase):
         text = ("![a](img/a.svg)\n![b](./b.png)\n![c](sub/deep/c.png \"T\")\n"
                 "![s](<my img.png>)\n![u](https://example.com/x.png)\n"
                 "![x](data:image/png;base64,AA)\n![z](/already/abs.png)\n")
-        want = ("![a](" + os.path.join(d, "img", "a.svg") + ")\n"
-                "![b](" + os.path.join(d, "b.png") + ")\n"
-                "![c](" + os.path.join(d, "sub", "deep", "c.png") + " \"T\")\n"
+        want = ("![a](" + _dest(os.path.join(d, "img", "a.svg")) + ")\n"
+                "![b](" + _dest(os.path.join(d, "b.png")) + ")\n"
+                "![c](" + _dest(os.path.join(d, "sub", "deep", "c.png")) + " \"T\")\n"
                 "![s](<" + os.path.join(d, "my img.png") + ">)\n"
                 "![u](https://example.com/x.png)\n"
                 "![x](data:image/png;base64,AA)\n"
@@ -480,7 +485,7 @@ class TestLocalAssets(unittest.TestCase):
         self.assertEqual(names, ["asset-0.svg", "doc.md"])
         self.assertEqual(
             m2p._absolutize_images(self.PROSE_AND_DEFS, d),
-            self.PROSE_AND_DEFS.replace("img/a.svg", os.path.join(d, "img", "a.svg")))
+            self.PROSE_AND_DEFS.replace("img/a.svg", _dest(os.path.join(d, "img", "a.svg"))))
 
     def test_definition_on_the_next_line_and_code_in_the_alt_text(self):
         d = self._tmp()
@@ -494,7 +499,7 @@ class TestLocalAssets(unittest.TestCase):
         d = self._tmp()
         text = "Press the ` key.\n\n![p](icon.svg)\n\nRun `ls`.\n"
         self.assertEqual(m2p._absolutize_images(text, d),
-                         text.replace("icon.svg", os.path.join(d, "icon.svg")))
+                         text.replace("icon.svg", _dest(os.path.join(d, "icon.svg"))))
 
     def test_chromium_diagram_links_become_relative_names(self):
         d = self._tmp()
@@ -520,11 +525,11 @@ class TestLocalAssets(unittest.TestCase):
         text = ("![l][r]\n[r]: img/a.svg\n<img class=\"x\" src='b.png'>\n[^1]: note\n"
                 "`![c](c.png)` and ``![e](e.png)``\n"
                 "```markdown\n![f](f.png)\n```\n~~~\n![t](t.png)\n~~~\n![out](o.png)\n")
-        want = (f"![l][r]\n[r]: {os.path.join(d, 'img', 'a.svg')}\n"
+        want = (f"![l][r]\n[r]: {_dest(os.path.join(d, 'img', 'a.svg'))}\n"
                 f"<img class=\"x\" src='{os.path.join(d, 'b.png')}'>\n[^1]: note\n"
                 "`![c](c.png)` and ``![e](e.png)``\n"
                 "```markdown\n![f](f.png)\n```\n~~~\n![t](t.png)\n~~~\n"
-                f"![out]({os.path.join(d, 'o.png')})\n")
+                f"![out]({_dest(os.path.join(d, 'o.png'))})\n")
         self.assertEqual(m2p._absolutize_images(text, d), want)
 
     def test_every_deck_call_allows_local_files(self):
@@ -548,7 +553,7 @@ class TestLocalAssets(unittest.TestCase):
                 out_path=out, deck_to=to, which=which, run=self._deck_run([]),
                 render=lambda t, _w, fmt="svg", run=None: t))
             with open(out, encoding="utf-8") as fh:
-                self.assertIn(f"![a]({os.path.join(d, 'img', 'a.svg')})", fh.read())
+                self.assertIn(f"![a]({_dest(os.path.join(d, 'img', 'a.svg'))})", fh.read())
         out = os.path.join(d, "s.html")
         m2p.convert_deck(src, m2p.ConvertOptions(
             out_path=out, deck_to="html", which=which, run=self._deck_run([]),

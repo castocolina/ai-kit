@@ -39,7 +39,8 @@
   "ai-kit-spec-review": {
    "batch": "32.2",
    "last_v4": null,
-   "old_score": {"value": "old 99/120 PASS, 2026-10-25, phase 25.1", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+   "old_score": {"value": "old 99/120 PASS, 2026-10-25, phase 25.1", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"},
+   "deferred": {"text": "Phases 39-40", "source": ".planning/ROADMAP.md:520"}
   },
   "ai-kit-spec-review-checklist": {
    "batch": "32.2",
@@ -64,12 +65,14 @@
   "ai-kit-cross-ai": {
    "batch": "32.3",
    "last_v4": null,
-   "old_score": {"value": "old 102/120 (85.0%) PASS, 2026-10-25, phase 25.1", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+   "old_score": {"value": "old 102/120 (85.0%) PASS, 2026-10-25, phase 25.1", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"},
+   "deferred": {"text": "Phases 37-38", "source": ".planning/ROADMAP.md:520"}
   },
   "ai-kit-session-wake": {
    "batch": "32.3",
    "last_v4": null,
-   "old_score": {"value": "old 108/120 PASS, 2026-10-30, phase 26", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
+   "old_score": {"value": "old 108/120 PASS, 2026-10-30, phase 26", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"},
+   "deferred": {"text": "the phase that next materially changes its SKILL.md", "source": ".planning/ROADMAP.md:520"}
   },
   "ai-kit-spec-goal-prompt": {
    "batch": "32.4",

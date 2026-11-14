@@ -1029,7 +1029,6 @@ class TestApplyReviewCli(unittest.TestCase):
             # config-get review.default_reviewers, read before any write
             (config_get_returncode, config_get_stdout, config_get_stderr),
             (0, "ok", ""),  # workflow.plan_review_convergence
-            (0, "ok", ""),  # review.effort.opencode
             (0, "ok", ""),  # review.default_reviewers write
             (0, "ok", ""),  # review.models.<slug> write
         ]
@@ -1090,8 +1089,8 @@ class TestApplyReviewCli(unittest.TestCase):
         """07-REVIEWS.md Cycle 2 MEDIUM: the realistic fresh-project -> apply-review path, where
         a global ~/.gsd/defaults.json has already pre-seeded review.default_reviewers with the
         same slug this run resolves to -- the dedupe must leave the list unchanged, and
-        review.models.<slug>/review.effort.opencode must still be written/confirmed with THIS
-        run's resolved values, never silently skipped because the slug was already present."""
+        review.models.<slug> must still be written/confirmed with THIS run's resolved value,
+        never silently skipped because the slug was already present."""
         exit_code, run, summary = self._run_apply_review(json.dumps(["opencode"]))
         self.assertEqual(exit_code, 0)
         self.assertEqual(summary["default_reviewers"], ["opencode"])
@@ -1110,9 +1109,26 @@ class TestApplyReviewCli(unittest.TestCase):
             call for call in run.calls
             if "config-set" in call and call[3] == "review.effort.opencode"
         ]
-        self.assertEqual(len(effort_writes), 1)
-        self.assertTrue(summary["review_effort_opencode_written"])
+        self.assertEqual(effort_writes, [])
+        self.assertNotIn("review_effort_opencode_written", summary)
         self.assertTrue(summary["plan_review_convergence_written"])
+
+    def test_apply_review_writes_no_effort_key_and_repeats_identically(self):
+        key_lists = []
+        for _ in range(2):
+            exit_code, run, _summary = self._run_apply_review(json.dumps(["claude"]))
+            self.assertEqual(exit_code, 0)
+            key_lists.append([call[3] for call in run.calls if "config-set" in call])
+        self.assertEqual(
+            key_lists[0],
+            [
+                "workflow.plan_review_convergence",
+                "review.default_reviewers",
+                "review.models.opencode",
+            ],
+        )
+        self.assertFalse(any(key.startswith("review.effort.") for key in key_lists[0]))
+        self.assertEqual(key_lists[0], key_lists[1])
 
     def test_unrecognized_cli_exits_cleanly_never_a_raw_keyerror_traceback(self):
         """Phase 7 code review WR-01: an unrecognized --cli must fail with a documented exit

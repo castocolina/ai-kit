@@ -5871,7 +5871,7 @@ class TestStatuslineOwnershipCounterexamples(unittest.TestCase):
         os.makedirs(os.path.join(self.install, "tools"), exist_ok=True)
         alias = os.path.join(self.tmp, "alias")
         os.symlink(self.install, alias)
-        command = f"python3 -S {os.path.join(alias, 'tools', 'claude-status-line.py')}"
+        command = f"python3 -S {shlex.quote(os.path.join(alias, 'tools', 'claude-status-line.py'))}"
         self._claude(command)
         self.assertEqual(setup.detect_statusline(self.paths)["state"], "ours")
         self._cursor(command.replace("claude-status-line", "cursor-status-line"))

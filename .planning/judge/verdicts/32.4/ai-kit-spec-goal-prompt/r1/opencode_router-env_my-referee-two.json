@@ -1,0 +1,147 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=255s out=207921 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"ai-kit-spec-goal-prompt\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":14,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":14},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":123,\"max_total\":125,\"percent\":98.4,\"grade\":\"A\",\"findings\":[{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-goal-prompt/SKILL.md\",\"line\":3,\"evidence\":\"The description's only boundary is \\\"Never runs the prompt.\\\" — the near-miss neighbours (execute a phase in this session, summarize phases, review a plan, /loop pacing without a goal) are not excluded, and those are exactly the negatives in trigger-queries.json that the description must separate on its own\",\"fix\":\"Builds a ready-to-paste /goal, /loop or /gsd-autonomous prompt file (one-shot goal, autonomous run) for GSD phases or superpowers plans, with rails, quota directives and e2e-based done. Use when asked for a goal prompt, a loop prompt, an autonomous run prompt or to finish phases N-M or these plans, even without the word 'prompt'. Not for running phases in this session, summarizing or reviewing them, or /loop pacing without a goal; never runs the prompt. Detects host primitives (labelled verified or unverified), picks one to three strategies, writes a committable file.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-goal-prompt/SKILL.md\",\"line\":26,\"evidence\":\"\\\"If it prints nothing, **stop the run**.\\\" — the one decision branch with no fallback or user-facing message: the agent is told to stop but not what to tell the user or how to recover, unlike every other missing-tool case covered in the When-something-is-missing table\",\"fix\":\"Add one clause naming the recovery: report that the skill's scripts are not installed at any searched skills directory and to re-run the ai-kit installer (tools/setup.py install --skills ai-kit-spec-goal-prompt), or ask the user for the scripts directory and continue with it.\"}]}"
+  }
+ ],
+ "digest": "5b512ffe744328ac375c8d20c62e9e8ed5d4fead50911204e2d2f4832d802e3a",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "32.4",
+ "modules": [
+  "tests/test_ai_kit_caller_text.py",
+  "tests/test_ai_kit_commit_fold.py",
+  "tests/test_ai_kit_commit_fold_adapters.py",
+  "tests/test_ai_kit_commit_fold_e2e.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_common.py",
+  "tests/test_ai_kit_spec_goal_prompt_e2e.py",
+  "tests/test_ai_kit_spec_goal_prompt_evals.py",
+  "tests/test_ai_kit_spec_goal_prompt_golden.py",
+  "tests/test_ai_kit_spec_goal_prompt_host.py",
+  "tests/test_ai_kit_spec_goal_prompt_matrix.py",
+  "tests/test_ai_kit_spec_goal_prompt_objective.py",
+  "tests/test_ai_kit_spec_goal_prompt_pointer.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_goal_prompt_scope.py",
+  "tests/test_ai_kit_spec_goal_prompt_signals.py",
+  "tests/test_ai_kit_spec_goal_prompt_skilltext.py",
+  "tests/test_ai_kit_spec_goal_prompt_strategies.py",
+  "tests/test_ai_kit_spec_goal_prompt_variants.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_flow_boundary.py",
+  "tests/test_flow_brief.py",
+  "tests/test_flow_checkpoint.py",
+  "tests/test_flow_checkpoint_2.py",
+  "tests/test_flow_contract.py",
+  "tests/test_flow_contract_2.py",
+  "tests/test_flow_contract_3.py",
+  "tests/test_flow_docs.py",
+  "tests/test_flow_index.py",
+  "tests/test_flow_index_e2e.py",
+  "tests/test_flow_stack.py",
+  "tests/test_flow_stack_2.py",
+  "tests/test_flow_stack_3.py",
+  "tests/test_gsd_curated_eval.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_run_unittest_parallel.py",
+  "tests/test_runtime_list_drift.py",
+  "tests/test_secret_shapes_copy_install.py"
+ ],
+ "prompt_sha256": "16d6f004a426806c021954b304c6454d9bf83048d02fb7cc34de8e2824708167",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "ai-kit-spec-goal-prompt",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D4",
+    "evidence": "The description's only boundary is \"Never runs the prompt.\" — the near-miss neighbours (execute a phase in this session, summarize phases, review a plan, /loop pacing without a goal) are not excluded, and those are exactly the negatives in trigger-queries.json that the description must separate on its own",
+    "file": "skills/ai-kit-spec-goal-prompt/SKILL.md",
+    "fix": "Builds a ready-to-paste /goal, /loop or /gsd-autonomous prompt file (one-shot goal, autonomous run) for GSD phases or superpowers plans, with rails, quota directives and e2e-based done. Use when asked for a goal prompt, a loop prompt, an autonomous run prompt or to finish phases N-M or these plans, even without the word 'prompt'. Not for running phases in this session, summarizing or reviewing them, or /loop pacing without a goal; never runs the prompt. Detects host primitives (labelled verified or unverified), picks one to three strategies, writes a committable file.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "\"If it prints nothing, **stop the run**.\" — the one decision branch with no fallback or user-facing message: the agent is told to stop but not what to tell the user or how to recover, unlike every other missing-tool case covered in the When-something-is-missing table",
+    "file": "skills/ai-kit-spec-goal-prompt/SKILL.md",
+    "fix": "Add one clause naming the recovery: report that the skill's scripts are not installed at any searched skills directory and to re-run the ai-kit installer (tools/setup.py install --skills ai-kit-spec-goal-prompt), or ask the user for the scripts directory and continue with it.",
+    "id": "D8-1",
+    "line": 26,
+    "severity": "low"
+   }
+  ],
+  "grade": "A",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 98.4,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 14,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 14
+  },
+  "skill": "ai-kit-spec-goal-prompt",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 123
+ }
+}

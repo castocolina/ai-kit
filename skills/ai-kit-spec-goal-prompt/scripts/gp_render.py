@@ -36,9 +36,8 @@ from gp_sections import (
     objective_text,
     plain_block,
     rail_sections,
+    resolve_turn_cap,
     strategy_heading,
-    turn_cap,
-    work_items,
 )
 
 __all__ = [
@@ -379,13 +378,13 @@ class RenderContext(NamedTuple):
 class BlockView(NamedTuple):
     """What the blocks need: the file's repo-relative path, the objective clause for a `/goal`
     condition, the flags-only `/gsd-autonomous` line ("" when there is none), the rails and the
-    turn cap (the floor when a caller does not derive one)."""
+    turn cap (the floor when a caller does not derive one; None: no cap)."""
 
     path: str
     objective: str
     first_line: str
     rails: str
-    turn_cap: int = TURN_FLOOR
+    turn_cap: int | None = TURN_FLOOR
     goal_style: str = "auto"
 
 
@@ -673,7 +672,7 @@ def render(
         objective=objective_text(answers, work.scope_desc),
         first_line=_autonomous_line(work),
         rails=rails,
-        turn_cap=turn_cap(work_items(work)),
+        turn_cap=resolve_turn_cap(answers, work),
         goal_style=_goal_style(answers),
     )
     blocks = build_blocks(strategies, view)

@@ -87,6 +87,17 @@ class _refusal(SystemExit):
         self.reason = reason
 
 
+@contextlib.contextmanager
+def refusal_fails_the_class():
+    """Turns a refusal raised in class setup into an AssertionError. A refusal is a SystemExit,
+    which unittest's class-setup handler does not catch, so it would end the whole module run;
+    as an AssertionError it fails only the class that hit it."""
+    try:
+        yield
+    except _refusal as stop:
+        raise AssertionError(f"refused: {stop.reason}") from stop
+
+
 # ═══ 1. path labels — the only way a path reaches output ══════════════════════════════
 
 WORKTREE_LABEL = "<worktree>"

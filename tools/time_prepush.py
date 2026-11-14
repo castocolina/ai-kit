@@ -9,9 +9,11 @@ whole push the owner can wait.
 
 The commands are read from `.pre-commit-config.yaml`, so they cannot drift from the hooks. Each
 hook runs in a fresh scratch HOME with the caller's tool caches forwarded and no inherited
-`AI_KIT_TEST_CPU_SHARE` (the default 40 % share applies). The verdict reads the per-module
-reports of each test hook: a failed, missing, unexpected, duplicated or all-skipped module, or a
-total that differs from the inventory, makes the run `invalid`, however fast it was.
+`AI_KIT_TEST_CPU_SHARE` (the default 40 % share applies). The check-dogfood hook alone keeps the
+caller's GSD_HOME (else the caller's HOME), where gsd-core finds the project's capability consent.
+The verdict reads the per-module reports of each test hook: a failed, missing, unexpected,
+duplicated or all-skipped module, or a total that differs from the inventory, makes the run
+`invalid`, however fast it was.
 
 Usage: python3 tools/time_prepush.py   (prints one `push-timing` record line; exit 0 only when
 the verdict is `pass` and every auxiliary hook exited 0)
@@ -41,7 +43,8 @@ AUXILIARY_HOOKS = ("pyright", "vulture", "check-dogfood", "deferred-e2e")
 ALL_SKIP_OK: dict[str, str] = {}
 # Variables the timing run must not inherit: a lower CPU share would change the worker count,
 # and the push refs would make deferred-e2e narrow to a range (its worst case is the no-range run).
-DROPPED_ENV = ("AI_KIT_TEST_CPU_SHARE", "PRE_COMMIT_FROM_REF", "PRE_COMMIT_TO_REF")
+# GSD_HOME reaches the check-dogfood hook alone (see `_timed`).
+DROPPED_ENV = ("AI_KIT_TEST_CPU_SHARE", "PRE_COMMIT_FROM_REF", "PRE_COMMIT_TO_REF", "GSD_HOME")
 SUMMARY_RE = re.compile(r"(\d+)/(\d+) modules passed")
 OUTPUT_TAIL_LINES = 30
 
@@ -193,6 +196,10 @@ def _timed(
     home.mkdir(parents=True, exist_ok=True)
     report_dir = scratch / f"reports-{name}" if expected is not None else None
     env = hook_env(os.environ, home, report_dir)
+    if name == "check-dogfood":
+        # Read-only: gsd-core looks up this project's capability consent under GSD_HOME (default
+        # HOME), so the fold capability renders its hooks as on a real push.
+        env["GSD_HOME"] = os.environ.get("GSD_HOME") or str(Path.home())
     return run_hook(name, hook_command(config_text, name), env, expected)
 
 

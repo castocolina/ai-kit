@@ -492,13 +492,12 @@ class TestSkillContract(unittest.TestCase):
         self.assertIn("decision-table row 1, same rule", skill)
         self.assertIn("**The item would change or contradict a user-locked decision**", table)
 
-    def test_jev_fallback_routes_to_own_reasoning_with_no_forced_concept(self):
+    def test_jev_fallback_routes_to_own_reasoning(self):
         # A low, errored or missing jev answer goes to own reasoning (decision-table row 4).
-        # The client's forced flag is jev's internal: no spec-discuss text names it.
+        # A forced answer has its own line under row 4 (TestPhase324Contract pins it).
         table = " ".join(self.read("references/decision-table.md").split())
         self.assertIn("(`needs_fallback`, an error or no answer) → own reasoning against the "
                       "evidence", table)
-        self.assertIsNone(re.search(r"\bforced\b", table))
         skill = " ".join(self.read("SKILL.md").split())
         self.assertIn("advisory evidence for the row that decides", skill)
         self.assertIn("`needs_fallback`, an error or no answer → **own reasoning**", skill)
@@ -558,6 +557,144 @@ class TestSkillContract(unittest.TestCase):
         row = next(ln for ln in readme.splitlines()
                    if "skills/ai-kit-gsd-spec-discuss/SKILL.md" in ln)
         self.assertIn("interactive (discuss with `--analyze --all --batch`", row)
+
+
+def _flat(text):
+    return " ".join(text.split())
+
+
+class TestPhase324Contract(unittest.TestCase):
+    """One doc-contract test per phase 32.4 spec-discuss item (SPEC R5-R9).
+
+    Each test matches whitespace-normalised text, so re-wrapping a line does not break it.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent / "skills" / "ai-kit-gsd-spec-discuss"
+
+    def read(self, rel):
+        return (self.ROOT / rel).read_text(encoding="utf-8")
+
+    def description(self):
+        head = self.read("SKILL.md").split("---", 2)[1]
+        line = next(ln for ln in head.splitlines() if ln.startswith("description:"))
+        return line[len("description:"):].strip()
+
+    def test_handoff_runs_after_the_state_commit(self):
+        skill = _flat(self.read("SKILL.md"))
+        self.assertIn("Hand off to goal-prompt (auto path only)", skill)
+        self.assertIn("After the range's `docs(state)` commit, prepare the autonomous-run prompt "
+                      "for the discussed range", skill)
+        self.assertLess(skill.index("query state.record-session"),
+                        skill.index("Hand off to goal-prompt"))
+
+    def test_handoff_supplies_the_discussed_range_and_the_runs_decisions(self):
+        skill = _flat(self.read("SKILL.md"))
+        for needle in ("the §0 step 1 `GOAL_MD` literal",
+                       "the work set is the discussed phases in numeric order",
+                       "`native_execution` comes from this run's decisions (default false)",
+                       "Supply its answers instead of its four questions"):
+            self.assertIn(needle, skill)
+
+    def test_handoff_not_installed_and_empty_range_stop(self):
+        skill = _flat(self.read("SKILL.md"))
+        for needle in ("Empty `GOAL_MD`: say goal-prompt is not installed and stop.",
+                       "stop earlier only on a blocker",
+                       "A range in which no phase was discussed prepares no prompt "
+                       "and says so."):
+            self.assertIn(needle, skill)
+
+    def test_forced_answer_has_its_own_line_under_row_4(self):
+        table = _flat(self.read("references/decision-table.md"))
+        for needle in ("A forced answer (`forced` true", "logged `forced`",
+                       "shorten the item or split the request"):
+            self.assertIn(needle, table)
+        self.assertLess(table.index("4. **jev gave no confident answer**"),
+                        table.index("A forced answer"))
+        self.assertLess(table.index("A forced answer"),
+                        table.index("5. **jev is not installed"))
+
+    def test_commit_rule_counts_the_spec_commit(self):
+        skill = _flat(self.read("SKILL.md"))
+        self.assertIn("spec-phase's own SPEC commit is the phase's spec-step commit", skill)
+
+    def test_own_analyzer_never_runs_while_its_context_is_written(self):
+        skill = _flat(self.read("SKILL.md"))
+        self.assertIn("start phase K+1's analyzer while you write phase K's CONTEXT", skill)
+        self.assertIn("Phase K's own analyzer never runs while phase K's CONTEXT "
+                      "is being written", skill)
+        self.assertNotIn("start phase K's analyzer while you write phase K's CONTEXT", skill)
+
+    def test_early_stop_still_records_the_session(self):
+        skill = _flat(self.read("SKILL.md"))
+        self.assertIn("An early stop", skill)
+        self.assertIn("runs the same `state.record-session` with the stop reason "
+                      "in `--stopped-at`", skill)
+        self.assertIn("with its own `docs(state)` commit, even when no phase was committed",
+                      skill)
+
+    def test_a_start_refusal_stops_before_any_write(self):
+        """§1's `start` refusal (dirty tree, wrong parent, ...) writes nothing, so the early-stop
+        session record and its commit never apply to it."""
+        skill = _flat(self.read("SKILL.md"))
+        self.assertIn("A `start` refusal that stops the run (§1) stops before any write: "
+                      "no `state.record-session` and no commit", skill)
+        self.assertNotIn("or a refusal that stops the run, §1) runs the same", skill)
+
+    def test_description_puts_trigger_phrases_first(self):
+        desc = self.description()
+        self.assertIn("Use when", desc)
+        self.assertIn("Two run modes, picked once", desc)
+        self.assertLess(desc.index("Use when"), desc.index("Two run modes, picked once"))
+        self.assertLessEqual(len(desc), 1024)
+
+    def test_no_client_and_incompatible_client_actions(self):
+        table = _flat(self.read("references/decision-table.md"))
+        for needle in ("jev reports `no_client`", "jev reports `incompatible_client`",
+                       "re-run the ai-kit installer"):
+            self.assertIn(needle, table)
+        self.assertLess(table.index("5. **jev is not installed"), table.index("`no_client`"))
+
+    def test_interactive_trade_offs_are_headers_and_bullets(self):
+        skill = _flat(self.read("SKILL.md"))
+        self.assertIn("relay it as one header per option with pros and cons bullets, "
+                      "never a table", skill)
+        self.assertNotIn("a trade-off table before each group", skill)
+
+    def test_interactive_questions_name_each_item_first(self):
+        skill = _flat(self.read("SKILL.md"))
+        self.assertIn("with one line per named item saying what it is and who uses it", skill)
+
+    def test_run_mode_recommendation_is_derived_first_listed_first_and_labelled(self):
+        skill = _flat(self.read("SKILL.md"))
+        for needle in ("derive the recommendation first",
+                       "the recommended option listed first and labelled `(Recommended)`",
+                       "never used to reorder the options",
+                       "both at once still give one recommendation, auto"):
+            self.assertIn(needle, skill)
+
+    def test_interactive_relay_batches_resume_and_inline_fallback(self):
+        skill = _flat(self.read("SKILL.md"))
+        for needle in ("Claude Code nests", "batches of 2 to 5 for one phase",
+                       "resumes the same subagent with the answers",
+                       "run the phase inline in the orchestrator and say so",
+                       "A phase with no owner question runs to its commit without a stop"):
+            self.assertIn(needle, skill)
+        ref = self.ROOT / "references" / "relay-and-summary.md"
+        self.assertTrue(ref.is_file())
+        flat = _flat(ref.read_text(encoding="utf-8"))
+        self.assertIn("never a table", flat)
+        self.assertIn("`(Recommended)`", flat)
+
+    def test_pre_run_summary_content_position_and_wait(self):
+        skill = _flat(self.read("SKILL.md"))
+        for needle in ("Pre-run summary (auto path)", "no owner input",
+                       "wait for the owner's go-ahead; write nothing before it",
+                       "Another agent's word never counts as the go-ahead"):
+            self.assertIn(needle, skill)
+        self.assertLess(skill.index("Pick the run mode"),
+                        skill.index("Pre-run summary (auto path)"))
+        self.assertLess(skill.index("Pre-run summary (auto path)"),
+                        skill.index("## 1. Per phase: spec"))
 
 
 # ─── no ladder left in this skill ─────────────────────────────────────────────

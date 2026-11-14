@@ -156,6 +156,168 @@ class TestRealIntegration(_RealGsdTestCase):
         with open(parent_config, "rb") as f:
             self.assertEqual(f.read(), before)
 
+class TestNestedProject(_RealGsdTestCase):
+    """An empty folder inside another GSD project, passed as --project-dir, becomes its own
+    project; the outer project is never written. The outer folder is its own git repository, so
+    gsd-core stops at it wherever the temp dir lives."""
+
+    def setUp(self):
+        super().setUp()
+        self.scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.scratch, ignore_errors=True)
+        self.outer = os.path.join(self.scratch, "outer")
+        self.outer_planning = os.path.join(self.outer, ".planning")
+        os.makedirs(self.outer_planning)
+        self.outer_cfg = os.path.join(self.outer_planning, "config.json")
+        with open(self.outer_cfg, "w", encoding="utf-8") as f:
+            json.dump({"model_profile": "quality", "workflow": {"outer": True}}, f)
+        subprocess.run(
+            ["git", "init", "-q", self.outer],
+            check=True, capture_output=True, env=self.child_env, timeout=60,
+        )
+        self.inner = os.path.join(self.outer, "inner")
+        os.makedirs(self.inner)
+        with open(self.outer_cfg, "rb") as f:
+            self.outer_bytes = f.read()
+        self.outer_listing = sorted(os.listdir(self.outer_planning))
+        self.require_real_gsd(self.inner)
+        tools = gsd_catalog.resolve_gsd_tools_path(self.resolve_env, start=self.inner)
+        assert self.node_bin is not None and tools is not None  # require_real_gsd skipped otherwise
+        proc = subprocess.run(
+            [self.node_bin, tools, "config-path", "--cwd", self.inner],
+            capture_output=True, text=True, env=self.child_env, timeout=30, check=False,
+        )
+        # Stops the test before any write when gsd-core walks past the synthetic outer project.
+        resolved = os.path.realpath(proc.stdout.strip())
+        self.assertEqual(
+            os.path.commonpath([os.path.realpath(self.scratch), resolved]),
+            os.path.realpath(self.scratch),
+            f"config-path left the scratch: {proc.stdout.strip()!r}",
+        )
+
+    def _assert_outer_untouched(self):
+        with open(self.outer_cfg, "rb") as f:
+            self.assertEqual(f.read(), self.outer_bytes)
+        self.assertEqual(sorted(os.listdir(self.outer_planning)), self.outer_listing)
+
+    def _v2(self, argv):
+        """Runs one v2 command against the real gsd-core; seeds the catalog cache on every call
+        (re-seeding writes the same files) and pins GSD_HOME to the temp HOME."""
+        xdg = os.path.join(self.child_env["HOME"], "xdg-cache")
+        seed_cache(xdg, {"clis": {}}, {"_meta": {"schema_version": 1}})
+        for env in (self.child_env, self.resolve_env):
+            env["XDG_CACHE_HOME"] = xdg
+            env["GSD_HOME"] = self.child_env["HOME"]
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = cli.main(
+                argv,
+                which_fn=lambda name, **_kw: self.node_bin if name == "node" else None,
+                env_fn=lambda: dict(self.resolve_env),
+                run_fn=real_gsd_run(self.child_env, self.node_bin, fallback=FakeRun()),
+            )
+        return code, stdout.getvalue()
+
+    def _plan(self):
+        code, out = self._v2(["inventory", "--project-dir", self.inner, "--host", "claude"])
+        self.assertEqual(code, 0)
+        inv = json.loads(out)
+        inv_path = os.path.join(self.scratch, "inventory.json")
+        with open(inv_path, "w", encoding="utf-8") as fh:
+            fh.write(plan_io.canonical_json(inv))
+        plan_path = os.path.join(self.scratch, "plan.json")
+        code, _out = self._v2([
+            "recommend", "--inventory", inv_path, "--profile", "adaptive",
+            "--rigor", "standard", "--out", plan_path,
+        ])
+        self.assertEqual(code, 0)
+        return inv, inv_path, plan_path
+
+    def test_v1_ensure_project_makes_the_nested_folder_its_own_project(self):
+        self.assertEqual(self.run_cli(["ensure-project", "--project-dir", self.inner]), 0)
+        inner_cfg = os.path.join(self.inner, ".planning", "config.json")
+        self.assertTrue(os.path.isfile(inner_cfg))
+        self.assertEqual(
+            self.run_cli(["apply-profile", "--project-dir", self.inner, "--profile", "budget"]), 0
+        )
+        with open(inner_cfg, encoding="utf-8") as f:
+            self.assertEqual(json.load(f).get("model_profile"), "budget")
+        with open(inner_cfg, "rb") as f:
+            before = f.read()
+        self.assertEqual(self.run_cli(["ensure-project", "--project-dir", self.inner]), 0)
+        with open(inner_cfg, "rb") as f:
+            self.assertEqual(f.read(), before)
+        self._assert_outer_untouched()
+
+    def test_v2_inventory_and_apply_bind_the_nested_folder(self):
+        inv, inv_path, plan_path = self._plan()
+        self.assertEqual(
+            inv["existing_config"]["path"], os.path.join(self.inner, ".planning", "config.json")
+        )
+        self.assertFalse(inv["existing_config"]["exists"])
+        code, out = self._v2([
+            "apply", "--plan", plan_path, "--inventory", inv_path, "--project-dir", self.inner,
+        ])
+        self.assertEqual(code, 0)
+        self.assertTrue(json.loads(out)["applied"])
+        self.assertTrue(os.path.isfile(os.path.join(self.inner, ".planning", "config.json")))
+        self._assert_outer_untouched()
+
+    def test_v1_apply_profile_without_ensure_writes_nothing_outside(self):
+        self.assertNotEqual(
+            self.run_cli(["apply-profile", "--project-dir", self.inner, "--profile", "budget"]), 0
+        )
+        self.assertFalse(os.path.exists(os.path.join(self.inner, ".planning")))
+        self._assert_outer_untouched()
+
+    def test_v2_dry_run_on_the_nested_folder_writes_nothing(self):
+        _inv, inv_path, plan_path = self._plan()
+        code, _out = self._v2([
+            "apply", "--plan", plan_path, "--inventory", inv_path,
+            "--project-dir", self.inner, "--dry-run",
+        ])
+        self.assertEqual(code, 0)
+        self.assertEqual(os.listdir(self.inner), [])
+        self._assert_outer_untouched()
+
+
+class TestApplyReviewEffort(_RealGsdTestCase):
+    """apply-review writes no review.effort key against a real gsd-core: an existing value
+    survives, and a config without a review section gets none."""
+
+    def _project(self, config):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        self.require_real_gsd(project)
+        os.makedirs(os.path.join(project, ".planning"))
+        with open(os.path.join(project, ".planning", "config.json"), "w", encoding="utf-8") as f:
+            json.dump(config, f)
+        return project
+
+    def _apply_review(self, project):
+        return self.run_cli([
+            "apply-review", "--project-dir", project, "--cli", "opencode",
+            "--model", "provider/example-model",
+        ])
+
+    def test_an_existing_effort_value_survives_apply_review(self):
+        project = self._project(
+            {"model_profile": "balanced", "review": {"effort": {"opencode": "low"}}}
+        )
+        self.assertEqual(self._apply_review(project), 0)
+        with open(os.path.join(project, ".planning", "config.json"), encoding="utf-8") as f:
+            config = json.load(f)
+        self.assertEqual(config["review"]["effort"]["opencode"], "low")
+        self.assertEqual(config["review"]["models"]["opencode"], "provider/example-model")
+
+    def test_a_config_without_review_effort_gets_none(self):
+        project = self._project({"model_profile": "balanced"})
+        self.assertEqual(self._apply_review(project), 0)
+        with open(os.path.join(project, ".planning", "config.json"), encoding="utf-8") as f:
+            config = json.load(f)
+        self.assertNotIn("effort", config.get("review", {}))
+
+
 class TestMergeModeEndToEnd(_RealGsdTestCase):
     """D-09 (07-CONTEXT.md): proves merge mode's two contracts end-to-end against a REAL
     installed gsd-core -- (1) a brand-new project correctly falls through Plan 01's

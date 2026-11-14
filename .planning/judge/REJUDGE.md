@@ -7,6 +7,7 @@ Each judged skill's verdict here is its base for the batch phases' regression ch
 Rubric: loop 32: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 Rubric: loop 32.1: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 Rubric: loop 32.2: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
+Rubric: loop 32.4: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 
 ## Judged skills
 | Skill | Batch | Loop | Round | Rounds | Judges | Why this many | Worst percent | Worst grade | Critical | High | Refuted | Bar | Spread | Digest |
@@ -23,9 +24,9 @@ Rubric: loop 32.2: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 | ai-kit-cross-ai | 32.3 | 32 | 1 | 1 | 2 | 2: no rubric-v4 verdict | 76.8 | C | 0 | 1 | 0 | not met | 1.6 | 7fee6ff03ba1 |
 | ai-kit-session-wake | 32.3 | 32 | 1 | 1 | 2 | 2: no rubric-v4 verdict | 87.2 | B | 0 | 1 | 0 | met: grade B or better | 5.6 | 7168e10acb80 |
 | ai-kit-spec-execute-superpowers | 32.3 | 32 | 1 | 1 | 2 | 2: last percent 83.2 is within 7.0 points of 80 | 86.4 | B | 0 | 0 | 0 | met: no critical or high finding | 0.8 | 76d60cb299d7 |
-| ai-kit-gsd-curated-config | 32.4 | 32 | 1 | 1 | 2 | 2: last verdict had a critical or high finding; last percent 84.0 is within 7.0 points of 80 | 82.4 | B | 0 | 0 | 0 | met: no critical or high finding | 5.6 | d1321c702ad1 |
-| ai-kit-gsd-spec-discuss | 32.4 | 32 | 1 | 1 | 1 | 1: no deterministic trigger; jev needs_fallback (own reasoning) | 84.8 | B | 0 | 0 | 0 | met: no critical or high finding | - | 8d13c39e0689 |
-| ai-kit-spec-goal-prompt | 32.4 | 32 | 1 | 1 | 1 | 1: no deterministic trigger; jev needs_fallback (own reasoning) | 92.8 | A | 0 | 0 | 0 | met: no critical or high finding | - | fb3955152a82 |
+| ai-kit-gsd-curated-config | 32.4 | 32.4 | 2 | 2 | 2 | 2: last percent 82.4 is within 7.0 points of 80 | 88.0 | B | 0 | 0 | 0 | met: no critical or high finding; lowest percent 88.0, loop 32 base 82.4 | 8.8 | 4d1f2e99ce33 |
+| ai-kit-gsd-spec-discuss | 32.4 | 32.4 | 2 | 2 | 1 (second judge unavailable) | 2: last percent 84.8 is within 7.0 points of 80 | 90.4 | A | 0 | 0 | 0 | met: no critical or high finding; lowest percent 90.4, loop 32 base 84.8 | - | b7a53246c4c6 |
+| ai-kit-spec-goal-prompt | 32.4 | 32.4 | 1 | 1 | 1 | 1: no deterministic trigger; jev needs_fallback (own reasoning) | 98.4 | A | 0 | 0 | 0 | met: no critical or high finding; lowest percent 98.4, loop 32 base 92.8 | - | 5b512ffe7443 |
 
 ## Verdicts
 | Skill | Loop | Round | Judge | Lane status | Substitute | Score | Percent | Grade | Critical | High |
@@ -55,11 +56,11 @@ Rubric: loop 32.2: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 | ai-kit-spec-execute-superpowers | 32 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=56s out=382568 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0; error: D3 is below its max but has no finding | - | not judged | - | - | - | - |
 | ai-kit-spec-execute-superpowers | 32 | 1 | opencode:router-env/my-referee-three | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=42s out=91240 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 109/125 | 87.2 | B | 0 | 0 |
 | ai-kit-spec-execute-superpowers | 32 | 1 | native:opus-xhigh | native, xhigh (frontmatter, documented; not observed) | replaces opencode:router-env/my-referee-two: failed: AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=56s out=382568 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | 108/125 | 86.4 | B | 0 | 0 |
-| ai-kit-gsd-curated-config | 32 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=56s out=192967 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 110/125 | 88.0 | B | 0 | 0 |
-| ai-kit-gsd-curated-config | 32 | 1 | opencode:router-env/my-referee-three | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=59s out=90221 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 103/125 | 82.4 | B | 0 | 0 |
-| ai-kit-gsd-spec-discuss | 32 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=57s out=274150 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0; error: D3 is below its max but has no finding | - | not judged | - | - | - | - |
-| ai-kit-gsd-spec-discuss | 32 | 1 | native:opus-xhigh | native, xhigh (frontmatter, documented; not observed) | replaces opencode:router-env/my-referee-two: failed: AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=57s out=274150 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | 106/125 | 84.8 | B | 0 | 0 |
-| ai-kit-spec-goal-prompt | 32 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=42s out=233312 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 116/125 | 92.8 | A | 0 | 0 |
+| ai-kit-gsd-curated-config | 32.4 | 2 | opencode:router-env/my-referee-one | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=72s out=322380 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 121/125 | 96.8 | A | 0 | 0 |
+| ai-kit-gsd-curated-config | 32.4 | 2 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=184s out=152024 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 110/125 | 88.0 | B | 0 | 0 |
+| ai-kit-gsd-spec-discuss | 32.4 | 2 | opencode:router-env/my-referee-one | AIKIT-XAI status=quota cli=opencode model=router-env/my-referee-one exit=75 cli_rc=1 elapsed=130s out=265262 tree=clean action=stop route=unknown rule=omniroute-all-targets-skipped pattern=verified attempts=1 cycles=0; error: lane is not usable: AIKIT-XAI status=quota cli=opencode model=router-env/my-referee-one exit=75 cli_rc=1 elapsed=130s out=265262 tree=clean action=stop route=unknown rule=omniroute-all-targets-skipped pattern=verified attempts=1 cycles=0 | - | not judged | - | - | - | - |
+| ai-kit-gsd-spec-discuss | 32.4 | 2 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=41s out=323222 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 113/125 | 90.4 | A | 0 | 0 |
+| ai-kit-spec-goal-prompt | 32.4 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=255s out=207921 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 123/125 | 98.4 | A | 0 | 0 |
 
 ## Judge count inputs
 | Skill | Loop | Last v4 percent | Critical | High | Base commit | Source | jev | Count | Reasons |
@@ -76,9 +77,44 @@ Rubric: loop 32.2: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 | ai-kit-cross-ai | 32 | - | - | - | - | - | not asked (deterministic two) | 2 | no rubric-v4 verdict |
 | ai-kit-session-wake | 32 | - | - | - | - | - | not asked (deterministic two) | 2 | no rubric-v4 verdict |
 | ai-kit-spec-execute-superpowers | 32 | 83.2 | 0 | 0 | 76fa531 | .planning/phases/30-phase-boundary-index-refresh-code-exploration-rules-and-lens/30-JUDGE.md:55 | not asked (deterministic two) | 2 | last percent 83.2 is within 7.0 points of 80 |
-| ai-kit-gsd-curated-config | 32 | 84.0 | 0 | 1 | - | .planning/phases/31-removals-and-small-defects/31-VERIFICATION.md:71 | not asked (deterministic two) | 2 | last verdict had a critical or high finding; last percent 84.0 is within 7.0 points of 80 |
-| ai-kit-gsd-spec-discuss | 32 | 88.0 | 0 | 0 | 16153d6 | .planning/phases/29.1-stacked-phase-branches-chained-prs-and-the-merge-chain-inserted/29.1-JUDGE.md:82 | jev needs_fallback (own reasoning) | 1 | no deterministic trigger; jev needs_fallback (own reasoning) |
-| ai-kit-spec-goal-prompt | 32 | 88.8 | 0 | 0 | d2855bc | .planning/phases/29-logical-commit-folding-and-the-shared-jev-ladder/29-JUDGE.md:99 | jev needs_fallback (own reasoning) | 1 | no deterministic trigger; jev needs_fallback (own reasoning) |
+| ai-kit-gsd-curated-config | 32.4 | 82.4 | 0 | 0 | d7bca418ab90672b67116272a4a6022fc2dab2f8 | verdicts/32/ai-kit-gsd-curated-config/r1/opencode_router-env_my-referee-three.json | not asked (deterministic two) | 2 | last percent 82.4 is within 7.0 points of 80 |
+| ai-kit-gsd-spec-discuss | 32.4 | 84.8 | 0 | 0 | d7bca418ab90672b67116272a4a6022fc2dab2f8 | verdicts/32/ai-kit-gsd-spec-discuss/r1/native_opus-xhigh.json | not asked (deterministic two) | 2 | last percent 84.8 is within 7.0 points of 80 |
+| ai-kit-spec-goal-prompt | 32.4 | 92.8 | 0 | 0 | 1335764d95ece745db8bd3471b229fa41802d735 | verdicts/32/ai-kit-spec-goal-prompt/r1/opencode_router-env_my-referee-two.json | jev needs_fallback (own reasoning) | 1 | no deterministic trigger; jev needs_fallback (own reasoning) |
+
+## Evals and tests
+| Skill | evals.json | Trigger queries | Near-misses | Test modules | Brought to the bar by |
+|---|---|---|---|---|---|
+| ai-kit-spec-review-fixer | 7 evals | 20 | 10 | 2 | - |
+| ai-kit-usage-metrics | 6 evals | 20 | 10 | 4 | - |
+| cst-refactor | 6 evals | 20 | 10 | 5 | - |
+| jev-fast-decision | 6 evals | 20 | 10 | 21 | - |
+| markdown-to-pdf | 6 evals | 20 | 10 | 4 | - |
+| ai-kit-spec-config | 6 evals | 16 | 8 | 4 | - |
+| ai-kit-spec-execute | 6 evals | 16 | 8 | 3 | - |
+| ai-kit-spec-review | none | none | none | 67 | Phases 39-40 |
+| ai-kit-spec-review-checklist | 9 evals | 20 | 10 | 3 | - |
+| ai-kit-cross-ai | none | none | none | 9 | Phases 37-38 |
+| ai-kit-session-wake | none | none | none | 13 | the phase that next materially changes its SKILL.md |
+| ai-kit-spec-execute-superpowers | 7 evals | 20 | 11 | 11 | - |
+| ai-kit-gsd-curated-config | 6 evals | 16 | 8 | 26 | - |
+| ai-kit-gsd-spec-discuss | 8 evals | 20 | 10 | 10 | - |
+| ai-kit-spec-goal-prompt | 10 evals | 20 | 10 | 39 | - |
+
+- ai-kit-spec-review-fixer: tests/test_ai_kit_spec_review_fixer.py, tests/test_wizard_pty.py
+- ai-kit-usage-metrics: tests/test_ai_kit_usage_metrics.py, tests/test_arch.py, tests/test_banned_tool_mentions.py, tests/test_gate_scope.py
+- cst-refactor: tests/test_cst_refactor.py, tests/test_cst_refactor_codemods.py, tests/test_gate_scope.py, tests/test_setup.py, tests/test_wizard_app_1.py
+- jev-fast-decision: tests/test_ai_kit_caller_text.py, tests/test_ai_kit_commit_fold.py, tests/test_ai_kit_commit_fold_adapters.py, tests/test_ai_kit_commit_fold_e2e.py, tests/test_ai_kit_gsd_spec_discuss.py, tests/test_ai_kit_spec_goal_prompt_cli.py, tests/test_ai_kit_spec_goal_prompt_golden.py, tests/test_ai_kit_spec_goal_prompt_host.py, tests/test_ai_kit_spec_goal_prompt_render.py, tests/test_ai_kit_spec_goal_prompt_variants.py, tests/test_arch.py, tests/test_check_dogfood.py, tests/test_curated_config_skills.py, tests/test_decision_probe.py, tests/test_jev_fast_decision.py, tests/test_jev_skill_install_e2e.py, tests/test_judge_loop.py, tests/test_precompact_core.py, tests/test_secret_shapes_copy_install.py, tests/test_setup.py, tests/test_wizard_pty.py
+- markdown-to-pdf: tests/test_markdown_to_pdf.py, tests/test_markdown_to_pdf_e2e.py, tests/test_setup.py, tests/test_wizard_pty.py
+- ai-kit-spec-config: tests/test_ai_kit_spec_check_providers.py, tests/test_ai_kit_spec_runtimes_table.py, tests/test_ai_kit_spec_superpowers.py, tests/test_cross_ai_skill_text.py
+- ai-kit-spec-execute: tests/test_ai_kit_spec_execute_router.py, tests/test_ai_kit_spec_superpowers.py, tests/test_gate_scope.py
+- ai-kit-spec-review: tests/test_ai_kit_commit_fold.py, tests/test_ai_kit_commit_fold_adapters.py, tests/test_ai_kit_commit_fold_e2e.py, tests/test_ai_kit_gsd_curated_config.py, tests/test_ai_kit_gsd_curated_config_matrix.py, tests/test_ai_kit_session_wake.py, tests/test_ai_kit_session_wake_fire.py, tests/test_ai_kit_spec.py, tests/test_ai_kit_spec_check_providers.py, tests/test_ai_kit_spec_e2e.py, tests/test_ai_kit_spec_env_scrub.py, tests/test_ai_kit_spec_goal_prompt_cli.py, tests/test_ai_kit_spec_goal_prompt_e2e.py, tests/test_ai_kit_spec_goal_prompt_evals.py, tests/test_ai_kit_spec_goal_prompt_golden.py, tests/test_ai_kit_spec_gsd_tools.py, tests/test_ai_kit_spec_jsonc_read.py, tests/test_ai_kit_spec_legacy_config.py, tests/test_ai_kit_spec_review_checklist.py, tests/test_ai_kit_spec_review_fixer.py, tests/test_ai_kit_spec_routing.py, tests/test_ai_kit_spec_runner_dispatch.py, tests/test_ai_kit_spec_runtimes_table.py, tests/test_ai_kit_spec_superpowers.py, tests/test_ai_kit_spec_trust.py, tests/test_arch.py, tests/test_check_dogfood.py, tests/test_cross_ai_catalog.py, tests/test_cross_ai_runner_e2e.py, tests/test_cross_ai_selftest_logic_1_e2e.py, tests/test_cross_ai_selftest_logic_2_e2e.py, tests/test_cross_ai_selftest_logic_3_e2e.py, tests/test_cross_ai_selftest_logic_4_e2e.py, tests/test_cross_ai_selftest_runtime_1_e2e.py, tests/test_cross_ai_selftest_runtime_2_e2e.py, tests/test_cross_ai_selftest_runtime_3_e2e.py, tests/test_cross_ai_selftest_runtime_4_e2e.py, tests/test_cross_ai_skill_text.py, tests/test_curated_config_apply.py, tests/test_curated_config_apply_e2e.py, tests/test_curated_config_e2e.py, tests/test_curated_config_followups.py, tests/test_curated_config_golden.py, tests/test_curated_config_inventory.py, tests/test_curated_config_script.py, tests/test_curated_config_skills.py, tests/test_cursor_agents.py, tests/test_flow_boundary.py, tests/test_flow_brief.py, tests/test_flow_checkpoint.py, tests/test_flow_checkpoint_2.py, tests/test_flow_contract.py, tests/test_flow_contract_2.py, tests/test_flow_contract_3.py, tests/test_flow_index.py, tests/test_flow_index_e2e.py, tests/test_flow_stack.py, tests/test_flow_stack_2.py, tests/test_flow_stack_3.py, tests/test_gate_scope.py, tests/test_gsd_curated_eval.py, tests/test_pi_live_tools.py, tests/test_quota_policy_text.py, tests/test_run_unittest_parallel.py, tests/test_runtime_list_drift.py, tests/test_secret_shapes.py, tests/test_sibling_resolution.py
+- ai-kit-spec-review-checklist: tests/test_ai_kit_spec.py, tests/test_ai_kit_spec_review_checklist.py, tests/test_framework_profiles.py
+- ai-kit-cross-ai: tests/test_ai_kit_spec.py, tests/test_ai_kit_spec_goal_prompt_cli.py, tests/test_ai_kit_spec_goal_prompt_render.py, tests/test_ai_kit_spec_superpowers.py, tests/test_arch.py, tests/test_cross_ai_skill_text.py, tests/test_curated_config_script.py, tests/test_quota_policy_text.py, tests/test_setup.py
+- ai-kit-session-wake: tests/test_ai_kit_session_wake.py, tests/test_ai_kit_session_wake_fire.py, tests/test_ai_kit_session_wake_reset.py, tests/test_ai_kit_spec_goal_prompt_cli.py, tests/test_ai_kit_spec_goal_prompt_golden.py, tests/test_ai_kit_spec_goal_prompt_host.py, tests/test_ai_kit_spec_goal_prompt_render.py, tests/test_ai_kit_spec_superpowers.py, tests/test_arch.py, tests/test_claude_session_wake_hook.py, tests/test_secret_shapes_copy_install.py, tests/test_setup.py, tests/test_wizard_pty.py
+- ai-kit-spec-execute-superpowers: tests/test_ai_kit_caller_text.py, tests/test_ai_kit_spec_execute_router.py, tests/test_ai_kit_spec_legacy_config.py, tests/test_ai_kit_spec_runtimes_table.py, tests/test_ai_kit_spec_superpowers.py, tests/test_ai_kit_spec_trust.py, tests/test_arch.py, tests/test_cross_ai_skill_text.py, tests/test_flow_docs.py, tests/test_quota_policy_text.py, tests/test_wizard_app_1.py
+- ai-kit-gsd-curated-config: tests/test_ai_kit_gsd_curated_config.py, tests/test_ai_kit_gsd_curated_config_matrix.py, tests/test_ai_kit_gsd_spec_discuss.py, tests/test_ai_kit_spec.py, tests/test_ai_kit_spec_runtimes_table.py, tests/test_arch.py, tests/test_check_dogfood.py, tests/test_cross_ai_runner_e2e.py, tests/test_cross_ai_skill_text.py, tests/test_curated_config_apply.py, tests/test_curated_config_apply_e2e.py, tests/test_curated_config_cross_ai.py, tests/test_curated_config_e2e.py, tests/test_curated_config_followups.py, tests/test_curated_config_golden.py, tests/test_curated_config_inventory.py, tests/test_curated_config_plan_edit.py, tests/test_curated_config_recommend.py, tests/test_curated_config_script.py, tests/test_curated_config_skills.py, tests/test_gate_scope.py, tests/test_gsd_curated_eval.py, tests/test_pi_live_tools.py, tests/test_quota_policy_text.py, tests/test_runtime_list_drift.py, tests/test_sibling_resolution.py
+- ai-kit-gsd-spec-discuss: tests/test_ai_kit_caller_text.py, tests/test_ai_kit_gsd_spec_discuss.py, tests/test_ai_kit_gsd_spec_discuss_e2e.py, tests/test_ai_kit_spec_goal_prompt_common.py, tests/test_ai_kit_spec_goal_prompt_golden.py, tests/test_ai_kit_spec_gsd_tools.py, tests/test_check_dogfood.py, tests/test_flow_docs.py, tests/test_gate_scope.py, tests/test_jev_fast_decision.py
+- ai-kit-spec-goal-prompt: tests/test_ai_kit_caller_text.py, tests/test_ai_kit_commit_fold.py, tests/test_ai_kit_commit_fold_adapters.py, tests/test_ai_kit_commit_fold_e2e.py, tests/test_ai_kit_spec_goal_prompt_cli.py, tests/test_ai_kit_spec_goal_prompt_common.py, tests/test_ai_kit_spec_goal_prompt_e2e.py, tests/test_ai_kit_spec_goal_prompt_evals.py, tests/test_ai_kit_spec_goal_prompt_golden.py, tests/test_ai_kit_spec_goal_prompt_host.py, tests/test_ai_kit_spec_goal_prompt_matrix.py, tests/test_ai_kit_spec_goal_prompt_objective.py, tests/test_ai_kit_spec_goal_prompt_pointer.py, tests/test_ai_kit_spec_goal_prompt_render.py, tests/test_ai_kit_spec_goal_prompt_scope.py, tests/test_ai_kit_spec_goal_prompt_signals.py, tests/test_ai_kit_spec_goal_prompt_skilltext.py, tests/test_ai_kit_spec_goal_prompt_strategies.py, tests/test_ai_kit_spec_goal_prompt_variants.py, tests/test_ai_kit_spec_superpowers.py, tests/test_arch.py, tests/test_flow_boundary.py, tests/test_flow_brief.py, tests/test_flow_checkpoint.py, tests/test_flow_checkpoint_2.py, tests/test_flow_contract.py, tests/test_flow_contract_2.py, tests/test_flow_contract_3.py, tests/test_flow_docs.py, tests/test_flow_index.py, tests/test_flow_index_e2e.py, tests/test_flow_stack.py, tests/test_flow_stack_2.py, tests/test_flow_stack_3.py, tests/test_gsd_curated_eval.py, tests/test_quota_policy_text.py, tests/test_run_unittest_parallel.py, tests/test_runtime_list_drift.py, tests/test_secret_shapes_copy_install.py
 
 ## Judge pool
 
@@ -111,6 +147,16 @@ Substitutes: none
 
 Members: opencode:router-env/my-referee-two, native:opus-xhigh
 Substitutes: native:opus-xhigh: only one configured judge passed its probe
+
+### Loop 32.4
+
+| Judge | Probe | Status line | Reason |
+|---|---|---|---|
+| opencode:router-env/my-referee-one | usable | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=8s out=689 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - |
+| opencode:router-env/my-referee-two | usable | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=7s out=689 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - |
+
+Members: opencode:router-env/my-referee-one, opencode:router-env/my-referee-two
+Substitutes: none
 
 ## Excluded skills
 | Skill | Reason |
