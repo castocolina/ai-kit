@@ -14,12 +14,9 @@ listed here.
 | `sed` (in-place edits) | `sd` | Simpler find/replace syntax, fewer regex-escaping surprises. |
 | `diff` | `delta` or `difftastic` | Readable, syntax-aware diffs. |
 
-## codegraph_explore (MCP)
+## codebase-memory-mcp
 
-When `codegraph_explore` is available and confirmed registered for the CLI running this
-dispatch (never assumed — confirmed via a live per-client health check), prefer it over broad
-file reads for architecture, cross-reference, or "where is X used" questions. Fall back to
-`rg`/`fd`/direct reads when a specific, narrow lookup is simpler than a graph query.
+When the `TOOL_AVAILABILITY = {…}` line reports `codebase-memory-mcp` true, use its graph before broad file reads for architecture, cross-reference, "where is X used" and doc-to-code questions: the MCP tools `search_graph`, `trace_path`, `get_code_snippet`, `query_graph`, `get_architecture` and `check_index_coverage` when this dispatch's prompt says they are configured for the CLI running it (read from the host's config, or for pi inferred from its extension file because pi has no MCP config; never assumed, never tested in the session), otherwise the same tools through `codebase-memory-mcp cli <tool> --flag value`. When `list_projects` shows no project for this checkout, run `index_repository` on it first. Fall back to `rg`/`fd`/direct reads when a narrow lookup is simpler than a graph query.
 
 Use whichever of the above tools are genuinely confirmed present and useful for the task at
 hand — this is a preference list, not a requirement to use every tool listed.

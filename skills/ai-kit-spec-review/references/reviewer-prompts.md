@@ -68,7 +68,7 @@ Step 2b: The orchestrator has also pre-resolved this machine's tooling facts:
 - SHARED_TOOLING_PATH = <SHARED_TOOLING_PATH>
 - TOOL_AVAILABILITY = <TOOL_AVAILABILITY_JSON>
 Read SHARED_TOOLING_PATH for this repo's confirmed tool preferences and apply them during your
-own grounding work (prefer rg/fd/bat/sd/eza and codegraph_explore where confirmed available,
+own grounding work (prefer rg/fd/bat/sd/eza and codebase-memory-mcp's search_graph and trace_path where confirmed available,
 over broad reads/legacy tools). TOOL_AVAILABILITY is the authoritative map of which of those
 tools are actually installed here — it is what the checklist's legacy-tool-usage rule is gated
 on, so never flag a legacy invocation whose modern replacement is not `true` in it.

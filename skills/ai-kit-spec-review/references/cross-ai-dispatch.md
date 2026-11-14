@@ -219,8 +219,8 @@ inline the prompt via `{prompt}` rather than reading stdin, so guidance composed
 would never reach them, and pre-rendering the argv yourself bypasses the single split point
 (templates become argv the way a shell splits words; `{prompt}` is one argument with no extra
 quoting; shell operators, `$`, and backticks in a template are rejected with an error naming the
-reviewer). There is likewise **no** `--codegraph-registered` flag to compute: `dispatch-reviewer`
-runs the same live `check_codegraph_mcp_usable` check itself whenever the entry has a `runtime`
+reviewer). There is likewise **no** `--code-index-registered` flag to compute: `dispatch-reviewer`
+runs the same `check_cbm_registered` check (a read of the host's config files) itself whenever the entry has a `runtime`
 (the same internal-resolution pattern the execute family's `prepare-tooling` already uses), so the
 orchestrator never has to evaluate it. `$SHARED_TOOLING_PATH` and `$TOOL_AVAILABILITY_JSON` are
 surfaced to the reviewer as named `SHARED_TOOLING_PATH = …` / `TOOL_AVAILABILITY = …` lines at

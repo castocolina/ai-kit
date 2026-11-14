@@ -222,9 +222,9 @@ against — verbose narration or full-file echoes can burn enough of it that you
 failure mode (an unconstrained run can exhaust the budget before it writes a report, and a
 budget-unaware run can run out of turns mid-review with no final report at all):
 
-1. **Minimize output tokens.** A tool `Read`/`codegraph_explore`/`rg` call is enough — don't
+1. **Minimize output tokens.** A tool `Read`/`search_graph`/`rg` call is enough — don't
    also restate or re-print what it returned. Progress updates are a single short line ("reading
-   Task 4...") never a paragraph. Prefer targeted reads (line ranges, `codegraph_explore`
+   Task 4...") never a paragraph. Prefer targeted reads (line ranges, `search_graph`
    queries, `rg` matches) over reading whole files when only one section is needed.
 2. **Print each finding the moment you're confident in it**, in the exact one-line format it
    will have in the final report, then keep reviewing — don't hold findings back "for the
@@ -243,7 +243,7 @@ Your dispatch prompt carries these two named lines when the orchestrator resolve
 
 - `SHARED_TOOLING_PATH = <path>` — `Read` it once before your first search/listing/edit-adjacent
   tool call. It names this repo's confirmed modern tool replacements (`rg`/`fd`/`bat`/`sd`/`eza`)
-  and, separately, when `codegraph_explore` is preferred over broad reads. Apply it to your OWN
+  and, separately, when codebase-memory-mcp's `search_graph` and `trace_path` are preferred over broad reads. Apply it to your OWN
   grounding work during this review, the same way you already apply `FRAMEWORK_PROFILE_PATH` —
   this is a `Read`-and-apply reference, never inlined prose repeated here. (An
   `AGENTS_TOOLING_PATH = <path>` line may appear alongside it for machine-level preferences;

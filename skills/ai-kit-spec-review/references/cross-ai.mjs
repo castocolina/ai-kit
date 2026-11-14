@@ -3714,7 +3714,7 @@ async function treeState(cwd, limit, depth = 0) {
     // git add -A skips ignored files, so fold in a stat signature of each one (U-3): hashing
     // contents would be too slow for node_modules-sized trees, and a write changes ctime.
     // Fully ignored dirs list as one 'dir/' entry and are skipped, so a background cache or
-    // indexer (.codegraph/, node_modules/) cannot read as an agent edit.
+    // indexer (graphify-out/, node_modules/) cannot read as an agent edit.
     const ignR = await runChild(git, ['ls-files', '-z', '-o', '-i', '--exclude-standard', '--directory'], { cwd, env, capMs: GIT_CAP_MS, limit });
     if (ignR.timedOut || ignR.spawnErr || ignR.code !== 0) {
       gitFailed(ignR, 'ls-files'); return null;
