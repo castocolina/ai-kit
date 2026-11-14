@@ -101,30 +101,19 @@ def strip_jsonc_comments(text: str) -> str:
     return "".join(chars)
 
 
-def code_indices(text: str, start: int, end: int) -> list[int]:
-    """CODE-state, non-whitespace positions in ``[start, end)``."""
-    kinds = _classify(text)
-    out: list[int] = []
-    for i in range(start, min(end, len(text))):
-        if kinds[i] != KIND_CODE:
-            continue
-        if text[i].isspace():
-            continue
-        out.append(i)
-    return out
-
-
 def strip_trailing_commas(text: str) -> str:
     """Replace trailing commas before ``}`` or ``]`` with a space."""
-    indices = code_indices(text, 0, len(text))
+    kinds = _classify(text)
+    # String characters count as the next token, so `["a", "b"]` keeps its comma.
+    tokens = [i for i, kind in enumerate(kinds) if kind != KIND_COMMENT and not text[i].isspace()]
     chars = list(text)
-    for pos, i in enumerate(indices):
-        if text[i] != ",":
+    for pos, i in enumerate(tokens):
+        if kinds[i] != KIND_CODE or text[i] != ",":
             continue
-        if pos + 1 >= len(indices):
+        if pos + 1 >= len(tokens):
             continue
-        nxt = text[indices[pos + 1]]
-        if nxt in "}]":
+        nxt = tokens[pos + 1]
+        if kinds[nxt] == KIND_CODE and text[nxt] in "}]":
             chars[i] = " "
     return "".join(chars)
 
