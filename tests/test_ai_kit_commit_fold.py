@@ -536,14 +536,15 @@ class TestFoldMerges(RepoCase):
         self.assertEqual(self.git(copy, "log", "-1", "--format=%an <%ae>", "plan"),
                          "Bob Example <bob@example.com>")
 
-    def test_merge_back_after_end_keeps_its_second_parent(self):
+    def test_merge_back_after_end_forking_inside_the_range_refuses(self):
+        # its second parent would keep the unfolded range alive beside the folded one
         copy = copy_repo(self.after_repo, self.tmp)
-        _first, second, _tracking, side, merge = self.after_shas
+        _first, second, _tracking, _side, merge = self.after_shas
+        before = self.state(copy)
         result = self.fold(copy, base=self.after_base, end=second, tip=merge)
-        self.assertEqual(result.outcome, "folded", msg=result.reason)
-        self.assertEqual(self.git(copy, "rev-parse", "plan^2"), side)
-        self.assertEqual(self.git(copy, "rev-parse", "plan^{tree}"),
-                         self.git(copy, "rev-parse", f"{merge}^{{tree}}"))
+        self.assertEqual(result.reason, "foreign_merge")
+        self.assertIn(f"merge {merge[:12]} after the range forks from inside it", result.note)
+        self.assertEqual(self.state(copy), before)
 
     def test_bad_segment_with_tracking_commit_refused(self):
         copy = copy_repo(self.track_repo, self.tmp)

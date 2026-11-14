@@ -426,6 +426,19 @@ def _replay(repo, cp, seg):
     return new
 
 
+def _check_replay_forks(repo, cp):
+    """Refuse when a merge after end has a side parent that reaches into base..end: replaying it
+    would keep the unfolded range alive as a side branch beside the folded one."""
+    span = f"{cp.base}..{cp.end}"
+    total = _count(repo, span)
+    merges = _git(repo, "rev-list", "--merges", "--first-parent", f"{cp.end}..{cp.tip}")
+    for sha in merges.decode().split():
+        side = _git(repo, "rev-list", "--parents", "-n", "1", sha).decode().split()[2:]
+        if _count(repo, span, "--not", *side) != total:
+            raise FoldError("foreign_merge", f"merge {sha[:12]} after the range forks from "
+                                             "inside it; folding would duplicate the range")
+
+
 def _fold(repo, cp, group, mode, seen):
     _guard(repo, cp)
     commits = range_commits(repo, cp)
@@ -434,6 +447,7 @@ def _fold(repo, cp, group, mode, seen):
         return Result(unit=cp.unit, ref=cp.ref, before=len(commits), after=len(commits),
                       tree="", tag="", outcome="nothing_to_fold", reason="", grouping="",
                       note="", mode=mode)
+    _check_replay_forks(repo, cp)
     changed, deleted = _changes(repo, cp)
     features, source, note = group(commits, cp, changed)
     new = _replay(repo, cp, _segment(repo, cp, commits, features, deleted))
