@@ -789,10 +789,12 @@ push of the checked-out branch from its own checkout with no other unpushed loca
 branch or worktree HEAD outside it; every over-budget one otherwise. The 60 s
 target covers the two test hooks alone (their subtotal, measured with
 `python3 tools/time_prepush.py`): before this phase they took 183.9 s (2026-11-03),
-after it 55.4 s, and 30.7 s after the test-time cuts (2026-11-04). pyright (9.7 s),
-vulture (1.9 s), check-dogfood (0.5 s) and deferred-e2e (0.0 s, no push range; no
-e2e module is over the commit budget) are recorded beside that subtotal, and the
-worst-case whole push (`push-worst`, every pre-push hook timed alone) is 42.7 s.
+after it 55.4 s, 30.7 s after the test-time cuts (2026-11-04), and 45.4 s after the
+four slowest hook modules were split and started first (2026-11-13). pyright
+(11.2 s), vulture (2.2 s), check-dogfood (8.1 s) and deferred-e2e (0.0 s, no push
+range; no e2e module is over the commit budget) are recorded beside that subtotal,
+and the worst-case whole push (`push-worst`, every pre-push hook timed alone) is
+67.0 s.
 Tests never call a real host CLI or read `.planning/`.
 
 **Skill judging.** `tools/judge_loop.py` builds skill-judge prompts that embed the installed judge's rubric and spec files (`prompt`, `prompt --probe`), picks the judge pool from probe lanes (`pool`), decides one or two judges per skill from recorded signals plus an advisory jev score (`count`), records each lane's verdict with its status line (`ingest`), and generates and checks the re-judge report in `.planning/judge/` (`report`, `check`; `--gate` also fails an unmet bar or a loop over three rounds, `--require-current` a stale digest). From a skill's second loop on, `count` takes its recorded signals from the skill's previous loop (its lowest valid percent and its worst verdict's critical and high counts) instead of `inputs.json`, and `report` and `check --gate` also fail the bar when a round's lowest percent is more than 7.0 points under the previous loop's lowest percent.

@@ -204,11 +204,15 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   they took 55.4 s (2026-11-04: 24 CPUs, 9 and 5 workers, share 0.40, one-minute
   load 4.48 at start; unit and arch 34.4 s, wizard 21.0 s); after the test-time
   cuts, 30.7 s (2026-11-04: 9 and 7 workers, load 1.90; unit and arch 21.6 s,
-  wizard 9.0 s). The pyright (9.7 s), vulture (1.9 s), check-dogfood (0.5 s) and
+  wizard 9.0 s); after the four slowest hook modules were split by test class and
+  the runner started the slowest modules first, 45.4 s (2026-11-13: 24 CPUs, 9 and
+  9 workers, load 1.37; unit and arch 27.5 s, wizard 17.9 s). The pyright (11.2 s),
+  vulture (2.2 s), check-dogfood (8.1 s: its no-write guard runs the real gsd-tools
+  tests and its judge records check rebuilds the staged-mapper index) and
   deferred-e2e (0.0 s, no push range; no e2e module is over the commit budget)
   times are recorded beside the subtotal, never inside the 60 s figure, with
   `push-worst` (all six pre-push hooks timed alone, deferred-e2e at its no-range
-  worst case) as the worst-case whole push: 42.7 s.
+  worst case) as the worst-case whole push: 67.0 s.
 - Runner self-test shards: `cross-ai.mjs --self-test-list` prints every self-test
   case as `name<TAB>kind`, `logic` or `runtime` (a case that waits on or measures
   a real clock is `runtime`). `tests/cross_ai_selftest.py` deals each kind,

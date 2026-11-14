@@ -105,7 +105,9 @@ INTEGRATION_MODULES = frozenset({
     "tests.test_wizard_app_1",
     "tests.test_wizard_app_2",
     "tests.test_wizard_app_3",
+    # the host pane tests, split in two so they run in parallel
     "tests.test_wizard_hostpane",
+    "tests.test_wizard_hostpane_2",
     "tests.test_wizard_pty",
 })
 # Real git worktrees, memory checks, and real `node` runs against the checkout-local
@@ -180,6 +182,34 @@ E2E_RECORDED_SECS = {
     "tests.test_staged_commit_e2e": 4,
     "tests.test_system_memory_e2e": 1,
     "tests.test_worktree_e2e": 1,
+}
+# Whole seconds per unit, arch, unit-uv or integration module of 5 s or more, rounded up from the
+# `=== <module>: ok in <s>` lines of one run of the two test hooks' groups (2026-11-13, 24 CPUs,
+# one-minute load 3.00 at start). Only the start order reads them: the slowest modules start
+# first, so a long one never starts last. Refresh after splitting or slowing a module.
+HOOK_RECORDED_SECS = {
+    "tests.test_ai_kit_session_wake_fire": 10,
+    "tests.test_ai_kit_spec_runner_dispatch": 8,
+    "tests.test_arch": 7,
+    "tests.test_claude_precompact": 10,
+    "tests.test_cursor_quota": 6,
+    "tests.test_flow_checkpoint": 8,
+    "tests.test_flow_checkpoint_2": 11,
+    "tests.test_flow_contract": 8,
+    "tests.test_flow_contract_2": 10,
+    "tests.test_flow_contract_3": 11,
+    "tests.test_flow_stack": 15,
+    "tests.test_flow_stack_2": 8,
+    "tests.test_flow_stack_3": 12,
+    "tests.test_jev_fast_decision": 18,
+    "tests.test_precompact_core": 7,
+    "tests.test_run_unittest_parallel": 8,
+    "tests.test_wizard_app_1": 13,
+    "tests.test_wizard_app_2": 18,
+    "tests.test_wizard_app_3": 13,
+    "tests.test_wizard_hostpane": 11,
+    "tests.test_wizard_hostpane_2": 12,
+    "tests.test_wizard_pty": 18,
 }
 # Files whose change can alter how any module runs or is selected: staging one runs the full
 # unit and arch groups. A tests/ helper or fixture covering two or more modules counts too, but
@@ -874,8 +904,10 @@ def _run_all(modules: list[str], cwd: Path = REPO_ROOT) -> list[str]:
     workers = worker_count(len(modules), available_cpus(), os.environ.get(CPU_SHARE_ENV))
     failed: list[str] = []
     _STOPPING.clear()
-    # Longest recorded e2e module first, so a slow one never starts last (a stable sort).
-    ordered = sorted(modules, key=lambda m: -E2E_RECORDED_SECS.get(m, 0))
+    # Longest recorded module first (e2e or hook table), so a slow one never starts last (a stable
+    # sort).
+    ordered = sorted(
+        modules, key=lambda m: -(E2E_RECORDED_SECS.get(m) or HOOK_RECORDED_SECS.get(m, 0)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(run_module, m, cwd) for m in ordered]
         try:

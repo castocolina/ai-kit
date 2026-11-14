@@ -671,11 +671,43 @@ class RunAllOrderTest(unittest.TestCase):
             unittest.mock.patch.object(runner, "run_module", fake_run),
             unittest.mock.patch.object(runner, "worker_count", return_value=1),
             unittest.mock.patch.object(runner, "E2E_RECORDED_SECS", table),
+            unittest.mock.patch.object(runner, "HOOK_RECORDED_SECS", {}),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             failed = runner._run_all(["tests.a", "tests.b", "tests.c", "tests.d"])
         self.assertEqual(failed, [])
         self.assertEqual(seen, ["tests.c", "tests.b", "tests.a", "tests.d"])
+
+    def test_a_recorded_hook_module_is_submitted_before_unrecorded_ones(self) -> None:
+        runner = load_runner()
+        seen: list[str] = []
+
+        def fake_run(module, _cwd):
+            seen.append(module)
+            return module, 0, "", 0.0
+
+        hook_table = {"tests.d": 20, "tests.b": 5}
+        with (
+            unittest.mock.patch.object(runner, "run_module", fake_run),
+            unittest.mock.patch.object(runner, "worker_count", return_value=1),
+            unittest.mock.patch.object(runner, "E2E_RECORDED_SECS", {}),
+            unittest.mock.patch.object(runner, "HOOK_RECORDED_SECS", hook_table),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            failed = runner._run_all(["tests.a", "tests.b", "tests.c", "tests.d"])
+        self.assertEqual(failed, [])
+        self.assertEqual(seen, ["tests.d", "tests.b", "tests.a", "tests.c"])
+
+    def test_hook_recorded_secs_name_non_e2e_modules_with_whole_seconds(self) -> None:
+        runner = load_runner()
+        modules = set(runner.discover_modules())
+        self.assertTrue(runner.HOOK_RECORDED_SECS)
+        for module, secs in runner.HOOK_RECORDED_SECS.items():
+            with self.subTest(module=module):
+                self.assertIn(module, modules)
+                self.assertNotIn(module, runner.E2E_MODULES)
+                self.assertIs(type(secs), int)
+                self.assertGreater(secs, 0)
 
 
 class ModuleDeadlineTest(unittest.TestCase):
