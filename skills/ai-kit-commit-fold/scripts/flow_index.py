@@ -62,7 +62,7 @@ CBM = "codebase-memory-mcp"
 CBM_INSTALL = ("curl -fsSL https://raw.githubusercontent.com/DeusData/"
                "codebase-memory-mcp/main/install.sh | bash")
 # codegraph's old index folder (codebase-memory-mcp replaced it): left in place, never removed
-LEGACY_INDEX_DIR = ".codegraph"  # codebase-memory-mcp replaced codegraph; never removed
+LEGACY_INDEX_DIR = ".codegraph"
 _CBM_GAPS = (("not_indexed_files_count", "files not indexed"), ("skipped_count", "skipped"),
              ("parse_partial_count", "partly parsed"), ("parse_unusable_count", "unusable"))
 
@@ -104,6 +104,54 @@ def cbm_step(top, run=_run_tool, which=shutil.which):
                     f"{data.get('edges')} edges{_cbm_gaps(data)})")
     return (f"{CBM}: index_repository failed (exit {rc}: {_cbm_failure_detail(out, err)}); "
             "retried at the next point")
+
+
+def _cbm_projects(exe, top, run):
+    """Every `list_projects` row (dicts), paged; [] on any failure."""
+    rows, offset = [], 0
+    for _ in range(20):  # shortcut: at most 20 pages of 500 projects; raise it when needed
+        rc, out, _err = run([exe, "cli", "list_projects", "--format", "json",
+                             "--limit", "500", "--offset", str(offset)], top)
+        try:
+            data = json.loads(out) if rc == 0 else None
+        except ValueError:
+            data = None
+        page = data.get("projects") if isinstance(data, dict) else None
+        if not isinstance(page, list):
+            break
+        page = [row for row in page if isinstance(row, dict)]
+        rows += page
+        if not data.get("has_more") or not page:
+            break
+        offset += len(page)
+    return rows
+
+
+def cbm_prune(top, run=_run_tool, which=shutil.which):
+    """Delete the index of each project whose checkout is gone from this repository's tree.
+
+    A worktree's database outlives `git worktree remove`; a project goes only when its root no
+    longer exists AND lies under the main checkout root (executor worktrees live inside it). An
+    existing root, or a root outside the checkout, is never touched. One note per deletion; a
+    failure is one note and never raises.
+    """
+    exe = which(CBM)
+    if exe is None:
+        return []
+    main = os.path.realpath(flow_record.main_worktree(top))
+    notes = []
+    for row in _cbm_projects(exe, top, run):
+        root, name = row.get("root_path"), row.get("name")
+        if (not isinstance(root, str) or not isinstance(name, str) or os.path.exists(root)
+                or not root.startswith(main + os.sep)):
+            continue
+        rc, out, err = run([exe, "cli", "delete_project", "--project", name], top)
+        if rc == 0:
+            notes.append(f"note: deleted the stale {CBM} index {name} (checkout gone: {root})")
+        else:
+            notes.append(f"note: {CBM} delete_project {name} failed (exit {rc}: "
+                         f"{_cbm_failure_detail(out, err)})")
+    return notes
 
 
 # ---- graphify (R3) --------------------------------------------------------------------------
@@ -205,6 +253,8 @@ def refresh(top, run=_run_tool, which=shutil.which, clock=time.monotonic, sleep=
         note = fold_adapters.index_ensure_graphifyignore(top)
         if note:
             notes.append(note)
+    with contextlib.suppress(Exception):  # pruning never fails the step
+        notes += cbm_prune(top, run, which)
     cbm_line = cbm_step(top, run, which)
     graphify_line = graphify_step(top, run, which, clock, sleep)
     rels = ["graphify-out"]

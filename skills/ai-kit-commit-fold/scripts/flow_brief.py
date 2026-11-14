@@ -131,24 +131,53 @@ def _cbm_project(top, run):
         offset += len(rows)
 
 
-def _query_names(out):
-    """(names, label) from one `query_graph` JSON result: the name column of each row."""
-    try:
-        data = json.loads(out)
-    except ValueError:
-        data = None
-    if not isinstance(data, dict):
-        return [], "file names only: codebase-memory-mcp query_graph output unreadable"
-    rows = data.get("rows")
-    if not isinstance(rows, list):
-        rows = []
+def _query_pages(top, run, project, query):
+    """(rows, total, more, error) from `query_graph` pages up to MAX_QUERY_ROWS rows.
+
+    The tool cuts a page at an output budget far below --max-rows, so page with the reported
+    `next_offset`. `error` is a label when the first page is unusable; a later bad page just
+    leaves `more` true.
+    """
+    rows, total, offset = [], None, 0
+    while True:
+        rc, out, _ = run([flow_index.CBM, "cli", "query_graph", "--project", project,
+                          "--format", "json", "--max-rows", str(MAX_QUERY_ROWS),
+                          "--offset", str(offset), "--query", query], top)
+        first = offset == 0
+        if rc != 0:
+            return rows, total, not first, (
+                f"file names only: codebase-memory-mcp query_graph failed, exit {rc}"
+                if first else None)
+        try:
+            data = json.loads(out)
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            return rows, total, not first, (
+                "file names only: codebase-memory-mcp query_graph output unreadable"
+                if first else None)
+        page = data.get("rows")
+        page = page if isinstance(page, list) else []
+        rows += page
+        total = data.get("total", total)
+        if not (data.get("has_more") or data.get("truncated")) or not page:
+            return rows, total, False, None
+        if len(rows) >= MAX_QUERY_ROWS:
+            return rows, total, True, None
+        next_offset = data.get("next_offset")
+        offset = next_offset if isinstance(next_offset, int) and next_offset > offset \
+            else offset + len(page)
+
+
+def _query_names(rows, total, more):
+    """(names, label) from the collected rows: the name column of each row."""
     names = {row[1] for row in rows
              if isinstance(row, list) and len(row) > 1 and isinstance(row[1], str)}
     if not names:
         return [], "file names only: codebase-memory-mcp listed no names"
-    if data.get("has_more") or data.get("truncated"):
-        return sorted(names), (f"symbol names from codebase-memory-mcp, partial: more than "
-                               f"{MAX_QUERY_ROWS} rows; plus file names")
+    if more:
+        return sorted(names), (f"symbol names from codebase-memory-mcp, partial: {len(rows)} of "
+                               f"{total if total is not None else 'more'} rows; plus file names")
     return sorted(names), "symbol names from codebase-memory-mcp plus file names"
 
 
@@ -164,12 +193,10 @@ def explore_names(top, code_paths, run, which):
     in_list = ", ".join(cypher_quote(path) for path in code_paths)
     query = (f"MATCH (f) WHERE f.file_path IN [{in_list}] AND "
              "(f:Function OR f:Method OR f:Class) RETURN f.file_path, f.name")
-    rc, out, _ = run([flow_index.CBM, "cli", "query_graph", "--project", project,
-                      "--format", "json", "--max-rows", str(MAX_QUERY_ROWS), "--query", query],
-                     top)
-    if rc != 0:
-        return [], f"file names only: codebase-memory-mcp query_graph failed, exit {rc}"
-    return _query_names(out)
+    rows, total, more, error = _query_pages(top, run, project, query)
+    if error:
+        return [], error
+    return _query_names(rows, total, more)
 
 
 def mentions(top, names):

@@ -7,8 +7,10 @@ defaults). Keys: `cbm_fail` ([rc, stderr line]: fails `index_repository`), `cbm_
 printed verbatim by `index_repository`), `cbm_projects` (list of project roots that
 `list_projects` pages through, 500 a page; absent means the checkout alone), `cbm_query_fail`
 ([rc, stderr line]: fails `query_graph`), `cbm_query_raw` (string printed verbatim by
-`query_graph`), `graphify_fail` ([rc, stderr line] or null), `graphify_no_graph` (exit 0,
-write nothing), `delay_s` (sleep before acting).
+`query_graph`), `cbm_query_budget` (max rows per `query_graph` page, like the real output
+budget; pages carry `next_offset`), `cbm_delete_fail` ([rc, stderr line]: fails `delete_project`;
+a successful one drops the project from `cbm_projects`), `graphify_fail` ([rc, stderr line] or
+null), `graphify_no_graph` (exit 0, write nothing), `delay_s` (sleep before acting).
 
 `graphify update .` writes `graphify-out/graph.json` with `built_at_commit` (full HEAD sha),
 one node per tracked path not excluded by the root `.graphifyignore`, plus small
@@ -127,10 +129,29 @@ def cbm(state):
                     match = re.match(r"^(\s*)(def|class)\s+([A-Za-z_]\w*)", line)
                     if match:
                         rows.append([item, match.group(3)])
-        data = {"columns": ["f.file_path", "f.name"], "rows": rows[:cap],
-                "returned": min(len(rows), cap), "total": len(rows),
-                "total_relation": "eq", "has_more": len(rows) > cap, "truncated": False}
+        offset = int(opts.get("--offset", "0"))
+        budget = state.get("cbm_query_budget")  # rows per page before the output budget cuts
+        take = min(cap, budget) if budget else cap
+        page = rows[offset:offset + take]
+        more = offset + len(page) < len(rows)
+        data = {"columns": ["f.file_path", "f.name"], "rows": page,
+                "returned": len(page), "total": len(rows),
+                "total_relation": "eq", "has_more": more, "truncated": more}
+        if more:
+            data["truncation_reason"] = "output_budget" if take < cap else "max_rows"
+            data["next_offset"] = offset + len(page)
         return 0, json.dumps(data) + "\n", ""
+    if ARGV[:2] == ["cli", "delete_project"]:
+        if state.get("cbm_delete_fail"):
+            return state["cbm_delete_fail"][0], "", state["cbm_delete_fail"][1] + "\n"
+        roots = state.get("cbm_projects")
+        if not isinstance(roots, list):
+            roots = [os.path.realpath(CWD)]
+        keep = [root for root in roots if name_of(root) != opts.get("--project")]
+        state["cbm_projects"] = keep
+        with open(STATE, "w", encoding="utf-8") as handle:
+            json.dump(state, handle)
+        return 0, json.dumps({"status": "deleted", "deleted": len(roots) - len(keep)}) + "\n", ""
     return 2, "", f"codebase-memory-mcp fake: unknown argv {ARGV}\n"
 
 

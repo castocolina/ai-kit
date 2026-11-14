@@ -111,7 +111,7 @@ class IndexNamesTests(unittest.TestCase):
         self.assertEqual(run.calls, [
             [CBM, "cli", "list_projects", "--format", "json", "--limit", "500", "--offset", "0"],
             [CBM, "cli", "query_graph", "--project", "p-repo", "--format", "json",
-             "--max-rows", "2000", "--query", _ALPHA_QUERY],
+             "--max-rows", "2000", "--offset", "0", "--query", _ALPHA_QUERY],
         ])
 
     def test_checkout_on_the_second_page_of_projects_is_found(self):
@@ -132,14 +132,37 @@ class IndexNamesTests(unittest.TestCase):
                          ([], _NO_INDEX))
         self.assertEqual(len(run.calls), 1)
 
-    def test_more_query_rows_than_the_cap_are_labeled_partial(self):
+    def test_query_pages_follow_next_offset_until_no_more(self):
+        def page(names, **extra):
+            data = json.loads(_query([["pkg/alpha.py", name] for name in names]))
+            data.update(extra)
+            return json.dumps(data)
+
         run = _tool_runner({
             "list_projects": (0, _projects(("p-repo", "/repo"))),
-            "query_graph": (0, _query([["pkg/alpha.py", "alpha_one"]], has_more=True)),
+            "query_graph": [
+                (0, page(["a1", "a2"], has_more=True, truncated=True, next_offset=2, total=3)),
+                (0, page(["a3"], total=3)),
+            ],
+        })
+        names, label = flow_brief.explore_names("/repo", ["pkg/alpha.py"], run, _found)
+        self.assertEqual(names, ["a1", "a2", "a3"])
+        self.assertEqual(label, "symbol names from codebase-memory-mcp plus file names")
+        offsets = [call[call.index("--offset") + 1] for call in run.calls[1:]]
+        self.assertEqual(offsets, ["0", "2"])
+
+    def test_rows_past_the_cap_are_labeled_with_the_real_counts(self):
+        rows = [["pkg/alpha.py", f"n{index}"] for index in range(flow_brief.MAX_QUERY_ROWS)]
+        data = json.loads(_query(rows, has_more=True))
+        data.update(total=5103, next_offset=len(rows))
+        run = _tool_runner({
+            "list_projects": (0, _projects(("p-repo", "/repo"))),
+            "query_graph": (0, json.dumps(data)),
         })
         _names, label = flow_brief.explore_names("/repo", ["pkg/alpha.py"], run, _found)
-        self.assertEqual(label, "symbol names from codebase-memory-mcp, partial: more than "
-                                "2000 rows; plus file names")
+        self.assertEqual(label, "symbol names from codebase-memory-mcp, partial: 2000 of "
+                                "5103 rows; plus file names")
+        self.assertEqual(len(run.calls), 2)
 
     def test_no_cli_makes_no_call(self):
         run = _tool_runner({})
@@ -363,6 +386,20 @@ class FakeIndexTests(unittest.TestCase):
         _write(self.repo, "pkg/it's é.py", "def quoted_one():\n    return 1\n")
         names, _label = self.names(["pkg/it's é.py"])
         self.assertEqual(names, ["quoted_one"])
+
+    def test_output_budget_cut_is_paged_to_all_names(self):
+        index_fakes.set_state(self.state, cbm_query_budget=3)
+        names, label = self.names(["pkg/many.py"])
+        self.assertEqual(names, [f"func_{index}" for index in range(8)])
+        self.assertEqual(label, "symbol names from codebase-memory-mcp plus file names")
+
+    def test_output_budget_cut_past_the_cap_is_labeled_partial(self):
+        index_fakes.set_state(self.state, cbm_query_budget=3)
+        with mock.patch.object(flow_brief, "MAX_QUERY_ROWS", 6):
+            names, label = self.names(["pkg/many.py"])
+        self.assertEqual(len(names), 6)
+        self.assertEqual(label, "symbol names from codebase-memory-mcp, partial: 6 of 8 rows; "
+                                "plus file names")
 
     def test_query_output_that_is_not_json_is_labeled(self):
         index_fakes.set_state(self.state, cbm_query_raw="not json")

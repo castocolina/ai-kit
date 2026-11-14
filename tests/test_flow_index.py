@@ -85,10 +85,46 @@ class CbmStepTests(_Base):
 
     def test_call_is_index_repository_full_mode_on_the_checkout(self):
         self.refresh()
-        calls = self.cbm_calls()
+        calls = [call for call in self.cbm_calls() if call["argv"][1] == "index_repository"]
         self.assertEqual([call["argv"] for call in calls],
                          [["cli", "index_repository", "--repo-path", ".", "--mode", "full"]])
         self.assertEqual(os.path.realpath(calls[0]["cwd"]), os.path.realpath(self.repo))
+
+    def projects(self):
+        return json.loads(self.state.read_text("utf-8")).get("cbm_projects")
+
+    def test_stale_worktree_project_inside_the_checkout_is_deleted(self):
+        gone = os.path.join(self.top, ".claude", "worktrees", "wt-gone")
+        self.set_state(cbm_projects=[self.top, gone])
+        lines = self.refresh()
+        self.assertEqual(self.projects(), [self.top])
+        name = gone.lstrip("/").replace("/", "-")
+        self.assertIn(f"note: deleted the stale codebase-memory-mcp index {name} "
+                      f"(checkout gone: {gone})", lines)
+        deletes = [c["argv"] for c in self.cbm_calls() if c["argv"][1] == "delete_project"]
+        self.assertEqual(deletes, [["cli", "delete_project", "--project", name]])
+
+    def test_existing_root_and_missing_root_outside_the_checkout_are_kept(self):
+        alive = self.tmp / "other-alive"
+        alive.mkdir()
+        outside = str(self.tmp / "elsewhere-gone")
+        inside_alive = self.repo / "sub"
+        inside_alive.mkdir()
+        roots = [self.top, str(alive), outside, str(inside_alive)]
+        self.set_state(cbm_projects=roots)
+        lines = self.refresh()
+        self.assertEqual(self.projects(), roots)
+        self.assertFalse([line for line in lines if "stale" in line])
+        self.assertFalse([c for c in self.cbm_calls() if c["argv"][1] == "delete_project"])
+
+    def test_failed_delete_is_one_note_and_the_step_goes_on(self):
+        gone = os.path.join(self.top, ".claude", "worktrees", "wt-gone")
+        self.set_state(cbm_projects=[self.top, gone], cbm_delete_fail=[1, "locked"])
+        lines = self.refresh()
+        name = gone.lstrip("/").replace("/", "-")
+        self.assertIn(f"note: codebase-memory-mcp delete_project {name} failed (exit 1: locked)",
+                      lines)
+        self.assertEqual(lines[0], "codebase-memory-mcp: ran index_repository (32 nodes, 47 edges)")
 
     def test_failing_index_with_json_hint_is_one_line_and_graphify_still_runs(self):
         self.set_state(cbm_fail=[1, json.dumps({"project": "x", "status": "error",
