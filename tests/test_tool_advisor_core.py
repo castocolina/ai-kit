@@ -424,9 +424,17 @@ class TestCbmSearchAdvice(unittest.TestCase):
         os.makedirs(os.path.join(root, "tools"))
         os.mkdir(os.path.join(root, ".git"))
         if indexed:
-            with open(core._cbm_db_path(root, self.env), "w", encoding="utf-8"):
+            # the tool's name rule written out here, not taken from core: root "/a/b" -> "a-b.db"
+            name = os.path.realpath(root).lstrip("/").replace("/", "-") + ".db"
+            with open(os.path.join(self.cache, name), "w", encoding="utf-8"):
                 pass
         return root
+
+    def test_database_name_follows_the_tools_rule_for_fixed_paths(self):
+        # the real tool names the database of /home/u/repo home-u-repo.db (read from its cache;
+        # reverse-engineered rule)
+        for root, name in (("/a/b/c", "a-b-c.db"), ("/x", "x.db")):
+            self.assertEqual(core._cbm_db_path(root, self.env), os.path.join(self.cache, name))
 
     def _sandbox(self):
         root = tempfile.mkdtemp(prefix="cbm-sandbox-")
