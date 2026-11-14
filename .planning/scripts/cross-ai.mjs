@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=2d4270fefa1f6bc038b6fbcd0b6b0b0f56509f0fc7bd3f44cdcbca890159bf64
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=61fa6ca8cbd0ecd14fe6977d382ac1216d1305f7246072e62720fd9c46752548
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
@@ -1325,6 +1325,9 @@ const OPENCODE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._@+-]*\/[A-Za-z0-9][A-Za-z0-9.
 // flushed (a stalled reader gets a bounded wait, shorter on the signal path).
 function exitFlushed(code) {
   if (backstop) clearTimeout(backstop);
+  // Every exit drops the temp folders still registered (an early return skips its finally).
+  // The catch keeps a failing rm from looping through the crash handler back to here.
+  for (const dir of [...tempDirs]) { try { dropTemp(dir); } catch { tempDirs.delete(dir); } }
   process.exitCode = code;
   let pending = 2;
   const done = () => { if (--pending === 0) process.exit(code); };
@@ -1342,7 +1345,6 @@ process.on('uncaughtException', (e) => {
     return;
   }
   if (current) killGroup(current, 'SIGKILL');
-  for (const dir of [...tempDirs]) dropTemp(dir);
   log(`cross-ai: internal error: ${e && e.stack || e}`);
   exitFlushed(reportAndFinish(
         'crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' },
@@ -3821,7 +3823,6 @@ for (const [sig, n] of [['SIGTERM', 15], ['SIGINT', 2], ['SIGHUP', 1]]) {
     if (currentFinalize) currentFinalize('signal');
     backstop = setTimeout(() => {
       if (current) killGroup(current, 'SIGKILL');
-      for (const dir of [...tempDirs]) dropTemp(dir);
       const fields = { ...liveFields, exit: 128 + n, tree: 'unknown' };
       exitFlushed(reportAndFinish('signal', fields, 'signal'));
     }, SIGNAL_BUDGET_MS + 200);
@@ -4655,7 +4656,11 @@ function readStdin() {
 
 function hermeticEnv(tmp, extra = {}) {
   const home = extra.HOME || path.join(tmp, 'home');
+  // A runner temp folder a case leaves behind stays inside the self-test root, never in /tmp.
+  const tmpdir = extra.TMPDIR || path.join(tmp, 'tmpdir');
+  fs.mkdirSync(tmpdir, { recursive: true });
   const base = {
+    TMPDIR: tmpdir,
     PATH: path.join(tmp, 'bin'),
     HOME: home,
     XDG_CONFIG_HOME: extra.XDG_CONFIG_HOME || path.join(home, '.config'),
@@ -5594,7 +5599,9 @@ async function runSelfTestCase(tmp, spec) {
   const calls = path.join(tmp, `calls-${spec.name}.log`);
   const pidFile = path.join(tmp, `pids-${spec.name}.log`);
   const copy = writeCopy(tmp, spec.name, spec.config || {});
+  const tmpdir = path.join(tmp, `tmp-${spec.name}`);
   const env = hermeticEnv(tmp, {
+    TMPDIR: tmpdir,
     HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'),
     XDG_STATE_HOME: path.join(home, '.local', 'state', spec.name),
     FAKE_CALLS: calls, FAKE_PIDS: pidFile,
@@ -5604,13 +5611,17 @@ async function runSelfTestCase(tmp, spec) {
     ...(spec.fakeOpencodeMode ? { FAKE_OPENCODE_MODE: spec.fakeOpencodeMode } : {}),
     ...(spec.env || {}),
   });
-  const c = { tmp, repo, home, calls, pidFile, copy, env };
+  const c = { tmp, repo, home, calls, pidFile, copy, env, tmpdir };
   let reason;
   try {
     reason = (spec.setup && spec.setup(c)) || await checkCase(spec, c);
   } finally {
     reapUnder(repo, [pidFile]);
   }
+  // Every runner exit path drops its temp folders; only a case that kills the runner on
+  // purpose (keepsTmp) may leave one.
+  const left = spec.keepsTmp ? [] : fs.readdirSync(tmpdir);
+  if (!reason && left.length) reason = `left in TMPDIR: ${left.join(',')}`;
   if (!spec.expectFailure) return reason;
   if (!reason) return 'case was expected to fail';
   return spec.afterReap({ ...c, pids: recordedPids(pidFile) });
@@ -7809,9 +7820,13 @@ async function blackBoxSelfTest(listOnly = false) {
         exit: 0,
         status: /^$/,
         expectFailure: true,
+        // SIGKILL skips every cleanup, so the runner's cross-ai-* folder stays (in the case
+        // TMPDIR, which proves the containment).
+        keepsTmp: true,
         afterReap: (c) => {
           const dead = deadCheck(c, ['pi', 'gc']);
           if (dead) return dead;
+          if (!fs.readdirSync(c.tmpdir).some((n) => n.startsWith('cross-ai-'))) return 'no cross-ai- folder in the case TMPDIR';
           const left = pidsUnder(c.repo);
           return left.length ? `survivors ${left.join(',')}` : null;
         },
