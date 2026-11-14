@@ -552,7 +552,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   itself turns it off are stated from the installed GSD docs.
 - [ ] **CUR-05**: Skills are assigned to GSD agents by responsibility from the skills actually available, through the
   shared role-keyed table.
-- [ ] **CUR-06**: curated-config no longer writes `review.effort.opencode = "high"`.
+- [ ] **CUR-06**: curated-config no longer writes `review.effort.opencode = "high"`. *(amended 2026-11-13, 32.4 spec S5: live check: the checkout-local gsd-core 1.16.0 no longer passes the effort as `--variant` (which opencode 2.x rejects) but appends it to the model as `#<variant>`, warning when no model is set; so the fix removes the v1 `apply-review` command's fixed write, which sets no model, and keeps the v2 planner's catalog-derived effort row, which is set with `review.models.opencode` and labelled with its unverified effect)*
 - [ ] **CUR-07**: When graphify is installed, curated-config turns on GSD's `graphify.enabled` and
   `graphify.auto_update` and says what they do; it never leaves the graph switched off silently.
 - [ ] **CUR-08**: After writing effort settings, curated-config runs `effort sync --apply` for the checkout and for
@@ -790,7 +790,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **DEF-10**: curated-config's real-gsd-tools tracer test passes with `TMPDIR` inside a GSD project checkout:
   the behaviour for a new project nested inside another project is decided and tested, and the six-environment
   custom-tmpdir row keeps `.planning/` in its clone so it catches the case. *(added 2026-11-07, Phase 32
-  close-out)*
+  close-out)* *(amended 2026-11-13, 32.4 D-15, D-16: live check: the custom-tmpdir row has no clone; its TMPDIR
+  sits in a fresh `git init` repository, which gains a synthetic `.planning/`; the nested-project fix covers the v1
+  `ensure-project` and the v2 inventory and apply, since gsd-tools resolves an empty nested folder to the outer
+  project's config)*
 
 ## Future Requirements
 
@@ -1010,3 +1013,4 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *Amended 2026-11-07 by Phase 32.1's spec and discuss (owner batch scope "Narrow"): JDG-03 and JDG-04 amended; ROADMAP goals and criteria 1-2 of 32.1-32.3, 32.1 criterion 5, 32.4's goal and criterion 4, and the JDG-04 criterion of Phases 37-40 amended; backlog 999.22 (headless installer agents) added.*
 *Amended 2026-11-08 by Phase 32.2's spec and discuss: DEF-09 amended (the guard also reads comments and covers every skill's Python); ROADMAP 32.2's goal note and criterion 4 amended.*
 *Amended 2026-11-13 by Phase 32.3's spec and discuss: DEF-02 amended (five shipped scanner copies plus the eval test helper, one shared token-shape scanner, a drift and new-copy guard); ROADMAP 32.3's code anchors and criterion 3 and Phase 47.1's code anchors amended.*
+*Amended 2026-11-13 by Phase 32.4's spec and discuss: CUR-06 amended (only the v1 `apply-review` fixed effort write goes) and DEF-10 amended (no clone in the custom-tmpdir row; both curated-config write flows fixed); ROADMAP 32.4 criteria 3 and 9 amended.*

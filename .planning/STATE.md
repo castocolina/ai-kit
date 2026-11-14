@@ -5,11 +5,11 @@ milestone_name: Skill Refactor
 current_phase: "32.4"
 current_phase_name: Batch 4, planning skills and the closing report
 status: planning
-stopped_at: Phase 32.3 complete, ready to plan Phase 32.4
-last_updated: "2026-11-13T14:37:23.461Z"
+stopped_at: Phase 32.4 spec and discuss done (SPEC 12 req, CONTEXT D-01..D-19); ready to plan Phase 32.4
+last_updated: "2026-11-13T15:35:18.813Z"
 last_activity: 2026-11-13
 last_activity_desc: Phase 32.3 complete, transitioned to Phase 32.4
-state_head: f46555ca64a7ae61fdf1ec14eb9cf9c957293f10
+state_head: 578778d7253024602ecb445cdb24a2d6e2120ca6
 progress:
   total_phases: 37
   completed_phases: 11
@@ -686,9 +686,9 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-13T14:02:34.648Z
-Stopped at: Phase 32.3 complete, ready to plan Phase 32.4
-Resume file: None
+Last session: 2026-11-13T15:35:18.297Z
+Stopped at: Phase 32.4 spec and discuss done (SPEC 12 req, CONTEXT D-01..D-19); ready to plan Phase 32.4
+Resume file: .planning/phases/32.4-batch-4-planning-skills-and-the-closing-report/32.4-CONTEXT.md
 
 ## Operator Next Steps
 
