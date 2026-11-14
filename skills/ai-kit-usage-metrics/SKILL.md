@@ -189,7 +189,7 @@ recognized as shell-executing inside a `custom_tool_call` — grounded by
 a full enumeration of the real captured store, the only observed
 `tools.*` name whose JSON argument carries a `cmd` key. Every other
 observed name sharing the same wrapper (`apply_patch`, `web__run`,
-`update_plan`, `write_stdin`, `mcp__codegraph__codegraph_explore`,
+`update_plan`, `write_stdin`, `mcp__codegraph__codegraph_explore` (codegraph's MCP tool; codebase-memory-mcp replaced codegraph),
 `append`, `create_goal`, `update_goal`, `values`) is deliberately NOT
 treated as a command. The working directory is taken from the tool
 call's own `workdir` argument when present, seeded once per record

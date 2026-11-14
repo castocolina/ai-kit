@@ -394,12 +394,12 @@ class TestSkillContract(unittest.TestCase):
         self.assertNotIn("The same line goes in the `gsd-advisor-researcher` spawn prompt",
                          brief)
 
-    def test_codegraph_block_is_gated_on_the_binary_and_an_index(self):
+    def test_code_index_block_is_gated_on_the_binary(self):
         brief = self.read("references/analyzer-brief.md")
-        self.assertIn("<CODEGRAPH BLOCK", brief)
-        self.assertIn("command -v codegraph", brief)
-        self.assertIn("codegraph sync", brief)
-        self.assertIn("codegraph_explore", brief)
+        self.assertIn("<CODE INDEX BLOCK", brief)
+        self.assertIn("command -v codebase-memory-mcp", brief)
+        self.assertIn("index_repository", brief)
+        self.assertIn("search_graph", brief)
 
     def test_decision_table_covers_blocking_by_confidence(self):
         table = self.read("references/decision-table.md")

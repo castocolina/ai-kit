@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=61fa6ca8cbd0ecd14fe6977d382ac1216d1305f7246072e62720fd9c46752548
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=9d2f52ee7e567e152bf5600ecc3bac627be333d8203bb3303793fe268815866f
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
@@ -3733,7 +3733,7 @@ async function treeState(cwd, limit, depth = 0) {
     // git add -A skips ignored files, so fold in a stat signature of each one (U-3): hashing
     // contents would be too slow for node_modules-sized trees, and a write changes ctime.
     // Fully ignored dirs list as one 'dir/' entry and are skipped, so a background cache or
-    // indexer (.codegraph/, node_modules/) cannot read as an agent edit.
+    // indexer (graphify-out/, node_modules/) cannot read as an agent edit.
     const ignR = await runChild(git, ['ls-files', '-z', '-o', '-i', '--exclude-standard', '--directory'], { cwd, env, capMs: GIT_CAP_MS, limit });
     if (ignR.timedOut || ignR.spawnErr || ignR.code !== 0) {
       gitFailed(ignR, 'ls-files'); return null;

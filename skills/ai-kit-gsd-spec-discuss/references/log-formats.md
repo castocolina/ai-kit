@@ -75,7 +75,7 @@ requirement. Edge Coverage rows: `~~old resolution~~ *(superseded, D-NN)* new re
 **Phase:** NN-slug
 **Mode:** <run mode — auto path: assumptions (`--analyze --all --batch`); interactive path:
 standard discuss mode (`--analyze --all --batch`) with the user>, jev screening, <quality rule> — add
-", CodeGraph" only when the brief included the CodeGraph block.
+", code index" only when the brief included the code index block.
 **Areas analyzed:** <areas>
 
 ## Assumptions Presented
