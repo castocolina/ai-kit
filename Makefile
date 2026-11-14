@@ -14,6 +14,7 @@ SETUP_PY   := tools/setup.py
 
 .PHONY: install reconfigure uninstall doctor check test lint dev setup-env setup-dev validate e2e-docker \
         test-unit test-integration e2e-test arch-test test-env-matrix \
+        test-unit-core test-unit-uv e2e-test-modules e2e-test-install \
         py-compile pylint pyright ruff shellcheck vulture unittest unittest-wizard check-dogfood \
         format security-scanner duplicate-code
 
@@ -53,9 +54,14 @@ check:
 
 # In-process modules with no subprocess/PTY/container — the fast, pure-unit tier.
 # `unit` runs under bare system python3 (stdlib-only, matching the runtime);
-# `unit-uv` needs PyYAML and LibCST from uv.
-test-unit:
+# `unit-uv` needs PyYAML and LibCST from uv. Each group is its own prerequisite target, so
+# `make -k` still runs `unit-uv` when `unit` fails (a recipe stops at its first failing line).
+test-unit: test-unit-core test-unit-uv
+
+test-unit-core:
 	python3 tools/run_unittest_parallel.py --group unit
+
+test-unit-uv:
 	uv run python3 tools/run_unittest_parallel.py --group unit-uv
 
 # The `integration` group: Textual app and PTY-driven subprocesses wired
@@ -64,9 +70,14 @@ test-integration:
 	uv run python tools/run_unittest_parallel.py --group integration
 
 # The `e2e` group: real git worktrees, memory checks and real `node` runs
-# against the checkout-local gsd-core, plus the shell-level install script.
-e2e-test:
+# against the checkout-local gsd-core, plus the shell-level install script, each its own
+# prerequisite target so `make -k` still runs the install script when the e2e group fails.
+e2e-test: e2e-test-modules e2e-test-install
+
+e2e-test-modules:
 	uv run python tools/run_unittest_parallel.py --group e2e
+
+e2e-test-install:
 	bash tests/test_install.sh
 
 # AST architecture-fitness check (the runner's `arch` group) — no import/execution.
