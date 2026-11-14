@@ -381,15 +381,13 @@ class TestGuardedAgentBinary(unittest.TestCase):
 
 
 class TestLegacyEntryPoints(unittest.TestCase):
-    def test_install_hint_and_mcp_list_use_the_cursor_id(self):
-        for name in ("cursor", "cursor-agent"):
-            command = detection.codegraph_install_command(name)
-            self.assertIn("--target=cursor", command)
-            self.assertNotIn("--target=cursor-agent", command)
-        self.assertEqual(
-            detection._MCP_LIST_COMMANDS["cursor"],
-            ("cursor-agent", "mcp", "list"),
-        )
+    def test_registration_reads_the_legacy_cursor_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"HOME": tmp}
+            self.assertEqual(
+                detection.cbm_registration("cursor-agent", env),
+                detection.cbm_registration("cursor", env),
+            )
 
     def test_find_alternative_reads_a_legacy_snapshot_key(self):
         snapshot = {
@@ -450,12 +448,10 @@ class TestLegacyEntryPoints(unittest.TestCase):
 
 
 class TestRegistryIdsInTable(unittest.TestCase):
-    def test_command_and_codegraph_registries_use_table_ids(self):
+    def test_command_and_code_index_registries_use_table_ids(self):
         ids = set(detection.RUNTIMES)
         self.assertTrue(set(commands.SUPPORTED_EXECUTE_CLIS) <= ids)
         self.assertTrue(set(execute_dispatch.OS_SANDBOXED_EXEC) <= ids)
-        self.assertTrue(set(detection._SUPPORTED_CODEGRAPH_CLIENTS) <= ids)
-        self.assertTrue(set(detection._MCP_LIST_COMMANDS) <= ids)
         self.assertTrue(set(detection._MULTI_PROVIDER_CLIS) <= ids)
         self.assertTrue(set(detection.CBM_REGISTRATION_KEYS) <= ids)
 

@@ -64,7 +64,7 @@ class ExecuteDispatchSpec(NamedTuple):
     format_block: str | None = None
     tool_availability: dict | None = None
     agents_tooling_path: object = None
-    codegraph_registered: bool = False
+    code_index_registered: bool = False
 
 
 def build_execute_guidance(spec: ExecuteDispatchSpec, seams: ExecuteSeams) -> str:
@@ -85,7 +85,7 @@ def build_execute_guidance(spec: ExecuteDispatchSpec, seams: ExecuteSeams) -> st
         runtime,
         spec.tool_availability or {},
         spec.agents_tooling_path,
-        spec.codegraph_registered,
+        spec.code_index_registered,
         shared_reference_path=resolve_shared_tooling_reference_path(),
     )
     if tool_guidance:

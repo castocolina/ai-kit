@@ -66,7 +66,7 @@ class SuperpowersDispatchGuidance(NamedTuple):
     format_block: str | None = None
     tool_availability: dict | None = None
     agents_tooling_path: str | None = None
-    codegraph_registered: bool = False
+    code_index_registered: bool = False
 
 
 class SuperpowersDispatchSeams(NamedTuple):
@@ -390,7 +390,7 @@ def dispatch_superpowers_task(request: DispatchTaskRequest,
             format_block=guide.format_block,
             tool_availability=guide.tool_availability,
             agents_tooling_path=guide.agents_tooling_path,
-            codegraph_registered=guide.codegraph_registered,
+            code_index_registered=guide.code_index_registered,
         )
     )
 

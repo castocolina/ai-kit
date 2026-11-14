@@ -77,7 +77,6 @@ class Runtime(NamedTuple):
     native_selectors: tuple[str, ...] = ()
     review_only: bool = False
     model_suffix: str | None = None
-    mcp_list: bool = False
     multi_provider: bool = False
     runner: bool = True
 
@@ -95,7 +94,6 @@ RUNTIMES: dict[str, Runtime] = {
         (("OPENCODE", _LABEL_OPENCODE),),
         list_argv=("models",),
         model_suffix=r"#[^#/]+$",
-        mcp_list=True,
         multi_provider=True,
     ),
     "cursor": Runtime(
@@ -103,7 +101,6 @@ RUNTIMES: dict[str, Runtime] = {
         (("CURSOR_AGENT", _LABEL_CURSOR),),
         list_argv=("models",),
         model_suffix=r"\[[^\]]*\]$",
-        mcp_list=True,
         multi_provider=True,
     ),
     "codex": Runtime(
@@ -111,7 +108,6 @@ RUNTIMES: dict[str, Runtime] = {
         (("CODEX_THREAD_ID", _LABEL_CODEX), ("CODEX_VERSION", _LABEL_CODEX)),
         scrub_signals=("CODEX_SANDBOX",),
         list_argv=("debug", "models"),
-        mcp_list=True,
     ),
     "claude": Runtime(
         ("claude",),
@@ -119,7 +115,6 @@ RUNTIMES: dict[str, Runtime] = {
         scrub_signals=("CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"),
         native_selectors=("fable", "opus", "sonnet", "haiku"),
         review_only=True,
-        mcp_list=True,
     ),
     # copilot has no known host signal (unverified) and its runner rows are unverified.
     "copilot": Runtime(("copilot",), (), runner=True),
@@ -1141,7 +1136,7 @@ def resolve_agents_tooling_path(env=None) -> str | None:
     """Machine-level file, not project-level -- never hardcode one user's absolute path.
     AGENTS_TOOLING_PATH env override wins IF it actually exists on disk; else the conventional
     ~/.agents/AGENTS-TOOLING.md location if it exists; else None (the caller omits tooling
-    guidance entirely, same never-guess principle as the codegraph MCP check below). The
+    guidance entirely, same never-guess principle as `cbm_registration`). The
     override is validated, not trusted blindly -- a stale/misconfigured env var must never put
     an unverified path into a dispatch prompt."""
     env = env if env is not None else os.environ
@@ -1314,132 +1309,6 @@ def run_cbm_index(target_dir: str, run_fn=subprocess.run) -> bool:
     return isinstance(data, dict) and data.get("status") == "indexed"
 
 
-# Confirmed live, 2026-08-30, against each installed CLI's own --help AND real invocations
-# (`claude mcp list`, `codex mcp list`, `cursor-agent mcp list`, `opencode mcp list` all ran
-# clean, exit 0, on this machine). grok is deliberately absent -- confirmed unsupported, never
-# attempt a lookup for it.
-#
-# claude/codex: `mcp get <name>` is the PRIMARY check where it exists -- direct per-name lookup,
-#   deterministic exit code (0 = registered, nonzero = "No MCP server named ..."). `mcp list`
-#   is a FALLBACK for these two as well: `get`'s nonzero exit means "not registered" in the
-#   common case, but could also mean something else went wrong with the `get` invocation itself
-#   (a CLI bug, an auth hiccup) -- cross-checking via `list` before concluding "not registered"
-#   costs one extra subprocess call only in the nonzero-exit case, and avoids a false negative
-#   from trusting a single command's exit code alone.
-# cursor-agent/opencode: no `get` subcommand exists (confirmed via --help) -- `mcp list` is the
-#   ONLY check, not a fallback.
-# All `mcp list` parsing looks for a line whose name token (text before the first ':') is
-# exactly "codegraph"; every observed list format uses that "name: ..." convention.
-#
-# HEALTH, not just presence: confirmed live that a registered server can be currently
-# disconnected -- `claude mcp list` showed `plugin:playwright:playwright: ... - ✘ Failed to
-# connect — CONNECTION_CLOSED`, moments before `claude mcp get plugin:playwright:playwright`
-# printed `Status: ✔ Connected` for that same server (connection state visibly fluctuates
-# between calls). Registered-but-unhealthy must be treated the same as not-registered for the
-# purpose this check serves -- telling a subagent to use a currently-broken MCP tool wastes a
-# dispatch on a guaranteed failure. Both `get` and `list` output include a `Status:`/inline
-# health indicator; look for an explicit failure signal in the relevant text before declaring
-# healthy, never assume health from presence alone.
-_SUPPORTED_CODEGRAPH_CLIENTS = frozenset(
-    rid for rid, row in RUNTIMES.items() if row.mcp_list
-)
-
-_MCP_GET_COMMANDS = {
-    "claude": ("claude", "mcp", "get", "codegraph"),
-    "codex": ("codex", "mcp", "get", "codegraph"),
-}
-_MCP_LIST_COMMANDS = {
-    rid: (row.binaries[0], "mcp", "list")
-    for rid, row in RUNTIMES.items() if row.mcp_list
-}
-
-# Confirmed live in claude's own output ("✔ Connected" / "✘ Failed to connect — ..."); codex/
-# cursor-agent/opencode not yet observed with a real failing entry (nothing was registered to
-# test against during this plan's own session) -- Task 3 Step 5's live smoke test must confirm
-# these same signals appear (or find and add the real ones) for whichever of those three CLIs
-# it tests against an actually-unhealthy server.
-_UNHEALTHY_SIGNALS = ("✘", "failed to connect", "not connected")
-
-
-def _text_is_healthy(text: str) -> bool:
-    lowered = text.lower()
-    return not any(marker.lower() in lowered for marker in _UNHEALTHY_SIGNALS)
-
-
-CODEGRAPH_PROBE_TIMEOUT_SECONDS = 15
-
-
-class CodegraphProbe(NamedTuple):
-    registered: bool | None
-    healthy: bool | None
-    install_command: str | None
-    detail: str
-
-
-def codegraph_install_command(cli: str) -> str:
-    return f"codegraph install --target={runtime_id(cli)} --location=global --yes --init"
-
-
-def _probe_codegraph_from_get(cli: str, result, hint: str) -> CodegraphProbe | None:
-    if result.returncode != 0:
-        return None
-    healthy = _text_is_healthy(result.stdout)
-    if cli == "codex" and healthy:
-        # A-WR-10/RUN-11: registered, but codex exposes no health -- unknown, never True.
-        return CodegraphProbe(True, None, None, "registered; codex does not expose health")
-    detail = result.stdout.strip() or ("healthy" if healthy else "unhealthy")
-    return CodegraphProbe(True, healthy, None if healthy else hint, detail)
-
-
-def _probe_codegraph_from_list(stdout: str, hint: str) -> CodegraphProbe:
-    for line in stdout.splitlines():
-        name = line.split(":", 1)[0].strip()
-        if name != "codegraph":
-            continue
-        healthy = _text_is_healthy(line)
-        return CodegraphProbe(True, healthy, None if healthy else hint, line.strip())
-    return CodegraphProbe(False, False, hint, "codegraph not listed")
-
-
-def probe_codegraph(cli: str, run_fn=subprocess.run,
-                    timeout: int = CODEGRAPH_PROBE_TIMEOUT_SECONDS) -> CodegraphProbe:
-    """Report-only codegraph MCP probe for one CLI. Never installs or registers anything --
-    when the server is missing or unhealthy, ``install_command`` carries the suggested command
-    for the user (or tools-installer) to run. Timeout/OSError yields unknown registered/healthy."""
-    cli = runtime_id(cli)
-    if cli not in _SUPPORTED_CODEGRAPH_CLIENTS:
-        return CodegraphProbe(
-            False, False, None, f"codegraph MCP is not supported for client {cli!r}")
-    hint = codegraph_install_command(cli)
-    try:
-        get_argv = _MCP_GET_COMMANDS.get(cli)
-        if get_argv is not None:
-            result = run_fn(
-                get_argv, capture_output=True, text=True, check=False, timeout=timeout)
-            from_get = _probe_codegraph_from_get(cli, result, hint)
-            if from_get is not None:
-                return from_get
-        list_result = run_fn(
-            _MCP_LIST_COMMANDS[cli], capture_output=True, text=True, check=False, timeout=timeout)
-        if list_result.returncode != 0:
-            # A failed list proves nothing about registration (A-IN-05): unknown, no hint.
-            return CodegraphProbe(None, None, None,
-                                  f"mcp list failed (exit {list_result.returncode})")
-        return _probe_codegraph_from_list(list_result.stdout, hint)
-    except subprocess.TimeoutExpired:
-        return CodegraphProbe(None, None, None, "probe timed out")
-    except OSError as exc:
-        return CodegraphProbe(None, None, None, str(exc))
-
-
-def check_codegraph_mcp_usable(cli: str, run_fn=subprocess.run) -> bool:
-    """True when ``probe_codegraph`` reports codegraph registered and not known unhealthy --
-    health may be unknown (codex exposes none), so this never claims "healthy". The execute
-    adapters' index step still requires ``healthy is True`` (D-20)."""
-    probe = probe_codegraph(runtime_id(cli), run_fn)
-    return probe.registered is True and probe.healthy is not False
-
-
 # The two multi-provider CLIs with their own per-model catalog (a single-vendor CLI's
 # list - codex's enumerated slugs included - only ever serves that one vendor's models, so
 # it can never be a *target* alternative for another CLI's model here; only these two
@@ -1472,25 +1341,3 @@ def find_code_index_alternative(cli: str, model: str, runtimes_snapshot: dict) -
             if needle in candidate_model.lower():
                 return candidate_cli
     return None
-
-
-CODEGRAPH_INDEX_TIMEOUT_SECONDS = 15  # agreed minimum, safety margin over the typical <5s runtime
-
-
-def run_codegraph_index(target_dir: str, run_fn=subprocess.run) -> bool:
-    """Run ``codegraph sync`` then ``codegraph init`` on failure, scoped to ``target_dir``.
-    Only invoked after a healthy probe; returns True only when sync or init exits 0."""
-    run_kw = {
-        "cwd": target_dir,
-        "capture_output": True,
-        "text": True,
-        "timeout": CODEGRAPH_INDEX_TIMEOUT_SECONDS,
-    }
-    try:
-        sync = run_fn(["codegraph", "sync"], check=False, **run_kw)
-        if sync.returncode == 0:
-            return True
-        init = run_fn(["codegraph", "init"], check=False, **run_kw)
-        return init.returncode == 0
-    except (subprocess.TimeoutExpired, OSError):
-        return False

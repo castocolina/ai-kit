@@ -5,6 +5,19 @@ prose it would have to infer/guess about when the answer should be certain')."""
 import json
 import os
 
+from ai_kit_spec.detection import CBM_NAME, CBM_REGISTRATION_KEYS, runtime_id
+
+# codebase-memory-mcp tools in documented priority order: a lane reaches for the first one that
+# answers its question.
+CBM_TOOLS = (
+    "search_graph",
+    "trace_path",
+    "get_code_snippet",
+    "query_graph",
+    "get_architecture",
+    "check_index_coverage",
+)
+
 
 def resolve_shared_tooling_reference_path() -> str | None:
     """Always resolves relative to this installed package -- ai-kit-spec-review/references/
@@ -27,8 +40,33 @@ def resolve_cross_ai_template_path() -> str | None:
     return candidate if os.path.isfile(candidate) else None
 
 
+def _code_index_line(mcp: bool, runtime: str) -> str:
+    """One guidance line for codebase-memory-mcp. The MCP list only when the host config
+    registers the server; otherwise the CLI form. Never both for the same lane."""
+    tools = ", ".join(CBM_TOOLS)
+    if mcp:
+        # A config entry is evidence of configuration, not of tools usable in this session.
+        if CBM_REGISTRATION_KEYS[runtime] is None:
+            evidence = "inferred from its extension file"
+        else:
+            evidence = "read from its config"
+        return (
+            "codebase-memory-mcp's tools are configured for this CLI "
+            f"({evidence}, not tested in this session): before broad file reads or grep, use "
+            f"{tools}; when list_projects shows no project for this checkout, run "
+            "index_repository on it first."
+        )
+    return (
+        "codebase-memory-mcp is installed (no MCP registration confirmed for this CLI): run "
+        "`codebase-memory-mcp cli <tool> --flag value` with the tools "
+        f"{tools} (`codebase-memory-mcp cli <tool> --help` lists the flags); when "
+        "`codebase-memory-mcp cli list_projects` shows no project for this checkout, run "
+        "`codebase-memory-mcp cli index_repository --repo-path .` first."
+    )
+
+
 def build_tooling_guidance(cli: str, tool_availability: dict, agents_tooling_path,
-                            codegraph_registered: bool, shared_reference_path=None) -> str:
+                            code_index_registered: bool, shared_reference_path=None) -> str:
     lines = []
     if shared_reference_path:
         # Emitted as a NAMED variable, not a bare path: ai-kit-spec-review-checklist's own
@@ -51,14 +89,11 @@ def build_tooling_guidance(cli: str, tool_availability: dict, agents_tooling_pat
             "TOOL_AVAILABILITY = "
             + json.dumps(tool_availability, sort_keys=True, separators=(",", ":"))
         )
-    # Hard-omit grok regardless of what the caller passes for codegraph_registered -- confirmed
-    # unsupported (design spec, Global Constraints above). Defense in depth: check_codegraph_
-    # mcp_healthy("grok") already always returns False, but this function must never emit
-    # codegraph guidance for grok even if a caller passes an inconsistent/stale True by mistake.
-    if cli != "grok" and codegraph_registered and tool_availability.get("codegraph"):
-        lines.append(
-            "codegraph_explore (MCP) is available and confirmed registered for this CLI -- "
-            "prefer it over broad file reads for architecture/cross-reference questions, "
-            "unless another tool is genuinely simpler for a specific lookup."
-        )
+    # The caller may forward a legacy id (cursor-agent); normalize it the way the registration
+    # reader does, so an alias gets the same guidance as its table id. A runtime without a
+    # registration reader (grok) never gets the MCP list, even with an inconsistent True.
+    if tool_availability.get(CBM_NAME):
+        name = runtime_id(cli)
+        mcp = bool(code_index_registered) and name in CBM_REGISTRATION_KEYS
+        lines.append(_code_index_line(mcp, name))
     return "\n".join(lines)

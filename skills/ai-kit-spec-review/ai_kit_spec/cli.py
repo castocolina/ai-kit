@@ -345,7 +345,7 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
                                   "mode whose caller already knows its own output convention")
     p_dispatch.add_argument("--tool-availability-json", default=None)
     p_dispatch.add_argument("--agents-tooling-path", default=None)
-    p_dispatch.add_argument("--codegraph-registered", action="store_true")
+    p_dispatch.add_argument("--code-index-registered", action="store_true")
     p_dispatch.add_argument(
         "--stdout-only", action="store_true",
         help="print ONLY the dispatched CLI's own stdout (result['stdout'], verbatim, no JSON "
@@ -934,7 +934,7 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
                 format_block=format_block,
                 tool_availability=tool_availability,
                 agents_tooling_path=args.agents_tooling_path,
-                codegraph_registered=args.codegraph_registered,
+                code_index_registered=args.code_index_registered,
             )
         )
     except ValueError as exc:

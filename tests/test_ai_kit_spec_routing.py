@@ -208,7 +208,6 @@ class TestResolveRoutes(unittest.TestCase):
 
     def test_saved_session_default_round_trips_into_dispatch_reviewer(self):
         """V2: a saved session default resolves native and dispatch-reviewer spawns nothing."""
-        from ai_kit_spec import detection
         with tempfile.TemporaryDirectory() as root:
             env = self._env(root)
             self._write_config(env["XDG_CONFIG_HOME"], [{"key": "sd", "model": ""}], ["sd"])
@@ -227,10 +226,8 @@ class TestResolveRoutes(unittest.TestCase):
             def never(*_args):
                 raise AssertionError("a native session default must not spawn")
 
-            skip = detection.CodegraphProbe(False, False, None, "skip")
             err = io.StringIO()
-            with mock.patch.object(detection, "probe_codegraph", return_value=skip), \
-                    redirect_stdout(io.StringIO()), redirect_stderr(err):
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
                 code = main(["dispatch-reviewer", "--reviewers-json", reviewers, "--index", "0",
                              "--prompt-file", prompt, "--timeout-tiers", "600"],
                             runner_tiers_fn=never, custom_fn=never)

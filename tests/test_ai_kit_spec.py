@@ -1810,272 +1810,6 @@ class TestFindCodeIndexAlternative(unittest.TestCase):
         self.assertIsNone(result)
 
 
-class TestProbeCodegraph(unittest.TestCase):
-    def _is_get(self, argv):
-        return len(argv) >= 3 and argv[2] == "get"
-
-    def test_grok_is_unsupported_without_running_any_command(self):
-        probe = detection.probe_codegraph(
-            "grok",
-            run_fn=lambda *a, **k: (_ for _ in ()).throw(
-                AssertionError("must not run any command for grok")
-            ),
-        )
-        self.assertEqual(probe.registered, False)
-        self.assertEqual(probe.healthy, False)
-        self.assertIsNone(probe.install_command)
-        self.assertIn("grok", probe.detail)
-
-    def test_unknown_cli_is_unsupported(self):
-        self.assertFalse(detection.check_codegraph_mcp_usable("some-future-cli"))
-
-    def test_claude_healthy_when_mcp_get_exits_zero_and_connected(self):
-        probe = detection.probe_codegraph(
-            "claude",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="codegraph:\n  Status: ✔ Connected\n"
-            ),
-        )
-        self.assertTrue(probe.registered)
-        self.assertTrue(probe.healthy)
-        self.assertIsNone(probe.install_command)
-        self.assertTrue(
-            detection.check_codegraph_mcp_usable(
-                "claude",
-                run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                    returncode=0, stdout="Status: ✔ Connected\n"
-                ),
-            )
-        )
-
-    def test_claude_unhealthy_when_get_shows_failed_to_connect(self):
-        probe = detection.probe_codegraph(
-            "claude",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="Status: ✘ Failed to connect — CONNECTION_CLOSED\n"
-            ),
-        )
-        self.assertTrue(probe.registered)
-        self.assertFalse(probe.healthy)
-        self.assertEqual(probe.install_command, detection.codegraph_install_command("claude"))
-
-    def test_claude_missing_when_get_and_list_both_fail(self):
-        def fake_run(argv, **k):
-            if self._is_get(argv):
-                return unittest.mock.MagicMock(returncode=1)
-            return unittest.mock.MagicMock(returncode=0, stdout="other-tool: x - Connected\n")
-
-        probe = detection.probe_codegraph("claude", run_fn=fake_run)
-        self.assertFalse(probe.registered)
-        self.assertFalse(probe.healthy)
-        self.assertEqual(probe.install_command, detection.codegraph_install_command("claude"))
-
-    def test_claude_get_success_skips_list_fallback(self):
-        seen = []
-
-        def fake_run(argv, **k):
-            seen.append(argv)
-            return unittest.mock.MagicMock(returncode=0, stdout="Status: ✔ Connected\n")
-
-        detection.probe_codegraph("claude", run_fn=fake_run)
-        self.assertEqual(seen, [detection._MCP_GET_COMMANDS["claude"]])
-
-    def test_claude_get_fails_but_list_finds_healthy_entry(self):
-        def fake_run(argv, **k):
-            if self._is_get(argv):
-                return unittest.mock.MagicMock(returncode=1)
-            return unittest.mock.MagicMock(returncode=0, stdout="codegraph: x - ✔ Connected\n")
-
-        probe = detection.probe_codegraph("claude", run_fn=fake_run)
-        self.assertTrue(probe.registered and probe.healthy)
-
-    def test_codex_registered_with_health_unknown_never_healthy(self):
-        # A-WR-10/RUN-11: codex exposes no health, so it is never reported healthy.
-        def run(*_a, **_k):
-            return unittest.mock.MagicMock(returncode=0, stdout="anything\n")
-
-        probe = detection.probe_codegraph("codex", run_fn=run)
-        self.assertTrue(probe.registered)
-        self.assertIsNone(probe.healthy)
-        self.assertIsNone(probe.install_command)
-        self.assertEqual(probe.detail, "registered; codex does not expose health")
-        self.assertTrue(detection.check_codegraph_mcp_usable("codex", run_fn=run))
-
-    def test_codex_get_output_with_a_failure_signal_is_unhealthy(self):
-        probe = detection.probe_codegraph(
-            "codex",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="codegraph ✘ not connected\n"),
-        )
-        self.assertTrue(probe.registered)
-        self.assertFalse(probe.healthy)
-        self.assertEqual(probe.install_command, detection.codegraph_install_command("codex"))
-
-    def test_failed_mcp_list_is_unknown_with_no_install_hint(self):
-        # A-IN-05: a failing `mcp list` proves nothing about registration.
-        probe = detection.probe_codegraph(
-            "cursor-agent",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=1, stdout=""),
-        )
-        self.assertIsNone(probe.registered)
-        self.assertIsNone(probe.healthy)
-        self.assertIsNone(probe.install_command)
-
-    def test_cursor_agent_parses_list_name_token(self):
-        fake_list = "codegraph: some-command - ✔ Connected\nother-tool: x\n"
-        probe = detection.probe_codegraph(
-            "cursor-agent",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list),
-        )
-        self.assertTrue(probe.registered and probe.healthy)
-
-    def test_cursor_agent_false_when_codegraph_only_in_description(self):
-        fake_list = "other-tool: some codegraph-related command - ✔ Connected\n"
-        probe = detection.probe_codegraph(
-            "cursor-agent",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list),
-        )
-        self.assertFalse(probe.registered)
-
-    def test_cursor_agent_unhealthy_line_gets_install_hint(self):
-        fake_list = "codegraph: cmd - ✘ Failed to connect\n"
-        probe = detection.probe_codegraph(
-            "cursor-agent",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list),
-        )
-        self.assertTrue(probe.registered)
-        self.assertFalse(probe.healthy)
-        self.assertEqual(probe.install_command, detection.codegraph_install_command("cursor-agent"))
-
-    def test_opencode_list_parsing_matches_cursor_agent(self):
-        probe = detection.probe_codegraph(
-            "opencode",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="codegraph: ✔ connected\n"
-            ),
-        )
-        self.assertTrue(probe.registered and probe.healthy)
-
-    def test_list_client_false_when_no_codegraph_entry(self):
-        probe = detection.probe_codegraph(
-            "cursor-agent",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="No MCP servers configured\n"
-            ),
-        )
-        self.assertFalse(probe.registered)
-
-    def test_timeout_yields_unknown_registered_and_healthy(self):
-        def fake_run(argv, **k):
-            raise subprocess.TimeoutExpired(cmd=argv, timeout=k["timeout"])
-
-        probe = detection.probe_codegraph("claude", run_fn=fake_run)
-        self.assertIsNone(probe.registered)
-        self.assertIsNone(probe.healthy)
-        self.assertIsNone(probe.install_command)
-
-    def test_oserror_yields_unknown_with_detail(self):
-        def fake_run(argv, **k):
-            raise OSError("no such binary")
-
-        probe = detection.probe_codegraph("claude", run_fn=fake_run)
-        self.assertIsNone(probe.registered)
-        self.assertIn("no such binary", probe.detail)
-
-    def test_every_subprocess_uses_argv_list_and_probe_timeout(self):
-        recorded = []
-
-        def fake_run(argv, **k):
-            recorded.append((argv, k))
-            return unittest.mock.MagicMock(returncode=1, stdout="")
-
-        detection.probe_codegraph("claude", run_fn=fake_run)
-        self.assertGreaterEqual(len(recorded), 2)
-        for argv, kw in recorded:
-            self.assertIsInstance(argv, (list, tuple))
-            self.assertEqual(kw.get("timeout"), detection.CODEGRAPH_PROBE_TIMEOUT_SECONDS)
-            joined = " ".join(argv)
-            self.assertNotIn("install", joined)
-
-    def test_no_supported_client_ever_runs_install_even_when_codegraph_missing(self):
-        # R12: for every client, a "codegraph not registered" answer yields only a hint.
-        for client in sorted(detection._SUPPORTED_CODEGRAPH_CLIENTS):
-            with self.subTest(cli=client):
-                recorded = []
-
-                def fake_run(argv, recorded=recorded, **k):
-                    recorded.append(list(argv))
-                    # "mcp get" misses (rc 1); "mcp list" succeeds with no codegraph entry
-                    return unittest.mock.MagicMock(
-                        returncode=1 if "get" in argv else 0, stdout="")
-
-                probe = detection.probe_codegraph(client, run_fn=fake_run)
-                self.assertTrue(recorded)
-                for argv in recorded:
-                    self.assertNotIn("install", argv)
-                    self.assertNotIn("add", argv)
-                self.assertIs(probe.registered, False)
-                self.assertTrue(probe.install_command)
-
-    def test_hanging_cli_binary_respects_probe_timeout(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            fake_claude = os.path.join(tmp, "claude")
-            with open(fake_claude, "w", encoding="utf-8") as f:
-                f.write("#!/bin/sh\nexec sleep 30\n")  # exec: the probe timeout kills sleep itself
-            os.chmod(fake_claude, stat.S_IRWXU)
-            env = os.environ.copy()
-            env["PATH"] = tmp + os.pathsep + env.get("PATH", "")
-
-            def patched_run(argv, **kw):
-                kw["env"] = env
-                return subprocess.run(argv, **kw)
-
-            start = time.monotonic()
-            probe = detection.probe_codegraph("claude", run_fn=patched_run, timeout=1)
-            elapsed = time.monotonic() - start
-            self.assertLess(elapsed, 5.0)
-            self.assertIsNone(probe.registered)
-
-
-class TestRunCodegraphIndex(unittest.TestCase):
-    def test_sync_success_returns_true_without_init(self):
-        calls = []
-
-        def fake_run(argv, **kw):
-            calls.append((argv, kw))
-            return unittest.mock.MagicMock(returncode=0)
-
-        self.assertTrue(detection.run_codegraph_index("/repo/root", run_fn=fake_run))
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][0], ["codegraph", "sync"])
-        self.assertEqual(calls[0][1]["cwd"], "/repo/root")
-
-    def test_sync_failure_runs_init_in_target_dir(self):
-        attempt = {"n": 0}
-
-        def fake_run(argv, **kw):
-            attempt["n"] += 1
-            return unittest.mock.MagicMock(returncode=0 if attempt["n"] == 2 else 1)
-
-        self.assertTrue(detection.run_codegraph_index("/tmp/a b", run_fn=fake_run))
-        self.assertEqual(attempt["n"], 2)
-
-    def test_both_fail_returns_false(self):
-        def fake_run(argv, **kw):
-            return unittest.mock.MagicMock(returncode=1)
-
-        self.assertFalse(detection.run_codegraph_index("/repo", run_fn=fake_run))
-
-    def test_timeout_returns_false(self):
-        def fake_run(argv, **kw):
-            raise subprocess.TimeoutExpired(cmd=argv, timeout=15)
-
-        self.assertFalse(detection.run_codegraph_index("/repo", run_fn=fake_run))
-
-    def test_minimum_index_timeout_constant(self):
-        self.assertEqual(detection.CODEGRAPH_INDEX_TIMEOUT_SECONDS, 15)
-
-
 class TestBuildRuntimesSnapshot(unittest.TestCase):
     def test_marks_missing_clis_not_installed(self):
         snapshot = build_runtimes_snapshot(
@@ -5086,9 +4820,11 @@ class TestMainCliDetectTools(unittest.TestCase):
 
 
 class TestBuildToolingGuidance(unittest.TestCase):
+    CLI_FORM = "codebase-memory-mcp cli <tool> --flag value"
+
     def test_empty_when_nothing_confirmed(self):
         result = tooling_guidance.build_tooling_guidance(
-            "grok", tool_availability={}, agents_tooling_path=None, codegraph_registered=False
+            "grok", tool_availability={}, agents_tooling_path=None, code_index_registered=False
         )
         self.assertEqual(result, "")
 
@@ -5097,45 +4833,67 @@ class TestBuildToolingGuidance(unittest.TestCase):
             "claude",
             tool_availability={},
             agents_tooling_path="/home/u/.agents/AGENTS-TOOLING.md",
-            codegraph_registered=False,
+            code_index_registered=False,
         )
         self.assertIn("/home/u/.agents/AGENTS-TOOLING.md", result)
 
-    def test_mentions_codegraph_explore_only_when_registered(self):
-        result = tooling_guidance.build_tooling_guidance(
-            "claude",
-            tool_availability={"codegraph": True},
-            agents_tooling_path=None,
-            codegraph_registered=True,
-        )
-        self.assertIn("codegraph_explore", result)
+    def test_registered_runtimes_get_the_mcp_tools_in_order(self):
+        for rid in detection.RUNTIMES:
+            with self.subTest(runtime=rid):
+                result = tooling_guidance.build_tooling_guidance(
+                    rid, {"codebase-memory-mcp": True}, None, True
+                )
+                if rid not in detection.CBM_REGISTRATION_KEYS:
+                    # No registration reader (grok): the CLI form only, never the MCP list.
+                    self.assertIn(self.CLI_FORM, result)
+                    self.assertNotIn("configured for this CLI", result)
+                    continue
+                positions = [result.index(tool) for tool in tooling_guidance.CBM_TOOLS]
+                self.assertEqual(positions, sorted(positions))
+                self.assertIn("configured for this CLI", result)
+                self.assertNotIn(self.CLI_FORM, result)
+                if detection.CBM_REGISTRATION_KEYS[rid] is None:
+                    self.assertIn("inferred from its extension file", result)
+                    self.assertNotIn("read from its config", result)
+                else:
+                    self.assertIn("read from its config", result)
+                    self.assertNotIn("inferred from its extension file", result)
 
-    def test_omits_codegraph_explore_when_not_registered_even_if_binary_present(self):
-        result = tooling_guidance.build_tooling_guidance(
-            "grok",
-            tool_availability={"codegraph": True},
-            agents_tooling_path=None,
-            codegraph_registered=False,
-        )
-        self.assertNotIn("codegraph_explore", result)
+    def test_unregistered_runtimes_get_the_cli_form(self):
+        for rid in detection.RUNTIMES:
+            with self.subTest(runtime=rid):
+                result = tooling_guidance.build_tooling_guidance(
+                    rid, {"codebase-memory-mcp": True}, None, False
+                )
+                self.assertIn(self.CLI_FORM, result)
+                self.assertNotIn("configured for this CLI", result)
 
-    def test_omits_codegraph_explore_when_registered_but_binary_not_detected(self):
-        result = tooling_guidance.build_tooling_guidance(
-            "claude",
-            tool_availability={"codegraph": False},
-            agents_tooling_path=None,
-            codegraph_registered=True,
+    def test_a_legacy_alias_gets_the_table_id_guidance(self):
+        alias = tooling_guidance.build_tooling_guidance(
+            "cursor-agent", {"codebase-memory-mcp": True}, None, True
         )
-        self.assertNotIn("codegraph_explore", result)
+        table_id = tooling_guidance.build_tooling_guidance(
+            "cursor", {"codebase-memory-mcp": True}, None, True
+        )
+        self.assertEqual(alias, table_id)
+        self.assertIn("configured for this CLI", alias)
 
-    def test_grok_never_gets_codegraph_explore_even_with_inconsistent_true_inputs(self):
-        result = tooling_guidance.build_tooling_guidance(
-            "grok",
-            tool_availability={"codegraph": True},
-            agents_tooling_path=None,
-            codegraph_registered=True,
+    def test_absent_binary_names_no_tool(self):
+        for rid in detection.RUNTIMES:
+            for registered in (True, False):
+                with self.subTest(runtime=rid, registered=registered):
+                    result = tooling_guidance.build_tooling_guidance(
+                        rid, {"codebase-memory-mcp": False}, None, registered
+                    )
+                    self.assertNotIn("search_graph", result)
+                    self.assertNotIn("codebase-memory-mcp cli", result)
+
+    def test_building_twice_gives_the_same_text(self):
+        args = ("opencode", {"codebase-memory-mcp": True, "rg": True}, None, True)
+        self.assertEqual(
+            tooling_guidance.build_tooling_guidance(*args),
+            tooling_guidance.build_tooling_guidance(*args),
         )
-        self.assertNotIn("codegraph_explore", result)
 
     def test_resolve_shared_tooling_reference_path_points_to_a_real_file(self):
         path = tooling_guidance.resolve_shared_tooling_reference_path()
@@ -5340,14 +5098,16 @@ class TestDispatchExecute(unittest.TestCase):
                     prompt="do the task",
                     target_dir=target,
                     timeout=600,
-                    tool_availability={"codegraph": True},
+                    tool_availability={"codebase-memory-mcp": True},
                     agents_tooling_path="/repo/AGENTS-TOOLING.md",
-                    codegraph_registered=True,
+                    code_index_registered=True,
                 ),
                 seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
             )
         self.assertIn("/repo/AGENTS-TOOLING.md", captured["prompt"])
-        self.assertIn("codegraph_explore", captured["prompt"])
+        self.assertIn("search_graph", captured["prompt"])
+        self.assertIn("configured for this CLI", captured["prompt"])
+        self.assertNotIn("codebase-memory-mcp cli <tool> --flag value", captured["prompt"])
 
     def test_includes_output_format_block_when_given(self):
         candidate = {
@@ -5812,7 +5572,7 @@ class TestDispatchReviewer(unittest.TestCase):
                 runner_tiers_fn=fake_tiers,
                 build_tooling_guidance_fn=lambda *a, **kw: "TOOLING GUIDANCE HERE",
                 resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
-                codegraph_health_fn=lambda cli: True,
+                code_index_registered_fn=lambda cli: True,
             ),
         )
 
@@ -5854,7 +5614,7 @@ class TestDispatchReviewer(unittest.TestCase):
             seams=reviewer_dispatch.ReviewerSeams(
                 custom_fn=fake_custom,
                 resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
-                codegraph_health_fn=lambda cli: False,
+                code_index_registered_fn=lambda cli: False,
             ),
         )
 
@@ -5864,7 +5624,7 @@ class TestDispatchReviewer(unittest.TestCase):
         self.assertIn("Read the checklist and review...", prompt_element)
         self.assertEqual(captured["prompt"], prompt_element)
 
-    def test_codegraph_health_is_resolved_internally_not_asked_of_the_caller(self):
+    def test_code_index_registration_is_resolved_internally_not_asked_of_the_caller(self):
         asked = []
 
         def fake_tiers(spec, tiers, prompt, seams):
@@ -5877,11 +5637,11 @@ class TestDispatchReviewer(unittest.TestCase):
 
         captured_guidance_args = {}
 
-        def fake_guidance(cli, availability, agents_path, codegraph_registered, **kw):
+        def fake_guidance(cli, availability, agents_path, code_index_registered, **kw):
             del cli
             del availability
             del agents_path
-            captured_guidance_args["codegraph_registered"] = codegraph_registered
+            captured_guidance_args["code_index_registered"] = code_index_registered
             return ""
 
         reviewer_dispatch.dispatch_reviewer(
@@ -5896,20 +5656,20 @@ class TestDispatchReviewer(unittest.TestCase):
                 },
                 prompt="p",
                 timeout_tiers=[600],
-                tool_availability={"codegraph": True},
+                tool_availability={"codebase-memory-mcp": True},
             ),
             seams=reviewer_dispatch.ReviewerSeams(
                 runner_tiers_fn=fake_tiers,
                 build_tooling_guidance_fn=fake_guidance,
                 resolve_shared_reference_fn=lambda: None,
-                codegraph_health_fn=fake_health,
+                code_index_registered_fn=fake_health,
             ),
         )
 
         self.assertEqual(asked, ["codex"])
-        self.assertTrue(captured_guidance_args["codegraph_registered"])
+        self.assertTrue(captured_guidance_args["code_index_registered"])
 
-    def test_custom_entry_never_runs_the_codegraph_health_check(self):
+    def test_custom_entry_never_runs_the_registration_check(self):
         asked = []
 
         def fake_custom(spec, prompt, seams):
@@ -5932,7 +5692,7 @@ class TestDispatchReviewer(unittest.TestCase):
             seams=reviewer_dispatch.ReviewerSeams(
                 custom_fn=fake_custom,
                 resolve_shared_reference_fn=lambda: None,
-                codegraph_health_fn=lambda cli: asked.append(cli) or True,
+                code_index_registered_fn=lambda cli: asked.append(cli) or True,
             ),
         )
 
@@ -5955,7 +5715,7 @@ class TestDispatchReviewer(unittest.TestCase):
                 ),
                 seams=reviewer_dispatch.ReviewerSeams(
                     resolve_shared_reference_fn=lambda: None,
-                    codegraph_health_fn=lambda cli: False,
+                    code_index_registered_fn=lambda cli: False,
                     runner_tiers_fn=lambda *a: (_ for _ in ()).throw(AssertionError(a)),
                 ),
             )
@@ -11750,7 +11510,7 @@ class TestDispatchReviewerRealChild(unittest.TestCase):
                         custom_fn=runner_dispatch.run_custom_command,
                         build_tooling_guidance_fn=lambda *a, **kw: "",
                         resolve_shared_reference_fn=lambda: None,
-                        codegraph_health_fn=lambda cli: False,
+                        code_index_registered_fn=lambda cli: False,
                     ),
                 )
             self.assertEqual(result["returncode"], 0, result)

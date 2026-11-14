@@ -10,7 +10,7 @@ from typing import Any, NamedTuple
 
 from ai_kit_spec import routing
 from ai_kit_spec.commands import ResolvedReviewer, render_reviewer_command
-from ai_kit_spec.detection import check_codegraph_mcp_usable
+from ai_kit_spec.detection import check_cbm_registered
 from ai_kit_spec.runner_dispatch import (
     CustomSpec,
     RunnerResult,
@@ -31,7 +31,7 @@ class ReviewerSeams(NamedTuple):
     runner_seams: RunnerSeams = RunnerSeams()
     build_tooling_guidance_fn: Callable[..., str] = build_tooling_guidance
     resolve_shared_reference_fn: Callable[[], Any] = resolve_shared_tooling_reference_path
-    codegraph_health_fn: Callable[[Any], bool] = check_codegraph_mcp_usable
+    code_index_registered_fn: Callable[[Any], bool] = check_cbm_registered
 
 
 class ReviewerDispatchSpec(NamedTuple):
@@ -47,12 +47,12 @@ def _reviewer_full_prompt(
     spec: ReviewerDispatchSpec, seams: ReviewerSeams
 ) -> tuple[str | None, str]:
     runtime = spec.reviewer_entry.get("runtime")
-    codegraph_registered = bool(runtime) and seams.codegraph_health_fn(runtime)
+    code_index_registered = bool(runtime) and seams.code_index_registered_fn(runtime)
     tooling_guidance = seams.build_tooling_guidance_fn(
         runtime,
         spec.tool_availability or {},
         spec.agents_tooling_path,
-        codegraph_registered,
+        code_index_registered,
         shared_reference_path=seams.resolve_shared_reference_fn(),
     )
     full_prompt = (tooling_guidance + "\n\n" + spec.prompt) if tooling_guidance else spec.prompt

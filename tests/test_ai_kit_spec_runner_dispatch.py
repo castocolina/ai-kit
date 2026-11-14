@@ -18,7 +18,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import detection, reviewer_dispatch
+from ai_kit_spec import reviewer_dispatch
 from ai_kit_spec import runner_dispatch as rd
 from ai_kit_spec.cli import main
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
@@ -805,13 +805,6 @@ class TestDispatchReviewerRunner(unittest.TestCase):
     """dispatch-reviewer runs a table runtime through the runner and a custom entry
     through the launcher (D-11, D-21)."""
 
-    def setUp(self):
-        # dispatch-reviewer's default codegraph health check would run `<cli> mcp list` for real.
-        skip = detection.CodegraphProbe(False, False, None, "skip")
-        patcher = mock.patch.object(detection, "probe_codegraph", return_value=skip)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
     def _reviewers(self, tmp, entries, name="reviewers.json"):
         path = os.path.join(tmp, name)
         with open(path, "w", encoding="utf-8") as handle:
@@ -931,7 +924,7 @@ class TestDispatchReviewerRunner(unittest.TestCase):
         seams = reviewer_dispatch.ReviewerSeams(
             runner_tiers_fn=never, custom_fn=never,
             build_tooling_guidance_fn=lambda *_a, **_kw: "",
-            resolve_shared_reference_fn=lambda: None, codegraph_health_fn=lambda _rt: False,
+            resolve_shared_reference_fn=lambda: None, code_index_registered_fn=lambda _rt: False,
         )
         entries = (
             {"key": "oc", "runtime": "opencode", "model": "x/y", "route": "bad_model"},
