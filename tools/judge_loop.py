@@ -201,10 +201,10 @@ def build_module_index(root):
 
 def module_list(root, name, index=None):
     """The test modules the commit hook runs when the skill changes, as sorted tests/<stem>.py."""
+    if index is None:
+        index = build_module_index(root)
     mapper = _load_mapper()
     try:
-        if index is None:
-            index = mapper.build_index(Path(root))
         found = mapper.covering_modules(index, f"skills/{name}/SKILL.md")
     except mapper.MapperError as exc:
         raise JudgeLoopError(str(exc)) from exc
