@@ -14,6 +14,7 @@ SCRIPTS = REPO / "skills" / "ai-kit-spec-goal-prompt" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import gp_e2e
 import gp_render
+import gp_scope
 import gp_sections
 from gp_common import GuardError
 from gp_render import RenderContext
@@ -204,6 +205,85 @@ class TestDoneVariants(unittest.TestCase):
             e2e = gp_e2e.detect_e2e(tmp)
             self.assertTrue(e2e["none"])
             self.assertEqual(gp_sections.done_lines(e2e, [])[0], CREATE_FIRST)
+
+
+class TestWrapItems(unittest.TestCase):
+    def test_exactly_200_characters_stays_one_line_and_201_wraps(self):
+        one = gp_sections.wrap_items("H: ", ["a" * 100, "b" * 92], ".", ", ", "ORDER")
+        self.assertEqual(one, ["H: " + "a" * 100 + ", " + "b" * 92 + "."])
+        two = gp_sections.wrap_items("H: ", ["a" * 100, "b" * 93], ".", ", ", "ORDER")
+        self.assertEqual(two, ["H: " + "a" * 100 + ",", "   " + "b" * 93 + "."])
+
+    def test_length_counts_code_points(self):
+        lines = gp_sections.wrap_items("H: ", ["é" * 100, "b" * 92], ".", ", ", "ORDER")
+        self.assertEqual(lines, ["H: " + "é" * 100 + ", " + "b" * 92 + "."])
+
+    def test_continuation_never_starts_with_the_separator_and_keeps_order(self):
+        items = [f"item-{i:03d}" for i in range(60)]
+        lines = gp_sections.wrap_items("L: ", items, ".", ", ", "ORDER")
+        self.assertGreater(len(lines), 1)
+        for line in lines[1:]:
+            self.assertTrue(line.startswith("   item-"), line)
+        for line in lines[:-1]:
+            self.assertTrue(line.endswith(","), line)
+        self.assertEqual(re.findall(r"item-\d{3}", "".join(lines)), items)
+        self.assertLessEqual(len("- " + lines[0]), 200)
+        for line in lines[1:]:
+            self.assertLessEqual(len(line), 200)
+
+    def test_head_with_three_spaces_is_a_sub_line(self):
+        lines = gp_sections.wrap_items("   Runner: ", ["node", "x.mjs"], ".", " ", "QUOTA")
+        self.assertEqual(lines, ["   Runner: node x.mjs."])
+
+    def test_a_single_item_keeps_the_head_and_tail(self):
+        lines = gp_sections.wrap_items("Candidate skills: ", ["none"], ".")
+        self.assertEqual(lines, ["Candidate skills: none."])
+
+    def test_an_item_longer_than_a_line_is_refused_naming_the_section(self):
+        with self.assertRaises(GuardError) as caught:
+            gp_sections.wrap_items("H: ", ["x" * 199], ".", ", ", "ORDER")
+        self.assertTrue(str(caught.exception).startswith("rule line over 200 characters in ORDER"))
+
+    def test_superpowers_order_gates_and_mockups_wrap_in_order(self):
+        plans = [
+            gp_scope.Plan(
+                file=f"plan-{i:02d}-a-fairly-long-plan-name.md",
+                title="",
+                depends_on=(),
+                free_text=(),
+                tasks=0,
+            )
+            for i in range(12)
+        ]
+        files = [plan.file for plan in plans]
+        lines = gp_sections.superpowers_order_lines(plans, files)
+        self.assertTrue(lines[0].startswith("Plans in order: "))
+        self.assertGreaterEqual(len(lines), 2)
+        for line in lines[1:]:
+            self.assertTrue(line.startswith("   "), line)
+        self.assertEqual(
+            re.findall(r"plan-\d{2}-a-fairly-long-plan-name\.md", "".join(lines)), files
+        )
+        gates = [f"make gate-{i:02d}-check" for i in range(20)]
+        mockups = [f"docs/mockups/screen-{i:02d}.png" for i in range(12)]
+        done = gp_sections.done_lines({"commands": [], "gates": gates, "none": True}, mockups)
+        joined = "".join(done)
+        self.assertEqual(re.findall(r"make gate-\d{2}-check", joined), gates)
+        self.assertEqual(re.findall(r"docs/mockups/screen-\d{2}\.png", joined), mockups)
+        self.assertIn("No automated judge decides it.", joined)
+        for line in done:
+            limit = 200 if line.startswith("   ") else 198
+            self.assertLessEqual(len(line), limit, line)
+
+    def test_a_too_long_skill_or_runner_word_is_refused_naming_its_section(self):
+        with self.assertRaises(GuardError) as skill:
+            gp_sections.plan_rule_lines(["a" * 199], True)
+        self.assertIn("in RULES FOR EVERY PLAN", str(skill.exception))
+        with self.assertRaises(GuardError) as runner:
+            gp_sections.quota_lines(
+                {"primitive": None, "label": ""}, {"command": "x" * 199, "label": ""}
+            )
+        self.assertIn("in QUOTA", str(runner.exception))
 
 
 class TestJevVariants(unittest.TestCase):
@@ -408,6 +488,70 @@ class TestCrossAiVariants(_RenderCase):
         with self.assertRaisesRegex(GuardError, "phase number"):
             gp_render.render(detect, answers, self._ctx())
         self.assertFalse(Path(self.repo, ".planning").exists())
+
+
+class TestLongLists(_RenderCase):
+    def test_forty_phases_render_with_every_phase_in_order(self):
+        numbers = [f"30.{i}" for i in range(1, 41)]
+        detect = make_detect(scope=opengsd_scope(*[phase(n, plans=1) for n in numbers]))
+        answers = make_answers(
+            work_set={"kind": "phases", "numbers": numbers}, native_execution=True
+        )
+        _, text = self._render(detect, answers)
+        order = section_map(text)["ORDER"]
+
+        def block(prefix):
+            start = next(i for i, line in enumerate(order) if line.startswith(prefix))
+            end = next(
+                (i for i in range(start + 1, len(order)) if not order[i].startswith("   ")),
+                len(order),
+            )
+            return order[start:end]
+
+        for prefix in ("- Phases in numeric order:", "- Plans already exist"):
+            with self.subTest(list=prefix):
+                lines = block(prefix)
+                self.assertGreaterEqual(len(lines), 2)
+                self.assertEqual(re.findall(r"30\.\d+", "".join(lines)), numbers)
+        fenced = [line for fence in gp_render._fenced_blocks(text.split("\n"))[0] for line in fence]
+        self.assertTrue(all(len(line) <= 200 for line in fenced))
+        for line in order:
+            if line.strip():
+                self.assertTrue(line.startswith("- ") or re.match(r"   \d", line), line)
+
+    def test_thirty_candidate_skills_render_in_order(self):
+        skills = [f"example-skill-{i:02d}" for i in range(30)]
+        _, text = self._render(make_detect(candidate_skills=skills), make_answers())
+        rules = section_map(text)["RULES FOR EVERY PLAN"]
+        self.assertEqual(re.findall(r"example-skill-\d{2}", "".join(rules)), skills)
+        fenced = [line for fence in gp_render._fenced_blocks(text.split("\n"))[0] for line in fence]
+        self.assertTrue(all(len(line) <= 200 for line in fenced))
+
+    def test_a_runner_command_over_300_characters_renders_in_order(self):
+        words = [f"word{i:03d}" for i in range(40)]
+        command = "node .planning/scripts/cross-ai.mjs " + " ".join(words)
+        self.assertGreater(len(command), 300)
+        _, text = self._render(make_detect(runner={"command": command, "label": ""}))
+        quota = section_map(text)["QUOTA"]
+        self.assertEqual(re.findall(r"word\d{3}", "".join(quota)), words)
+        runner_lines = [
+            line for line in quota if line.startswith("   Runner:") or re.match(r"   word", line)
+        ]
+        self.assertGreaterEqual(len(runner_lines), 2)
+        fenced = [line for fence in gp_render._fenced_blocks(text.split("\n"))[0] for line in fence]
+        self.assertTrue(all(len(line) <= 200 for line in fenced))
+
+    def test_wrapped_lists_past_sixty_lines_are_still_refused(self):
+        numbers = [f"30.{i}" for i in range(1, 121)]
+        phases = []
+        for number in numbers:
+            row = phase(number, plans=1)
+            row.update(has_spec=False, has_context=False, has_verification=True)
+            phases.append(row)
+        answers = make_answers(work_set={"kind": "phases", "numbers": numbers})
+        with self.assertRaises(GuardError) as caught:
+            self._render(make_detect(scope=opengsd_scope(*phases)), answers)
+        self.assertIn("more than 60 rule lines", str(caught.exception))
 
 
 class TestRenderGuards(_RenderCase):

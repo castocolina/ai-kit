@@ -5,7 +5,8 @@ Each builder returns plain rule lines: no bullets, no headings. `assemble_rails`
 bullets and the section headings. A line that starts with three spaces is a sub-line and keeps
 its text unprefixed. Every fixed line stays at most LINE_CAP characters (guards are in gp_render).
 Variable text (a plan title, the objective, a free-text dependency) is cut by `fit_line` so its
-line fits; a list of work items is never cut, because a cut list would hide work from the run.
+line fits; a list of work items or a command is never cut, because a cut list would hide work from
+the run: `wrap_items` breaks it between items onto three-space continuation sub-lines.
 stdlib only; gp_e2e and gp_common are the only siblings used.
 """
 
@@ -15,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, NamedTuple
 
 import gp_e2e
-from gp_common import phase_key
+from gp_common import GuardError, phase_key
 from gp_scope import Plan, dependents, execution_order
 
 __all__ = [
@@ -47,11 +48,13 @@ __all__ = [
     "superpowers_rule_lines",
     "turn_cap",
     "work_items",
+    "wrap_items",
 ]
 
 LINE_CAP = 200
 GOAL_SCOPE_CAP = 600  # the scope clause of a /goal condition; the 1,800 budget holds the rest
 RULE_BULLET = "- "
+SUB_INDENT = "   "
 ELLIPSIS = "..."
 TURN_FLOOR = 60
 TURN_PER_ITEM = 40
@@ -151,6 +154,34 @@ def fit_line(
     return f"{head}{variable}{tail}"
 
 
+def wrap_items(
+    head: str, items: Sequence[str], tail: str = "", sep: str = ", ", section: str = "a rule"
+) -> list[str]:
+    """`head`, the items joined by `sep`, then `tail`, filled greedily onto rule lines of LINE_CAP.
+    The first line is a bullet (a sub-line when `head` starts with SUB_INDENT); later lines are
+    SUB_INDENT continuations. A break falls only between items, so none is cut or dropped; an item
+    too long for a line of its own raises GuardError naming `section`."""
+    room = LINE_CAP if head.startswith(SUB_INDENT) else LINE_CAP - len(RULE_BULLET)
+    pieces = [f"{item}{sep}" for item in items[:-1]] + [f"{items[-1]}{tail}"] if items else [tail]
+    lines: list[str] = []
+    current = head
+    for piece in pieces:
+        if len((current + piece).rstrip()) <= room:
+            current += piece
+            continue
+        if len((SUB_INDENT + piece).rstrip()) > LINE_CAP:
+            raise GuardError(
+                f"rule line over {LINE_CAP} characters in {section}: "
+                "one list item or command word is longer than a line"
+            )
+        if current.strip():
+            lines.append(current.rstrip())
+        current = SUB_INDENT + piece
+        room = LINE_CAP
+    lines.append(current.rstrip())
+    return lines
+
+
 def _paren(label: str) -> str:
     return f" ({label})" if label else ""
 
@@ -196,13 +227,17 @@ def objective_text(answers: Mapping[str, Any], scope_desc: str) -> str:
 def plan_rule_lines(candidate_skills: Sequence[str], native: bool) -> list[str]:
     """Rules that bind each plan. Native swaps the first rule and drops the readiness step."""
     lines = [NATIVE_RULE] if native else [CROSS_AI_RULE, *READINESS_RULES]
-    skills = ", ".join(candidate_skills) or "none"
     lines += [
         "Reviewers come from .planning/config.json. Probe each one once before the first review. "
         "Record any failure; never substitute a model.",
         "Read AGENTS.md first, then each phase SPEC and CONTEXT. Their decisions are locked; never "
         "re-discuss them.",
-        f"Read a skill only when the task needs it. Candidate skills: {skills}.",
+        *wrap_items(
+            "Read a skill only when the task needs it. Candidate skills: ",
+            list(candidate_skills) or ["none"],
+            ".",
+            section="RULES FOR EVERY PLAN",
+        ),
         "Pre-commit hooks always run on every commit; fix a real failure at its root, never skip "
         "it.",
     ]
@@ -211,7 +246,6 @@ def plan_rule_lines(candidate_skills: Sequence[str], native: bool) -> list[str]:
 
 def superpowers_rule_lines(candidate_skills: Sequence[str]) -> list[str]:
     """Superpowers plans: one subagent per plan in dependency order, verified by the orchestrator"""
-    skills = ", ".join(candidate_skills) or "none"
     return [
         "Dispatch each plan's work to a subagent, one plan at a time. Reuse a subagent or start a "
         "fresh one as you judge best; no two plans share the working tree at once.",
@@ -220,7 +254,12 @@ def superpowers_rule_lines(candidate_skills: Sequence[str]) -> list[str]:
         "After each plan, run its done checks yourself and print their output before starting "
         "the next plan.",
         "A failed plan stops only the plans that depend on it; every independent plan still runs.",
-        f"Read a skill only when the task needs it. Candidate skills: {skills}.",
+        *wrap_items(
+            "Read a skill only when the task needs it. Candidate skills: ",
+            list(candidate_skills) or ["none"],
+            ".",
+            section="RULES FOR EVERY PLAN",
+        ),
         "Pre-commit hooks always run on every commit; fix a real failure at its root, never skip "
         "it.",
     ]
@@ -228,11 +267,15 @@ def superpowers_rule_lines(candidate_skills: Sequence[str]) -> list[str]:
 
 def generic_rule_lines(candidate_skills: Sequence[str]) -> list[str]:
     """Free-text work with no plan files: the same verification and skill rules, no plan loop."""
-    skills = ", ".join(candidate_skills) or "none"
     return [
         "Work the task in order and verify each step yourself; never accept a reported pass.",
         "You own AGENTS.md compliance; read AGENTS.md first.",
-        f"Read a skill only when the task needs it. Candidate skills: {skills}.",
+        *wrap_items(
+            "Read a skill only when the task needs it. Candidate skills: ",
+            list(candidate_skills) or ["none"],
+            ".",
+            section="RULES FOR EVERY PLAN",
+        ),
         "Pre-commit hooks always run on every commit; fix a real failure at its root, never skip "
         "it.",
     ]
@@ -243,11 +286,16 @@ def superpowers_order_lines(plans: Sequence[Plan], order: Sequence[str]) -> list
     by_file = {plan.file: plan for plan in plans}
     lines: list[str] = []
     if len(plans) > 1:
-        lines.append(f"Plans in order: {', '.join(order)}.")
+        lines += wrap_items("Plans in order: ", list(order), ".", section="ORDER")
         for name in order:
             children = dependents(plans, name)
             if children:
-                lines.append(f"If {name} fails, skip its dependents: {', '.join(children)}.")
+                lines += wrap_items(
+                    f"If {name} fails, skip its dependents: ",
+                    list(children),
+                    ".",
+                    section="ORDER",
+                )
     for name in order:
         for text in by_file[name].free_text:
             note = _one_line(text).rstrip(".")
@@ -305,11 +353,13 @@ def order_lines(phases: Sequence[Mapping[str, Any]], native: bool = False) -> li
     """Numeric order, then one line per gap kind that has at least one phase. Native execution
     keeps its plans without cross_ai: true, so it never lists the cross_ai gap."""
     ordered = sorted(phases, key=lambda p: phase_key(p["number"]))
-    lines = [f"Phases in numeric order: {', '.join(p['number'] for p in ordered)}."]
+    lines = wrap_items(
+        "Phases in numeric order: ", [p["number"] for p in ordered], ".", section="ORDER"
+    )
     for label, applies in GAP_KINDS:
         listed = [p["number"] for p in ordered if applies(p)]
         if listed:
-            lines.append(f"{label}: {', '.join(listed)}.")
+            lines += wrap_items(f"{label}: ", listed, ".", section="ORDER")
     if not native:
         missing = [
             p["number"]
@@ -317,8 +367,12 @@ def order_lines(phases: Sequence[Mapping[str, Any]], native: bool = False) -> li
             if p["plan_count"] > 0 and p["cross_ai_plans"] < p["plan_count"]
         ]
         if missing:
-            names = ", ".join(missing)
-            lines.append(f"Existing plans missing cross_ai: true (add it, then execute): {names}.")
+            lines += wrap_items(
+                "Existing plans missing cross_ai: true (add it, then execute): ",
+                missing,
+                ".",
+                section="ORDER",
+            )
     return lines
 
 
@@ -347,7 +401,13 @@ def quota_lines(wake: Mapping[str, Any], runner: Mapping[str, Any]) -> list[str]
     ]
     command = _one_line(runner.get("command") or "")
     if command:
-        lines.append(f"   Runner: {command}{_paren(runner.get('label', ''))}.")
+        lines += wrap_items(
+            "   Runner: ",
+            command.split(" "),
+            f"{_paren(runner.get('label', ''))}.",
+            sep=" ",
+            section="QUOTA",
+        )
     return lines
 
 
@@ -460,17 +520,16 @@ def done_lines(e2e: Mapping[str, Any], mockups: Sequence[Any]) -> list[str]:
     """DONE WHEN: the create-first task when no e2e suite exists, the detected e2e commands
     otherwise, and a human-review line when mockups are given. Free text collapses to one line."""
     gates = list(e2e.get("gates") or [])
-    gate_text = ", ".join(gates) or (
-        "the project's lint and unit commands (none detected: find them)"
-    )
+    fallback = ["the project's lint and unit commands (none detected: find them)"]
     none = bool(e2e.get("none"))
     lines = [CREATE_FIRST] if none else []
-    lines += [EVIDENCE, f"Gates first: {gate_text}."]
+    lines += [EVIDENCE, *wrap_items("Gates first: ", gates or fallback, ".", section="DONE WHEN")]
     if not none:
         lines += _e2e_lines(e2e["commands"])
     if mockups:
-        names = ", ".join(_one_line(mockup) for mockup in mockups)
-        lines.append(MOCKUP_REVIEW.format(mockups=names))
+        head, _, tail = MOCKUP_REVIEW.partition("{mockups}")
+        mockup_names = [_one_line(mockup) for mockup in mockups]
+        lines += wrap_items(head, mockup_names, tail, section="DONE WHEN")
     lines += list(DONE_TAIL)
     return lines
 
