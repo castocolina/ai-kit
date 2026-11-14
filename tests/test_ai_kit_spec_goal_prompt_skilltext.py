@@ -289,6 +289,30 @@ class TestSkillText(unittest.TestCase):
         self.assertIn(shown, matrix)
         self.assertIn(f"{gp_sections.LINE_CAP}-character", matrix)
 
+    def test_skill_md_documents_every_owner_field(self):
+        flat = " ".join(SKILL_MD.read_text(encoding="utf-8").split())
+        for name in goal_prompt.OWNER_FIELDS:
+            self.assertIn(f"`{name}`", flat)
+        self.assertIn(f"never below {gp_sections.TURN_FLOOR}", flat)
+
+    def test_caller_supplied_answers_replace_the_four_questions(self):
+        flat = " ".join(SKILL_MD.read_text(encoding="utf-8").split())
+        self.assertIn("its answers replace the four questions", flat)
+
+    def test_owner_fields_come_from_stated_sources_never_a_fifth_question(self):
+        flat = " ".join(SKILL_MD.read_text(encoding="utf-8").split())
+        self.assertIn("Fill an owner field only when a source states it", flat)
+        self.assertIn("never ask a fifth question for one", flat)
+
+    def test_cross_ai_line_cap_limit_names_the_guard_message(self):
+        flat = " ".join(SKILL_MD.read_text(encoding="utf-8").split())
+        self.assertIn(f"more than {gp_render.RULE_CAP} rule lines", flat)
+        self.assertIn("every owner field set", flat)
+
+    def test_wrapping_is_documented(self):
+        flat = " ".join(SKILL_MD.read_text(encoding="utf-8").split())
+        self.assertIn("three-space continuation lines", flat)
+
     def test_excerpt_check_fails_on_a_mutated_copy(self):
         golden = GOLDEN.read_text(encoding="utf-8")
         excerpt = golden.split("\n")[9:20]
