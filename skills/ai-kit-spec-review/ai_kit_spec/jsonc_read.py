@@ -165,8 +165,9 @@ def project_config_paths(cwd: str) -> list[str]:
     ]
 
 
-def opencode_config_paths(env: dict, cwd: str) -> list[str]:
-    """User-level opencode config files, then the project's. Relative bases are dropped."""
+def opencode_user_config_paths(env: dict) -> list[str]:
+    """User-level opencode config files (opencode.json, then opencode.jsonc). Relative bases are
+    dropped."""
     explicit = env.get("OPENCODE_CONFIG_DIR", "")
     if explicit:
         base = explicit
@@ -180,4 +181,9 @@ def opencode_config_paths(env: dict, cwd: str) -> list[str]:
         os.path.join(base, "opencode.json"),
         os.path.join(base, "opencode.jsonc"),
     ]
-    return [path for path in user_paths if os.path.isabs(path)] + project_config_paths(cwd)
+    return [path for path in user_paths if os.path.isabs(path)]
+
+
+def opencode_config_paths(env: dict, cwd: str) -> list[str]:
+    """User-level opencode config files, then the project's. Relative bases are dropped."""
+    return opencode_user_config_paths(env) + project_config_paths(cwd)

@@ -1741,7 +1741,10 @@ class TestDetectToolAvailability(unittest.TestCase):
         result = detection.detect_tool_availability(which_fn=fake_which)
         self.assertEqual(
             result,
-            {"rg": True, "sd": False, "bat": False, "eza": False, "fd": True, "codegraph": False},
+            {
+                "rg": True, "sd": False, "bat": False, "eza": False, "fd": True,
+                "codebase-memory-mcp": False,
+            },
         )
 
 
@@ -1772,7 +1775,7 @@ class TestResolveAgentsToolingPath(unittest.TestCase):
             self.assertIsNone(detection.resolve_agents_tooling_path(env=env))
 
 
-class TestFindCodegraphAlternative(unittest.TestCase):
+class TestFindCodeIndexAlternative(unittest.TestCase):
     def test_finds_grok_model_reachable_via_cursor_agent(self):
         snapshot = {
             "clis": {
@@ -1783,12 +1786,12 @@ class TestFindCodegraphAlternative(unittest.TestCase):
                 "opencode": {"installed": True, "models": ["opencode-go/qwen3.8-max"]},
             }
         }
-        result = detection.find_codegraph_alternative("grok", "grok-4.6", snapshot)
+        result = detection.find_code_index_alternative("grok", "grok-4.6", snapshot)
         self.assertEqual(result, "cursor")
 
-    def test_returns_none_when_cli_already_supports_codegraph(self):
+    def test_returns_none_when_the_cli_has_a_registration_reader(self):
         snapshot = {"clis": {"cursor-agent": {"installed": True, "models": ["cursor-grok-4.6"]}}}
-        result = detection.find_codegraph_alternative("cursor-agent", "cursor-grok-4.6", snapshot)
+        result = detection.find_code_index_alternative("cursor-agent", "cursor-grok-4.6", snapshot)
         self.assertIsNone(result)
 
     def test_returns_none_when_no_matching_model_found_anywhere(self):
@@ -1798,12 +1801,12 @@ class TestFindCodegraphAlternative(unittest.TestCase):
                 "opencode": {"installed": True, "models": ["opencode-go/qwen3.8-max"]},
             }
         }
-        result = detection.find_codegraph_alternative("grok", "grok-4.6", snapshot)
+        result = detection.find_code_index_alternative("grok", "grok-4.6", snapshot)
         self.assertIsNone(result)
 
-    def test_skips_a_codegraph_capable_cli_that_is_not_installed(self):
+    def test_skips_a_multi_provider_cli_that_is_not_installed(self):
         snapshot = {"clis": {"cursor-agent": {"installed": False}}}
-        result = detection.find_codegraph_alternative("grok", "grok-4.6", snapshot)
+        result = detection.find_code_index_alternative("grok", "grok-4.6", snapshot)
         self.assertIsNone(result)
 
 
@@ -5075,7 +5078,10 @@ class TestMainCliDetectTools(unittest.TestCase):
         result = json.loads(buf.getvalue())
         self.assertEqual(
             result,
-            {"rg": True, "sd": False, "bat": False, "eza": False, "fd": False, "codegraph": False},
+            {
+                "rg": True, "sd": False, "bat": False, "eza": False, "fd": False,
+                "codebase-memory-mcp": False,
+            },
         )
 
 

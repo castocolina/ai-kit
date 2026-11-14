@@ -91,7 +91,7 @@ path, plus its `models` list when present (pi, opencode, cursor, codex and claud
 one, grok never does; a CLI whose enumeration failed degrades to no list).
 
 `detect-tools` prints `{"rg": bool, "sd": bool, "bat": bool, "eza": bool, "fd": bool,
-"codegraph": bool}` — informational only, this step does not add new wizard questions.
+"codebase-memory-mcp": bool}` — informational only, this step does not add new wizard questions.
 When asking the user optional per-reviewer/per-executor questions later in the wizard,
 mention which of these are present on this machine — this is the data
 `ai-kit-spec-execute` will need later; this step only surfaces it.
@@ -179,7 +179,7 @@ models, calling `fetch-model-catalog`, ranking, or presenting candidates, read
 [`references/cli-model-selection.md`](references/cli-model-selection.md) completely
 from start to finish. **NEVER set any range limits when reading this file.** It is the
 8-item procedure (group → extra-candidate → fetch → unmatched-confirm → rank → present
-→ codegraph-alternative → heuristic-confirm) plus the exact command templates. Skipping
+→ code-index-alternative → heuristic-confirm) plus the exact command templates. Skipping
 it reproduces live landmines this wizard already hit: guessing a codex id
 (`gpt-5.6-sol-high` instead of `gpt-5.6-sol`), dumping a ~200-id cursor list
 ungrouped, ranking before unmatched confirmation, and silently dropping every

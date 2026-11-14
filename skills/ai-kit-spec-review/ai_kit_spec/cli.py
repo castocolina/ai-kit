@@ -49,7 +49,7 @@ from ai_kit_spec.detection import (
     cache_runtimes_path,
     detect_current_runtime,
     detect_tool_availability,
-    find_codegraph_alternative,
+    find_code_index_alternative,
     group_models_by_family,
     normalize_runtime_keys,
     runtime_id,
@@ -306,7 +306,7 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
     p_group.add_argument("--runtime", "--cli", dest="runtime", required=True,
                           help="which runtime's models array to group, e.g. opencode, cursor")
 
-    p_alt = sub.add_parser("check-codegraph-alternative")
+    p_alt = sub.add_parser("check-code-index-alternative")
     p_alt.add_argument("--runtime", "--cli", dest="runtime", required=True,
                         help="runtime id, e.g. opencode, cursor")
     p_alt.add_argument("--model", required=True)
@@ -896,10 +896,10 @@ def _cmd_group_models(args: argparse.Namespace, deps: CliDeps) -> int:
     print(json.dumps(group_models_by_family(models)))
     return 0
 
-def _cmd_check_codegraph_alternative(args: argparse.Namespace, deps: CliDeps) -> int:
+def _cmd_check_code_index_alternative(args: argparse.Namespace, deps: CliDeps) -> int:
     snapshot = cache_read_json(args.runtimes_json) or {}
     snapshot = {**snapshot, "clis": normalize_runtime_keys(snapshot.get("clis"))}
-    alternative = find_codegraph_alternative(runtime_id(args.runtime), args.model, snapshot)
+    alternative = find_code_index_alternative(runtime_id(args.runtime), args.model, snapshot)
     print(json.dumps({"alternative_cli": alternative}))
     return 0
 
@@ -1020,7 +1020,7 @@ _COMMANDS = {
     "build-command": _cmd_build_command,
     "build-model-id": _cmd_build_model_id,
     "group-models": _cmd_group_models,
-    "check-codegraph-alternative": _cmd_check_codegraph_alternative,
+    "check-code-index-alternative": _cmd_check_code_index_alternative,
     "dispatch-execute": _cmd_dispatch_execute,
     "dispatch-reviewer": _cmd_dispatch_reviewer,
     "check-reviewer": _cmd_check_reviewer,

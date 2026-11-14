@@ -396,7 +396,7 @@ class TestLegacyEntryPoints(unittest.TestCase):
             "clis": {"cursor-agent": {"installed": True, "models": ["grok-4.6"]}},
         }
         self.assertEqual(
-            detection.find_codegraph_alternative("grok", "grok-4.6", snapshot),
+            detection.find_code_index_alternative("grok", "grok-4.6", snapshot),
             "cursor",
         )
 
@@ -456,7 +456,8 @@ class TestRegistryIdsInTable(unittest.TestCase):
         self.assertTrue(set(execute_dispatch.OS_SANDBOXED_EXEC) <= ids)
         self.assertTrue(set(detection._SUPPORTED_CODEGRAPH_CLIENTS) <= ids)
         self.assertTrue(set(detection._MCP_LIST_COMMANDS) <= ids)
-        self.assertTrue(set(detection._CODEGRAPH_CAPABLE_MULTI_PROVIDER_CLIS) <= ids)
+        self.assertTrue(set(detection._MULTI_PROVIDER_CLIS) <= ids)
+        self.assertTrue(set(detection.CBM_REGISTRATION_KEYS) <= ids)
 
     def test_curated_config_registries_use_table_ids(self):
         curated_path = os.path.join(

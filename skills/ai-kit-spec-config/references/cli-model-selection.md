@@ -304,18 +304,18 @@ for purpose in ('review', 'execute'):
    side, which must never be an accident of a newly-written entry, only the documented
    legacy-compat default). This IS the answer to what used to be a separate `purpose`
    question — see Step 2.6 below.
-7. **Before finalizing a CLI outside codegraph support (today: `grok`), check for a
-   codegraph-capable alternative.** For each model confirmed onto such a CLI in the previous
-   item, run:
+7. **Before finalizing a CLI where ai-kit cannot read a codebase-memory-mcp registration
+   (today: `grok`), check for an alternative whose registration it can read.** For each model
+   confirmed onto such a CLI in the previous item, run:
    ```bash
-   python3 "$TOOLS_PY" check-codegraph-alternative --runtime <id> --model <model-id> \
+   python3 "$TOOLS_PY" check-code-index-alternative --runtime <id> --model <model-id> \
      --runtimes-json "$RUNTIMES_JSON"
    ```
    When `alternative_cli` is non-null, tell the user in one line before they finalize: `"<model>
-   is also reachable via <alternative_cli>, which supports codegraph_explore (grok CLI does
-   not) — consider registering it through <alternative_cli> instead for grounding-heavy
-   review/execute work."` This is informational only (best-effort substring match, per
-   `find_codegraph_alternative`'s own docstring) — the user still makes the final call; never
+   is also reachable via <alternative_cli>, which can carry the codebase-memory-mcp MCP tools
+   (grok gets only its CLI form) — consider registering it through <alternative_cli> instead
+   for grounding-heavy review/execute work."` This is informational only (best-effort substring
+   match, per `find_code_index_alternative`'s own docstring) — the user still makes the final call; never
    silently substitute the CLI or drop the original option.
 8. Confirm `is_router`/`batch_mode`/`fallback_quota` for any candidate where the catalog set them
    via naming heuristic (never an external source, per the design) — **but skip any field
