@@ -632,6 +632,14 @@ class TestPhase324Contract(unittest.TestCase):
         self.assertIn("with its own `docs(state)` commit, even when no phase was committed",
                       skill)
 
+    def test_a_start_refusal_stops_before_any_write(self):
+        """§1's `start` refusal (dirty tree, wrong parent, ...) writes nothing, so the early-stop
+        session record and its commit never apply to it."""
+        skill = _flat(self.read("SKILL.md"))
+        self.assertIn("A `start` refusal that stops the run (§1) stops before any write: "
+                      "no `state.record-session` and no commit", skill)
+        self.assertNotIn("or a refusal that stops the run, §1) runs the same", skill)
+
     def test_description_puts_trigger_phrases_first(self):
         desc = self.description()
         self.assertIn("Use when", desc)
