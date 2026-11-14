@@ -331,9 +331,26 @@ def _check_point(point: str, hooks: list[dict] | None) -> list[str]:
     return [f"{point}: {failed[0]}"] if failed else []
 
 
+def _cap_problem(caps: object) -> str | None:
+    """The named problem when the fold capability is not listed or not active, else None. A
+    project-scope capability stays inactive until this project's consent is recorded under
+    GSD_HOME (default HOME), and then renders no hooks."""
+    cap = None
+    if isinstance(caps, list):
+        cap = next((c for c in caps if isinstance(c, dict) and c.get("id") == FLOW_CAP), None)
+    if cap is None:
+        return f"capability {FLOW_CAP} is not installed"
+    if cap.get("status") != "active":
+        return (f"capability {FLOW_CAP} is {cap.get('status') or 'without a status'}: "
+                f"{cap.get('reason') or 'no reason given'}; its hooks render only with this "
+                "project's consent record under GSD_HOME (default HOME)")
+    return None
+
+
 def check_flow_config(root: Path, run: FlowRun = _run_gsd) -> tuple[list[str], list[str]]:
     """(problems, notes) for ai-kit's own GSD flow: branch per phase, clean health, the capability
-    installed, and the hook points of the capability (read-only; `run` is the test seam)."""
+    installed and active, and the hook points of the capability (read-only; `run` is the test
+    seam)."""
     if not (root / GSD_TOOLS_REL).is_file():
         return [], ["flow config not checked: no project-local gsd-core"]
     problems = []
@@ -349,11 +366,9 @@ def check_flow_config(root: Path, run: FlowRun = _run_gsd) -> tuple[list[str], l
         if health.get("status") != "healthy" or codes:
             warned = f" with warnings {', '.join(codes)}" if codes else ""
             problems.append(f"validate health is {health.get('status')}{warned}")
-    caps = _parse_json(run(root, "capability", "list", "--raw").stdout)
-    installed = isinstance(caps, list) and any(
-        isinstance(cap, dict) and cap.get("id") == FLOW_CAP for cap in caps)
-    if not installed:
-        problems.append(f"capability {FLOW_CAP} is not installed")
+    cap_problem = _cap_problem(_parse_json(run(root, "capability", "list", "--raw").stdout))
+    if cap_problem:
+        problems.append(cap_problem)
         return problems, []
     for point in FLOW_EXPECT:
         problems += _check_point(point, _active_hooks(root, run, point))
