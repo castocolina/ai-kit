@@ -29,8 +29,11 @@ you use that answer as evidence, never as the decision.
 4. **jev gave no confident answer** (`needs_fallback`, an error or no answer) → own reasoning
    against the evidence. Log the low answer as `low 0.NN`, or the error as `error: <code>`. The
    answer is one input, not the decision.
+   - A forced answer (`forced` true: the item or its request passed jev's size guard, so the answer is no real judgment) → own reasoning, logged `forced`; next time, shorten the item or split the request.
 5. **jev is not installed or was not asked** → own reasoning against the evidence; ledger it
    when it blocks nothing.
+   - jev reports `no_client` (no jev client found) → this row; log `not installed`.
+   - jev reports `incompatible_client` (the client found is too old for jev's ladder) → this row; log `error: incompatible_client`, and tell the user to re-run the ai-kit installer.
 
 Own reasoning is not a fallback of last resort in quality terms: it is the step that reads the
 actual code and docs. When jev's first answer and its second opinion split, the evidence decides,

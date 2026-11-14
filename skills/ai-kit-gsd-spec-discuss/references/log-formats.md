@@ -8,6 +8,7 @@ ledger. All artifacts in English.
 - `choice 0.NN` — jev answered confidently (`needs_fallback` false); `0.NN` is its winning
   probability.
 - `low 0.NN` — jev answered with `needs_fallback` true: low confidence, advisory only.
+- `forced` — jev's answer came back forced (its `forced` flag true); decided by own reasoning (decision-table row 4).
 - `choice 0.NN (second opinion)` — from a second-opinion request on the same item.
 - `none` — jev was not asked this item.
 - `not installed` — the `jev-fast-decision` skill is not on this host.

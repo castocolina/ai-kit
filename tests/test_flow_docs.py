@@ -351,6 +351,8 @@ class TestAdapterSkillText(unittest.TestCase):
         self.assertEqual(lines["S"], str(_SPEC_DISCUSS.parent / "scripts"), proc.stderr)
         self.assertEqual(lines["FOLD_PY"],
                          str(_REPO / "skills" / "ai-kit-commit-fold" / "scripts" / "fold.py"))
+        self.assertEqual(lines["GOAL_MD"],
+                         str(_REPO / "skills" / "ai-kit-spec-goal-prompt" / "SKILL.md"))
         self.assertEqual(os.path.realpath(lines["REPO"]), want_repo)
 
 
