@@ -2143,6 +2143,7 @@ class TestCliDispatchTask(unittest.TestCase):
                 resolve_agents_tooling_path_fn=lambda: None,
                 cbm_registered_fn=lambda cli: True,
                 run_cbm_index_fn=lambda d: index_dirs.append(d) or True,
+                which_fn=lambda name: "/usr/bin/" + name,
                 stdout=io.StringIO(),
             )
             self.assertEqual(index_dirs, [tmp])
@@ -2150,11 +2151,25 @@ class TestCliDispatchTask(unittest.TestCase):
 
 
 class TestCodeIndexRegistration(unittest.TestCase):
+    def test_registered_without_the_binary_runs_no_index_and_is_silent(self):
+        index_dirs = []
+        deps = superpowers_cli.CliDeps()._replace(
+            cbm_registered_fn=lambda cli: True,
+            run_cbm_index_fn=lambda d: index_dirs.append(d) or True,
+            which_fn=lambda name: None,
+        )
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertTrue(superpowers_cli._code_index_registered_for_cli("codex", "/repo", deps))
+        self.assertEqual(index_dirs, [])
+        self.assertEqual(err.getvalue(), "")
+
     def test_registered_with_index_ok_indexes_once_and_is_silent(self):
         index_dirs = []
         deps = superpowers_cli.CliDeps()._replace(
             cbm_registered_fn=lambda cli: True,
             run_cbm_index_fn=lambda d: index_dirs.append(d) or True,
+            which_fn=lambda name: "/usr/bin/" + name,
         )
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
@@ -2166,6 +2181,7 @@ class TestCodeIndexRegistration(unittest.TestCase):
         deps = superpowers_cli.CliDeps()._replace(
             cbm_registered_fn=lambda cli: True,
             run_cbm_index_fn=lambda d: False,
+            which_fn=lambda name: "/usr/bin/" + name,
         )
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
@@ -2241,6 +2257,7 @@ class TestCodeIndexRegistration(unittest.TestCase):
                     resolve_agents_tooling_path_fn=lambda: None,
                     cbm_registered_fn=lambda cli: True,
                     run_cbm_index_fn=lambda d: False,
+                    which_fn=lambda name: "/usr/bin/" + name,
                     stdout=io.StringIO(),
                 )
         self.assertTrue(captured["code_index_registered"])

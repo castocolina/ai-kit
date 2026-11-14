@@ -24,6 +24,7 @@ from typing import Any, NamedTuple, TextIO
 from ai_kit_spec.cache import cache_read_json, cache_write_json
 from ai_kit_spec.config_io import ConfigError
 from ai_kit_spec.detection import (
+    CBM_NAME,
     LOOPBACK_URLOPEN,
     check_cbm_registered,
     detect_tool_availability,
@@ -292,9 +293,12 @@ def _write_report_fallback(args: argparse.Namespace, fallback_content: str) -> N
 def _code_index_registered_for_cli(cli_name: str, target_dir: str, deps: CliDeps) -> bool:
     """D-20 (amended RUN-34, Phase 32.5): when the lane's host config registers
     codebase-memory-mcp, index the target with one index_repository call; return the
-    registration. A failed index is reported on stderr and never reads as missing registration."""
+    registration. A failed index is reported on stderr and never reads as missing registration;
+    with no binary on PATH there is nothing to run, so no index and no stderr line."""
     if not deps.cbm_registered_fn(cli_name):
         return False
+    if deps.which_fn(CBM_NAME) is None:
+        return True
     if not deps.run_cbm_index_fn(target_dir):
         print(f"codebase-memory-mcp: pre-dispatch index_repository failed in {target_dir}; "
               "the lane may find a missing or stale index", file=sys.stderr)
