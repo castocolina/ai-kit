@@ -8,7 +8,9 @@ Usage (from a git checkout, or pass --root):
   judge_loop.py check RECORDS [--skills S ...] [--judges J ...] [--gate] [--require-current]
   judge_loop.py report RECORDS (also writes RECORDS/facts.json, the evals and test-module
                 snapshot the report reads)
-  judge_loop.py pool --loop L --native ID --probe-dir DIR --records DIR [--judges J ...]
+  judge_loop.py pool --loop L --probe-dir DIR --records DIR [--judges J ...] [--native ID]
+                (the first two usable judges in list order, or one with a note; no usable
+                judge exits 1; --native ID keeps the old native fallback for old loops)
   judge_loop.py count --loop L --records DIR [--skill S ...] [--no-jev] [--client PATH]
                 [--judge-package DIR]
   count bases each skill on its latest prior loop's lowest valid percent and worst verdict
@@ -1155,6 +1157,8 @@ def _pool_lines(records):
         members = ", ".join(pool.get("members", []))
         lines += ["", f"### Loop {loop}", "", *_table(PROBE_HEADER, probes), "",
                   f"Members: {members}", f"Substitutes: {'; '.join(subs) or 'none'}"]
+        if pool.get("notes"):
+            lines.append(f"Notes: {'; '.join(pool['notes'])}")
     return lines
 
 
@@ -1479,6 +1483,7 @@ POOL_SIZE = 2
 SUBSTITUTE_ONE = "only one configured judge passed its probe"
 SUBSTITUTE_NONE = "no configured judge passed its probe"
 SUBSTITUTE_EMPTY = "judge list empty"
+SINGLE_JUDGE = "only one judge passed its probe"
 
 
 def _probe_files(lane):
@@ -1512,15 +1517,36 @@ def probe_result(probe_dir, judge):
     return _probe_verdict(judge, True, status, "")
 
 
+def _judge_pool(pool, judges, usable, results):
+    """No native judge: the first two usable judges in list order; one alone is valid."""
+    if not judges:
+        raise JudgeLoopError(f"{SUBSTITUTE_EMPTY}; a pool needs at least one judge")
+    if not usable:
+        probes = "; ".join(f"{r['judge']} ({r['reason']})" for r in results)
+        raise JudgeLoopError(f"no judge passed its probe: {probes}")
+    members = usable[:POOL_SIZE]
+    failed = [judge for judge in judges[:POOL_SIZE] if judge not in members]
+    extras = [judge for judge in members if judge not in judges[:POOL_SIZE]]
+    pool["members"] = members
+    pool["substitutes"] = [{"judge": extra, "reason": f"replaces {down}, which failed its probe"}
+                           for extra, down in zip(extras, failed, strict=False)]
+    if len(members) == 1:
+        pool["notes"] = [SINGLE_JUDGE]
+    return pool
+
+
 def choose_pool(judges, native, results):
-    """The pool: the first two usable judges; else one usable judge plus native; else native."""
-    if native in judges:
+    """The pool: the first two usable judges. With a native id (old loops), one usable judge plus
+    native, else native alone; without one, a single usable judge, else a refusal."""
+    if native is not None and native in judges:
         raise JudgeLoopError("the native id must not be in the judge list")
     if len(set(judges)) != len(judges):
         raise JudgeLoopError("a judge appears twice in the judge list")
     usable = [result["judge"] for result in results if result["usable"]]
     pool = {"judges": list(judges), "native": native, "probes": list(results),
             "members": [], "substitutes": []}
+    if native is None:
+        return _judge_pool(pool, judges, usable, results)
     if len(usable) >= POOL_SIZE:
         pool["members"] = usable[:POOL_SIZE]
         return pool
@@ -1571,6 +1597,8 @@ def _cmd_pool(args, root):
         print(f"{PREFIX} probe {result['judge']}: {state}")
     for substitute in pool["substitutes"]:
         print(f"{PREFIX} substitute {substitute['judge']}: {substitute['reason']}")
+    for note in pool.get("notes", []):
+        print(f"{PREFIX} note: {note}")
     print(f"{PREFIX} pool {args.loop}: {', '.join(pool['members'])}")
     return 0
 
@@ -1972,7 +2000,8 @@ def build_parser():
     pool_p = sub.add_parser("pool", help="choose the judge pool from the probe results")
     pool_p.add_argument("--loop", required=True)
     pool_p.add_argument("--judges", nargs="*", default=[])
-    pool_p.add_argument("--native", required=True, help="the native judge id, the fallback")
+    pool_p.add_argument("--native", help="a native judge id as the fallback (old loops only; "
+                        "without it the pool takes the first two usable judges, or one)")
     pool_p.add_argument("--probe-dir", required=True)
     pool_p.add_argument("--records", required=True)
     count_p = sub.add_parser("count", help="the judge count per skill: triggers, then jev")

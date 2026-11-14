@@ -357,6 +357,29 @@ class ReportFixture(unittest.TestCase):
             self.records, record["loop"], record["skill"], record["round"], record["judge"]),
             record)
 
+    def _referee_only_loop(self):
+        """Loop 32's pool rewritten with no native id and only cli-a usable."""
+        probes = [{"judge": "cli-a:model-a", "usable": True, "status_line": STATUS_OK,
+                   "reason": ""},
+                  {"judge": "cli-b:model-b", "usable": False, "status_line": QUOTA_LINE,
+                   "reason": "status quota exit 75 tree clean"}]
+        pool = judge_loop.choose_pool(["cli-a:model-a", "cli-b:model-b"], None, probes)
+        judge_loop.update_loop_file(self.records, "32", "pool", pool)
+
+    def test_a_referee_only_pool_renders_its_note_and_checks_its_judges(self):
+        self._referee_only_loop()
+        self.assertIn("Notes: only one judge passed its probe", self._render())
+        _code, out = self._check()
+        self.assertNotIn("is not in the judge list", out)
+
+    def test_a_native_record_outside_a_referee_only_pool_is_named(self):
+        self._referee_only_loop()
+        self._put(make_record("32", "demo-b", 1, "native:fixture",
+                              full_verdict("demo-b", "native:fixture")))
+        _code, out = self._check()
+        self.assertIn("demo-b r1 native:fixture: judge native:fixture is not in the judge list",
+                      out)
+
     def _drop(self, skill, judge, rnd=1):
         os.remove(judge_loop.record_path(self.records, "32", skill, rnd, judge))
 
@@ -1363,6 +1386,65 @@ class TestPool(unittest.TestCase):
     def test_a_judge_listed_twice_is_refused(self):
         with self.assertRaisesRegex(judge_loop.JudgeLoopError, "appears twice"):
             self._pool(["cli-a:m", "cli-a:m"], usable=["cli-a:m"])
+
+    def _referee_pool(self, usable):
+        self._lanes(self.JUDGES, usable)
+        results = [judge_loop.probe_result(self.probes, judge) for judge in self.JUDGES]
+        return judge_loop.choose_pool(self.JUDGES, None, results)
+
+    def test_without_native_two_usable_referees_form_the_pool(self):
+        pool = self._referee_pool(usable=self.JUDGES)
+        self.assertEqual(pool["members"], ["cli-a:m", "cli-b:m"])
+        self.assertEqual(pool["substitutes"], [])
+        self.assertIsNone(pool["native"])
+        self.assertNotIn("notes", pool)
+
+    def test_without_native_the_third_referee_replaces_a_failed_primary(self):
+        pool = self._referee_pool(usable=["cli-a:m", "cli-c:m"])
+        self.assertEqual(pool["members"], ["cli-a:m", "cli-c:m"])
+        self.assertEqual(pool["substitutes"], [{
+            "judge": "cli-c:m", "reason": "replaces cli-b:m, which failed its probe"}])
+
+    def test_without_native_one_usable_referee_is_a_single_judge_pool(self):
+        pool = self._referee_pool(usable=["cli-c:m"])
+        self.assertEqual(pool["members"], ["cli-c:m"])
+        self.assertEqual(pool["notes"], ["only one judge passed its probe"])
+        self.assertNotIn(NATIVE, json.dumps(pool))
+
+    def test_without_native_no_usable_referee_names_each_probe(self):
+        self._lanes(self.JUDGES, usable=[])
+        results = [judge_loop.probe_result(self.probes, judge) for judge in self.JUDGES]
+        with self.assertRaises(judge_loop.JudgeLoopError) as caught:
+            judge_loop.choose_pool(self.JUDGES, None, results)
+        text = str(caught.exception)
+        self.assertIn("no judge passed its probe", text)
+        for judge in self.JUDGES:
+            self.assertIn(f"{judge} (status quota exit 75 tree clean)", text)
+
+    def test_without_native_an_empty_judge_list_is_refused(self):
+        with self.assertRaisesRegex(judge_loop.JudgeLoopError, "judge list empty"):
+            judge_loop.choose_pool([], None, [])
+
+    def test_cli_pool_without_native_writes_a_null_native_and_the_note(self):
+        self._lanes(self.JUDGES, usable=["cli-b:m"])
+        code, out = run_main(["--root", str(self.base), "pool", "--loop", "32", "--judges",
+                              *self.JUDGES, "--probe-dir", str(self.probes),
+                              "--records", str(self.records)])
+        self.assertEqual(code, 0)
+        self.assertIn("judge-loop: note: only one judge passed its probe", out)
+        self.assertIn("judge-loop: pool 32: cli-b:m", out)
+        loop = json.loads((self.records / "loops" / "32.json").read_text(encoding="utf-8"))
+        self.assertIsNone(loop["pool"]["native"])
+        self.assertEqual(loop["pool"]["members"], ["cli-b:m"])
+
+    def test_cli_pool_without_native_and_no_usable_judge_exits_1_without_writing(self):
+        self._lanes(["cli-a:m"], usable=[])
+        code, out = run_main(["--root", str(self.base), "pool", "--loop", "32", "--judges",
+                              "cli-a:m", "--probe-dir", str(self.probes),
+                              "--records", str(self.records)])
+        self.assertEqual(code, 1)
+        self.assertIn("no judge passed its probe", out)
+        self.assertFalse((self.records / "loops" / "32.json").exists())
 
     def test_usable_probe_reports_its_status_line_and_no_reason(self):
         write_probe(self.probes, "cli-a:m", ANSWER, ANSWER + "\n", _status())
