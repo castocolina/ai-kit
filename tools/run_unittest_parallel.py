@@ -230,6 +230,9 @@ EXPLICIT_GROUPS = {
 HOST_CLI_NAMES = frozenset({
     "agent", "claude", "codex", "copilot", "cursor-agent", "grok", "opencode", "pi",
 })
+# Non-host tools a test may reach only through a fake (tests/index_fakes.py); kept apart from
+# HOST_CLI_NAMES, which a drift test pins to the RUNTIMES binaries.
+TOOL_STUB_NAMES = frozenset({"codebase-memory-mcp"})
 TRIPWIRE_MAX_LINES = 20
 # Copied from detection.HOST_SIGNAL_ENV_VARS (pinned by a drift test): a caller's host marker
 # must not make a module believe it runs inside a host.
@@ -249,6 +252,9 @@ HOME_OVERRIDE_VARS = frozenset({
     "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR", "ZCODE_CONFIG_DIR",
     "AGENTS_TOOLING_PATH", "SHARED_TOOLING_PATH", "AI_KIT_DIR", "CLAUDE_JOB_DIR",
     "CLAUDE_PLUGIN_ROOT", "RUNTIME_DIR", "JEV_API_KEY_FILE",
+    # CBM_CACHE_DIR: the code index tool's cache; OPENCODE_CONFIG: one more opencode config
+    # file (no _FILE suffix, so the drift scan misses it; listed by hand).
+    "CBM_CACHE_DIR", "OPENCODE_CONFIG",
 })
 # API keys and backend URLs product code reads or used to read: no test makes a credentialed
 # call through the caller's key.
@@ -344,22 +350,27 @@ def worker_count(n_modules: int, cpus: int | None, share_env: str | None = None)
 
 _STUB = """#!/bin/sh
 printf '%s %s\\n' {name} "$*" >> {log}
-echo 'ai-kit tripwire: real host CLI {name} called from a test; use tests/host_fakes.py' >&2
+echo 'ai-kit tripwire: real {kind} {name} called from a test; use {fakes}' >&2
 exit 127
 """
 
 
 def write_tripwire(directory: Path) -> Path:
-    """Create `directory/bin/<host>` stubs (log, message, exit 127) and an empty
-    `directory/calls.log`; return the log path. The log path is baked into each stub."""
+    """Create `directory/bin/<name>` stubs (log, message, exit 127) for every host CLI and tool
+    name and an empty `directory/calls.log`; return the log path. The log path is baked into
+    each stub."""
     bin_dir = directory / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     log = directory / "calls.log"
     log.write_text("", encoding="utf-8")
-    for name in sorted(HOST_CLI_NAMES):
+    for name in sorted(HOST_CLI_NAMES | TOOL_STUB_NAMES):
+        kind, fakes = (("tool", "tests/index_fakes.py") if name in TOOL_STUB_NAMES
+                       else ("host CLI", "tests/host_fakes.py"))
         stub = bin_dir / name
         stub.write_text(
-            _STUB.format(name=shlex.quote(name), log=shlex.quote(str(log))), encoding="utf-8"
+            _STUB.format(name=shlex.quote(name), log=shlex.quote(str(log)), kind=kind,
+                         fakes=fakes),
+            encoding="utf-8",
         )
         stub.chmod(0o755)
     return log
@@ -370,7 +381,8 @@ def _tripwire_report(log_path: Path) -> str:
     calls = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     if not calls:
         return ""
-    lines = ["tripwire: real host CLI calls (fakes only, tests/host_fakes.py):"]
+    lines = ["tripwire: real host CLI or tool calls (fakes only, tests/host_fakes.py "
+             "or tests/index_fakes.py):"]
     lines += calls[:TRIPWIRE_MAX_LINES]
     if len(calls) > TRIPWIRE_MAX_LINES:
         lines.append(f"... and {len(calls) - TRIPWIRE_MAX_LINES} more calls")

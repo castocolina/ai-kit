@@ -232,6 +232,24 @@ class TripwireTest(unittest.TestCase):
         self.assertIn("tripwire:", output)
         self.assertIn("claude --version", output)
 
+    def test_a_code_index_call_turns_a_passing_module_into_rc_1(self) -> None:
+        rc, output = self._run(
+            "import subprocess\n"
+            "subprocess.run(['codebase-memory-mcp', 'cli', 'list_projects'], check=False)"
+        )
+        self.assertEqual(rc, 1, output)
+        self.assertIn("tripwire:", output)
+        self.assertIn("codebase-memory-mcp cli list_projects", output)
+        self.assertIn(
+            "tripwire: real host CLI or tool calls (fakes only, tests/host_fakes.py "
+            "or tests/index_fakes.py):", output
+        )
+
+    def test_tool_stub_names_stay_out_of_the_host_set(self) -> None:
+        runner = load_runner()
+        self.assertIn("codebase-memory-mcp", runner.TOOL_STUB_NAMES)
+        self.assertEqual(runner.TOOL_STUB_NAMES & runner.HOST_CLI_NAMES, frozenset())
+
     def test_a_fake_earlier_on_path_wins(self) -> None:
         rc, output = self._run(
             "import os, subprocess, tempfile\n"
@@ -331,6 +349,13 @@ class BaselineEnvTest(unittest.TestCase):
         env = self._env(**dict.fromkeys(names, "/sentinel"))
         for name in names:
             self.assertNotIn(name, env)
+
+    def test_code_index_cache_and_opencode_config_overrides_are_dropped(self) -> None:
+        # Synthetic paths only; nothing is created at them.
+        env = self._env(CBM_CACHE_DIR=str(self.caller_home / "cbm-cache"),
+                        OPENCODE_CONFIG=str(self.caller_home / "opencode-extra.json"))
+        self.assertNotIn("CBM_CACHE_DIR", env)
+        self.assertNotIn("OPENCODE_CONFIG", env)
 
     def test_pinned_values(self) -> None:
         env = self._env()
