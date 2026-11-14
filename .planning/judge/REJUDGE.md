@@ -24,8 +24,8 @@ Rubric: loop 32.4: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 | ai-kit-cross-ai | 32.3 | 32 | 1 | 1 | 2 | 2: no rubric-v4 verdict | 76.8 | C | 0 | 1 | 0 | not met | 1.6 | 7fee6ff03ba1 |
 | ai-kit-session-wake | 32.3 | 32 | 1 | 1 | 2 | 2: no rubric-v4 verdict | 87.2 | B | 0 | 1 | 0 | met: grade B or better | 5.6 | 7168e10acb80 |
 | ai-kit-spec-execute-superpowers | 32.3 | 32 | 1 | 1 | 2 | 2: last percent 83.2 is within 7.0 points of 80 | 86.4 | B | 0 | 0 | 0 | met: no critical or high finding | 0.8 | 76d60cb299d7 |
-| ai-kit-gsd-curated-config | 32.4 | 32.4 | 1 | 1 | 2 | 2: last percent 82.4 is within 7.0 points of 80 | 85.6 | B | 0 | 0 | 0 | met: no critical or high finding; lowest percent 85.6, loop 32 base 82.4 | 12.0 | d36a72e06325 |
-| ai-kit-gsd-spec-discuss | 32.4 | 32.4 | 1 | 1 | 2 | 2: last percent 84.8 is within 7.0 points of 80 | 85.6 | B | 0 | 0 | 0 | met: no critical or high finding; lowest percent 85.6, loop 32 base 84.8 | 12.8 | b95aef1b39c9 |
+| ai-kit-gsd-curated-config | 32.4 | 32.4 | 2 | 2 | 2 | 2: last percent 82.4 is within 7.0 points of 80 | 88.0 | B | 0 | 0 | 0 | met: no critical or high finding; lowest percent 88.0, loop 32 base 82.4 | 8.8 | 4d1f2e99ce33 |
+| ai-kit-gsd-spec-discuss | 32.4 | 32.4 | 2 | 2 | 1 (second judge unavailable) | 2: last percent 84.8 is within 7.0 points of 80 | 90.4 | A | 0 | 0 | 0 | met: no critical or high finding; lowest percent 90.4, loop 32 base 84.8 | - | b7a53246c4c6 |
 | ai-kit-spec-goal-prompt | 32.4 | 32.4 | 1 | 1 | 1 | 1: no deterministic trigger; jev needs_fallback (own reasoning) | 98.4 | A | 0 | 0 | 0 | met: no critical or high finding; lowest percent 98.4, loop 32 base 92.8 | - | 5b512ffe7443 |
 
 ## Verdicts
@@ -56,10 +56,10 @@ Rubric: loop 32.4: version 4, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 | ai-kit-spec-execute-superpowers | 32 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=56s out=382568 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0; error: D3 is below its max but has no finding | - | not judged | - | - | - | - |
 | ai-kit-spec-execute-superpowers | 32 | 1 | opencode:router-env/my-referee-three | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=42s out=91240 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 109/125 | 87.2 | B | 0 | 0 |
 | ai-kit-spec-execute-superpowers | 32 | 1 | native:opus-xhigh | native, xhigh (frontmatter, documented; not observed) | replaces opencode:router-env/my-referee-two: failed: AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=56s out=382568 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | 108/125 | 86.4 | B | 0 | 0 |
-| ai-kit-gsd-curated-config | 32.4 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=233s out=211323 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 122/125 | 97.6 | A | 0 | 0 |
-| ai-kit-gsd-curated-config | 32.4 | 1 | native:opus-xhigh | native, xhigh (frontmatter, documented; not observed) | - | 107/125 | 85.6 | B | 0 | 0 |
-| ai-kit-gsd-spec-discuss | 32.4 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=178s out=156923 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 123/125 | 98.4 | A | 0 | 0 |
-| ai-kit-gsd-spec-discuss | 32.4 | 1 | native:opus-xhigh | native, xhigh (frontmatter, documented; not observed) | - | 107/125 | 85.6 | B | 0 | 0 |
+| ai-kit-gsd-curated-config | 32.4 | 2 | opencode:router-env/my-referee-one | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=72s out=322380 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 121/125 | 96.8 | A | 0 | 0 |
+| ai-kit-gsd-curated-config | 32.4 | 2 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=184s out=152024 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 110/125 | 88.0 | B | 0 | 0 |
+| ai-kit-gsd-spec-discuss | 32.4 | 2 | opencode:router-env/my-referee-one | AIKIT-XAI status=quota cli=opencode model=router-env/my-referee-one exit=75 cli_rc=1 elapsed=130s out=265262 tree=clean action=stop route=unknown rule=omniroute-all-targets-skipped pattern=verified attempts=1 cycles=0; error: lane is not usable: AIKIT-XAI status=quota cli=opencode model=router-env/my-referee-one exit=75 cli_rc=1 elapsed=130s out=265262 tree=clean action=stop route=unknown rule=omniroute-all-targets-skipped pattern=verified attempts=1 cycles=0 | - | not judged | - | - | - | - |
+| ai-kit-gsd-spec-discuss | 32.4 | 2 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=41s out=323222 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 113/125 | 90.4 | A | 0 | 0 |
 | ai-kit-spec-goal-prompt | 32.4 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=255s out=207921 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 123/125 | 98.4 | A | 0 | 0 |
 
 ## Judge count inputs
@@ -152,11 +152,11 @@ Substitutes: native:opus-xhigh: only one configured judge passed its probe
 
 | Judge | Probe | Status line | Reason |
 |---|---|---|---|
-| opencode:router-env/my-referee-two | usable | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=12s out=689 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - |
-| opencode:router-env/my-referee-three | unusable | AIKIT-XAI status=timeout cli=opencode model=router-env/my-referee-three exit=124 cli_rc=130 elapsed=510s out=566 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | status timeout exit 124 tree clean |
+| opencode:router-env/my-referee-one | usable | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=8s out=689 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - |
+| opencode:router-env/my-referee-two | usable | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=7s out=689 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - |
 
-Members: opencode:router-env/my-referee-two, native:opus-xhigh
-Substitutes: native:opus-xhigh: only one configured judge passed its probe
+Members: opencode:router-env/my-referee-one, opencode:router-env/my-referee-two
+Substitutes: none
 
 ## Excluded skills
 | Skill | Reason |

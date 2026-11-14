@@ -73,33 +73,28 @@
  "loop": "32.4",
  "pool": {
   "judges": [
-   "opencode:router-env/my-referee-two",
-   "opencode:router-env/my-referee-three"
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
   ],
   "members": [
-   "opencode:router-env/my-referee-two",
-   "native:opus-xhigh"
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
   ],
-  "native": "native:opus-xhigh",
+  "native": null,
   "probes": [
    {
-    "judge": "opencode:router-env/my-referee-two",
+    "judge": "opencode:router-env/my-referee-one",
     "reason": "",
-    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=12s out=689 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=8s out=689 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
     "usable": true
    },
    {
-    "judge": "opencode:router-env/my-referee-three",
-    "reason": "status timeout exit 124 tree clean",
-    "status_line": "AIKIT-XAI status=timeout cli=opencode model=router-env/my-referee-three exit=124 cli_rc=130 elapsed=510s out=566 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
-    "usable": false
+    "judge": "opencode:router-env/my-referee-two",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=7s out=689 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "usable": true
    }
   ],
-  "substitutes": [
-   {
-    "judge": "native:opus-xhigh",
-    "reason": "only one configured judge passed its probe"
-   }
-  ]
+  "substitutes": []
  }
 }
