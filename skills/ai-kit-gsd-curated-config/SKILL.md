@@ -27,7 +27,7 @@ already run GSD in. Resolution order: on a pi, opencode or cursor host `<root>/.
 `JEV_API_URL` is set, `inventory` also opens one TCP connection to its host (reachability
 only, never a request).
 
-**A new project inside another one.** An empty folder inside another GSD project, passed as `--project-dir`, becomes its own project: `ensure-project` and `apply` create its `.planning/` first, and `inventory` treats a config gsd-core resolves outside that folder as absent, so nothing outside it is written.
+**A new project inside another one.** Any folder inside another GSD project, passed as `--project-dir` without a `.planning/` of its own, becomes its own project, empty or not (so pass the outer project's root to configure the outer project): `ensure-project` and `apply` create its `.planning/` first, and `inventory` treats a config gsd-core resolves outside that folder as absent, so nothing outside it is written.
 
 **Exit codes:**
 
