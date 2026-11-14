@@ -623,7 +623,7 @@ explicitly requested:
   | Id | What it does | Hosts | Default |
   |---|---|---|---|
   | `session-briefing` | Installed-tool briefing to user/model | Claude Code, Cursor | on |
-  | `tool-advisor` | Advice for grep/cat/sed/find, large reads, and code searches (Bash, Grep, Glob) in a codegraph-indexed checkout | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
+  | `tool-advisor` | Advice for grep/cat/sed/find, large reads, and code searches (Bash, Grep, Glob) in a checkout with a codebase-memory-mcp index | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
   | `tool-reminder` | Output-size reminder with a better installed tool | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
   | `decision-probe` | Reports usable decision backends | Claude Code | off |
   | `precompact` | Decision-system pre-summary before compaction | Claude Code, pi, experimental opencode | Per recorded host verdict |
@@ -633,13 +633,14 @@ explicitly requested:
   ids (comma-separated, with optional `:host` selectors). Claude Code settings
   are wired per event; pi extensions and opencode plugins use symlinks. Absent
   hosts are skipped. The pre-summary fails open without blocking compaction.
-- `--with-global-rules` — rewrites codegraph's "indexing is the user's decision"
-  sentence inside its `<!-- CODEGRAPH_START -->` block in the four global
-  instruction files (Claude `CLAUDE.md`, Codex `AGENTS.md`, Gemini `GEMINI.md`,
-  opencode `AGENTS.md`). Only that sentence changes; each file is backed up first
+- `--with-global-rules` — replaces a leftover codegraph block (`<!-- CODEGRAPH_START -->`, from before codebase-memory-mcp replaced codegraph)
+  with ai-kit's codebase-memory-mcp block in the four global instruction files (Claude `CLAUDE.md`,
+  Codex `AGENTS.md`, Gemini `GEMINI.md`, opencode `AGENTS.md`). A file that already holds a
+  codebase-memory-mcp block is left as it is; each file is backed up first
   to `${XDG_STATE_HOME:-~/.local/state}/ai-kit/backups/global-rules/`. A bare
   `--headless` never touches these files, and `--dry-run` only previews the change.
-  The config doctor row `codegraph-global-sentence` reports which wording each file holds.
+  The config doctor row `cbm-global-block` reports which block each file holds; the rows
+  `cbm-binary` and `cbm-registration` report the binary and its MCP registration per host.
 - `--examples=all|none|<ids>` — the same pre-existing flag `install.sh` and
   the interactive wizard use for bundled example segments; it works
   identically here, with or without `--headless`.
@@ -727,7 +728,7 @@ Every runtime-config apply (Claude `settings.json`, `opencode.jsonc`, Codex
 `~/.local/state/ai-kit/backups/<runtime>/<file name>.<UTC timestamp>.bak` (the
 newest 10 per file are kept). This is a different name from the skill backups'
 `<name>.bak-<timestamp>/` described above. A missing target and a dry run take no backup.
-The global-rules applier (`codegraph-global-sentence`) keeps its own backups
+The global-rules applier (`cbm-global-block`) keeps its own backups
 under `~/.local/state/ai-kit/backups/global-rules/`.
 
 The row `claude-playwright-mcp-browser` is shown only when the Playwright plugin
@@ -758,7 +759,7 @@ user's own `python3` with no dependencies. The lint/type toolchain below is
 
 ```bash
 make dev        # uv sync + install pre-commit hooks (sets up the dev env)
-make setup-dev  # uv sync, the missing flow tools (pre-commit, gh, gh-stack, codegraph, graphify) and the hooks, each guarded; never upgrades, always exits 0 (dev and setup-env stay strict)
+make setup-dev  # uv sync, the missing flow tools (pre-commit, gh, gh-stack, graphify; codebase-memory-mcp is checked and its install command printed) and the hooks, each guarded; never upgrades, always exits 0 (dev and setup-env stay strict)
 make test       # full suite in parallel, one subprocess per module, through tools/run_unittest_parallel.py (system python3 for the unit group)
 make lint       # shellcheck + py-compile hooks (pre-commit, all files)
 make validate   # the full quality gate (see below)

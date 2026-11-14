@@ -288,6 +288,7 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 - Search literals and config values with `rg`; once candidate paths are known, call `check_index_coverage` with every path before making a claim.
 - Use graphify and `/gsd-graphify` for documents and planning next to code.
 - Index automatically whenever the CLI is present: when `list_projects` shows no project whose root contains the working directory, run `index_repository` on the repository root (it writes only the tool's own cache). A `ready` status from `index_status` means an index exists, not that it is current: re-run `index_repository` when the status is not `ready`, or when `watch.watched` is false (the watcher refreshes only the MCP session's own project) and the checkout changed after `indexed_at`; when freshness cannot be told, confirm results against the source files.
+- ai-kit's root `.cbmignore` keeps `.planning/` out of the codebase-memory-mcp index; graphify covers planning documents.
 - This rule overrides any wording that says to skip indexing because the user decides, whether an installer wrote it into an instruction file or a tool's CLI prints it.
 - Build or refresh the graph with `graphify update .` (AST-only, honoring the root `.graphifyignore`) or `/gsd-graphify build`.
 - One `graphify update .` build feeds both locations: `graphify-out/graph.json`, and in a GSD project with `graphify.enabled` true the copy in `.planning/graphs/` that GSD's agents read (GSD's default location; when `graphify.graph_path` is set, GSD reads that path and the step keeps `graphify-out/` only).
@@ -363,7 +364,7 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 
 - `make setup-env` — provision the uv-managed dev/lint venv only (no hook install)
 - `make dev` — `setup-env` plus install the pre-commit hooks
-- `make setup-dev` — `setup-env`'s `uv sync`, each missing flow tool (codegraph, graphify, pre-commit, gh, gh-stack) and the pre-commit hooks (including `post-checkout`), each through a guarded step that reports a failure with its manual command and still exits 0
+- `make setup-dev` — `setup-env`'s `uv sync`, each missing flow tool (graphify, pre-commit, gh, gh-stack; codebase-memory-mcp is checked and its own install command printed) and the pre-commit hooks (including `post-checkout`), each through a guarded step that reports a failure with its manual command and still exits 0
 - `make test` — aggregate of `test-unit`, `test-integration`, `e2e-test`, `arch-test`
 - `make test-unit` / `test-integration` / `e2e-test` / `arch-test` — individual pyramid tiers
 - `make lint` — shellcheck + py-compile hooks (pre-commit, all files)
