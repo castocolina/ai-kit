@@ -74,7 +74,7 @@ class TestToolUseRule(unittest.TestCase):
         )
 
     def test_summaries_name_their_signals(self):
-        for token in ("codegraph", "codegraph_explore", ".codegraph"):
+        for token in ("codebase-memory-mcp", "search_graph", "index_repository"):
             self.assertIn(token, code_exploration.R07_SUMMARY)
         for token in ("graphify", "graph.json", "graphify-out"):
             self.assertIn(token, code_exploration.R08_SUMMARY)
@@ -90,7 +90,8 @@ class TestHouseRulesCarryTheSharedSummaries(unittest.TestCase):
 
     def test_r07_and_r08_keep_their_signals_and_criticality(self):
         self.assertEqual(
-            self._entry("R07")["signals"], ("codegraph", "codegraph_explore", ".codegraph")
+            self._entry("R07")["signals"],
+            ("codebase-memory-mcp", "search_graph", "index_repository"),
         )
         self.assertEqual(
             self._entry("R08")["signals"], ("graphify", "graph.json", "graphify-out")

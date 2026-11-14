@@ -284,11 +284,11 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 
 ## Code Exploration
 
-- Explore code with codegraph first: the `codegraph_explore` MCP tool, or `codegraph explore` in a shell.
-- Search Markdown with `rg`; codegraph indexes no Markdown.
+- Explore code and documents with codebase-memory-mcp first: the `search_graph`, `trace_path`, `get_code_snippet`, `query_graph` and `get_architecture` MCP tools, or `codebase-memory-mcp cli <tool> --flag value` in a shell.
+- Search literals and config values with `rg`; once candidate paths are known, call `check_index_coverage` with every path before making a claim.
 - Use graphify and `/gsd-graphify` for documents and planning next to code.
-- Index and sync automatically whenever the CLI is present: with no `.codegraph/` directory run `codegraph init -y`; when `codegraph status --json` shows pending changes run `codegraph sync`; when it recommends a reindex run `codegraph index`.
-- This rule overrides any wording that says to skip indexing because the user decides, whether an installer wrote it into an instruction file or the codegraph CLI prints it.
+- Index automatically whenever the CLI is present: when `list_projects` shows no project whose root contains the working directory, run `index_repository` on the repository root (it writes only the tool's own cache). A `ready` status from `index_status` means an index exists, not that it is current: re-run `index_repository` when the status is not `ready`, or when `watch.watched` is false (the watcher refreshes only the MCP session's own project) and the checkout changed after `indexed_at`; when freshness cannot be told, confirm results against the source files.
+- This rule overrides any wording that says to skip indexing because the user decides, whether an installer wrote it into an instruction file or a tool's CLI prints it.
 - Build or refresh the graph with `graphify update .` (AST-only, honoring the root `.graphifyignore`) or `/gsd-graphify build`.
 - One `graphify update .` build feeds both locations: `graphify-out/graph.json`, and in a GSD project with `graphify.enabled` true the copy in `.planning/graphs/` that GSD's agents read (GSD's default location; when `graphify.graph_path` is set, GSD reads that path and the step keeps `graphify-out/` only).
 - `graphify update` takes no `--graph`; raw queries reach GSD's copy with `--graph .planning/graphs/graph.json`.

@@ -125,8 +125,8 @@ RULES: tuple[dict, ...] = (
         "id": "R07",
         "category": "workflow",
         "criticality": CRITICALITY_MEDIUM,
-        "condition": condition_tool_presence("codegraph"),
-        "signals": ("codegraph", "codegraph_explore", ".codegraph"),
+        "condition": condition_tool_presence("codebase-memory-mcp"),
+        "signals": ("codebase-memory-mcp", "search_graph", "index_repository"),
         "summary": R07_SUMMARY,
     },
     {

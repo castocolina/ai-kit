@@ -410,20 +410,26 @@ class LiveEvidenceCheckerTests(unittest.TestCase):
             self.assertEqual(self.checker.main(["a", "b"]), 2)
 
 
-class TestCodegraphSearchAdvice(unittest.TestCase):
-    """SPEC R7 / D-09: code searches in a codegraph-indexed checkout get one codegraph line."""
+class TestCbmSearchAdvice(unittest.TestCase):
+    """Code searches in a checkout with a codebase-memory-mcp index get one advice line."""
+
+    def setUp(self):
+        self.cache = tempfile.mkdtemp(prefix="cbm-cache-")
+        self.addCleanup(shutil.rmtree, self.cache, ignore_errors=True)
+        self.env = {"CBM_CACHE_DIR": self.cache, "HOME": self.cache, "PATH": ""}
 
     def _checkout(self, indexed=True):
-        root = tempfile.mkdtemp(prefix="codegraph-advice-")
+        root = tempfile.mkdtemp(prefix="cbm-advice-")
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         os.makedirs(os.path.join(root, "tools"))
         os.mkdir(os.path.join(root, ".git"))
         if indexed:
-            os.mkdir(os.path.join(root, ".codegraph"))
+            with open(core._cbm_db_path(root, self.env), "w", encoding="utf-8"):
+                pass
         return root
 
     def _sandbox(self):
-        root = tempfile.mkdtemp(prefix="codegraph-sandbox-")
+        root = tempfile.mkdtemp(prefix="cbm-sandbox-")
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         runtime = os.path.join(root, "runtime")
         os.mkdir(runtime, 0o700)
@@ -431,11 +437,12 @@ class TestCodegraphSearchAdvice(unittest.TestCase):
                "XDG_CONFIG_HOME": os.path.join(root, "config"),
                "XDG_CACHE_HOME": os.path.join(root, "cache"),
                "XDG_STATE_HOME": os.path.join(root, "state"),
-               "XDG_RUNTIME_DIR": runtime, "AI_KIT_REFUSE_REAL_HOME": "1"}
+               "XDG_RUNTIME_DIR": runtime, "AI_KIT_REFUSE_REAL_HOME": "1",
+               "CBM_CACHE_DIR": self.cache}
         os.makedirs(env["HOME"])
         bin_dir = os.path.join(root, "bin")
         os.mkdir(bin_dir)
-        executable = os.path.join(bin_dir, "codegraph")
+        executable = os.path.join(bin_dir, "codebase-memory-mcp")
         with open(executable, "w", encoding="utf-8") as handle:
             handle.write("#!/bin/sh\nexit 0\n")
         os.chmod(executable, 0o700)
@@ -467,14 +474,13 @@ class TestCodegraphSearchAdvice(unittest.TestCase):
         for fields, expected in cases:
             with self.subTest(fields=fields):
                 event = dict(fields, kind="advisor", cwd=checkout)
-                advice = core.codegraph_advice(event, {"codegraph"})
+                advice = core.cbm_advice(event, {"codebase-memory-mcp"}, self.env)
                 self.assertEqual(bool(advice), expected)
                 if advice:
-                    self.assertEqual(advice[0][0], "codegraph-search")
+                    self.assertEqual(advice[0][0], "cbm-search")
                     self.assertLessEqual(len(advice[0][1]), 160)
-                    self.assertIn("codegraph_explore", advice[0][1])
-                    self.assertIn("codegraph explore", advice[0][1])
-                    self.assertIn("keep rg for Markdown", advice[0][1])
+                    self.assertIn("search_graph", advice[0][1])
+                    self.assertIn("codebase-memory-mcp cli", advice[0][1])
 
     def test_pi_grep_glob_decides_markdown_only(self):
         checkout = self._checkout()
@@ -483,24 +489,32 @@ class TestCodegraphSearchAdvice(unittest.TestCase):
             with self.subTest(tool_input=tool_input):
                 event = core.event_from_pi({"toolName": "grep", "input": tool_input,
                                             "cwd": checkout})
-                self.assertEqual(bool(core.codegraph_advice(event, {"codegraph"})), expected)
+                advice = core.cbm_advice(event, {"codebase-memory-mcp"}, self.env)
+                self.assertEqual(bool(advice), expected)
 
     def test_advice_tokens_match_the_code_exploration_rule(self):
         rules = _load("code_exploration", os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "skills", "_shared", "ai_kit_rules_common", "code_exploration.py"))
-        for token in ("codegraph_explore", "codegraph explore"):
-            self.assertIn(token, core.CODEGRAPH_LINE)
+        self.assertLessEqual(len(core.CBM_LINE), 160)
+        for token in ("search_graph", "codebase-memory-mcp cli"):
+            self.assertIn(token, core.CBM_LINE)
             self.assertIn(token, rules.RULE_CLAUSES[0])
 
     def test_no_advice_without_index_or_cli_or_on_reminder(self):
         unindexed = self._checkout(indexed=False)
         indexed = self._checkout()
+        installed = {"codebase-memory-mcp"}
         event = {"tool": "grep", "search_path": "tools", "kind": "advisor"}
-        self.assertEqual(core.codegraph_advice(dict(event, cwd=unindexed), {"codegraph"}), [])
-        self.assertEqual(core.codegraph_advice(dict(event, cwd=indexed), set()), [])
+        self.assertEqual(core.cbm_advice(dict(event, cwd=unindexed), installed, self.env), [])
+        self.assertEqual(core.cbm_advice(dict(event, cwd=indexed), set(), self.env), [])
         reminder = {"tool": "bash", "command": "rg x", "kind": "reminder", "cwd": indexed}
-        self.assertEqual(core.codegraph_advice(reminder, {"codegraph"}), [])
+        self.assertEqual(core.cbm_advice(reminder, installed, self.env), [])
+
+    def test_checkout_without_cache_file_gets_no_advice_with_the_binary(self):
+        checkout = self._checkout(indexed=False)
+        event = {"tool": "grep", "search_path": "tools", "kind": "advisor", "cwd": checkout}
+        self.assertEqual(core.cbm_advice(event, {"codebase-memory-mcp"}, self.env), [])
 
     def test_nested_unindexed_worktree_gets_no_advice(self):
         indexed = self._checkout()
@@ -508,11 +522,12 @@ class TestCodegraphSearchAdvice(unittest.TestCase):
         os.makedirs(os.path.join(nested, "tools"))
         with open(os.path.join(nested, ".git"), "w", encoding="utf-8") as handle:
             handle.write("gitdir: somewhere\n")
+        installed = {"codebase-memory-mcp"}
         event = {"tool": "grep", "search_path": "tools", "kind": "advisor"}
-        self.assertEqual(core.codegraph_advice(dict(event, cwd=nested), {"codegraph"}), [])
+        self.assertEqual(core.cbm_advice(dict(event, cwd=nested), installed, self.env), [])
         subdir = os.path.join(indexed, "tools")
-        self.assertEqual(core.codegraph_advice(dict(event, cwd=subdir), {"codegraph"}),
-                         [("codegraph-search", core.CODEGRAPH_LINE)])
+        self.assertEqual(core.cbm_advice(dict(event, cwd=subdir), installed, self.env),
+                         [("cbm-search", core.CBM_LINE)])
 
     def test_frequency_and_dedupe_through_advise(self):
         _root, env = self._sandbox()
@@ -572,7 +587,7 @@ class TestCodegraphSearchAdvice(unittest.TestCase):
             input=json.dumps(payload).encode("utf-8"), env=env, capture_output=True,
             check=False, timeout=30)
         self.assertEqual(completed.returncode, 0)
-        self.assertIn("codegraph_explore", completed.stdout.decode("utf-8"))
+        self.assertIn("search_graph", completed.stdout.decode("utf-8"))
 
 
 if __name__ == "__main__":

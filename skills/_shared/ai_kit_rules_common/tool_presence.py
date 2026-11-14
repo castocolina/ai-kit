@@ -31,7 +31,7 @@ def check_tool_presence(
     }
     result: dict[str, bool] = {
         "modern-cli": any(per_tool.values()),
-        "codegraph": os.path.isdir(os.path.join(root, ".codegraph")),
+        "codebase-memory-mcp": shutil.which("codebase-memory-mcp", path=search_path) is not None,
         "graphify": (
             shutil.which("graphify", path=search_path) is not None
             or os.path.isdir(os.path.join(root, "graphify-out"))
