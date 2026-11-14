@@ -178,8 +178,9 @@ GOOD_TEXT = {
     "opencode": '{ "theme": "dark" }\n',
     "codex": 'model = "x"\n',
 }
-# Phase 30's codegraph sentence applier keeps its own backup under backups/global-rules/ (R11).
-EXEMPT_APPLIERS = {"codegraph-global-sentence"}
+# The global-rules applier (codebase-memory-mcp block migration) keeps its own backup
+# under backups/global-rules/ (R11).
+EXEMPT_APPLIERS = {"cbm-global-block"}
 
 
 class TestEveryApplierRefusesAndBacksUp(_Scratch):

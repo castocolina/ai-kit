@@ -407,8 +407,8 @@ def set_jsonc_value(text, key_path, new_value):
     return _jsonc_insert_key(text, key_name, dumped, open_i, close_i)
 
 
-def apply_codegraph_global_sentence(ctx, _target, dry):
-    """Re-apply ai-kit wording where codegraph's installer wrote its sentence back (D-11).
+def apply_cbm_global_block(ctx, _target, dry):
+    """Migrate a leftover codegraph block to the codebase-memory-mcp block (D-11).
 
     Keeps its own backup under backups/global-rules/ (Phase 30 R11): it is the one
     applier exempt from the shared apply_guarded path (D-14).
@@ -420,8 +420,9 @@ def apply_codegraph_global_sentence(ctx, _target, dry):
     return {"ok": True, "current_display": global_rules.summary(ctx.env), "lines": lines}
 
 
-# Guarded apply (D-14, D-08, D-09): every doctor applier except the Phase 30
-# codegraph sentence goes through apply_guarded. Backups are uniform per
+# Guarded apply (D-14, D-08, D-09): every doctor applier except the Phase 30 global-rules
+# block migration (codebase-memory-mcp since Phase 32.5) goes through apply_guarded. Backups
+# are uniform per
 # runtime under backups_root(env)/<runtime>/ (plan ruling 4).
 
 

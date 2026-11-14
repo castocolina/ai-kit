@@ -601,8 +601,8 @@ _CODEX_SOURCE = "https://learn.chatgpt.com/docs/config-file/config-reference"
 _CURSOR_CONFIG_SOURCE = "https://cursor.com/docs/cli/reference/configuration"
 
 
-def read_codegraph_global_sentence(ctx):
-    """Which wording each global instruction file holds; never raises."""
+def read_cbm_global_block(ctx):
+    """Which block each global instruction file holds; never raises."""
     return global_rules.summary(ctx.env)
 
 
@@ -1123,20 +1123,24 @@ CONFIG_DOCTOR_ROWS = [
         source=_CURSOR_CONFIG_SOURCE,
     ),
     CheckRow(
-        id="codegraph-global-sentence",
+        id="cbm-global-block",
         runtime="cross",
         scope="global",
-        check="codegraph sentence in the global instruction files",
-        read=read_codegraph_global_sentence,
-        recommended="ai-kit wording",
+        check=(
+            "global instruction files: leftover codegraph block (codebase-memory-mcp replaces it)"
+        ),
+        read=read_cbm_global_block,
+        recommended="codebase-memory-mcp block",
         confidence="MEDIUM",
         why=(
-            "Sourced from codegraph 1.6.2's installer source (marker block and sentence in "
-            "installer/instructions-template.js); a later codegraph may move the block or "
-            "reword the sentence. Apply: rewrites only the in-block sentence, backup first."
+            "Replaces a "
+            "leftover codegraph 1.6.2 installer block with the codebase-memory-mcp block "
+            "between the markers codebase-memory-mcp 0.12.1's installer uses "
+            "(read from its binary, not its docs); a file that already holds that block stays "
+            "byte-equal. Apply: replaces only that block, backup first."
         ),
         source="tools/global_rules.py",
-        apply=config_doctor_appliers.apply_codegraph_global_sentence,
+        apply=config_doctor_appliers.apply_cbm_global_block,
         reads_section_file=False,
     ),
     CheckRow(

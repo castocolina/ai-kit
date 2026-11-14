@@ -1,6 +1,7 @@
-"""Rewrite codegraph's "user decides" sentence in the four global instruction files.
+"""Migrate a leftover codegraph installer block to ai-kit's codebase-memory-mcp block.
 
-Only text between codegraph's markers is touched, bytes in and bytes out, with a backup
+Applies to the four global instruction files. A file that already holds a
+codebase-memory-mcp block is left byte-equal. Bytes in and bytes out, with a backup
 written before each file. The only writer of those files in ai-kit (SPEC R11, D-11).
 Stdlib only; never imports setup.py.
 """
@@ -13,34 +14,44 @@ import tempfile
 from collections.abc import Callable
 from typing import NamedTuple
 
-from marked_block import replace_in_block
+from marked_block import find_block
 
-START = b"<!-- CODEGRAPH_START -->"
-END = b"<!-- CODEGRAPH_END -->"
-INSTALLER_SENTENCE = (
-    "If there is no `.codegraph/` directory, skip CodeGraph entirely "
-    "— indexing is the user's decision."
-).encode()
-AIKIT_SENTENCE = (
-    b"If there is no `.codegraph/` directory and the `codegraph` CLI is installed, "
-    b"run `codegraph init -y` to create the index; if the index exists and "
-    b"`codegraph status --json` shows pending changes, run `codegraph sync` first "
-    b"(`codegraph index` when it reports a reindex is recommended)."
+LEGACY_START = b"<!-- CODEGRAPH_START -->"  # codegraph's block, migrated to codebase-memory-mcp
+LEGACY_END = b"<!-- CODEGRAPH_END -->"  # codegraph's block, migrated to codebase-memory-mcp
+CBM_START = b"<!-- codebase-memory-mcp:start -->"
+CBM_END = b"<!-- codebase-memory-mcp:end -->"
+_BLOCK_BODY = (
+    b"## codebase-memory-mcp (code and doc exploration)\n"
+    b"\n"
+    b"Before grep, find or broad file reads, query the codebase-memory-mcp graph: "
+    b"`search_graph` (symbols and doc sections), `trace_path` (callers and callees), "
+    b"`get_code_snippet` (source), `query_graph` (Cypher), `get_architecture` "
+    b"(overview). Call `check_index_coverage` with every path you cite. When "
+    b"`list_projects` has no project whose root contains the working directory, run "
+    b"`index_repository` on the repository root. Without the MCP tools, run "
+    b"`codebase-memory-mcp cli <tool> --flag value`. Use `rg` for literals and config "
+    b"values."
 )
+AIKIT_BLOCK = CBM_START + b"\n" + _BLOCK_BODY + b"\n" + CBM_END
 HOST_ORDER = ("claude", "codex", "gemini", "opencode")
+_MARKERS = (CBM_START, CBM_END, LEGACY_START, LEGACY_END)
 
 
 class Change(NamedTuple):
     host: str
     path: str
-    status: str  # "replace", "already", or a skip reason
+    status: str  # "replace", "already", "ambiguous", or a skip reason
     before: bytes | None
     after: bytes | None
     detail: str = ""
 
 
 def global_instruction_paths(env) -> list[tuple[str, str]]:
-    """Return (host, path) for the four global files, using codegraph 1.6.2's resolvers."""
+    """Return (host, path) for the four global files.
+
+    codebase-memory-mcp replaced codegraph 1.6.2, whose installer wrote these files.
+    A leftover codegraph block can remain there; codebase-memory-mcp migrates it.
+    """
     home = env.get("HOME", "")
     claude_dir = env.get("CLAUDE_CONFIG_DIR", "")
     claude_base = (
@@ -63,6 +74,26 @@ def _read(path: str) -> bytes:
         return fh.read()
 
 
+def _plan_one(host: str, path: str, data: bytes) -> Change:
+    """Decide one file's Change from its bytes; a repeated marker is never migrated."""
+    if any(data.count(marker) > 1 for marker in _MARKERS):
+        # find_block takes the first start and the next end; with repeated or nested markers
+        # that span could swallow text between blocks, so the file is skipped whole.
+        return Change(host, path, "ambiguous", data, None)
+    cbm = find_block(data, CBM_START, CBM_END)
+    if cbm != "no_block":
+        status = "already" if isinstance(cbm, tuple) else "one_marker"
+        return Change(host, path, status, data, None)
+    legacy = find_block(data, LEGACY_START, LEGACY_END)
+    if isinstance(legacy, str):
+        return Change(host, path, legacy, data, None)
+    begin, finish = legacy
+    after = (
+        data[: begin - len(LEGACY_START)] + AIKIT_BLOCK + data[finish + len(LEGACY_END) :]
+    )
+    return Change(host, path, "replace", data, after)
+
+
 def plan_changes(env) -> list[Change]:
     """Plan one Change per host, in HOST_ORDER; never raises on a per-file I/O error."""
     changes = []
@@ -79,23 +110,27 @@ def plan_changes(env) -> list[Change]:
         except OSError as exc:
             changes.append(Change(host, path, "unreadable", None, None, exc.strerror or str(exc)))
             continue
-        edited, reason = replace_in_block(data, START, END, INSTALLER_SENTENCE, AIKIT_SENTENCE)
-        if reason == "replaced":
-            changes.append(Change(host, path, "replace", data, edited))
-        else:
-            changes.append(
-                Change(host, path, "already" if reason == "already" else reason, data, None)
-            )
+        changes.append(_plan_one(host, path, data))
     return changes
 
 
 _SKIP_TEXT = {
     "missing_file": "missing file",
     "not_regular": "not a regular file",
-    "no_block": "no codegraph block",
+    "no_block": "no codegraph or codebase-memory-mcp block",
     "one_marker": "block with only one marker",
-    "no_sentence": "block without codegraph's sentence",
+    "ambiguous": "repeated or nested block markers",
 }
+
+
+def _old_block_lines(data: bytes) -> list[str]:
+    """The whole legacy block, markers included, as `  - ` preview lines."""
+    span = find_block(data, LEGACY_START, LEGACY_END)
+    if isinstance(span, str):
+        return []
+    begin, finish = span
+    old = data[begin - len(LEGACY_START) : finish + len(LEGACY_END)]
+    return [f"  - {line}" for line in old.decode("utf-8", errors="replace").splitlines()]
 
 
 def preview_lines(changes) -> list[str]:
@@ -103,11 +138,11 @@ def preview_lines(changes) -> list[str]:
     for change in changes:
         head = f"{change.host} {change.path}"
         if change.status == "replace":
-            lines.append(f"{head}: replace codegraph's sentence")
-            lines.append(f"  - {INSTALLER_SENTENCE.decode('utf-8')}")
-            lines.append(f"  + {AIKIT_SENTENCE.decode('utf-8')}")
+            lines.append(f"{head}: replace the codegraph block with the codebase-memory-mcp block")
+            lines.extend(_old_block_lines(change.before))
+            lines.extend(f"  + {line}" for line in AIKIT_BLOCK.decode("utf-8").splitlines())
         elif change.status == "already":
-            lines.append(f"{head}: already ai-kit's wording")
+            lines.append(f"{head}: already holds the codebase-memory-mcp block")
         elif change.status == "unreadable":
             lines.append(f"{head}: skipped: unreadable ({change.detail})")
         else:
@@ -231,23 +266,30 @@ def _write_change(change: Change, directory, when, before_replace) -> tuple[bool
         _replace_file(real, change.after)
     except OSError as exc:
         return False, f"{head}: write failed ({exc.strerror or exc}); not written"
-    return True, f"{head}: rewrote codegraph's sentence (backup {backup})"
+    return True, (
+        f"{head}: replaced the codegraph block with the codebase-memory-mcp block "
+        f"(backup {backup})"
+    )
 
 
 def summary(env) -> str:
-    """The doctor row's value: which wording each file holds; never raises."""
+    """The doctor row's value: which block each file holds; never raises."""
     try:
         changes = plan_changes(env)
     except OSError as exc:
         return f"unknown ({exc.strerror or exc})"
     installer = [c.host for c in changes if c.status == "replace"]
+    ambiguous = [c.host for c in changes if c.status == "ambiguous"]
     unreadable = [c.host for c in changes if c.status == "unreadable"]
     if installer:
-        value = f"installer wording: {', '.join(installer)}"
+        hosts = ", ".join(installer)
+        value = f"leftover codegraph block (codebase-memory-mcp replaces it): {hosts}"
     elif any(c.status == "already" for c in changes):
-        value = "ai-kit wording"
+        value = "codebase-memory-mcp block"
     else:
-        value = "no codegraph block"
+        value = "no block"
     if unreadable:
         value += f"; unreadable: {', '.join(unreadable)}"
+    if ambiguous:
+        value += f"; ambiguous markers: {', '.join(ambiguous)}"
     return value

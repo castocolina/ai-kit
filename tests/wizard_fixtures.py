@@ -117,7 +117,7 @@ def make_ctx_kinds(items=None, host_ids=("claude",), sl_state="ours", engine=Non
     Phase 30's global-rules item and its per-file preview (ctx.state)."""
     sel_items = list(_KIND_ITEMS if items is None else items)
     if global_rules:
-        sel_items.append(("global rules", "codegraph sentence", True))
+        sel_items.append(("global rules", "codebase-memory-mcp block", True))
     sel = setup.Selection(sel_items)
     state: dict = {"_initial_enabled": {(c, n): False for c, n, _ in sel.items}}
     if global_rules:

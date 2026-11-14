@@ -7,10 +7,10 @@ if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
 import marked_block
 
-START = b"<!-- CODEGRAPH_START -->"
-END = b"<!-- CODEGRAPH_END -->"
+START = b"<!-- DEMO_START -->"
+END = b"<!-- DEMO_END -->"
 OLD = b"indexing is the user's decision."
-NEW = b"run codegraph init -y."
+NEW = b"run the demo index."
 
 
 class TestReplaceInBlock(unittest.TestCase):

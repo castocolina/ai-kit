@@ -813,8 +813,8 @@ class TestCrossRuntimeRow(_ScratchRuntimes):
     def test_appears_when_all_four_config_files_absent(self):
         catalog = checks.build_catalog(self._env())
         self.assertIn("cross", self._runtimes(catalog))
-        row = _row_by_id(catalog, "codegraph-global-sentence")
-        self.assertEqual(row["id"], "codegraph-global-sentence")
+        row = _row_by_id(catalog, "cbm-global-block")
+        self.assertEqual(row["id"], "cbm-global-block")
         self.assertTrue(row["current_display"])
 
     def test_cross_pass_has_no_isfile_gate(self):

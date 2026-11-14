@@ -13,24 +13,29 @@ if _TOOLS_DIR not in sys.path:
 import config_doctor_checks
 import global_rules
 
-START, END = global_rules.START, global_rules.END
-INST, AIKIT = global_rules.INSTALLER_SENTENCE, global_rules.AIKIT_SENTENCE
+LEGACY_START, LEGACY_END = global_rules.LEGACY_START, global_rules.LEGACY_END
+BLOCK = global_rules.AIKIT_BLOCK
+OLD = b"legacy installer text"
 
 
 def _file_body(extra_outside=b""):
-    # The installer sentence first appears inside the block: the rewrite is in-block.
+    # A legacy codegraph block sits mid-file; the codebase-memory-mcp migration replaces it.
     return (
         b"prefix\r\n"
-        + START
+        + LEGACY_START
         + b"\r\n"
-        + INST
+        + OLD
         + b"\r\n"
-        + END
+        + LEGACY_END
         + b"\r\n"
-        + INST
+        + OLD
         + b" tail \xc3\xa9"
         + extra_outside
     )
+
+
+def _migrated_body(extra_outside=b""):
+    return b"prefix\r\n" + BLOCK + b"\r\n" + OLD + b" tail \xc3\xa9" + extra_outside
 
 
 class _ScratchHome(unittest.TestCase):
@@ -64,6 +69,11 @@ class _ScratchHome(unittest.TestCase):
             with open(path, "wb") as fh:
                 fh.write(body if body is not None else _file_body())
 
+    def write_one(self, host, body):
+        os.makedirs(os.path.dirname(self.paths[host]), exist_ok=True)
+        with open(self.paths[host], "wb") as fh:
+            fh.write(body)
+
     def read(self, host):
         with open(self.paths[host], "rb") as fh:
             return fh.read()
@@ -78,14 +88,17 @@ class _ScratchHome(unittest.TestCase):
         root = os.path.join(self.state, "ai-kit", "backups", "global-rules")
         return sorted(os.listdir(root)) if os.path.isdir(root) else []
 
+    def ctx(self):
+        return config_doctor_checks.ReadContext(data=None, env=self.env, runner=None)
+
 
 class TestHeadlessRewrite(_ScratchHome):
-    def test_rewrites_only_the_in_block_sentence_with_backups(self):
+    def test_replaces_only_the_legacy_block_with_backups(self):
         self.write_all()
         result = self.run_setup("--headless", "--with-global-rules")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         for host in ("claude", "codex", "gemini", "opencode"):
-            self.assertEqual(self.read(host), _file_body().replace(INST, AIKIT, 1), host)
+            self.assertEqual(self.read(host), _migrated_body(), host)
         self.assertEqual(len(self.backups()), 4)
 
     def test_report_lists_hosts_in_fixed_order(self):
@@ -103,14 +116,22 @@ class TestHeadlessRewrite(_ScratchHome):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual({h: self.read(h) for h in self.paths}, before)
         self.assertEqual(self.backups(), backups_before)
-        self.assertEqual(result.stdout.count("already ai-kit's wording"), 4)
+        self.assertEqual(result.stdout.count("already holds the codebase-memory-mcp block"), 4)
 
     def test_dry_run_prints_preview_and_changes_nothing(self):
         self.write_all()
         result = self.run_setup("--headless", "--with-global-rules", "--dry-run")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("  - " + INST.decode("utf-8"), result.stdout)
-        self.assertIn("  + " + AIKIT.decode("utf-8"), result.stdout)
+        self.assertEqual(
+            result.stdout.count("replace the codegraph block with the codebase-memory-mcp block"),
+            4,
+        )
+        self.assertIn("  - " + LEGACY_START.decode("utf-8"), result.stdout)
+        self.assertIn("  - " + OLD.decode("utf-8"), result.stdout)
+        self.assertIn("  + " + global_rules.CBM_START.decode("utf-8"), result.stdout)
+        self.assertIn(
+            "  + ## codebase-memory-mcp (code and doc exploration)", result.stdout
+        )
         for host in self.paths:
             self.assertEqual(self.read(host), _file_body())
         self.assertEqual(self.backups(), [])
@@ -129,17 +150,14 @@ class TestHeadlessRewrite(_ScratchHome):
         for host in self.paths:
             self.assertEqual(self.read(host), _file_body())
 
-    def test_missing_file_and_block_without_sentence_are_skipped(self):
-        os.makedirs(os.path.dirname(self.paths["codex"]), exist_ok=True)
-        plain = b"no block here " + INST
-        with open(self.paths["codex"], "wb") as fh:
-            fh.write(plain)
+    def test_missing_file_and_block_without_markers_are_skipped(self):
+        plain = b"no block here " + OLD
+        self.write_one("codex", plain)
         result = self.run_setup("--headless", "--with-global-rules")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("skipped: missing file", result.stdout)
-        self.assertIn("skipped: no codegraph block", result.stdout)
-        with open(self.paths["codex"], "rb") as fh:
-            self.assertEqual(fh.read(), plain)
+        self.assertIn("skipped: no codegraph or codebase-memory-mcp block", result.stdout)
+        self.assertEqual(self.read("codex"), plain)
 
 
 class TestApplyFunction(_ScratchHome):
@@ -152,34 +170,29 @@ class TestApplyFunction(_ScratchHome):
         self.assertTrue(ok)
         self.assertTrue(any("changed since it was reviewed; not written" in line for line in lines))
         self.assertTrue(self.read("claude").endswith(b"edited"))
-        self.assertIn(INST, self.read("claude"))
+        self.assertIn(LEGACY_START, self.read("claude"))
 
 
 class TestDoctorRow(_ScratchHome):
-    def ctx(self):
-        return config_doctor_checks.ReadContext(data=None, env=self.env, runner=None)
-
-    def test_read_reports_installer_wording_then_ai_kit_wording(self):
+    def test_read_reports_leftover_block_then_codebase_memory_mcp_block(self):
         self.write_all()
         self.assertEqual(
-            config_doctor_checks.read_codegraph_global_sentence(self.ctx()),
-            "installer wording: claude, codex, gemini, opencode",
+            config_doctor_checks.read_cbm_global_block(self.ctx()),
+            "leftover codegraph block (codebase-memory-mcp replaces it): "
+            "claude, codex, gemini, opencode",
         )
-        result = config_doctor_checks.apply_row("codegraph-global-sentence", self.ctx(), False)
+        result = config_doctor_checks.apply_row("cbm-global-block", self.ctx(), False)
         self.assertTrue(result["ok"], result)
-        self.assertEqual(result["current_display"], "ai-kit wording")
-        self.assertEqual(
-            config_doctor_checks.read_codegraph_global_sentence(self.ctx()), "ai-kit wording"
-        )
+        self.assertEqual(result["current_display"], "codebase-memory-mcp block")
+        self.assertEqual(config_doctor_checks.read_cbm_global_block(self.ctx()),
+                         "codebase-memory-mcp block")
 
-    def test_no_block_anywhere_reads_no_codegraph_block(self):
-        self.assertEqual(
-            config_doctor_checks.read_codegraph_global_sentence(self.ctx()), "no codegraph block"
-        )
+    def test_no_block_anywhere_reads_no_block(self):
+        self.assertEqual(config_doctor_checks.read_cbm_global_block(self.ctx()), "no block")
 
     def test_dry_apply_writes_nothing(self):
         self.write_all()
-        result = config_doctor_checks.apply_row("codegraph-global-sentence", self.ctx(), True)
+        result = config_doctor_checks.apply_row("cbm-global-block", self.ctx(), True)
         self.assertTrue(result["ok"], result)
         for host in self.paths:
             self.assertEqual(self.read(host), _file_body())
@@ -191,21 +204,21 @@ class TestDoctorRow(_ScratchHome):
         self.addCleanup(
             os.chmod, os.path.join(self.state, "ai-kit", "backups", "global-rules"), 0o700
         )
-        result = config_doctor_checks.apply_row("codegraph-global-sentence", self.ctx(), False)
+        result = config_doctor_checks.apply_row("cbm-global-block", self.ctx(), False)
         self.assertFalse(result["ok"])
         self.assertIn("backup failed", result["reason"])
         self.assertTrue(result["lines"])
 
     def test_row_attributes_name_the_installer_source(self):
         rows = config_doctor_checks.CONFIG_DOCTOR_ROWS
-        row = next(r for r in rows if r.id == "codegraph-global-sentence")
+        row = next(r for r in rows if r.id == "cbm-global-block")
         self.assertEqual(row.runtime, "cross")
         self.assertEqual(row.scope, "global")
         self.assertFalse(row.reads_section_file)
         self.assertEqual(row.confidence, "MEDIUM")
-        self.assertIn("codegraph 1.6.2", row.why)
+        self.assertIn("leftover codegraph 1.6.2 installer block with the codebase-memory-mcp block",
+                      row.why)
         self.assertIn("installer", row.why)
-        self.assertIn("may move the block or reword the sentence", row.why)
 
 
 NOT_ROOT = hasattr(os, "geteuid") and os.geteuid() != 0
@@ -242,7 +255,7 @@ class TestEdges(_ScratchHome):
         self.assertTrue(ok)
         self.assertTrue(any("changed since it was read" in line for line in lines), lines)
         self.assertTrue(self.read("claude").endswith(b"!"))
-        self.assertNotIn(global_rules.AIKIT_SENTENCE, self.read("claude"))
+        self.assertNotIn(global_rules.AIKIT_BLOCK, self.read("claude"))
 
     def test_reviewed_set_skips_unreviewed_replace(self):
         self.write_all()
@@ -263,23 +276,111 @@ class TestEdges(_ScratchHome):
         self.assertTrue(ok)
         self.assertTrue(os.path.islink(self.paths["claude"]))
         with open(real, "rb") as fh:
-            self.assertEqual(fh.read(), _file_body().replace(INST, AIKIT, 1))
+            self.assertEqual(fh.read(), _migrated_body())
 
     def test_one_marker_block_is_skipped_and_read_does_not_raise(self):
-        os.makedirs(os.path.dirname(self.paths["claude"]), exist_ok=True)
-        partial = START + b"\n" + INST + b"\n"
-        with open(self.paths["claude"], "wb") as fh:
-            fh.write(partial)
-        self.assertEqual(
-            config_doctor_checks.read_codegraph_global_sentence(
-                config_doctor_checks.ReadContext(data=None, env=self.env, runner=None)
-            ),
-            "no codegraph block",
-        )
+        partial = LEGACY_START + b"\n" + OLD + b"\n"
+        self.write_one("claude", partial)
+        self.assertEqual(config_doctor_checks.read_cbm_global_block(self.ctx()), "no block")
         ok, lines = global_rules.apply(self.env, False)
         self.assertTrue(ok)
         self.assertTrue(any("block with only one marker" in line for line in lines), lines)
         self.assertEqual(self.read("claude"), partial)
+
+    def test_codebase_memory_mcp_block_stays_byte_equal(self):
+        body = global_rules.CBM_START + b"\ninstaller text\n" + global_rules.CBM_END
+        self.write_one("claude", body)
+        ok, lines = global_rules.apply(self.env, False)
+        self.assertTrue(ok)
+        self.assertEqual(self.read("claude"), body)
+        self.assertTrue(
+            any(line.startswith("claude") and "already holds" in line for line in lines), lines
+        )
+        self.assertEqual(self.backups(), [])
+
+    def test_codebase_memory_mcp_and_legacy_blocks_together_stay_byte_equal(self):
+        body = (
+            global_rules.CBM_START
+            + b"\ninstaller text\n"
+            + global_rules.CBM_END
+            + b"\n"
+            + LEGACY_START
+            + b"\n"
+            + OLD
+            + b"\n"
+            + LEGACY_END
+        )
+        self.write_one("claude", body)
+        ok, _lines = global_rules.apply(self.env, False)
+        self.assertTrue(ok)
+        self.assertEqual(self.read("claude"), body)
+
+    def test_lone_codebase_memory_mcp_start_marker_is_skipped_byte_equal(self):
+        body = global_rules.CBM_START + b"\ninstaller text\n"
+        self.write_one("claude", body)
+        ok, lines = global_rules.apply(self.env, False)
+        self.assertTrue(ok)
+        self.assertTrue(any("block with only one marker" in line for line in lines), lines)
+        self.assertEqual(self.read("claude"), body)
+
+    def test_no_instruction_file_is_created(self):
+        ok, lines = global_rules.apply(self.env, False)
+        self.assertTrue(ok)
+        self.assertTrue(any("missing file" in line for line in lines), lines)
+        for path in self.paths.values():
+            self.assertFalse(os.path.lexists(path), path)
+
+    def test_repeated_legacy_blocks_are_ambiguous_and_byte_equal(self):
+        body = (
+            LEGACY_START
+            + b"\n"
+            + OLD
+            + b"\n"
+            + LEGACY_END
+            + b"\n"
+            + LEGACY_START
+            + b"\n"
+            + OLD
+            + b"\n"
+            + LEGACY_END
+        )
+        self.write_one("claude", body)
+        ok, lines = global_rules.apply(self.env, False)
+        self.assertTrue(ok)
+        self.assertTrue(any("repeated or nested block markers" in line for line in lines), lines)
+        self.assertEqual(self.read("claude"), body)
+
+    def test_nested_legacy_blocks_are_ambiguous_and_byte_equal(self):
+        body = (
+            LEGACY_START
+            + b"\n"
+            + LEGACY_START
+            + b"\n"
+            + OLD
+            + b"\n"
+            + LEGACY_END
+            + b"\n"
+            + LEGACY_END
+        )
+        self.write_one("claude", body)
+        ok, lines = global_rules.apply(self.env, False)
+        self.assertTrue(ok)
+        self.assertTrue(any("repeated or nested block markers" in line for line in lines), lines)
+        self.assertEqual(self.read("claude"), body)
+
+    def test_reversed_legacy_pair_is_skipped_byte_equal(self):
+        body = LEGACY_END + b"\n" + OLD + b"\n" + LEGACY_START
+        self.write_one("claude", body)
+        ok, lines = global_rules.apply(self.env, False)
+        self.assertTrue(ok)
+        self.assertTrue(any("block with only one marker" in line for line in lines), lines)
+        self.assertEqual(self.read("claude"), body)
+
+    def test_doctor_value_names_ambiguous_hosts(self):
+        self.write_all()
+        self.write_one("claude", LEGACY_START + b"\n" + LEGACY_START + b"\n" + LEGACY_END)
+        value = config_doctor_checks.read_cbm_global_block(self.ctx())
+        self.assertTrue(value.endswith("; ambiguous markers: claude"), value)
 
     @unittest.skipUnless(NOT_ROOT, "file modes are not enforced for root")
     def test_unreadable_file_is_skipped_and_others_rewritten(self):
@@ -291,16 +392,14 @@ class TestEdges(_ScratchHome):
         self.assertTrue(
             any(line.startswith("codex") and "unreadable" in line for line in lines), lines
         )
-        self.assertEqual(self.read("claude"), _file_body().replace(INST, AIKIT, 1))
+        self.assertEqual(self.read("claude"), _migrated_body())
 
     @unittest.skipUnless(NOT_ROOT, "file modes are not enforced for root")
     def test_unreadable_codex_row_reads_and_catalog_still_builds(self):
         self.write_all()
         os.chmod(self.paths["codex"], 0)
         self.addCleanup(os.chmod, self.paths["codex"], 0o600)
-        value = config_doctor_checks.read_codegraph_global_sentence(
-            config_doctor_checks.ReadContext(data=None, env=self.env, runner=None)
-        )
+        value = config_doctor_checks.read_cbm_global_block(self.ctx())
         self.assertTrue(value.endswith("; unreadable: codex"), value)
         catalog = config_doctor_checks.build_catalog(
             self.env, runner=lambda *a, **k: subprocess.CompletedProcess(a, 1, "", "")
@@ -319,7 +418,7 @@ class TestEdges(_ScratchHome):
             any(line.startswith("gemini") and "write failed" in line for line in lines), lines
         )
         self.assertEqual(self.read("gemini"), _file_body())
-        self.assertEqual(self.read("claude"), _file_body().replace(INST, AIKIT, 1))
+        self.assertEqual(self.read("claude"), _migrated_body())
         self.assertEqual([n for n in os.listdir(gemini_dir) if n.startswith(".ai-kit-global-")], [])
 
 

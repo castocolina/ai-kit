@@ -3725,12 +3725,13 @@ def _statusline_hosts_present(paths):
     return tuple(statusline_hosts_detected(paths))
 
 
-GLOBAL_RULES_ITEM: tuple[str, str] = ("global rules", "codegraph sentence")
+GLOBAL_RULES_ITEM: tuple[str, str] = ("global rules", "codebase-memory-mcp block")
 
 
 def _global_rules_review(rules_env):
-    """The Review item for codegraph's sentence (Phase 30, D-11): None when no
-    global file holds it, else the replace Changes and their preview lines."""
+    """The Review item for the global-rules migration (Phase 30 D-11, Phase 32.5): None when
+    no global file holds a leftover codegraph block for the codebase-memory-mcp block to
+    replace, else the replace Changes and their preview lines."""
     if rules_env is None:
         return None
     global_rules = _sibling("global_rules")
@@ -4815,7 +4816,8 @@ def _headless_replace(paths, entries, skills_flag, dry, counts):
 
 
 def _headless_apply_global_rules(env, dry):
-    """--with-global-rules: rewrite codegraph's sentence in the four global files.
+    """--with-global-rules: replace a leftover codegraph block with the codebase-memory-mcp
+    block in the four global files.
 
     Prints one line per file (and the preview under --dry-run); False when a backup or
     write failed. Skips (missing file, no block) are not failures."""
@@ -5216,9 +5218,13 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
                         help="(--headless only) bare wires rows marked on below; "
                              "=<id[:host],...> wires exactly those rows additively: "
                              + "; ".join(hook_description(i) for i in HOOK_IDS))
-    parser.add_argument("--with-global-rules", action="store_true",
-                        help="(--headless only) rewrite codegraph's \"user decides\" sentence "
-                             "in the global instruction files (backup first; --dry-run previews)")
+    parser.add_argument(
+        "--with-global-rules", action="store_true",
+        help=(
+            "(--headless only) replace a leftover codegraph block with the codebase-memory-mcp "
+            "block in the global instruction files (backup first; --dry-run previews)"
+        ),
+    )
     parser.add_argument("--hooks", default=None, metavar="<id[:host],...>",
                         help="(uninstall only) remove only these hooks")
     parser.add_argument(
