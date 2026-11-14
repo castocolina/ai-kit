@@ -1,6 +1,7 @@
 """Real gsd-core runs for ai-kit-spec-review: the e2e tier
 (C-IN-06). Each class spawns real `node` against this checkout's own `.claude/gsd-core` on a
 scratch project with a temp HOME, and skips when node or that gsd-core is missing."""
+import json
 import os
 import shutil
 import subprocess
@@ -93,6 +94,35 @@ class TestRealGsdTools(unittest.TestCase):
         )
         self.assertFalse(ok)
         self.assertIn("unknown", output.lower())
+
+    def test_a_folder_nested_in_another_project_becomes_its_own_project(self):
+        """An empty folder inside another GSD project becomes its own project; the outer project
+        is never written. The outer folder is its own git repository, so gsd-core stops there
+        wherever the temp dir lives."""
+        outer = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outer, ignore_errors=True)
+        self._run(["git", "init", "-q", outer], check=True, capture_output=True, timeout=60)
+        os.mkdir(os.path.join(outer, ".planning"))
+        outer_cfg = os.path.join(outer, ".planning", "config.json")
+        with open(outer_cfg, "w", encoding="utf-8") as f:
+            json.dump({"model_profile": "quality"}, f)
+        with open(outer_cfg, "rb") as f:
+            outer_bytes = f.read()
+        outer_listing = sorted(os.listdir(os.path.join(outer, ".planning")))
+        inner = os.path.join(outer, "inner")
+        os.mkdir(inner)
+        # Stops before any write when gsd-core walks past the synthetic outer project.
+        probe = gsd_tools.config_path(self.tools, inner, run_fn=self._run)
+        assert probe is not None
+        _assert_inside(self, probe, outer)
+        self.assertTrue(gsd_tools.ensure_config_exists(self.tools, inner, run_fn=self._run))
+        self.assertTrue(os.path.isfile(os.path.join(inner, ".planning", "config.json")))
+        resolved = gsd_tools.config_path(self.tools, inner, run_fn=self._run)
+        assert resolved is not None
+        _assert_inside(self, resolved, inner)
+        with open(outer_cfg, "rb") as f:
+            self.assertEqual(f.read(), outer_bytes)
+        self.assertEqual(sorted(os.listdir(os.path.join(outer, ".planning"))), outer_listing)
 
 class TestRealGsdConfigSet(unittest.TestCase):
     """The one real gsd-tools run: against this checkout's own .claude/gsd-core on a scratch

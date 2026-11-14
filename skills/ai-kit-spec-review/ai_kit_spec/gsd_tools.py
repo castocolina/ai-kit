@@ -362,10 +362,16 @@ def ensure_config_exists(
 ) -> bool:
     """Runs `config-new-project --cwd <dir>` with `env` (default: this process's). `True`
     covers both the freshly-created case and gsd-tools' own idempotent `already_exists`
-    no-op; `False` otherwise, including a spawn error or a `timeout`."""
+    no-op; `False` otherwise, including a spawn error or a `timeout`. An existing `project_dir`
+    gets its `.planning/` first, so a folder nested in another project becomes its own project;
+    a missing one is left to fail in gsd-tools."""
     # env only when given: callers' run_fn wrappers may inject their own env keyword.
     env_kw = {} if env is None else {"env": dict(env)}
     try:
+        if os.path.isdir(project_dir):
+            # gsd-core takes a start folder holding .planning/ as its own root; without it, it
+            # walks up and answers `already_exists` for an outer project.
+            os.makedirs(os.path.join(project_dir, ".planning"), exist_ok=True)
         result = run_fn(
             [tools.node_bin, tools.gsd_tools_path, "config-new-project", "--cwd", project_dir,
              "--raw"],

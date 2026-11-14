@@ -89,10 +89,6 @@ def _cmd_ensure_project(args, which_fn, run_fn, env_fn):
     if error or gsd is None or tools is None:
         print(error, file=sys.stderr)
         return 2
-    if os.path.isdir(args.project_dir):
-        # gsd-core takes a start folder holding .planning/ as its own root, so a folder nested
-        # in another project becomes its own project.
-        os.makedirs(os.path.join(args.project_dir, ".planning"), exist_ok=True)
     ensured = gsd.ensure_config_exists(tools, args.project_dir, run_fn=run_fn)
     print(json.dumps({"ensured": ensured}))
     return 0 if ensured else 1
