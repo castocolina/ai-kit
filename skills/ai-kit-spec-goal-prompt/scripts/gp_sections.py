@@ -35,11 +35,14 @@ __all__ = [
     "objective_lines",
     "objective_text",
     "order_lines",
+    "owner_rule_lines",
+    "phase_end_lines",
     "plain_block",
     "plan_rule_lines",
     "quota_lines",
     "rail_sections",
     "report_lines",
+    "resolve_turn_cap",
     "role_lines",
     "safety_lines",
     "stop_lines",
@@ -61,6 +64,19 @@ TURN_PER_ITEM = 40
 GSD_FAMILIES = ("opengsd", "gsd-unproven")
 GOAL_EVIDENCE = "exit code and count line"
 UNIT_CLAUSE = "Unit tests alone never count as done."
+E2E_HEAD = "E2E, each exits 0 and prints a test count above zero (zero is not green): "
+INFERRED_SUFFIX = " (inferred: confirm it runs the real app)"
+RAIL_ASK = (
+    "Ask the owner only for a locked-decision ambiguity, a package or security gate, or a call "
+    "only human eyes can make; otherwise verify, decide and report."
+)
+RAIL_WAIT = (
+    "Never end a turn with a waiting message while independent work remains; put a blocking item "
+    "in the ledger and continue."
+)
+RAIL_PING = (
+    "In every progress or resume ping give the local time, the running step and when it started."
+)
 OBJECTIVE_TAIL = ", each verified. Then leave the repository clean."
 OBJECTIVE_POINTER = " (full text: {path}section Full objective)"
 # Only the `/loop` row is typed as a `/loop` command; a schedule or wake tool never becomes an
@@ -110,20 +126,19 @@ CREATE_FIRST = (
 )
 EVIDENCE = (
     "Print each command with its exact exit code, its count line and the last 20 lines of "
-    "output, ANSI codes stripped."
+    "output, ANSI codes stripped, and the paths of the screenshots or TUI text snapshots the e2e "
+    "run produced."
 )
 MOCKUP_REVIEW = (
     "Mockup fidelity: capture e2e screenshots or TUI text snapshots, print their paths, and list "
     "them for human review against {mockups}. No automated judge decides it."
 )
 DONE_TAIL = (
-    "Print the paths of the screenshots or TUI text snapshots the e2e run produced.",
     "Start each long-lived e2e process in its own process group and record its group id in "
     "tmp/. After the run kill those groups and print a process listing (ps) that shows none "
     "remain.",
     "Phase status: VERIFICATION shows passed for every phase in scope, or the item is listed as "
-    "human verification with its reason.",
-    "Unit tests alone never count as done.",
+    "human verification with its reason. " + UNIT_CLAUSE,
 )
 
 
@@ -135,6 +150,14 @@ def turn_cap(items: int) -> int:
 def work_items(work: Work) -> int:
     """The items the turn cap counts: phases, else plans, else one free-text task."""
     return len(work.phases) or len(work.plans) or 1
+
+
+def resolve_turn_cap(answers: Mapping[str, Any], work: Work) -> int | None:
+    """The one turn cap that STOP IF and every `/goal` condition use: the answers' `turn_cap` when
+    the key is present (None means no cap), else the cap derived from the work set."""
+    if "turn_cap" in answers:
+        return answers["turn_cap"]
+    return turn_cap(work_items(work))
 
 
 def _one_line(text: str) -> str:
@@ -180,6 +203,11 @@ def wrap_items(
         room = LINE_CAP
     lines.append(current.rstrip())
     return lines
+
+
+def _words(text: str, section: str, head: str = "") -> list[str]:
+    """`text` split between its words onto rule lines; a free-text value is never cut."""
+    return wrap_items(head, _one_line(text).split(" "), "", " ", section)
 
 
 def _paren(label: str) -> str:
@@ -238,8 +266,6 @@ def plan_rule_lines(candidate_skills: Sequence[str], native: bool) -> list[str]:
             ".",
             section="RULES FOR EVERY PLAN",
         ),
-        "Pre-commit hooks always run on every commit; fix a real failure at its root, never skip "
-        "it.",
     ]
     return lines
 
@@ -260,8 +286,6 @@ def superpowers_rule_lines(candidate_skills: Sequence[str]) -> list[str]:
             ".",
             section="RULES FOR EVERY PLAN",
         ),
-        "Pre-commit hooks always run on every commit; fix a real failure at its root, never skip "
-        "it.",
     ]
 
 
@@ -276,8 +300,6 @@ def generic_rule_lines(candidate_skills: Sequence[str]) -> list[str]:
             ".",
             section="RULES FOR EVERY PLAN",
         ),
-        "Pre-commit hooks always run on every commit; fix a real failure at its root, never skip "
-        "it.",
     ]
 
 
@@ -303,13 +325,19 @@ def superpowers_order_lines(plans: Sequence[Plan], order: Sequence[str]) -> list
     return lines
 
 
-def goal_block(path: str, objective: str, cap: int, evidence: str = GOAL_EVIDENCE) -> list[str]:
-    """One `/goal` line: the objective, the rails section and DONE WHEN, evidence, a turn cap."""
+def goal_block(
+    path: str, objective: str, cap: int | None, evidence: str = GOAL_EVIDENCE
+) -> list[str]:
+    """One `/goal` line: the objective, the rails section and DONE WHEN, evidence, a turn cap
+    (no cap when `cap` is None)."""
+    tail = (
+        "If it does not hold, stop and report."
+        if cap is None
+        else f"If it does not hold, stop and report after {cap} turns."
+    )
     condition = _one_line(
         f"{objective} Done when every DONE WHEN item in {path} section Rails holds, with the "
-        f"{evidence} of "
-        f"every command printed. {UNIT_CLAUSE} If it does not hold, stop and report after "
-        f"{cap} turns."
+        f"{evidence} of every command printed. {UNIT_CLAUSE} {tail}"
     )
     return [f"/goal {condition}"]
 
@@ -376,6 +404,47 @@ def order_lines(phases: Sequence[Mapping[str, Any]], native: bool = False) -> li
     return lines
 
 
+def owner_rule_lines(answers: Mapping[str, Any]) -> list[str]:
+    """The model-split and review-lens rules; each appears only when its answers field is set."""
+    lines: list[str] = []
+    models = answers.get("models")
+    if models:
+        planner, executor = models["planner"], models["executor"]
+        lines += _words(
+            f"Models: the planner runs on {planner['model']} at {planner['effort']} effort, "
+            f"the executor on {executor['model']} at {executor['effort']} effort.",
+            "RULES FOR EVERY PLAN",
+        )
+    lens = answers.get("review_lens")
+    if lens:
+        text = f"the {lens['name']} lens"
+        if lens.get("questions"):
+            text += f": {lens['questions']}"
+        end = "" if text[-1] in ".?!" else "."
+        lines += _words(
+            f"Give the planner and each reviewer {text}{end} "
+            f"Run {lens['skill']} beside the code review.",
+            "RULES FOR EVERY PLAN",
+        )
+    return lines
+
+
+def phase_end_lines(steps: Sequence[str], family: str) -> list[str]:
+    """The per-phase end sequence: a lead line for the family, then each step numbered from 1."""
+    if not steps:
+        return []
+    if family in GSD_FAMILIES:
+        lead = "Each phase ends with, in order:"
+    elif family == "superpowers":
+        lead = "Each plan ends with, in order:"
+    else:
+        lead = "The work ends with, in order:"
+    lines = [lead]
+    for number, step in enumerate(steps, start=1):
+        lines += _words(step, "ORDER", head=f"{SUB_INDENT}{number}. ")
+    return lines
+
+
 def quota_lines(wake: Mapping[str, Any], runner: Mapping[str, Any]) -> list[str]:
     """Two separate directives: A is this session's own wake, B is the cross-AI children."""
     primitive = wake.get("primitive")
@@ -417,58 +486,77 @@ def decision_lines() -> list[str]:
         "Gray areas: ask the jev-fast-decision skill and follow its SKILL.md. Advisory only: on "
         "needs_fallback or no answer you decide; verify before acting. Prefer the best design over "
         "the easiest.",
-        "Never pause for questions or UAT. Put a blocking item in the ledger and continue.",
+        RAIL_ASK,
+        RAIL_WAIT,
         "Never remove existing features.",
     ]
 
 
-def safety_lines() -> list[str]:
+def safety_lines(push: bool = False) -> list[str]:
+    secrets = (
+        "Never print secrets. Never stage everything blindly. Push only after the fold."
+        if push
+        else "Never print secrets. Never push. Never stage everything blindly."
+    )
     return [
         "Never touch the real ~/.claude, ~/.cursor, ~/.config/opencode, ~/.codex, ~/.pi or ~/.gsd; "
         "use a scratch HOME.",
-        "Never print secrets. Never push. Never stage everything blindly.",
-        "Pre-commit hooks and every test tier always run; no step may skip one.",
+        secrets,
+        "Pre-commit hooks and every test tier always run on every commit; fix a real failure at "
+        "its root, no step may skip one.",
     ]
 
 
-def cleanup_lines() -> list[str]:
+def cleanup_lines(push: bool = False) -> list[str]:
     # Each rule is its own line under LINE_CAP. No flag-like token: the OpenGSD block refuses one
     # after line 1 (the workflow greps it), so the porcelain and force rules use words.
+    merge = (
+        "Fold the commits, push the working branch, then merge it into the main checkout and "
+        "push that."
+        if push
+        else "Merge the working branch into the main checkout; never push."
+    )
     return [
         "Leave no stray files: commit, ignore or remove each.",
         "Act only on worktrees, branches and tags this run created and recorded in a run ledger "
-        "under tmp/.",
-        "Anything older or not owned by this run is reported, never removed.",
+        "under tmp/; anything older or not owned by this run is reported, never removed.",
         "Mark each backlog entry finished in this run done in the backlog's Done list, with the "
         "date and what delivered it; delete no entry or directory; list the rest.",
         "Before any merge or removal, the porcelain form of git status must be empty in that "
         "worktree and in the main checkout.",
         "Never force a merge, removal or branch delete. On a conflict or a dirty tree, stop and "
         "report.",
-        "Merge the working branch into the main checkout; never push.",
+        merge,
         "Archive the unmerged work of each worktree this run created as a tag, then remove that "
         "worktree and its branch; remove this worktree last.",
     ]
 
 
-def stop_lines(cap: int, opengsd: bool) -> list[str]:
+def stop_lines(cap: int | None, opengsd: bool) -> list[str]:
     lines = [
-        "The same failure repeats 3 times with no progress.",
-        f"Stop after {cap} turns and report.",
-        "A decision blocks other work and nothing resolves it.",
-        "A step needs a real config write, a login or sudo.",
+        "The same failure repeats 3 times with no progress, or a decision blocks other work and "
+        "nothing resolves it.",
     ]
+    if cap is not None:
+        lines.append(f"Stop after {cap} turns and report.")
+    lines.append("A step needs a real config write, a login or sudo.")
     if opengsd:
         lines.append("Every cross-AI candidate for a role is unusable.")
     lines.append("In each case park the item, continue independent work, then report.")
     return lines
 
 
-def report_lines(jev: Mapping[str, Any]) -> list[str]:
-    lines = [
-        "Per item: status, verification, the evidence printed, the cross-AI CLI used.",
-        "The ledger of your decisions, the commits made, nothing pushed.",
-    ]
+def report_lines(jev: Mapping[str, Any], push: bool = False, language: str = "") -> list[str]:
+    lines = ["Per item: status, verification, the evidence printed, the cross-AI CLI used."]
+    if language:
+        lines += _words(
+            f"Write the report in {language}; files stay in the project's language.", "REPORT"
+        )
+    lines.append(
+        "The ledger of your decisions, the commits made, the pushes."
+        if push
+        else "The ledger of your decisions, the commits made, nothing pushed."
+    )
     if jev.get("usable"):
         lines.append(
             "Advisory (not a gate): ask the jev-fast-decision skill one choice item (follow its "
@@ -481,6 +569,7 @@ def report_lines(jev: Mapping[str, Any]) -> list[str]:
     else:
         reason = _one_line(jev.get("reason") or "no usable backend")
         lines.append(fit_line("The advisory closeness check was omitted: ", reason, "."))
+    lines.append(RAIL_PING)
     return lines
 
 
@@ -498,15 +587,39 @@ def _marker_labels(commands: Sequence[Mapping[str, str]]) -> str:
     return "; ".join(labels)
 
 
+def _code_chunks(command: str, end: str) -> list[str]:
+    """The command as code spans, whole when it fits a continuation sub-line, else split between
+    words into the fewest spans that each fit; `end` follows the last span."""
+    room = LINE_CAP - len(SUB_INDENT)
+    chunks: list[str] = []
+    current = ""
+    for word in command.split(" "):
+        if len(f"`{word}`") + len(end) > room:
+            raise GuardError(
+                f"rule line over {LINE_CAP} characters in DONE WHEN: one list item or command word "
+                "is longer than a line"
+            )
+        candidate = f"{current} {word}" if current else word
+        if current and len(f"`{candidate}`") + len(end) > room:
+            chunks.append(f"`{current}`")
+            current = word
+        else:
+            current = candidate
+    chunks.append(f"`{current}`")
+    chunks[-1] += end
+    return chunks
+
+
 def _e2e_lines(commands: Sequence[Mapping[str, str]]) -> list[str]:
-    lines = []
-    for entry in commands:
-        inferred = entry["confidence"] == "inferred"
-        suffix = " (inferred: confirm it runs the real app)" if inferred else ""
-        lines.append(
-            f"E2E: `{entry['command']}` exits 0 and prints a test count above zero. Exit 0 with a "
-            f"zero count is not green.{suffix}"
-        )
+    lines: list[str] = []
+    if commands:
+        items: list[str] = []
+        last = len(commands) - 1
+        for index, entry in enumerate(commands):
+            end = INFERRED_SUFFIX if entry["confidence"] == "inferred" else ""
+            end += ";" if index < last else ""
+            items += _code_chunks(_one_line(entry["command"]), end)
+        lines = wrap_items(E2E_HEAD, items, ".", sep=" ", section="DONE WHEN")
     markers = _marker_labels(commands)
     lines.append(
         f"Zero-count markers: {markers}."
@@ -564,6 +677,8 @@ def rail_sections(
 ) -> list[tuple[str, list[str]]]:
     """The labeled sections of D-28 for one work family; ORDER is present only when it has lines."""
     rules, order = _rules_and_order(detect, answers, work)
+    rules = [*rules, *owner_rule_lines(answers)]
+    order = [*order, *phase_end_lines(answers.get("phase_end") or [], work.family)]
     sections: list[tuple[str, list[str]]] = [
         ("OBJECTIVE", objective_lines(answers, work.scope_desc, path)),
         ("ROLE", role_lines()),
@@ -571,13 +686,20 @@ def rail_sections(
     ]
     if order:
         sections.append(("ORDER", order))
+    push = answers.get("push_after_fold") is True
     return [
         *sections,
         ("QUOTA", quota_lines(detect["wake"], detect["runner"])),
         ("DECISIONS", decision_lines()),
-        ("SAFETY", safety_lines()),
+        ("SAFETY", safety_lines(push)),
         ("DONE WHEN", done_lines(detect["e2e"], answers.get("mockups") or [])),
-        ("CLEANUP", cleanup_lines()),
-        ("STOP IF", stop_lines(turn_cap(work_items(work)), work.family == "opengsd")),
-        ("REPORT", report_lines(detect["jev"])),
+        ("CLEANUP", cleanup_lines(push)),
+        (
+            "STOP IF",
+            stop_lines(resolve_turn_cap(answers, work), work.family == "opengsd"),
+        ),
+        (
+            "REPORT",
+            report_lines(detect["jev"], push, answers.get("report_language") or ""),
+        ),
     ]

@@ -1,0 +1,338 @@
+{
+  "schema_version": 1,
+  "host": {
+    "current": "claude",
+    "target": "claude",
+    "current_version": "2.1.319"
+  },
+  "primitives": [
+    {
+      "host": "claude",
+      "primitive": "systemd user timer",
+      "kind": "os-timer",
+      "surface": "cli",
+      "availability": "available",
+      "usage_source": "live",
+      "survives_stall": true,
+      "survives_process_death": true,
+      "survives_reboot": true,
+      "rank": 3,
+      "note": "spike 001: claude -p --resume <id> from a systemd user timer re-enters the session (claude 2.1.310); reboot survival of the enabled unit is unverified"
+    },
+    {
+      "host": "claude",
+      "primitive": "CronCreate one-shot",
+      "kind": "schedule",
+      "surface": "tool",
+      "availability": "not seen",
+      "usage_source": "official docs",
+      "survives_stall": true,
+      "survives_process_death": false,
+      "survives_reboot": false,
+      "rank": 1,
+      "note": "spike 004: a fire scheduled after the reset does work; a fire inside a limit is lost (claude 2.1.299)"
+    },
+    {
+      "host": "claude",
+      "primitive": "CronCreate recurring",
+      "kind": "schedule",
+      "surface": "tool",
+      "availability": "not seen",
+      "usage_source": "official docs",
+      "survives_stall": true,
+      "survives_process_death": false,
+      "survives_reboot": false,
+      "rank": 1,
+      "note": "spike 004: fires inside a limit are lost; recurring jobs expire after 7 days (claude 2.1.299)"
+    },
+    {
+      "host": "claude",
+      "primitive": "/goal",
+      "kind": "goal",
+      "surface": "slash-command",
+      "availability": "available",
+      "usage_source": "official docs",
+      "survives_stall": false,
+      "survives_process_death": false,
+      "survives_reboot": false,
+      "rank": 0,
+      "note": "spike 004: pauses at a usage limit and needs a message after the reset (claude 2.1.299)"
+    },
+    {
+      "host": "claude",
+      "primitive": "ScheduleWakeup",
+      "kind": "wake",
+      "surface": "tool",
+      "availability": "not seen",
+      "usage_source": "official docs",
+      "survives_stall": false,
+      "survives_process_death": false,
+      "survives_reboot": false,
+      "rank": 0,
+      "note": "docs via the source todo: 1 min to 1 h, not restored on resume; never measured"
+    },
+    {
+      "host": "claude",
+      "primitive": "/loop",
+      "kind": "loop",
+      "surface": "slash-command",
+      "availability": "unverified",
+      "usage_source": "official docs",
+      "survives_stall": false,
+      "survives_process_death": false,
+      "survives_reboot": false,
+      "rank": 0,
+      "note": "docs via the source todo: session-scoped; never measured"
+    },
+    {
+      "host": "claude",
+      "primitive": "cloud routine",
+      "kind": "schedule",
+      "surface": "slash-command",
+      "availability": "unverified",
+      "usage_source": "official docs",
+      "survives_stall": false,
+      "survives_process_death": false,
+      "survives_reboot": false,
+      "rank": 0,
+      "note": "inference from the docs: runs in the cloud and cannot re-enter a local session"
+    }
+  ],
+  "matrix_source": "session-wake",
+  "unrecognized_tools": [
+    "Agent",
+    "Artifact",
+    "Bash",
+    "Edit",
+    "Read",
+    "Skill",
+    "ToolSearch",
+    "Write",
+    "mcp__codegraph__codegraph_explore",
+    "ArtifactComments",
+    "ArtifactData",
+    "EnterWorktree",
+    "ExitWorktree",
+    "LSP",
+    "NotebookEdit",
+    "SendMessage",
+    "TaskStop",
+    "WebFetch",
+    "WebSearch"
+  ],
+  "scope": {
+    "kind": "opengsd",
+    "identity": "opengsd",
+    "ask": null,
+    "phases": [
+      {
+        "number": "32",
+        "name": "Re-judge baseline",
+        "dir": ".planning/phases/32-re-judge-baseline",
+        "has_spec": true,
+        "has_context": true,
+        "plan_count": 0,
+        "has_reviews": false,
+        "has_verification": false,
+        "disk_status": "discussed",
+        "cross_ai_plans": 0
+      },
+      {
+        "number": "32.1",
+        "name": "Batch 1, general small skills",
+        "dir": null,
+        "has_spec": false,
+        "has_context": false,
+        "plan_count": 0,
+        "has_reviews": false,
+        "has_verification": false,
+        "disk_status": "no_directory",
+        "cross_ai_plans": 0
+      },
+      {
+        "number": "32.2",
+        "name": "Batch 2, spec review family",
+        "dir": null,
+        "has_spec": false,
+        "has_context": false,
+        "plan_count": 0,
+        "has_reviews": false,
+        "has_verification": false,
+        "disk_status": "no_directory",
+        "cross_ai_plans": 0
+      },
+      {
+        "number": "32.3",
+        "name": "Batch 3, execution and session skills",
+        "dir": null,
+        "has_spec": false,
+        "has_context": false,
+        "plan_count": 0,
+        "has_reviews": false,
+        "has_verification": false,
+        "disk_status": "no_directory",
+        "cross_ai_plans": 0
+      },
+      {
+        "number": "32.4",
+        "name": "Batch 4, planning skills and the closing report",
+        "dir": null,
+        "has_spec": false,
+        "has_context": false,
+        "plan_count": 0,
+        "has_reviews": false,
+        "has_verification": false,
+        "disk_status": "no_directory",
+        "cross_ai_plans": 0
+      },
+      {
+        "number": "33",
+        "name": "One config design",
+        "dir": null,
+        "has_spec": false,
+        "has_context": false,
+        "plan_count": 0,
+        "has_reviews": false,
+        "has_verification": false,
+        "disk_status": "no_directory",
+        "cross_ai_plans": 0
+      },
+      {
+        "number": "34",
+        "name": "jev backends by host and Laya calibration",
+        "dir": null,
+        "has_spec": false,
+        "has_context": false,
+        "plan_count": 0,
+        "has_reviews": false,
+        "has_verification": false,
+        "disk_status": "no_directory",
+        "cross_ai_plans": 0
+      }
+    ],
+    "plans": [],
+    "order": [
+      "32",
+      "32.1",
+      "32.2",
+      "32.3",
+      "32.4",
+      "33",
+      "34"
+    ],
+    "roadmap_order": [
+      "28",
+      "29",
+      "29.1",
+      "30",
+      "30.1",
+      "30.2",
+      "31",
+      "32",
+      "32.1",
+      "32.2",
+      "32.3",
+      "32.4",
+      "33",
+      "34",
+      "35",
+      "36",
+      "37",
+      "38",
+      "38.1",
+      "39",
+      "40",
+      "41",
+      "42",
+      "43",
+      "44",
+      "45",
+      "45.1",
+      "46",
+      "47",
+      "47.1",
+      "48",
+      "49",
+      "50",
+      "51",
+      "52",
+      "53",
+      "54"
+    ]
+  },
+  "e2e": {
+    "commands": [
+      {
+        "command": "make e2e-test",
+        "source": "Makefile:e2e-test",
+        "kind": "make",
+        "confidence": "detected"
+      },
+      {
+        "command": "make e2e-docker",
+        "source": "Makefile:e2e-docker",
+        "kind": "make",
+        "confidence": "detected"
+      },
+      {
+        "command": "python3 -m unittest tests.test_wizard_pty",
+        "source": "PTY driver tests/test_wizard_pty.py",
+        "kind": "pty",
+        "confidence": "inferred"
+      }
+    ],
+    "gates": [
+      "make test",
+      "make lint",
+      "make validate",
+      "make test-unit"
+    ],
+    "none": false
+  },
+  "readiness": {
+    "runner_ok": false,
+    "cli_listed": null,
+    "reviewers_ok": true,
+    "clis": [],
+    "label": "usability unverified",
+    "problems": [
+      "cross_ai_execution off"
+    ],
+    "ready_for_cross_ai": false
+  },
+  "jev": {
+    "usable": true,
+    "reason": "local backend usable"
+  },
+  "derived": {
+    "must_outlive": true,
+    "provable": true
+  },
+  "strategies": [
+    {
+      "id": "autonomous",
+      "rank": 1,
+      "recommended": true,
+      "reason": "OpenGSD scope: /gsd-autonomous with --from/--to/--only and --converge",
+      "primitive": null,
+      "label": "",
+      "row": "M01"
+    }
+  ],
+  "dropped": [],
+  "needs": [],
+  "candidate_skills": [
+    "ai-kit-cross-ai",
+    "ai-kit-gsd-spec-discuss",
+    "ai-kit-session-wake",
+    "ai-kit-spec-execute-superpowers"
+  ],
+  "wake": {
+    "primitive": "systemd user timer",
+    "label": ""
+  },
+  "runner": {
+    "command": "node .planning/scripts/cross-ai.mjs",
+    "label": "usability unverified"
+  }
+}

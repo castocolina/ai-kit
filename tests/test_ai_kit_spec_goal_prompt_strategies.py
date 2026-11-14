@@ -422,8 +422,6 @@ class TestSuperpowers(_RepoCase):
                 "A failed plan stops only the plans that depend on it; every independent plan "
                 "still runs.",
                 "Read a skill only when the task needs it. Candidate skills: ai-kit-spec-review.",
-                "Pre-commit hooks always run on every commit; fix a real failure at its root, "
-                "never skip it.",
             ],
         )
 
@@ -507,7 +505,11 @@ class TestSuperpowers(_RepoCase):
         text = self.read(gp_render.render(detect, plan_answers(["a.md"]), self.ctx()))
         self.assertIn("\n- A. This session (its own quota)", text)
         self.assertIn("\n- B. Cross-AI children", text)
-        self.assertIn("`make e2e-test` exits 0 and prints a test count above zero", text)
+        self.assertIn(
+            "E2E, each exits 0 and prints a test count above zero (zero is not green): "
+            "`make e2e-test`.",
+            text,
+        )
         self.assertIn("\nCLEANUP\n", text)
 
     def test_plan_work_set_renders_only_the_named_plan_files(self):

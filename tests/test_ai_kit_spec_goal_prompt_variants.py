@@ -34,7 +34,8 @@ CREATE_FIRST = (
 )
 EVIDENCE = (
     "Print each command with its exact exit code, its count line and the last 20 lines of "
-    "output, ANSI codes stripped."
+    "output, ANSI codes stripped, and the paths of the screenshots or TUI text snapshots the e2e "
+    "run produced."
 )
 MOCKUP_TEXT = (
     "Mockup fidelity: capture e2e screenshots or TUI text snapshots, print their paths, and list "
@@ -138,11 +139,13 @@ class TestDoneVariants(unittest.TestCase):
         lines = gp_sections.done_lines(NO_E2E, [])
         self.assertIn(EVIDENCE, lines)
         self.assertTrue(any(line.startswith("Start each long-lived e2e process") for line in lines))
-        self.assertIn("Unit tests alone never count as done.", lines)
+        self.assertTrue(
+            any(line.endswith("Unit tests alone never count as done.") for line in lines)
+        )
 
     def test_no_e2e_has_no_command_line_even_with_gates_detected(self):
         lines = gp_sections.done_lines({"commands": [], "gates": ["make lint"], "none": True}, [])
-        self.assertFalse(any(line.startswith("E2E:") for line in lines))
+        self.assertFalse(any(line.startswith("E2E") for line in lines))
         self.assertIn("Gates first: make lint.", lines)
 
     def test_detected_commands_name_every_command_and_the_grep_targets(self):
@@ -150,8 +153,11 @@ class TestDoneVariants(unittest.TestCase):
             {"commands": [MAKE_E2E], "gates": ["make lint"], "none": False}, []
         )
         self.assertNotIn(CREATE_FIRST, lines)
-        self.assertIn("E2E: `make e2e-test` exits 0 and prints a test count above zero. Exit 0 "
-                      "with a zero count is not green.", lines)
+        self.assertIn(
+            "E2E, each exits 0 and prints a test count above zero (zero is not green): "
+            "`make e2e-test`.",
+            lines,
+        )
         joined = "\n".join(lines)
         for needle in ("exit code", "count", "process group", "ps"):
             self.assertIn(needle, joined)
@@ -197,8 +203,11 @@ class TestDoneVariants(unittest.TestCase):
                 e2e = gp_e2e.detect_e2e(tmp)
                 self.assertFalse(e2e["none"])
                 lines = gp_sections.done_lines(e2e, [])
-                self.assertIn(f"E2E: `{e2e['commands'][0]['command']}` exits 0 and prints a test "
-                              "count above zero. Exit 0 with a zero count is not green.", lines)
+                self.assertIn(
+                    "E2E, each exits 0 and prints a test count above zero (zero is not green): "
+                    f"`{e2e['commands'][0]['command']}`.",
+                    lines,
+                )
         with tempfile.TemporaryDirectory() as tmp:
             fx.git_init(Path(tmp))
             fx.empty_project(Path(tmp))
@@ -552,6 +561,26 @@ class TestLongLists(_RenderCase):
         with self.assertRaises(GuardError) as caught:
             self._render(make_detect(scope=opengsd_scope(*phases)), answers)
         self.assertIn("more than 60 rule lines", str(caught.exception))
+
+    def test_a_300_character_e2e_command_renders_in_code_span_pieces(self):
+        command = "python3 -m unittest " + " ".join(
+            f"tests.test_e2e_module_{i:02d}" for i in range(12)
+        )
+        self.assertGreaterEqual(len(command), 300)
+        e2e = {
+            "commands": [
+                {"command": command, "source": "x", "kind": "unittest", "confidence": "detected"}
+            ],
+            "gates": ["make lint"],
+            "none": False,
+        }
+        _, text = self._render(make_detect(e2e=e2e))
+        done = section_map(text)["DONE WHEN"]
+        e2e_lines = [line for line in done if line.startswith(("- E2E", "   `"))]
+        self.assertGreaterEqual(len(e2e_lines), 2)
+        spans = re.findall(r"`([^`]*)`", "\n".join(e2e_lines))
+        self.assertEqual(" ".join(spans), command)
+        self.assertTrue(all(len(line) <= 200 for line in e2e_lines))
 
 
 class TestRenderGuards(_RenderCase):
