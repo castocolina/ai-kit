@@ -975,6 +975,8 @@ class TestCodeIndexRows(unittest.TestCase):
              "CODEX_HOME": os.path.join(home, "cx"),
              "PI_CODING_AGENT_DIR": os.path.join(home, "pa")},
             {"HOME": home, "OPENCODE_CONFIG_DIR": "rel-oc", "OPENCODE_CONFIG": "rel-custom.json"},
+            {"HOME": home, "CLAUDE_CONFIG_DIR": os.path.join(home, "cl")},
+            {"HOME": home, "CLAUDE_CONFIG_DIR": "rel-cl"},
         ]
         for env in envs:
             for host in checks.CBM_HOSTS:
@@ -982,7 +984,10 @@ class TestCodeIndexRows(unittest.TestCase):
                     self.assertEqual(checks._cbm_config_paths(host, env),
                                      detection._cbm_config_paths(host, env))
         # a relative base must never become a cwd-relative read
-        self.assertEqual(checks._cbm_config_paths("opencode", envs[-1]), [])
+        self.assertEqual(checks._cbm_config_paths("opencode", envs[-3]), [])
+        self.assertEqual(checks._cbm_config_paths("claude", envs[-1]), [])
+        self.assertEqual(checks._cbm_config_paths("claude", envs[-2]),
+                         [os.path.join(home, "cl", ".claude.json")])
 
     def test_registration_states_match_detection_on_shared_fixtures(self):
         for name in _CBM_FIXTURES:

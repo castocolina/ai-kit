@@ -1176,7 +1176,9 @@ def _cbm_config_paths(runtime: str, env) -> list[str]:
     # shortcut: user-level files only; per-project overrides (Claude's projects map, opencode
     # project files) are not read; read them when a lane reports a mismatch
     if runtime == "claude":
-        paths = [os.path.join(home, ".claude.json")]
+        # per Claude Code's CLAUDE_CONFIG_DIR documentation (not live-checked on this machine):
+        # the global config moves to $CLAUDE_CONFIG_DIR/.claude.json; a relative base is dropped
+        paths = [os.path.join(env.get("CLAUDE_CONFIG_DIR") or home, ".claude.json")]
     elif runtime == "opencode":
         paths = jsonc_read.opencode_user_config_paths(env)
         paths.append(env.get("OPENCODE_CONFIG", ""))
@@ -1318,11 +1320,14 @@ _MULTI_PROVIDER_CLIS = tuple(
 )
 
 
-def find_code_index_alternative(cli: str, model: str, runtimes_snapshot: dict) -> str | None:
+def find_code_index_alternative(
+    cli: str, model: str, runtimes_snapshot: dict, env=None
+) -> str | None:
     """Best-effort only (design spec §8, §14): when `cli` has no codebase-memory-mcp registration
     reader (not in CBM_REGISTRATION_KEYS; today grok, which gets the CLI form only) but a
     substring match suggests the SAME base model is reachable through a multi-provider CLI
-    whose registration ai-kit can read, return that CLI's name -- informational only, never a
+    that has codebase-memory-mcp registered (read from its config), return that CLI's name --
+    informational only, never a
     hard filter. Model-id naming conventions differ across CLIs (e.g. "grok-4.6" vs.
     "cursor-grok-4.6-high") so this is a substring heuristic, not a guarantee; a missed match
     degrades silently to None, never a false claim."""
@@ -1335,7 +1340,7 @@ def find_code_index_alternative(cli: str, model: str, runtimes_snapshot: dict) -
     needle = model.lower()
     for candidate_cli in _MULTI_PROVIDER_CLIS:
         entry = clis.get(candidate_cli, {})
-        if not entry.get("installed"):
+        if not entry.get("installed") or not check_cbm_registered(candidate_cli, env):
             continue
         for candidate_model in entry.get("models", []):
             if needle in candidate_model.lower():

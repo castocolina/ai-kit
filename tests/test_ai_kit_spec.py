@@ -104,6 +104,8 @@ from ai_kit_spec.review_reports import (
 from ai_kit_spec.runner_dispatch import PI_EXEC_NOTE, RunnerResult
 from ai_kit_spec.vendor import infer_vendor_from_model
 
+from tests import host_fakes
+
 # Fixture provenance (JSON cannot hold comments, so the record lives here, next to the
 # constant the tests read the fixture through):
 # - Source command: `codex debug models` (CLI version codex-cli 0.147.0, the real binary
@@ -1776,7 +1778,13 @@ class TestResolveAgentsToolingPath(unittest.TestCase):
 
 
 class TestFindCodeIndexAlternative(unittest.TestCase):
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="ai-kit-alt-")
+        self.addCleanup(shutil.rmtree, self.home, True)
+        self.env = {"HOME": self.home, "PATH": ""}
+
     def test_finds_grok_model_reachable_via_cursor_agent(self):
+        host_fakes.write_cbm_registration(self.home, ["cursor"])
         snapshot = {
             "clis": {
                 "cursor-agent": {
@@ -1786,8 +1794,16 @@ class TestFindCodeIndexAlternative(unittest.TestCase):
                 "opencode": {"installed": True, "models": ["opencode-go/qwen3.8-max"]},
             }
         }
-        result = detection.find_code_index_alternative("grok", "grok-4.6", snapshot)
+        result = detection.find_code_index_alternative("grok", "grok-4.6", snapshot, self.env)
         self.assertEqual(result, "cursor")
+
+    def test_an_alternative_without_the_server_registered_is_not_offered(self):
+        snapshot = {"clis": {"cursor-agent": {"installed": True, "models": ["cursor-grok-4.6"]}}}
+        self.assertIsNone(
+            detection.find_code_index_alternative("grok", "grok-4.6", snapshot, self.env))
+        host_fakes.write_cbm_registration(self.home, ["cursor"], disabled=["cursor"])
+        self.assertIsNone(
+            detection.find_code_index_alternative("grok", "grok-4.6", snapshot, self.env))
 
     def test_returns_none_when_the_cli_has_a_registration_reader(self):
         snapshot = {"clis": {"cursor-agent": {"installed": True, "models": ["cursor-grok-4.6"]}}}

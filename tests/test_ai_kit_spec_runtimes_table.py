@@ -22,6 +22,8 @@ from ai_kit_spec.detection import normalize_runtime_keys, runtime_id
 from ai_kit_spec.error_classifier import REASONS, STATUS_TO_REASON, reason_for_status
 from ai_kit_spec.model_catalog import split_catalog_meta
 
+from tests import host_fakes
+
 _SCRUB_NAMES = {
     "AI_AGENT",
     "CLAUDECODE",
@@ -393,10 +395,13 @@ class TestLegacyEntryPoints(unittest.TestCase):
         snapshot = {
             "clis": {"cursor-agent": {"installed": True, "models": ["grok-4.6"]}},
         }
-        self.assertEqual(
-            detection.find_code_index_alternative("grok", "grok-4.6", snapshot),
-            "cursor",
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            host_fakes.write_cbm_registration(tmp, ["cursor"])
+            self.assertEqual(
+                detection.find_code_index_alternative(
+                    "grok", "grok-4.6", snapshot, {"HOME": tmp}),
+                "cursor",
+            )
 
     def test_legacy_name_matches_the_runtime_id(self):
         self.assertIsNone(commands.execute_cli_error("cursor"))

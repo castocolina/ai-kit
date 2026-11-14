@@ -653,7 +653,8 @@ def _cbm_config_paths(host, env):
     """Registration files for one host, lowest precedence first; relative paths are dropped."""
     home = env.get("HOME", "")
     if host == "claude":
-        paths = [os.path.join(home, ".claude.json")]
+        # per Claude Code's CLAUDE_CONFIG_DIR documentation (not live-checked on this machine)
+        paths = [os.path.join(env.get("CLAUDE_CONFIG_DIR") or home, ".claude.json")]
     elif host == "opencode":
         paths = [*_cbm_opencode_user_paths(env), env.get("OPENCODE_CONFIG", "")]
     elif host == "cursor":

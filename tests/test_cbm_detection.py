@@ -45,6 +45,21 @@ class TestRegistrationReads(_ScratchHome):
                 self.assertIs(detection.cbm_registration(host, self.env).registered, True)
         self.assertIn("inferred", detection.cbm_registration("pi", self.env).detail)
 
+    def test_claude_reads_dot_claude_json_under_claude_config_dir(self):
+        base = os.path.join(self.home, "cfg")
+        os.makedirs(base)
+        with open(os.path.join(base, ".claude.json"), "w", encoding="utf-8") as handle:
+            json.dump({"mcpServers": {SERVER: {}}}, handle)
+        env = {**self.env, "CLAUDE_CONFIG_DIR": base}
+        self.assertIs(detection.cbm_registration("claude", env).registered, True)
+        # HOME's own file is not consulted once the variable is set
+        self.assertIs(detection.cbm_registration("claude", self.env).registered, False)
+
+    def test_relative_claude_config_dir_is_dropped_not_read_from_the_cwd(self):
+        host_fakes.write_cbm_registration(self.home, ["claude"])
+        env = {**self.env, "CLAUDE_CONFIG_DIR": "rel"}
+        self.assertIsNone(detection.cbm_registration("claude", env).registered)
+
     def test_no_file_reads_not_registered(self):
         result = detection.cbm_registration("claude", self.env)
         self.assertIs(result.registered, False)
