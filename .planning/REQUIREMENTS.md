@@ -46,17 +46,16 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   *(amended 2026-11-03, 29.1 spec: still a unit branch, fast-forwarded into its target and pushed after each checkpoint with no PR, only
   when nothing unmerged sits below the unit; otherwise the flow refuses with a named reason and stays on the PR
   path)*
-- [x] **FLOW-04**: At every phase boundary, on the current branch, the codegraph index is synced, the graphify
+- [x] **FLOW-04**: At every phase boundary, on the current branch, the codegraph (replaced by codebase-memory-mcp in Phase 32.5) index is synced, the graphify
   graph is rebuilt, and the next phase's brief lists the new or changed symbols to hook into and the documents
   that mention them, so its researcher, planner and executor know what to attach to and which docs to update;
   none of this depends on commits to main.
-  *(amended 2026-11-03, 30 spec: the step runs for every unit inside the unit-flow engine, at the unit's start, before its planning and before its first execution wave, on the unit's own branch; codegraph and graphify are created or refreshed automatically whenever their CLI is installed; the brief also lists removed symbols and searches tracked documents outside `.planning/`)*
+  *(amended 2026-11-03, 30 spec: the step runs for every unit inside the unit-flow engine, at the unit's start, before its planning and before its first execution wave, on the unit's own branch; codegraph (replaced by codebase-memory-mcp in Phase 32.5) and graphify are created or refreshed automatically whenever their CLI is installed; the brief also lists removed symbols and searches tracked documents outside `.planning/`)*
 - [x] **FLOW-05**: ai-kit's own GSD config is set for this flow (branch per phase, the boundary step above) through
   the project's `gsd-tools`.
 - [x] **FLOW-06**: ai-kit's own AGENTS.md, the current house rules and the tool-advisor hook's advice (the generated
   rules block carries the same rule once RULE-03 builds it)
-  tell agents to explore code with codegraph when it is indexed, and keep graphify for GSD's discovery of
-  documents and planning next to code (verified 2026-11-02: codegraph indexes no Markdown; graphify does, but
+  tell agents to explore code with codegraph (replaced by codebase-memory-mcp in Phase 32.5) when it is indexed, and keep graphify for GSD's discovery of documents and planning next to code (verified 2026-11-02: codegraph indexes no Markdown; graphify does, but
   with no document-to-code links and keyword-noisy hits). A runbook says how to build the graphify index
   (archived milestones excluded), when to refresh it (every phase boundary, plus GSD's auto-update after commits)
   and how.
@@ -87,17 +86,13 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   it merges into the trunk of an open stack, the unmerged stack is rebased onto the updated trunk and pushed with
   `--force-with-lease`, and a conflict restores every branch and stops. *(added 2026-11-03, 29.1 spec)*
   *(amended 2026-11-03, 29.1 D-07: a conflict is first resolved by an agent keeping both sides' intent, GSD's planning files merged by content, and the gates run on the result; every branch is restored and the flow stops only when the resolution or the gates fail; the report names every resolved file and how)*
-- [x] **FLOW-12**: ai-kit's setup (`tools/setup.py`, headless and in the wizard) finds codegraph's installer block
-  (`<!-- CODEGRAPH_START -->` … `<!-- CODEGRAPH_END -->`) in every global instruction file codegraph's installer
-  writes (Claude, Codex, Gemini, opencode) and replaces only its "skip CodeGraph entirely — indexing is the user's
-  decision" sentence with ai-kit's rule (create the index with `codegraph init -y` when the CLI is installed and
-  there is none; `codegraph sync` first when `codegraph status --json` shows pending changes): a backup first, an
+- [x] **FLOW-12**: ai-kit's setup (`tools/setup.py`, headless and in the wizard) finds codegraph's (replaced by codebase-memory-mcp in Phase 32.5) installer block (`<!-- CODEGRAPH_START -->` … `<!-- CODEGRAPH_END -->`) in every global instruction file codegraph's installer writes (Claude, Codex, Gemini, opencode) and replaces only its "skip CodeGraph entirely — indexing is the user's decision" sentence with ai-kit's rule (create the index with `codegraph init -y` when the CLI is installed and there is none; `codegraph sync` first when `codegraph status --json` shows pending changes): a backup first, an
   atomic write, every other byte untouched, no diff on a second run, a dry run that shows the change, a one-line
   note when the file, block or sentence is missing; the config doctor reports the installer's wording when it is
   back and install re-applies ai-kit's; tests use synthetic files in a scratch HOME only. The marked-block editor is
   shared with JEV-04. *(added 2026-11-03, 30 spec)*
 - [x] **FLOW-13**: ai-kit's `make setup-dev` runs `setup-env`, installs the pre-commit hooks including the
-  `post-checkout` stage, and installs each missing flow tool (the codegraph and graphify CLIs, pre-commit, gh, the
+  `post-checkout` stage, and installs each missing flow tool (the codegraph (replaced by codebase-memory-mcp in Phase 32.5) and graphify CLIs, pre-commit, gh, the
   gh-stack extension) through a guarded step: an installed tool is left alone, a tool that cannot install is
   reported by name with its manual command, the target still succeeds and the flow degrades without that tool;
   `dev` and `setup-env` keep working until RULE-05 settles the aliases. *(added 2026-11-03, 30 D-04)*
@@ -217,7 +212,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   after approval; a lens is inlined in the prompt when the lane's host cannot load it by path (Claude built-ins, pi
   through an allow-listed `--skill`).
 - [ ] **REV-04**: Each lane gets a capability block built from its final argv (read-only or write, shell or not, the
-  tools found on the child's PATH, codegraph only with an index), so no lane is told about a tool it cannot use.
+  tools found on the child's PATH, codebase-memory-mcp only when its binary is on that PATH (it replaced codegraph in Phase 32.5)), so no lane is told about a tool it cannot use.
 - [ ] **REV-05**: One role-keyed table of the skills (and MCP servers where a host allows it) present on each host,
   rescanned every run, is shared by review, execute and curated-config; an optional config-time jev step sorts an
   unknown skill into a role, and the user confirms every such sort.
@@ -305,7 +300,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **RULE-03**: The generated AGENTS.md block carries the top rules (AGENTS.md is the only instructions file;
   vertical slices with something visible at the end of phase 1; bypass mode means scripts in files; done means the
   gates pass; talk in the user's language and write in English; simplicity over complexity but the best
-  implementation over the easy one, deciding with jev on certainty and criteria; codegraph for code exploration *(amended 2026-11-03, 30 spec: the general form of Phase 30's tool-use rule: codegraph first for code, rg for Markdown, graphify for documents and planning, index and sync automatically whenever the CLI is present, refresh before research on stacked branches; and `.codegraph/`, `graphify-out/` and `.planning/graphs/` gitignored when those tools are present)* *(amended 2026-11-03, 30 D-16: `graphify-out/` is always ignored and is the graph agents query in a non-GSD project, which never gets a `.planning/` folder; `.planning/graphs/` is ignored and fed by a copy of the same build only in a GSD project)*) and
+  implementation over the easy one, deciding with jev on certainty and criteria; codegraph (replaced by codebase-memory-mcp in Phase 32.5) for code exploration *(amended 2026-11-03, 30 spec: the general form of Phase 30's tool-use rule: codegraph first for code, rg for Markdown, graphify for documents and planning, index and sync automatically whenever the CLI is present, refresh before research on stacked branches; and `.codegraph/`, `graphify-out/` and `.planning/graphs/` gitignored when those tools are present)* *(amended 2026-11-03, 30 D-16: `graphify-out/` is always ignored and is the graph agents query in a non-GSD project, which never gets a `.planning/` folder; `.planning/graphs/` is ignored and fed by a copy of the same build only in a GSD project)*) and
   the general never list, placed below the owner's hand-written sections without collision, repetition or
   contradiction. The vertical-slices rule points to a runbook that names, per stage (mocks, front, backend,
   database, real data, security, infra, observability, accessibility), the lens skills from the role-keyed table,
@@ -315,7 +310,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   overwritten.
 - [ ] **RULE-05**: Makefile rules: `setup-dev` and `setup-docker` (with `setup-env` as an alias for one milestone),
   `validate-<category>` aliases only for a category with more than one tool and a cap on categories, and recipes of
-  three lines or fewer. *(amended 2026-11-03, 30 D-04: `setup-dev` also installs the tools the project's flow needs when they are missing (codegraph and graphify when the project uses them, pre-commit, gh and gh-stack for the unit flow), each through a guarded step that reports a failed install and degrades instead of failing; ai-kit's own target ships in Phase 30, FLOW-13)*
+  three lines or fewer. *(amended 2026-11-03, 30 D-04: `setup-dev` also installs the tools the project's flow needs when they are missing (codegraph (replaced by codebase-memory-mcp in Phase 32.5) and graphify when the project uses them, pre-commit, gh and gh-stack for the unit flow), each through a guarded step that reports a failed install and degrades instead of failing; ai-kit's own target ships in Phase 30, FLOW-13)*
 - [ ] **RULE-06**: Event playbooks cover session start, worktree created, end of task, plan or phase, CI wait, the
   PR review loop (reusing an existing feedback skill first), delegation and quota, each reachable from one pointer
   line in the generated AGENTS.md block. The worktree-created playbook runs `setup-dev` through a git
@@ -323,7 +318,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   when it cannot (ai-kit never installs GSD itself). RULE-17 to RULE-19 set what the end-of-unit, delegation and
   quota playbooks contain; RULE-20 to RULE-23 add the requirement-intake, audit, milestone-close and worktree-closed
   playbooks.
-  *(amended 2026-11-03, 30 spec: the worktree-created playbook also runs `codegraph init` (or `sync` when the worktree has its own index) and `graphify update .` in the new worktree whenever the CLI is installed, without blocking git; a missing CLI prints one line; ai-kit's own hook ships in Phase 30)* *(amended 2026-11-03, 30 D-16: the copy into `.planning/graphs/` happens only in a GSD project; a non-GSD project keeps `graphify-out/` only)*
+  *(amended 2026-11-03, 30 spec: the worktree-created playbook also runs `codegraph init` (replaced by codebase-memory-mcp in Phase 32.5) (or `sync` when the worktree has its own index) and `graphify update .` in the new worktree whenever the CLI is installed, without blocking git; a missing CLI prints one line; ai-kit's own hook ships in Phase 30)* *(amended 2026-11-03, 30 D-16: the copy into `.planning/graphs/` happens only in a GSD project; a non-GSD project keeps `graphify-out/` only)*
 - [ ] **RULE-07**: The skill chains `crafting-effective-readmes` for the README, a diagram skill for README diagrams,
   and `agent-md-refactor` through a wrapper.
 - [ ] **RULE-08**: Per-stack research at invocation is time-boxed and cached per category for the five known stacks;
@@ -386,7 +381,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   checks the header in each generated brief.
   *(amended 2026-11-04, owner rules audit: the header also carries (a) a jev-first block with time rules: ask jev
   before reasoning about a classification or a choice, re-run only the failing target after a fix, run the
-  whole suite once at the end, and stop a step that passes twice its estimate and report; (b) the codegraph
+  whole suite once at the end, and stop a step that passes twice its estimate and report; (b) the codegraph (replaced by codebase-memory-mcp in Phase 32.5)
   instruction: sync the index, then explore with it before grep or Read, using the shell form when the subagent
   has no MCP tools; (c) where the project has a real-home refusal guard, delegated executor runs export it, and
   the close compares the modification times of the real host-config files, because prompt rails are advisory
@@ -629,7 +624,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   text states that a confident Laya answer is not proven accurate, since the 32-case live run measured about half
   right when confident)*
 - [ ] **JEV-04**: A short jev marker block reaches the four global instruction files through ai-kit's atomic writers,
-  with the owner's consent. *(amended 2026-11-03, 30 spec: it reuses the marked-block editor FLOW-12 builds in Phase 30; the four files are the global ones codegraph's installer also writes: `~/.claude/CLAUDE.md`, `$CODEX_HOME/AGENTS.md`, `~/.gemini/GEMINI.md`, `${XDG_CONFIG_HOME:-~/.config}/opencode/AGENTS.md`)*
+  with the owner's consent. *(amended 2026-11-03, 30 spec: it reuses the marked-block editor FLOW-12 builds in Phase 30; the four files are the global ones codegraph's (replaced by codebase-memory-mcp in Phase 32.5) installer also writes: `~/.claude/CLAUDE.md`, `$CODEX_HOME/AGENTS.md`, `~/.gemini/GEMINI.md`, `${XDG_CONFIG_HOME:-~/.config}/opencode/AGENTS.md`)*
 - [ ] **JEV-05**: jev answers image and bounding-box questions after a TypeSafe spike, with a key and consent; a
   named caller uses it to judge a delivered screen against a supplied mockup, the request limits are recorded as
   live facts, and the Laya capability cell is re-checked. *(amended 2026-11-07, owner decision from the jev and
@@ -800,7 +795,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *(added 2026-11-14, owner decision: codebase-memory-mcp replaces codegraph; Phase 32.5)*
 
 - [ ] **IDX-01**: The unit flow's boundary step and `fold.py index` refresh the codebase-memory-mcp index of the checkout or worktree instead of running codegraph, and the unit brief names changed functions from it; a missing binary is reported once with its install command and the step still exits 0.
-- [ ] **IDX-02**: The tooling guidance for review and execute lanes names codebase-memory-mcp on every runtime: the MCP tools where the host registers it (Claude Code, opencode, pi, Codex, Copilot CLI, Cursor), the `codebase-memory-mcp cli <tool> '<json args>'` form otherwise.
+- [ ] **IDX-02**: The tooling guidance for review and execute lanes names codebase-memory-mcp on every runtime: the MCP tools where the host registers it (Claude Code, opencode, pi, Codex, Copilot CLI, Cursor), the `codebase-memory-mcp cli <tool> '<json args>'` form otherwise. *(amended 2026-11-14, 32.5 research: codebase-memory-mcp 0.12.1 deprecates raw JSON arguments, so the CLI form is `codebase-memory-mcp cli <tool> --flag value`)*
 - [ ] **IDX-03**: spec-review's detection and spec-config's CLI preference read codebase-memory-mcp's registration and index state, with no auto-install and no global write; the codegraph probe is removed.
 - [ ] **IDX-04**: `make setup-dev`, the doctor, the global-rules writer, the tool advisor hook and the setup wizard check, recommend or write codebase-memory-mcp instead of codegraph, through the existing atomic writers.
 - [ ] **IDX-05**: The shared rules package and `ai-kit-project-rules-agents` generate their code-exploration rule with codebase-memory-mcp.
@@ -823,7 +818,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | A separate cross-AI chain skill | The shared runner gains the options instead (RUN-01) |
 | ai-kit execute or review of GSD plans | GSD's own execute and review lanes cover them; the GSD adapter is removed |
 | CLAUDE.md and its variants as instruction files | AGENTS.md and AGENTS.local.md only (owner, 2026-11-02) |
-| graphify as the agents' code-exploration tool | codegraph is better for code (verbatim source, call paths); graphify stays for GSD's document discovery (FLOW-06) |
+| graphify as the agents' code-exploration tool | codegraph (replaced by codebase-memory-mcp in Phase 32.5) is better for code (verbatim source, call paths); graphify stays for GSD's document discovery (FLOW-06) |
 | Windows support | Owner decision 2026-11-02 |
 | rtk | Dropped by the owner; removed everywhere (RMV-04) |
 
@@ -1021,10 +1016,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *Last updated: 2026-11-03 after the ideas and rules audit: 41 new requirements (GATE-05, FLOW-07..09, JDG-08, HUB-08, REV-07, EXE-07..08, RUN-07..11, RULE-10..25, JEV-07, CUR-08..10, DIST-06..07, ARCH-01..02, FEAT-04..06), 38 amended, decimal phases 38.1, 45.1 and 47.1 split out; JDG-04 to Phase 32, RUN-05 to 38.1, RULE-03 and DESIGN-02 to 45.1*
 *Amended 2026-11-03 by Phase 29's spec and discuss: FLOW-02, FLOW-03, FLOW-05 and FLOW-07 to the new Phase 29.1; FLOW-01 and RULE-17 amended; RULE-27 (Phase 45) and REV-08 (Phase 40) added.*
 *Amended 2026-11-03 by Phase 29.1's spec: FLOW-02 and FLOW-03 amended; FLOW-10 (neutral unit contract) and FLOW-11 (hotfix path) added to Phase 29.1; FLOW-11 amended by its discuss (conflicts resolved before any restore).*
-*Amended 2026-11-03 by Phase 30's spec: FLOW-04, FLOW-06, LENS-01, RULE-03, RULE-06 and JEV-04 amended; FLOW-12 (global codegraph sentence rewrite) added to Phase 30.*
+*Amended 2026-11-03 by Phase 30's spec: FLOW-04, FLOW-06, LENS-01, RULE-03, RULE-06 and JEV-04 amended; FLOW-12 (global codegraph (replaced by codebase-memory-mcp in Phase 32.5) sentence rewrite) added to Phase 30.*
 *Amended 2026-11-03 by Phase 30's discuss: FLOW-13 (ai-kit's `setup-dev` installs the flow's tools) added to Phase 30; RULE-05 amended (coupling, Phase 46).*
 *Amended 2026-11-03 by Phase 30.1's spec and discuss: WIZ-01, WIZ-03, FEAT-01, FEAT-04 and FEAT-06 amended; WIZ-04 rewritten as Cursor status-line parity and moved to the new Phase 30.2; WIZ-05 (real-render preview) added to Phase 30.1.*
-*Amended 2026-11-04 by the owner rules audit (the owner's local memory compared with the requirements): RULE-14 (jev first) and RULE-18 (jev-first block with time rules, codegraph instruction and real-home guard in every brief) amended; RULE-30 (agent closes push and host-session verification items, through herdr for host sessions), RULE-31 (failed external runs: no silent harness switch, foreground probe) and RULE-32 (GSD-only settings rules) added.*
+*Amended 2026-11-04 by the owner rules audit (the owner's local memory compared with the requirements): RULE-14 (jev first) and RULE-18 (jev-first block with time rules, codegraph (replaced by codebase-memory-mcp in Phase 32.5) instruction and real-home guard in every brief) amended; RULE-30 (agent closes push and host-session verification items, through herdr for host sessions), RULE-31 (failed external runs: no silent harness switch, foreground probe) and RULE-32 (GSD-only settings rules) added.*
 *Amended 2026-11-06 by the owner's decision on Phase 30.1's cycle-2 review: WIZ-03 amended (a foreign status line is kept, removed so the host shows its own default, or replaced by a customized ai-kit line).*
 *Amended 2026-11-07 by the owner's decisions on the jev and typesafe-ai research and the skill-distribution fact sheet (`.planning/research/2026-11-07-*.md`): DEF-08 (Phase 32.4), JEV-08 and JEV-09 (Phase 32.1), JEV-10 and JEV-11 (Phase 34), DIST-08 (Phase 53) and DIST-09 (Phase 52) added; JDG-01, JDG-03, RULE-27, JEV-03, JEV-05, DIST-01, DIST-02, DIST-03 and DIST-04 amended.*
 *Amended 2026-11-07 by Phase 32's spec and discuss: JDG-01 (the flat test layout and the scripts reading) and JDG-06 (the bar-boundary reading, confirmed by the owner 2026-11-07) amended; ROADMAP 32 criterion 8, 32.1-32.3 criterion 2 and 34 criterion 3 cite JDG-04; the stale `decide.py` anchors of 32.4 and 34 corrected.*
@@ -1033,3 +1028,4 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *Amended 2026-11-08 by Phase 32.2's spec and discuss: DEF-09 amended (the guard also reads comments and covers every skill's Python); ROADMAP 32.2's goal note and criterion 4 amended.*
 *Amended 2026-11-13 by Phase 32.3's spec and discuss: DEF-02 amended (five shipped scanner copies plus the eval test helper, one shared token-shape scanner, a drift and new-copy guard); ROADMAP 32.3's code anchors and criterion 3 and Phase 47.1's code anchors amended.*
 *Amended 2026-11-13 by Phase 32.4's spec and discuss: CUR-06 amended (only the v1 `apply-review` fixed effort write goes) and DEF-10 amended (no clone in the custom-tmpdir row; both curated-config write flows fixed); ROADMAP 32.4 criteria 3 and 9 amended.*
+*Amended 2026-11-14 by Phase 32.5's plan: IDX-02 amended (the CLI form takes flags); every live row naming codegraph names codebase-memory-mcp on the same line (record rows keep their record with a replacement note; REV-04 names the new tool).*

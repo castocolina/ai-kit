@@ -103,13 +103,13 @@ added superpowers plans and both PR-chaining backends: Phase 29 keeps the local 
 29.1 the branches, pushes, PRs and merge chain. Phases 38.1, 45.1 and 47.1 were split out on 2026-11-03, when the ideas and rules audit added requirements that overloaded 38, 45 and 47. Every phase that adds or changes a SKILL.md carries a judge-bar criterion citing JDG-04.
 
 Each phase lists **Code anchors**: the existing files and symbols it changes or hooks into, the new files it
-creates (`new:`), and the docs it must update (`docs:`). They were found with `codegraph explore` on
+creates (`new:`), and the docs it must update (`docs:`). They were found with `codegraph explore` (replaced by codebase-memory-mcp in Phase 32.5) on
 2026-11-03; "unknown until research" marks what the phase researcher must locate first.
 
 - [x] **Phase 28: Fast, environment-proof gates** - Commit runs only the covering tests; push runs the full suites fast with fakes only (completed 2026-11-04)
 - [x] **Phase 29: Logical-commit folding and the shared jev ladder** - Each finished GSD or superpowers plan becomes logical-feature commits; every caller chains jev as a black box (completed 2026-11-04)
 - [x] **Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)** - Stacked branches, a push per plan, chained PRs and an owner-started merge chain (completed 2026-11-05)
-- [x] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph sync, graphify rebuild and a changed-symbols brief at every phase boundary (completed 2026-11-06)
+- [x] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph (replaced by codebase-memory-mcp in Phase 32.5) sync, graphify rebuild and a changed-symbols brief at every phase boundary (completed 2026-11-06)
 - [x] **Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)** - One card per component kind, host-styled status-line panes, config doctor reachable from the wizard (completed 2026-11-06)
 - [x] **Phase 30.2: Cursor status-line parity (INSERTED)** - Cursor status line brought back to the approved proof of concept and to Claude's look where the data allows (completed 2026-11-06)
 - [x] **Phase 31: Removals and small defects** - Three skills and rtk gone, seven small known defects fixed *(amended 2026-11-03, 31 spec: seven items per DEF-01)* (completed 2026-11-06)
@@ -280,15 +280,15 @@ Plans:
 **Depends on**: Phase 29.1 *(amended 2026-11-03, 29 spec: the phase branches now arrive in 29.1)*
 **Requirements**: FLOW-04, FLOW-06, DESIGN-01, LENS-01, FLOW-12, FLOW-13
 *(Amended 2026-11-03: the global-sentence rewrite came from the 30 spec; the setup-dev tool installs came from 30 D-04, with code anchors `Makefile` `setup-env`/`dev` and AGENTS.md Commands.)*
-**Code anchors**: new: phase-boundary step (`codegraph sync`, graphify rebuild, changed-symbols brief; hook point in GSD's phase transition unknown until research); `graphify-out/` and a graphify exclude for `.planning/milestones/` (mechanism unknown until research); house rules in `skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/rules.py`; tool-advisor advice in `tools/hooks/advisor_core.py`, `tools/hooks/claude_tool_advisor.py`; new: graphify runbook (`docs/run-book/graphify.md`); lens wiring in `.planning/config.json` `agent_skills` and `workflow.ui_review` (set through `gsd-tools config-set`); docs: AGENTS.md Code Exploration, `.claude/cli-environment.md` *(amended 2026-11-03, 30 spec: the step lives in the unit-flow engine of Phase 29.1 and runs at the unit's start, `plan:pre` and `execute:wave:pre` of wave 1, since GSD's transition dispatches no hook; the exclude is a committed root `.graphifyignore`; new: ai-kit's worktree-created indexing hook (`post-checkout`); `agent_skills_security.trusted_global_roots`; the superpowers adapter `skills/ai-kit-spec-execute-superpowers/` carries the brief; `.claude/cli-environment.md` is gitignored and local-only, so it is not a deliverable)*
+**Code anchors**: new: phase-boundary step (`codegraph sync` (replaced by codebase-memory-mcp in Phase 32.5), graphify rebuild, changed-symbols brief; hook point in GSD's phase transition unknown until research); `graphify-out/` and a graphify exclude for `.planning/milestones/` (mechanism unknown until research); house rules in `skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/rules.py`; tool-advisor advice in `tools/hooks/advisor_core.py`, `tools/hooks/claude_tool_advisor.py`; new: graphify runbook (`docs/run-book/graphify.md`); lens wiring in `.planning/config.json` `agent_skills` and `workflow.ui_review` (set through `gsd-tools config-set`); docs: AGENTS.md Code Exploration, `.claude/cli-environment.md` *(amended 2026-11-03, 30 spec: the step lives in the unit-flow engine of Phase 29.1 and runs at the unit's start, `plan:pre` and `execute:wave:pre` of wave 1, since GSD's transition dispatches no hook; the exclude is a committed root `.graphifyignore`; new: ai-kit's worktree-created indexing hook (`post-checkout`); `agent_skills_security.trusted_global_roots`; the superpowers adapter `skills/ai-kit-spec-execute-superpowers/` carries the brief; `.claude/cli-environment.md` is gitignored and local-only, so it is not a deliverable)*
 **Success Criteria** (what must be TRUE):
-  1. Closing a phase on its branch syncs the codegraph index and rebuilds the graphify graph with archived milestones excluded, with no commit to main needed. *(amended 2026-11-03, 30 spec: for every unit, at its start, before its planning and before its first execution wave, on its own branch; codegraph and graphify are created or refreshed automatically whenever their CLI is installed, and every new ai-kit worktree is indexed the same way without blocking git)*
+  1. Closing a phase on its branch syncs the codegraph (replaced by codebase-memory-mcp in Phase 32.5) index and rebuilds the graphify graph with archived milestones excluded, with no commit to main needed. *(amended 2026-11-03, 30 spec: for every unit, at its start, before its planning and before its first execution wave, on its own branch; codegraph and graphify are created or refreshed automatically whenever their CLI is installed, and every new ai-kit worktree is indexed the same way without blocking git)*
   2. The next phase's brief lists the new or changed symbols to hook into and the documents that mention them, and that phase's researcher, planner and executor read it.
-  3. ai-kit's AGENTS.md, the current house rules and the tool-advisor hook's advice all say to explore code with codegraph when it is indexed and to keep graphify for GSD's document discovery.
+  3. ai-kit's AGENTS.md, the current house rules and the tool-advisor hook's advice all say to explore code with codegraph (replaced by codebase-memory-mcp in Phase 32.5) when it is indexed and to keep graphify for GSD's document discovery.
   4. A runbook says how to build the graphify index (archived milestones excluded), when it refreshes (every phase boundary plus GSD's auto-update after commits) and how.
   5. `gsd-tools query agent-skills` shows `impeccable` for the UI researcher, checker and auditor, `ponytail` for the planner and plan checker and `ponytail-review` for the code reviewer, all as `global:` names; UI review is on; with a lens removed from a scratch home the agent runs and reports the missing lens.
   6. ai-kit's AGENTS.md states the design rule (simple is not easy; never a half-done feature or mediocre value to save a few uncomplicated steps; ponytail governs how code is built, reusing existing components and known design patterns before new code, not how much ships; MVP only shifts the weight), the ponytail and review lenses are briefed with it, and a doc-contract test pins the text.
-  7. In a scratch HOME, install rewrites only codegraph's "indexing is the user's decision" sentence in the four synthetic global instruction files with a backup, a second run gives no diff, `--dry-run` writes nothing, and the config doctor reports the installer's wording when it is back. *(amended 2026-11-03, 30 spec: added, FLOW-12; code anchors `tools/setup.py`, `tools/config_doctor_checks.py`, `tools/config_doctor_appliers.py`, new: shared marked-block editor)*
+  7. In a scratch HOME, install rewrites only codegraph's (replaced by codebase-memory-mcp in Phase 32.5) "indexing is the user's decision" sentence in the four synthetic global instruction files with a backup, a second run gives no diff, `--dry-run` writes nothing, and the config doctor reports the installer's wording when it is back. *(amended 2026-11-03, 30 spec: added, FLOW-12; code anchors `tools/setup.py`, `tools/config_doctor_checks.py`, `tools/config_doctor_appliers.py`, new: shared marked-block editor)*
   8. With the five flow tools missing and fake installers in a scratch HOME, `make setup-dev` installs the four that can install, reports the one that cannot and exits 0, and a worktree made with hooks uninstalled is still indexed at the next boundary point. *(amended 2026-11-03, 30 D-04: added, FLOW-13 and the resilient-indexing rule)*
   9. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04). *(amended 2026-11-03, 30 spec: added, renumbered 9 after FLOW-12 and FLOW-13; the superpowers adapter changes to carry the brief)*
 
@@ -296,13 +296,13 @@ Plans:
 
 Plans:
 **Wave 1**
-- [x] 30-01-PLAN.md — index engine: `fold.py index` (codegraph, graphify, GSD copy), the post-checkout worktree hook with a detached runner, shared fakes, ai-kit's `.graphifyignore`
+- [x] 30-01-PLAN.md — index engine: `fold.py index` (codegraph (replaced by codebase-memory-mcp in Phase 32.5), graphify, GSD copy), the post-checkout worktree hook with a detached runner, shared fakes, ai-kit's `.graphifyignore`
 - [x] 30-02-PLAN.md — one code-exploration rule in AGENTS.md and R07/R08, the graphify runbook, the design rule, the setup-dev Commands line
-- [x] 30-03-PLAN.md — setup rewrites codegraph's global sentence (headless flag, wizard Review item, doctor drift row) through a shared marked-block editor
+- [x] 30-03-PLAN.md — setup rewrites codegraph's (replaced by codebase-memory-mcp in Phase 32.5) global sentence (headless flag, wizard Review item, doctor drift row) through a shared marked-block editor
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [x] 30-04-PLAN.md — `fold.py boundary` and the unit brief: start, planning and wave-1 points, document mentions, worktree brief seeding
-- [x] 30-05-PLAN.md — tool advisor codegraph advice (Bash, Grep, Glob) and `make setup-dev` with guarded tool installs
+- [x] 30-05-PLAN.md — tool advisor codegraph (replaced by codebase-memory-mcp in Phase 32.5) advice (Bash, Grep, Glob) and `make setup-dev` with guarded tool installs
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [x] 30-06-PLAN.md — GSD delivery: execute:wave:pre step, plan:pre planner contribution, lens wiring and lens brief, check-dogfood drift, judge set
@@ -549,12 +549,12 @@ Plans:
 **Depends on**: Phase 32.4
 **Requirements**: IDX-01, IDX-02, IDX-03, IDX-04, IDX-05, IDX-06, IDX-07
 *(inserted 2026-11-14, owner decision: "find every reference to codegraph and change it to codebase-memory-mcp"; `32.5-SPEC.md` is its scope; the owner first chose a quick task, then the same day a phase run with 33-34 through `/gsd-autonomous`; the global instruction files outside the repo were updated the same day)*
-**Code anchors**: `skills/ai-kit-commit-fold/scripts/flow_index.py` (`codegraph_step`, `_codegraph_status`, `_codegraph_run`, `refresh`), `flow_brief.py`, `fold.py index`; `skills/ai-kit-spec-review/ai_kit_spec/detection.py` (`run_codegraph_index`, `CODEGRAPH_INDEX_TIMEOUT_SECONDS`), `cli.py`, `tooling_guidance.py`, `reviewer_dispatch.py`, `execute_dispatch.py`; `skills/ai-kit-spec-execute-superpowers/ai_kit_spec_superpowers/dispatch_injection.py`, `cli.py`; `tools/global_rules.py`, `config_doctor_checks.py`, `config_doctor_appliers.py`, `setup.py`, `setup_dev.py`, `wizard_app.py`, `hooks/advisor_core.py`; `skills/_shared/ai_kit_rules_common/code_exploration.py`, `tool_presence.py`; new: `.cbmignore`; docs: `AGENTS.md`, `README.md`, `docs/run-book/graphify.md`, the live SKILL.md files and references
+**Code anchors**: `skills/ai-kit-commit-fold/scripts/flow_index.py` (`codegraph_step` (replaced by codebase-memory-mcp in Phase 32.5), `_codegraph_status`, `_codegraph_run`, `refresh`), `flow_brief.py`, `fold.py index`; `skills/ai-kit-spec-review/ai_kit_spec/detection.py` (`run_codegraph_index`, `CODEGRAPH_INDEX_TIMEOUT_SECONDS`), `cli.py`, `tooling_guidance.py`, `reviewer_dispatch.py`, `execute_dispatch.py`; `skills/ai-kit-spec-execute-superpowers/ai_kit_spec_superpowers/dispatch_injection.py`, `cli.py`; `tools/global_rules.py`, `config_doctor_checks.py`, `config_doctor_appliers.py`, `setup.py`, `setup_dev.py`, `wizard_app.py`, `hooks/advisor_core.py`; `skills/_shared/ai_kit_rules_common/code_exploration.py`, `tool_presence.py`; new: `.cbmignore`; docs: `AGENTS.md`, `README.md`, `docs/run-book/graphify.md`, the live SKILL.md files and references
 **Success Criteria** (what must be TRUE):
   1. The boundary step and `fold.py index` refresh codebase-memory-mcp and never run codegraph; the unit brief names changed functions from the new index.
   2. Review and execute lane guidance names codebase-memory-mcp on every runtime, with the MCP tools or the CLI form.
   3. Detection, `make setup-dev`, the doctor, global rules, the advisor hook, the wizard and the project-rules code-exploration rule use codebase-memory-mcp; no live code path runs or recommends codegraph.
-  4. A live-set search for codegraph finds only replacement notes; history paths are untouched; `.cbmignore` keeps `.planning/` out of the index; `make check-dogfood` and `make test` pass.
+  4. A live-set search for codegraph (replaced by codebase-memory-mcp in Phase 32.5) finds only replacement notes; history paths are untouched; `.cbmignore` keeps `.planning/` out of the index; `make check-dogfood` and `make test` pass.
   5. graphify is unchanged and a backlog entry evaluates whether codebase-memory-mcp's document graph makes it redundant.
   6. A SKILL.md whose only change is the tool name and its commands is recorded as not materially changed (no judge loop); any other SKILL.md change meets the judge bar (JDG-04).
 
@@ -693,7 +693,7 @@ Plans:
 **Code anchors**: `ai_kit_spec/reviewer_dispatch.py` (`_reviewer_full_prompt`, `dispatch_reviewer`), `tooling_guidance.py` (`build_tooling_guidance`), `execute_dispatch.py` (`build_execute_guidance`), `runner_dispatch.py` (final argv); skill scan in curated-config `skill_scan.py`; new: role-keyed per-host skill table (home unknown until research), capability block builder; new: optional config-time jev role classifier for unknown skills; docs: `skills/ai-kit-spec-review/references/tooling-guidance.md`, `reviewer-prompts.md`, `SKILL.md`
 **Success Criteria** (what must be TRUE):
   1. One role-keyed table of the skills (and MCP servers where a host allows it) present on each host is rescanned every run and read by review, execute and curated-config; an optional config-time jev step sorts an unknown skill into a role, and the owner confirms each sort.
-  2. Each lane's prompt carries a capability block built from its final argv (read-only or write, shell or not, the tools found on the child's PATH, codegraph only with an index); a lane without a shell is told about no shell tool.
+  2. Each lane's prompt carries a capability block built from its final argv (read-only or write, shell or not, the tools found on the child's PATH, codebase-memory-mcp only when its binary is on that PATH (it replaced codegraph in Phase 32.5)); a lane without a shell is told about no shell tool.
   3. Lens skills present in the environment (the ponytail family, reducing-entropy, naming-analyzer, simplify, impeccable for UI) reach reviewers by path, and file-editing lenses run as a pass after approval; a lens is inlined where the lane cannot load it by path (Claude built-ins, pi through an allow-listed `--skill`).
   4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation. *(amended 2026-11-07, 32.1 D-01: `ai-kit-spec-review`, below the bar at the Phase 32 baseline (75.2 C), was deferred here from batch 32.2; it reaches the bar, with its Markdown scenarios converted to new-shape evals and with tests, in whichever of Phases 39-40 first changes its SKILL.md, and no later than Phase 40's close)*
 
@@ -1027,7 +1027,7 @@ Open entries only. An entry a v2.0 requirement absorbs moves to **Absorbed into 
 (moved there 2026-11-07: 999.2, 999.5, 999.7 to 999.17 and 999.19), with the requirement and phase
 that track it. 999.6 stays open (secondary runtime); 999.20 (Claude extra-usage segment) was added
 2026-11-07, 999.21 (runner temp directories) at the Phase 32 close-out, and 999.22 (headless installer agents) at the
-32.1 discuss, and 999.23 (the checklist's open judge notes) at the 32.2 close-out. The Playwright MCP Chrome path row in 999.1 is
+32.1 discuss, 999.23 (the checklist's open judge notes) at the 32.2 close-out, and 999.24 (whether codebase-memory-mcp makes graphify redundant) at the 32.5 plan. The Playwright MCP Chrome path row in 999.1 is
 the FEAT-06 owner decision; the whole-tree layering suite once named 999.3 is ARCH-01 (Phase 52).
 Finished entries move to **Done** at the end of this section, with the date and what delivered them.
 
@@ -1124,6 +1124,16 @@ in the shape test's machine-path pattern, which would fail on those copies today
 The native judge alone raised (2) to (5). Phases 39-40 change the spec-review family but name only
 `ai-kit-spec-review` and the fixer, so this entry is their natural home when either changes the checklist; a
 promoted entry lands there. Found 2026-11-13 at the Phase 32.2 close-out (loop 32.2 round 1 verdicts).
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.24: Does codebase-memory-mcp's document graph make graphify redundant? (BACKLOG)
+
+**Goal:** [Captured for future planning] codebase-memory-mcp (Phase 32.5) indexes Markdown sections with doc-to-code `MENTIONS` edges, which overlaps graphify's role as GSD's document-discovery graph (FLOW-06). Compare the two on this repository: which planning and document questions each answers (GSD's `/gsd-graphify` queries and the unit brief's document mentions), build and refresh time, index size, and what GSD's agents read from `.planning/graphs/`; then record whether graphify can be retired, kept for GSD only, or kept as is. This entry retires nothing: a retirement becomes its own phase with the owner's decision. `.cbmignore` keeps `.planning/` out of codebase-memory-mcp's index, so the comparison indexes planning documents in a scratch copy and never edits the committed `.cbmignore`. Added 2026-11-14 at the Phase 32.5 plan (32.5 D-08 and R7; jev advisory: keep and evaluate, choice 0.91).
 **Requirements:** TBD
 **Plans:** 0 plans
 

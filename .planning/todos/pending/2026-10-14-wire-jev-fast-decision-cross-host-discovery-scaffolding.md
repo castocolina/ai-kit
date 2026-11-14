@@ -28,7 +28,7 @@ can discover it. Live-verified on 2026-10-14:
   `consent_required_for_remote` / `missing_api_key`.
 - The four global always-on files exist and already carry ai-kit marker blocks
   (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md`,
-  `~/.pi/AGENTS.md`; CODEGRAPH_START/END precedent), but none mention jev.
+  `~/.pi/AGENTS.md`; CODEGRAPH_START/END (replaced by codebase-memory-mcp in Phase 32.5) precedent), but none mention jev.
 - `TYPESAFE_API_KEY` is exported in `~/.mycreds` (0600, sourced via `~/.myshellrc` from both
   `.zshrc` and `.bashrc`) — interactive shells only. Agent tool shells are non-interactive and
   do not inherit it, so any script the skill runs must source `~/.mycreds` itself or fail
@@ -61,7 +61,7 @@ Future scope; sequence after the plan-execution todo and aligned with v1.3 Phase
 1. Make the skill cross-host discoverable: install/symlink into `~/.agents/skills/` (Pi reads
    it natively; Claude Code already symlinks from there) via the ai-kit installer rather than
    a manual copy, keeping one source of truth.
-2. Add a short marker block (CODEGRAPH-style, idempotent, atomic writes per repo rules) to the
+2. Add a short marker block (CODEGRAPH-style (replaced by codebase-memory-mcp in Phase 32.5), idempotent, atomic writes per repo rules) to the
    four global instruction files: trigger conditions (routing among named options, triage,
    gating, rubric scores), the activation env line, `--probe` usage, and the
    never-when-no-backend rule.
