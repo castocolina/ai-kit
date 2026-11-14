@@ -118,7 +118,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 32.2: Batch 2, spec review family** - checklist reaches the bar; spec-config and spec-execute get their fixes; spec-review deferred to Phases 39-40 *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
 - [x] **Phase 32.3: Batch 3, execution and session skills** - spec-execute-superpowers and session-wake keep their bar; one shared secret scanner; cross-ai deferred to Phases 37-38 *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
 - [x] **Phase 32.4: Batch 4, planning skills and the closing report** - goal-prompt, spec-discuss and curated-config keep their bar with their fixes; the closing report shows all 15 judged skills *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
-- [ ] **Phase 32.5: codebase-memory-mcp replaces codegraph** - every live index, check, rule, lane guidance and doc uses codebase-memory-mcp; history unchanged; `.planning/` kept out of the index *(inserted 2026-11-14, owner decision; run with Phases 33-34 through `/gsd-autonomous`)*
+- [x] **Phase 32.5: codebase-memory-mcp replaces codegraph** - every live index, check, rule, lane guidance and doc uses codebase-memory-mcp; history unchanged; `.planning/` kept out of the index *(inserted 2026-11-14, owner decision; run with Phases 33-34 through `/gsd-autonomous`)* (completed 2026-11-14)
 - [ ] **Phase 33: One config design** - One documented config for every ai-kit setting; review-spec.toml migrates on its own
 - [ ] **Phase 34: jev backends by host and Laya calibration** - jev picks its backend per host from ai-kit's config; Laya measured against its floor
 - [ ] **Phase 35: Model discovery and catalog** - spec-config lists every model on every host with honest source, usability and tier labels
@@ -558,26 +558,26 @@ Plans:
   5. graphify is unchanged and a backlog entry evaluates whether codebase-memory-mcp's document graph makes it redundant.
   6. A SKILL.md whose only change is the tool name and its commands is recorded as not materially changed (no judge loop); any other SKILL.md change meets the judge bar (JDG-04).
 
-**Plans**: 10 plans in 5 waves *(amended 2026-11-14, owner decision: run through `/gsd-autonomous` with Phases 33 and 34 instead of a quick task; no quick plan was written)*
+**Plans**: 10/10 plans complete in 5 waves *(amended 2026-11-14, owner decision: run through `/gsd-autonomous` with Phases 33 and 34 instead of a quick task; no quick plan was written)*
 **Wave 1**
-- [ ] 32.5-10-PLAN.md — runner tripwire stub for the tool and stripped `CBM_CACHE_DIR` and `OPENCODE_CONFIG`, before any other plan's tests (wave 1)
-- [ ] 32.5-05-PLAN.md — live REQUIREMENTS, ROADMAP and pending-todo rows name codebase-memory-mcp; backlog 999.24 (graphify redundancy) (wave 1)
+- [x] 32.5-10-PLAN.md — runner tripwire stub for the tool and stripped `CBM_CACHE_DIR` and `OPENCODE_CONFIG`, before any other plan's tests (wave 1)
+- [x] 32.5-05-PLAN.md — live REQUIREMENTS, ROADMAP and pending-todo rows name codebase-memory-mcp; backlog 999.24 (graphify redundancy) (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 32.5-01-PLAN.md — boundary refresh (with coverage gaps), `fold.py index` and the unit brief (paged project lookup) on codebase-memory-mcp through a recording fake; commit-fold text; root `.cbmignore` (wave 2)
-- [ ] 32.5-02-PLAN.md — shared code-exploration rule, tool-presence key, house rule R07 and the tool advisor on codebase-memory-mcp (wave 2)
-- [ ] 32.5-03-PLAN.md — global-rules writer migrates a leftover installer block to the codebase-memory-mcp block; doctor row `cbm-global-block`; setup and wizard strings (wave 2)
-- [ ] 32.5-04-PLAN.md — read-only per-host registration reader (disabled, malformed, inferred pi, `$OPENCODE_CONFIG`) and one-call index helper; spec-config's alternative step renamed (wave 2)
+- [x] 32.5-01-PLAN.md — boundary refresh (with coverage gaps), `fold.py index` and the unit brief (paged project lookup) on codebase-memory-mcp through a recording fake; commit-fold text; root `.cbmignore` (wave 2)
+- [x] 32.5-02-PLAN.md — shared code-exploration rule, tool-presence key, house rule R07 and the tool advisor on codebase-memory-mcp (wave 2)
+- [x] 32.5-03-PLAN.md — global-rules writer migrates a leftover installer block to the codebase-memory-mcp block; doctor row `cbm-global-block`; setup and wizard strings (wave 2)
+- [x] 32.5-04-PLAN.md — read-only per-host registration reader (disabled, malformed, inferred pi, `$OPENCODE_CONFIG`) and one-call index helper; spec-config's alternative step renamed (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 32.5-06-PLAN.md — lane guidance per runtime (MCP tools or CLI form), superpowers pre-dispatch index, old probe removed (wave 3)
-- [ ] 32.5-07-PLAN.md — `make setup-dev` checks the binary and prints its install command; doctor binary and registration rows (wave 3)
+- [x] 32.5-06-PLAN.md — lane guidance per runtime (MCP tools or CLI form), superpowers pre-dispatch index, old probe removed (wave 3)
+- [x] 32.5-07-PLAN.md — `make setup-dev` checks the binary and prints its install command; doctor binary and registration rows (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 32.5-08-PLAN.md — docs, skill text, `.gitignore`, runner template comment and dogfood re-render (wave 4)
+- [x] 32.5-08-PLAN.md — docs, skill text, `.gitignore`, runner template comment and dogfood re-render (wave 4)
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 32.5-09-PLAN.md — the phase gate: live-set check, history check, real `.cbmignore` check with a positive control, `make test`, `make check-dogfood`, then `make test-env-matrix` (wave 5)
+- [x] 32.5-09-PLAN.md — the phase gate: live-set check, history check, real `.cbmignore` check with a positive control, `make test`, `make check-dogfood`, then `make test-env-matrix` (wave 5)
 
 ### Phase 33: One config design
 
@@ -994,7 +994,7 @@ Plans:
 | 32.2. Batch 2, spec review family | 5/5 | Complete    | 2026-11-13 |
 | 32.3. Batch 3, execution and session skills | 5/5 | Complete    | 2026-11-13 |
 | 32.4. Batch 4, planning skills and the closing report | 9/9 | Complete    | 2026-11-13 |
-| 32.5. codebase-memory-mcp replaces codegraph | 0/1 | Not started | - |
+| 32.5. codebase-memory-mcp replaces codegraph | 10/10 | Complete    | 2026-11-14 |
 | 33. One config design | 0/TBD | Not started | - |
 | 34. jev backends by host and Laya calibration | 0/TBD | Not started | - |
 | 35. Model discovery and catalog | 0/TBD | Not started | - |

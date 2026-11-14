@@ -794,13 +794,13 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 *(added 2026-11-14, owner decision: codebase-memory-mcp replaces codegraph; Phase 32.5)*
 
-- [ ] **IDX-01**: The unit flow's boundary step and `fold.py index` refresh the codebase-memory-mcp index of the checkout or worktree instead of running codegraph, and the unit brief names changed functions from it; a missing binary is reported once with its install command and the step still exits 0.
-- [ ] **IDX-02**: The tooling guidance for review and execute lanes names codebase-memory-mcp on every runtime: the MCP tools where the host registers it (Claude Code, opencode, pi, Codex, Copilot CLI, Cursor), the `codebase-memory-mcp cli <tool> '<json args>'` form otherwise. *(amended 2026-11-14, 32.5 research: codebase-memory-mcp 0.12.1 deprecates raw JSON arguments, so the CLI form is `codebase-memory-mcp cli <tool> --flag value`)*
-- [ ] **IDX-03**: spec-review's detection and spec-config's CLI preference read codebase-memory-mcp's registration and index state, with no auto-install and no global write; the codegraph probe is removed.
-- [ ] **IDX-04**: `make setup-dev`, the doctor, the global-rules writer, the tool advisor hook and the setup wizard check, recommend or write codebase-memory-mcp instead of codegraph, through the existing atomic writers.
-- [ ] **IDX-05**: The shared rules package and `ai-kit-project-rules-agents` generate their code-exploration rule with codebase-memory-mcp.
-- [ ] **IDX-06**: `AGENTS.md`, `README.md`, the run-book, every live SKILL.md and reference, the runner template comment, `.gitignore`, the live planning rows, pending todos and agent memory name codebase-memory-mcp; a `.cbmignore` keeps `.planning/` out of the index (owner, 2026-11-14).
-- [ ] **IDX-07**: History records keep their codegraph wording, graphify stays unchanged, and a backlog entry evaluates whether codebase-memory-mcp's document graph makes graphify redundant.
+- [x] **IDX-01**: The unit flow's boundary step and `fold.py index` refresh the codebase-memory-mcp index of the checkout or worktree instead of running codegraph, and the unit brief names changed functions from it; a missing binary is reported once with its install command and the step still exits 0.
+- [x] **IDX-02**: The tooling guidance for review and execute lanes names codebase-memory-mcp on every runtime: the MCP tools where the host registers it (Claude Code, opencode, pi, Codex, Copilot CLI, Cursor), the `codebase-memory-mcp cli <tool> '<json args>'` form otherwise. *(amended 2026-11-14, 32.5 research: codebase-memory-mcp 0.12.1 deprecates raw JSON arguments, so the CLI form is `codebase-memory-mcp cli <tool> --flag value`)*
+- [x] **IDX-03**: spec-review's detection and spec-config's CLI preference read codebase-memory-mcp's registration and index state, with no auto-install and no global write; the codegraph probe is removed.
+- [x] **IDX-04**: `make setup-dev`, the doctor, the global-rules writer, the tool advisor hook and the setup wizard check, recommend or write codebase-memory-mcp instead of codegraph, through the existing atomic writers.
+- [x] **IDX-05**: The shared rules package and `ai-kit-project-rules-agents` generate their code-exploration rule with codebase-memory-mcp.
+- [x] **IDX-06**: `AGENTS.md`, `README.md`, the run-book, every live SKILL.md and reference, the runner template comment, `.gitignore`, the live planning rows, pending todos and agent memory name codebase-memory-mcp; a `.cbmignore` keeps `.planning/` out of the index (owner, 2026-11-14).
+- [x] **IDX-07**: History records keep their codegraph wording, graphify stays unchanged, and a backlog entry evaluates whether codebase-memory-mcp's document graph makes graphify redundant.
 
 ## Future Requirements
 
@@ -998,13 +998,13 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | DEF-08 | Phase 32.4 | Complete |
 | DEF-09 | Phase 32.2 | Complete |
 | DEF-10 | Phase 32.4 | Complete |
-| IDX-01 | Phase 32.5 | Pending |
-| IDX-02 | Phase 32.5 | Pending |
-| IDX-03 | Phase 32.5 | Pending |
-| IDX-04 | Phase 32.5 | Pending |
-| IDX-05 | Phase 32.5 | Pending |
-| IDX-06 | Phase 32.5 | Pending |
-| IDX-07 | Phase 32.5 | Pending |
+| IDX-01 | Phase 32.5 | Complete |
+| IDX-02 | Phase 32.5 | Complete |
+| IDX-03 | Phase 32.5 | Complete |
+| IDX-04 | Phase 32.5 | Complete |
+| IDX-05 | Phase 32.5 | Complete |
+| IDX-06 | Phase 32.5 | Complete |
+| IDX-07 | Phase 32.5 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 179 total
