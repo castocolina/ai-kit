@@ -118,6 +118,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 32.2: Batch 2, spec review family** - checklist reaches the bar; spec-config and spec-execute get their fixes; spec-review deferred to Phases 39-40 *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
 - [x] **Phase 32.3: Batch 3, execution and session skills** - spec-execute-superpowers and session-wake keep their bar; one shared secret scanner; cross-ai deferred to Phases 37-38 *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
 - [x] **Phase 32.4: Batch 4, planning skills and the closing report** - goal-prompt, spec-discuss and curated-config keep their bar with their fixes; the closing report shows all 15 judged skills *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
+- [ ] **Phase 32.5: codebase-memory-mcp replaces codegraph** - every live index, check, rule, lane guidance and doc uses codebase-memory-mcp; history unchanged; `.planning/` kept out of the index *(inserted 2026-11-14, owner decision; run with Phases 33-34 through `/gsd-autonomous`)*
 - [ ] **Phase 33: One config design** - One documented config for every ai-kit setting; review-spec.toml migrates on its own
 - [ ] **Phase 34: jev backends by host and Laya calibration** - jev picks its backend per host from ai-kit's config; Laya measured against its floor
 - [ ] **Phase 35: Model discovery and catalog** - spec-config lists every model on every host with honest source, usability and tier labels
@@ -542,6 +543,23 @@ Plans:
 **Wave 4** *(blocked on Wave 3 completion)*
 - [x] 32.4-07-PLAN.md — loop 32.4 judges goal-prompt, spec-discuss and curated-config (wave 4, checkpoint)
 
+### Phase 32.5: codebase-memory-mcp replaces codegraph (INSERTED)
+
+**Goal**: Every live place where ai-kit indexes, checks, recommends or documents a code-exploration tool uses codebase-memory-mcp instead of codegraph, for every host (opencode and pi included); history records keep their wording.
+**Depends on**: Phase 32.4
+**Requirements**: IDX-01, IDX-02, IDX-03, IDX-04, IDX-05, IDX-06, IDX-07
+*(inserted 2026-11-14, owner decision: "find every reference to codegraph and change it to codebase-memory-mcp"; `32.5-SPEC.md` is its scope; the owner first chose a quick task, then the same day a phase run with 33-34 through `/gsd-autonomous`; the global instruction files outside the repo were updated the same day)*
+**Code anchors**: `skills/ai-kit-commit-fold/scripts/flow_index.py` (`codegraph_step`, `_codegraph_status`, `_codegraph_run`, `refresh`), `flow_brief.py`, `fold.py index`; `skills/ai-kit-spec-review/ai_kit_spec/detection.py` (`run_codegraph_index`, `CODEGRAPH_INDEX_TIMEOUT_SECONDS`), `cli.py`, `tooling_guidance.py`, `reviewer_dispatch.py`, `execute_dispatch.py`; `skills/ai-kit-spec-execute-superpowers/ai_kit_spec_superpowers/dispatch_injection.py`, `cli.py`; `tools/global_rules.py`, `config_doctor_checks.py`, `config_doctor_appliers.py`, `setup.py`, `setup_dev.py`, `wizard_app.py`, `hooks/advisor_core.py`; `skills/_shared/ai_kit_rules_common/code_exploration.py`, `tool_presence.py`; new: `.cbmignore`; docs: `AGENTS.md`, `README.md`, `docs/run-book/graphify.md`, the live SKILL.md files and references
+**Success Criteria** (what must be TRUE):
+  1. The boundary step and `fold.py index` refresh codebase-memory-mcp and never run codegraph; the unit brief names changed functions from the new index.
+  2. Review and execute lane guidance names codebase-memory-mcp on every runtime, with the MCP tools or the CLI form.
+  3. Detection, `make setup-dev`, the doctor, global rules, the advisor hook, the wizard and the project-rules code-exploration rule use codebase-memory-mcp; no live code path runs or recommends codegraph.
+  4. A live-set search for codegraph finds only replacement notes; history paths are untouched; `.cbmignore` keeps `.planning/` out of the index; `make check-dogfood` and `make test` pass.
+  5. graphify is unchanged and a backlog entry evaluates whether codebase-memory-mcp's document graph makes it redundant.
+  6. A SKILL.md whose only change is the tool name and its commands is recorded as not materially changed (no judge loop); any other SKILL.md change meets the judge bar (JDG-04).
+
+**Plans**: TBD *(amended 2026-11-14, owner decision: run through `/gsd-autonomous` with Phases 33 and 34 instead of a quick task; no quick plan was written)*
+
 ### Phase 33: One config design
 
 **Goal**: Every setting ai-kit keeps follows one recorded config design under neutral names, and existing `review-spec.toml` files migrate on their own.
@@ -957,6 +975,7 @@ Plans:
 | 32.2. Batch 2, spec review family | 5/5 | Complete    | 2026-11-13 |
 | 32.3. Batch 3, execution and session skills | 5/5 | Complete    | 2026-11-13 |
 | 32.4. Batch 4, planning skills and the closing report | 9/9 | Complete    | 2026-11-13 |
+| 32.5. codebase-memory-mcp replaces codegraph | 0/1 | Not started | - |
 | 33. One config design | 0/TBD | Not started | - |
 | 34. jev backends by host and Laya calibration | 0/TBD | Not started | - |
 | 35. Model discovery and catalog | 0/TBD | Not started | - |
