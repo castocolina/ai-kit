@@ -524,7 +524,21 @@ Plans:
   8. Before an auto-mode run starts, spec-discuss shows the owner a short summary of every requested item in the range and how it plans to resolve each one, and waits for the owner's go-ahead; a doc-contract test pins it (DEF-08). *(added 2026-11-07, owner decision)*
   9. `tests/test_curated_config_e2e.py`'s `test_tracer_against_real_installed_gsd_tools` passes when `TMPDIR` points inside a GSD project checkout (today its fresh project then sits inside the checkout's project and apply refuses with `applied: false`): curated-config's behaviour for a new project nested inside another project is decided and tested, and the six-environment custom-tmpdir row runs in a clone that keeps `.planning/`, so it catches this case (DEF-10). *(added 2026-11-07, Phase 32 close-out)* *(amended 2026-11-13, 32.4 D-15, D-16: the custom-tmpdir row has no clone; the fresh repository holding its TMPDIR gains a synthetic `.planning/`; the fix covers curated-config's v1 and v2 write flows (DEF-10 amended))*
 
-**Plans**: TBD
+**Plans**: 7 plans in 4 waves *(revised 2026-11-13 per cross-AI review cycle 1: 32.4-03 waits for 32.4-02, whose rendering it documents; the judge loop moves to wave 4)*
+**Wave 1**
+- [ ] 32.4-01-PLAN.md — goal-prompt wraps long lists and the runner command; answers accept the six owner run-rule fields (wave 1)
+- [ ] 32.4-04-PLAN.md — spec-discuss handoff, eight polish items, run-mode order, interactive relay, pre-run summary (wave 1)
+- [ ] 32.4-05-PLAN.md — curated-config nested new project (v1 and v2), apply-review drops the fixed opencode effort, env-matrix synthetic .planning (wave 1)
+- [ ] 32.4-06-PLAN.md — re-judge report shows evals, trigger queries, test modules and deferred phases for all 15 skills (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 32.4-02-PLAN.md — goal-prompt FLOW-09 rails, merged lines, e2e list line, owner fields rendered, goldens regenerated, R4 caps fixture (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 32.4-03-PLAN.md — goal-prompt SKILL.md and READMEs document owner fields, caller answers, wrapping and the cross-AI limit (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 32.4-07-PLAN.md — loop 32.4 judges goal-prompt, spec-discuss and curated-config (wave 4, checkpoint)
 
 ### Phase 33: One config design
 

@@ -4,16 +4,16 @@ milestone: v2.0
 milestone_name: Skill Refactor
 current_phase: "32.4"
 current_phase_name: Batch 4, planning skills and the closing report
-status: planning
+status: executing
 stopped_at: Phase 32.4 spec and discuss done (SPEC 12 req, CONTEXT D-01..D-19); ready to plan Phase 32.4
-last_updated: "2026-11-13T15:35:18.813Z"
+last_updated: "2026-11-13T18:53:45.151Z"
 last_activity: 2026-11-13
-last_activity_desc: Phase 32.3 complete, transitioned to Phase 32.4
-state_head: 578778d7253024602ecb445cdb24a2d6e2120ca6
+last_activity_desc: Phase 32.4 execution started
+state_head: 0450fba6a6a8ccb594fb1ed35dca7c0aa2a02deb
 progress:
   total_phases: 37
   completed_phases: 11
-  total_plans: 83
+  total_plans: 90
   completed_plans: 83
   percent: 30
 ---
@@ -25,14 +25,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 32.3 — Batch 3, execution and session skills
+**Current focus:** Phase 32.4 — Batch 4, planning skills and the closing report
 
 ## Current Position
 
-Phase: 32.4 — Batch 4, planning skills and the closing report
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-11-13 — Phase 32.3 complete, transitioned to Phase 32.4
+Phase: 32.4 (Batch 4, planning skills and the closing report) — EXECUTING
+Plan: 1 of 7
+Status: Executing Phase 32.4
+Last activity: 2026-11-13 — Phase 32.4 execution started
 
 Progress: [███░░░░░░░] 30%
 
