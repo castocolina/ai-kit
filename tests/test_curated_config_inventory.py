@@ -2307,6 +2307,49 @@ class TestProjectFacts(unittest.TestCase):
         self.assertEqual(row["root_kind"], "project")
 
 
+class TestProjectConfigPath(unittest.TestCase):
+    def test_inside_path_is_kept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = os.path.join(tmp, "project")
+            resolved = os.path.join(project, ".planning", "workstreams", "a", "config.json")
+            self.assertEqual(inventory.project_config_path(project, resolved), resolved)
+
+    def test_outside_path_maps_to_the_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = os.path.join(tmp, "outer", "inner")
+            resolved = os.path.join(tmp, "outer", ".planning", "config.json")
+            self.assertEqual(
+                inventory.project_config_path(project, resolved),
+                os.path.join(project, ".planning", "config.json"),
+            )
+
+    def test_empty_resolution_maps_to_the_folder(self):
+        project = os.path.join("some", "project")
+        self.assertEqual(
+            inventory.project_config_path(project, None),
+            os.path.join(project, ".planning", "config.json"),
+        )
+        self.assertEqual(
+            inventory.project_config_path(project, ""),
+            os.path.join(project, ".planning", "config.json"),
+        )
+
+    def test_linked_planning_store_counts_as_inside(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = os.path.join(tmp, "project")
+            store = os.path.join(tmp, "store")
+            os.makedirs(project)
+            os.makedirs(os.path.join(store, ".planning"))
+            os.symlink(os.path.join(store, ".planning"), os.path.join(project, ".planning"))
+            kept = os.path.join(project, ".planning", "config.json")
+            self.assertEqual(inventory.project_config_path(project, kept), kept)
+            through_store = os.path.join(store, ".planning", "config.json")
+            self.assertEqual(
+                inventory.project_config_path(project, through_store),
+                os.path.join(project, ".planning", "config.json"),
+            )
+
+
 class TestReadOnly(unittest.TestCase):
     def _readonly_project(self):
         home = tempfile.mkdtemp()

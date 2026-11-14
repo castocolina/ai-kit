@@ -80,14 +80,26 @@ def _hoist_legacy_depth(raw: dict) -> tuple[dict, bool]:
     return {**raw, "granularity": mapped}, True
 
 
+def project_config_path(project_dir: str, resolved: str | None) -> str:
+    """gsd-core's resolved config path when it lies inside `project_dir`, compared without
+    resolving symlinks so a linked `.planning` store counts as inside; otherwise the folder's own
+    `.planning/config.json`, because `--project-dir` always names the project root."""
+    own = os.path.join(project_dir, ".planning", "config.json")
+    if not resolved:
+        return own
+    root = os.path.abspath(project_dir)
+    if os.path.commonpath([root, os.path.abspath(resolved)]) == root:
+        return resolved
+    return own
+
+
 def _existing_config(project_dir, tools_path, node_bin, deps):
     gsd = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
     path = os.path.join(project_dir, ".planning", "config.json")
     if gsd is not None and node_bin is not None:
         tools = gsd.GsdTools(node_bin, tools_path)
         resolved = gsd.config_path(tools, project_dir, deps.run_fn, deps.env_fn())
-        if resolved:
-            path = resolved
+        path = project_config_path(project_dir, resolved)
     raw, warn = plan_io.read_json_object(path)
     exists = os.path.isfile(path)
     raw, hoisted = _hoist_legacy_depth(raw or {})

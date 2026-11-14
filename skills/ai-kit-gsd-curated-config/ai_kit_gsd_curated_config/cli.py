@@ -89,6 +89,10 @@ def _cmd_ensure_project(args, which_fn, run_fn, env_fn):
     if error or gsd is None or tools is None:
         print(error, file=sys.stderr)
         return 2
+    if os.path.isdir(args.project_dir):
+        # gsd-core takes a start folder holding .planning/ as its own root, so a folder nested
+        # in another project becomes its own project.
+        os.makedirs(os.path.join(args.project_dir, ".planning"), exist_ok=True)
     ensured = gsd.ensure_config_exists(tools, args.project_dir, run_fn=run_fn)
     print(json.dumps({"ensured": ensured}))
     return 0 if ensured else 1
@@ -380,10 +384,7 @@ def _apply_review_writes(ctx: _GsdCtx, args):
             file=sys.stderr,
         )
         return 1
-    steps = (
-        ("workflow.plan_review_convergence", True, "workflow.plan_review_convergence"),
-        ("review.effort.opencode", "high", "review.effort.opencode"),
-    )
+    steps = (("workflow.plan_review_convergence", True, "workflow.plan_review_convergence"),)
     for key, value, label in steps:
         code = _config_set_exit(ctx, key, value, label)
         if code is not None:
@@ -419,7 +420,6 @@ def _cmd_apply_review(args, which_fn, run_fn, env_fn):
             {
                 "plan_review_convergence_written": True,
                 "default_reviewers": result,
-                "review_effort_opencode_written": True,
             }
         )
     )

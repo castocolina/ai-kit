@@ -494,6 +494,7 @@ class TestTheOtherFourEnvironments(unittest.TestCase):
         self.assertIn(" ", str(tmp_dir))
         self.assertTrue(tmp_dir.is_dir())
         self.assertTrue(self.m.inside_git_worktree(tmp_dir))
+        self.assertTrue((tmp_dir.parent / ".planning" / "config.json").is_file())
 
     def test_outside_git_starts_from_a_cwd_outside_every_repository(self) -> None:
         spec = self.m.build_spec("outside-git", self.caller, {}, self.scratch, self.src)

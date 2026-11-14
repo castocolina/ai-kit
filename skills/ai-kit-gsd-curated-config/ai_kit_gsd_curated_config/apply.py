@@ -195,6 +195,7 @@ def _target_for_core(inputs: Inputs, deps: ApplyDeps, core: host.GsdCore) -> Tar
     if not config_path:
         ver = core.version or "unknown"
         return f"gsd-core at {core.root} (version {ver}): config-path failed"
+    config_path = inventory.project_config_path(inputs.project_dir, config_path)
     bind_err = _config_binding_error(config_path, inputs.inv["existing_config"].get("path"))
     if bind_err:
         return bind_err
