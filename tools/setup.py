@@ -3735,7 +3735,8 @@ def _global_rules_review(rules_env):
     if rules_env is None:
         return None
     global_rules = _sibling("global_rules")
-    changes = [c for c in global_rules.plan_changes(rules_env) if c.status == "replace"]
+    changes = [c for c in global_rules.plan_changes(rules_env)
+               if c.status in global_rules.WRITE_STATUSES]
     if not changes:
         return None
     return {"changes": changes, "preview": global_rules.preview_lines(changes)}

@@ -1328,7 +1328,10 @@ class WizardApp(App):
             return []
         count = len(rules["changes"])
         lines = [f"[{DIM}]•[/] Replace the codegraph block with the codebase-memory-mcp block in "
-                 f"{count} global instruction files (backup first)"]
+                 f"{count} global instruction files (backup first)"
+                 + ("; where a file already has the codebase-memory-mcp block, the codegraph "
+                    "block is removed" if any(": remove the leftover codegraph block" in line
+                                              for line in rules["preview"]) else "")]
         lines.extend(f"[{DIM}]{escape(line)}[/]" for line in rules["preview"])
         return lines
 

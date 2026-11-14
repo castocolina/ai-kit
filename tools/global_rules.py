@@ -1,7 +1,8 @@
 """Migrate a leftover codegraph installer block to ai-kit's codebase-memory-mcp block.
 
 Applies to the four global instruction files. A file that already holds a
-codebase-memory-mcp block is left byte-equal. Bytes in and bytes out, with a backup
+codebase-memory-mcp block keeps it and every other byte; a complete codegraph block
+beside it is removed with one adjacent blank-line separator. Bytes in and bytes out, with a backup
 written before each file. The only writer of those files in ai-kit (SPEC R11, D-11).
 Stdlib only; never imports setup.py.
 """
@@ -9,6 +10,7 @@ Stdlib only; never imports setup.py.
 import contextlib
 import datetime
 import os
+import re
 import stat
 import tempfile
 from collections.abc import Callable
@@ -33,6 +35,7 @@ _BLOCK_BODY = (
     b"values."
 )
 AIKIT_BLOCK = CBM_START + b"\n" + _BLOCK_BODY + b"\n" + CBM_END
+WRITE_STATUSES = ("replace", "remove")  # the statuses `apply` writes
 HOST_ORDER = ("claude", "codex", "gemini", "opencode")
 _MARKERS = (CBM_START, CBM_END, LEGACY_START, LEGACY_END)
 
@@ -40,7 +43,7 @@ _MARKERS = (CBM_START, CBM_END, LEGACY_START, LEGACY_END)
 class Change(NamedTuple):
     host: str
     path: str
-    status: str  # "replace", "already", "ambiguous", or a skip reason
+    status: str  # "replace", "remove", "already", "ambiguous", or a skip reason
     before: bytes | None
     after: bytes | None
     detail: str = ""
@@ -74,6 +77,29 @@ def _read(path: str) -> bytes:
         return fh.read()
 
 
+def _plan_remove(host: str, path: str, data: bytes, cbm, legacy) -> Change:
+    """A file with both blocks: drop the legacy block and one adjacent blank-line separator,
+    every other byte equal. A legacy block that overlaps the codebase-memory-mcp block is skipped
+    whole (ambiguous), never cut."""
+    cbm_from, cbm_to = cbm[0] - len(CBM_START), cbm[1] + len(CBM_END)
+    begin, end = legacy[0] - len(LEGACY_START), legacy[1] + len(LEGACY_END)
+    if not (end <= cbm_from or begin >= cbm_to):
+        return Change(host, path, "ambiguous", data, None)
+    head, rest = data[:begin], data[end:]
+    blank = re.match(rb"(?:\r?\n){2}", rest)
+    if blank:
+        rest = rest[blank.end() :]
+    else:
+        newline = re.match(rb"\r?\n", rest)
+        if newline:
+            rest = rest[newline.end() :]
+        if not rest:  # the block ended the file: its separator goes with it
+            trail = re.search(rb"\r?\n$", head)
+            if trail:
+                head = head[: trail.start()]
+    return Change(host, path, "remove", data, head + rest)
+
+
 def _plan_one(host: str, path: str, data: bytes) -> Change:
     """Decide one file's Change from its bytes; a repeated marker is never migrated."""
     if any(data.count(marker) > 1 for marker in _MARKERS):
@@ -82,8 +108,12 @@ def _plan_one(host: str, path: str, data: bytes) -> Change:
         return Change(host, path, "ambiguous", data, None)
     cbm = find_block(data, CBM_START, CBM_END)
     if cbm != "no_block":
-        status = "already" if isinstance(cbm, tuple) else "one_marker"
-        return Change(host, path, status, data, None)
+        if not isinstance(cbm, tuple):
+            return Change(host, path, "one_marker", data, None)
+        legacy = find_block(data, LEGACY_START, LEGACY_END)
+        if not isinstance(legacy, tuple):
+            return Change(host, path, "already", data, None)
+        return _plan_remove(host, path, data, cbm, legacy)
     legacy = find_block(data, LEGACY_START, LEGACY_END)
     if isinstance(legacy, str):
         return Change(host, path, legacy, data, None)
@@ -141,6 +171,10 @@ def preview_lines(changes) -> list[str]:
             lines.append(f"{head}: replace the codegraph block with the codebase-memory-mcp block")
             lines.extend(_old_block_lines(change.before))
             lines.extend(f"  + {line}" for line in AIKIT_BLOCK.decode("utf-8").splitlines())
+        elif change.status == "remove":
+            lines.append(f"{head}: remove the leftover codegraph block "
+                         "(the codebase-memory-mcp block stays)")
+            lines.extend(_old_block_lines(change.before))
         elif change.status == "already":
             lines.append(f"{head}: already holds the codebase-memory-mcp block")
         elif change.status == "unreadable":
@@ -221,7 +255,7 @@ def apply(
     directory = _backup_dir(env)
     ok, lines = True, []
     for change in changes:
-        if change.status != "replace":
+        if change.status not in WRITE_STATUSES:
             lines.extend(preview_lines([change]))
             continue
         skipped = _reviewed_skip(change, reviewed_by_path)
@@ -266,10 +300,9 @@ def _write_change(change: Change, directory, when, before_replace) -> tuple[bool
         _replace_file(real, change.after)
     except OSError as exc:
         return False, f"{head}: write failed ({exc.strerror or exc}); not written"
-    return True, (
-        f"{head}: replaced the codegraph block with the codebase-memory-mcp block "
-        f"(backup {backup})"
-    )
+    done = ("removed the leftover codegraph block" if change.status == "remove"
+            else "replaced the codegraph block with the codebase-memory-mcp block")
+    return True, f"{head}: {done} (backup {backup})"
 
 
 def summary(env) -> str:
@@ -279,11 +312,20 @@ def summary(env) -> str:
     except OSError as exc:
         return f"unknown ({exc.strerror or exc})"
     installer = [c.host for c in changes if c.status == "replace"]
+    beside = [c.host for c in changes if c.status == "remove"]
     ambiguous = [c.host for c in changes if c.status == "ambiguous"]
     unreadable = [c.host for c in changes if c.status == "unreadable"]
+    parts = []
     if installer:
-        hosts = ", ".join(installer)
-        value = f"leftover codegraph block (codebase-memory-mcp replaces it): {hosts}"
+        parts.append(
+            f"leftover codegraph block (codebase-memory-mcp replaces it): {', '.join(installer)}"
+        )
+    if beside:
+        parts.append(
+            f"leftover codegraph block beside the codebase-memory-mcp block: {', '.join(beside)}"
+        )
+    if parts:
+        value = "; ".join(parts)
     elif any(c.status == "already" for c in changes):
         value = "codebase-memory-mcp block"
     else:

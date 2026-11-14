@@ -179,6 +179,20 @@ class TestSetupDevGuardedSteps(unittest.TestCase):
         self.assertIn("codebase-memory-mcp: present (left alone)", lines)
         self.assertFalse(any("codebase-memory-mcp" in item for item in fake.installs()))
 
+    def test_install_command_is_one_string_across_setup_dev_doctor_and_flow(self):
+        scripts = os.path.join(_ROOT, "skills", "ai-kit-commit-fold", "scripts")
+        sys.path.insert(0, scripts)
+        self.addCleanup(sys.path.remove, scripts)
+        sys.path.insert(0, os.path.join(_ROOT, "tools"))
+        self.addCleanup(sys.path.remove, os.path.join(_ROOT, "tools"))
+        import config_doctor_checks
+        import flow_index
+
+        self.assertEqual(setup_dev.CBM_INSTALL_COMMAND, flow_index.CBM_INSTALL)
+        self.assertEqual(config_doctor_checks.CBM_INSTALL_COMMAND, flow_index.CBM_INSTALL)
+        manual = next(t.manual for t in setup_dev.TOOLS if t.name == "codebase-memory-mcp")
+        self.assertIn(flow_index.CBM_INSTALL, manual)
+
     def test_installer_argv_never_uses_sudo_or_a_shell(self):
         for tool in setup_dev.TOOLS:
             with self.subTest(tool=tool.name):

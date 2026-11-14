@@ -31,6 +31,12 @@ class Tool(NamedTuple):
     verified: bool
 
 
+# printed, never run; config_doctor_checks shows the same command and imports it from here
+CBM_INSTALL_COMMAND = (
+    "curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh "
+    "| bash"
+)
+
 TOOLS = (
     Tool("pre-commit", None, "uv", ("uv", "tool", "install", "pre-commit"),
          "uv tool install pre-commit", True),
@@ -41,8 +47,7 @@ TOOLS = (
          "gh extension install github/gh-stack", True),
     Tool("codebase-memory-mcp", None, "", (),
          "install it with its own installer, which also wires each AI CLI: "
-         "curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/"
-         "install.sh | bash (github.com/DeusData/codebase-memory-mcp)", False),
+         f"{CBM_INSTALL_COMMAND} (github.com/DeusData/codebase-memory-mcp)", False),
     Tool("graphify", None, "uv", ("uv", "tool", "install", "graphifyy"),
          "uv tool install graphifyy", True),
 )

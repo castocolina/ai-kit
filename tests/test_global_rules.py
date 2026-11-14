@@ -187,6 +187,16 @@ class TestDoctorRow(_ScratchHome):
         self.assertEqual(config_doctor_checks.read_cbm_global_block(self.ctx()),
                          "codebase-memory-mcp block")
 
+    def test_apply_is_offered_only_while_a_codegraph_block_can_change(self):
+        row = next(r for r in config_doctor_checks.CONFIG_DOCTOR_ROWS if r.id == "cbm-global-block")
+        self.assertFalse(config_doctor_checks.evaluate_row(row, self.ctx())["apply_eligible"])
+        self.write_one("claude", global_rules.CBM_START + b"\nx\n" + global_rules.CBM_END)
+        self.assertFalse(config_doctor_checks.evaluate_row(row, self.ctx())["apply_eligible"])
+        self.write_all()
+        self.assertTrue(config_doctor_checks.evaluate_row(row, self.ctx())["apply_eligible"])
+        config_doctor_checks.apply_row("cbm-global-block", self.ctx(), False)
+        self.assertFalse(config_doctor_checks.evaluate_row(row, self.ctx())["apply_eligible"])
+
     def test_no_block_anywhere_reads_no_block(self):
         self.assertEqual(config_doctor_checks.read_cbm_global_block(self.ctx()), "no block")
 
@@ -298,22 +308,46 @@ class TestEdges(_ScratchHome):
         )
         self.assertEqual(self.backups(), [])
 
-    def test_codebase_memory_mcp_and_legacy_blocks_together_stay_byte_equal(self):
-        body = (
-            global_rules.CBM_START
-            + b"\ninstaller text\n"
-            + global_rules.CBM_END
-            + b"\n"
-            + LEGACY_START
-            + b"\n"
-            + OLD
-            + b"\n"
-            + LEGACY_END
-        )
+    def test_legacy_block_beside_the_codebase_memory_mcp_block_is_removed(self):
+        cbm = global_rules.CBM_START + b"\ninstaller text\n" + global_rules.CBM_END
+        legacy = LEGACY_START + b"\n" + OLD + b"\n" + LEGACY_END
+        cases = {
+            "after": (b"top\r\n\r\n" + cbm + b"\r\n\r\n" + legacy + b"\r\n tail",
+                      b"top\r\n\r\n" + cbm + b"\r\n\r\n tail"),
+            "before": (b"top\n\n" + legacy + b"\n\n" + cbm + b"\ntail\n",
+                       b"top\n\n" + cbm + b"\ntail\n"),
+            "at the end": (cbm + b"\n" + legacy, cbm),
+            "tight": (b"top\n" + legacy + b"\n" + cbm, b"top\n" + cbm),
+        }
+        for name, (body, expected) in cases.items():
+            with self.subTest(name):
+                self.write_one("claude", body)
+                ok, lines = global_rules.apply(self.env, False)
+                self.assertTrue(ok, lines)
+                self.assertEqual(self.read("claude"), expected)
+                self.assertTrue(any("removed the leftover codegraph block" in line
+                                    for line in lines), lines)
+        self.assertEqual(len(self.backups()), 4)
+
+    def test_overlapping_blocks_are_skipped_byte_equal(self):
+        body = (global_rules.CBM_START + b"\n" + LEGACY_START + b"\n" + global_rules.CBM_END
+                + b"\n" + LEGACY_END)
         self.write_one("claude", body)
-        ok, _lines = global_rules.apply(self.env, False)
+        ok, lines = global_rules.apply(self.env, False)
         self.assertTrue(ok)
         self.assertEqual(self.read("claude"), body)
+        self.assertTrue(any("repeated or nested block markers" in line for line in lines), lines)
+
+    def test_doctor_value_names_the_leftover_block_beside_the_codebase_memory_mcp_block(self):
+        cbm = global_rules.CBM_START + b"\ninstaller text\n" + global_rules.CBM_END
+        self.write_one("claude", cbm + b"\n\n" + LEGACY_START + b"\n" + OLD + b"\n" + LEGACY_END)
+        self.write_one("codex", cbm)
+        expected = ("leftover codegraph block beside the codebase-memory-mcp block: claude")
+        self.assertEqual(config_doctor_checks.read_cbm_global_block(self.ctx()), expected)
+        result = config_doctor_checks.apply_row("cbm-global-block", self.ctx(), False)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(config_doctor_checks.read_cbm_global_block(self.ctx()),
+                         "codebase-memory-mcp block")
 
     def test_lone_codebase_memory_mcp_start_marker_is_skipped_byte_equal(self):
         body = global_rules.CBM_START + b"\ninstaller text\n"

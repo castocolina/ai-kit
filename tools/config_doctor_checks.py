@@ -19,6 +19,7 @@ from typing import NamedTuple, cast
 import config_doctor_appliers
 import config_doctor_readers
 import global_rules
+import setup_dev
 
 UNKNOWN = config_doctor_readers.UNKNOWN
 
@@ -610,10 +611,7 @@ def read_cbm_global_block(ctx):
 # codebase-memory-mcp replaced codegraph in Phase 32.5. Its own installer owns client wiring: the
 # rows below only read, and CBM_INSTALL_COMMAND is shown to the user, never run.
 CBM_NAME = "codebase-memory-mcp"
-CBM_INSTALL_COMMAND = (
-    "curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh "
-    "| bash"
-)
+CBM_INSTALL_COMMAND = setup_dev.CBM_INSTALL_COMMAND  # one string, shared with `make setup-dev`
 CBM_HOSTS = ("claude", "opencode", "cursor", "copilot", "codex", "pi")
 # copied from ai_kit_spec.detection (tools/ never imports skills/); a drift test keeps them equal
 CBM_REGISTRATION_KEYS: dict[str, str | None] = {
@@ -788,6 +786,11 @@ def _playwright_apply_when(ctx):
     if not isinstance(ctx.data, dict):
         return False
     return _playwright_problem(ctx.data) and _is_executable(PLAYWRIGHT_FLATPAK_CHROME)
+
+
+def _cbm_global_block_apply_when(ctx):
+    """True only while some global file holds a codegraph block Apply can replace or remove."""
+    return any(c.status in global_rules.WRITE_STATUSES for c in global_rules.plan_changes(ctx.env))
 
 
 def _apply_claude_playwright_chrome(ctx, _target, dry):
@@ -1306,11 +1309,14 @@ CONFIG_DOCTOR_ROWS = [
             "Replaces a "
             "leftover codegraph 1.6.2 installer block with the codebase-memory-mcp block "
             "between the markers codebase-memory-mcp 0.12.1's installer uses "
-            "(read from its binary, not its docs); a file that already holds that block stays "
-            "byte-equal. Apply: replaces only that block, backup first."
+            "(read from its binary, not its docs); a file that already holds that block keeps "
+            "it, and a complete codegraph block beside it is removed. "
+            "Apply: offered only while a codegraph block can be replaced or removed; "
+            "changes only that block, backup first."
         ),
         source="tools/global_rules.py",
         apply=config_doctor_appliers.apply_cbm_global_block,
+        apply_when=_cbm_global_block_apply_when,
         reads_section_file=False,
     ),
     CheckRow(
