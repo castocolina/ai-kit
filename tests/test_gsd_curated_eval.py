@@ -4823,5 +4823,47 @@ class TestReviewFixes(unittest.TestCase):
         self.assertEqual(code, 1)
 
 
+class TestRefusalFailsTheClass(unittest.TestCase):
+    """A refusal raised in class setup fails that class only; later classes still run
+    (unittest's class-setup handler catches only Exception, and a refusal is a SystemExit)."""
+
+    @staticmethod
+    def _suite(guarded: bool) -> unittest.TestSuite:
+        class Refused(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                guard = ev.refusal_fails_the_class() if guarded else contextlib.nullcontext()
+                with guard:
+                    raise ev._refusal(1, "poison not copied")
+
+            def test_never_runs(self):
+                self.fail("class setup was refused")
+
+        class Later(unittest.TestCase):
+            def test_runs(self):
+                pass
+
+        loader = unittest.TestLoader()
+        return unittest.TestSuite(
+            [loader.loadTestsFromTestCase(Refused), loader.loadTestsFromTestCase(Later)]
+        )
+
+    def test_the_refused_class_errors_and_the_next_class_runs(self):
+        result = unittest.TestResult()
+        self._suite(True).run(result)
+        self.assertEqual(result.testsRun, 1)
+        self.assertEqual(len(result.errors), 1)
+        self.assertIn("poison not copied", result.errors[0][1])
+        self.assertEqual(result.failures, [])
+
+    def test_without_the_guard_the_refusal_ends_the_run(self):
+        with self.assertRaises(SystemExit):
+            self._suite(False).run(unittest.TestResult())
+
+    def test_other_exceptions_pass_through(self):
+        with self.assertRaises(unittest.SkipTest), ev.refusal_fails_the_class():
+            raise unittest.SkipTest("no cached pi package")
+
+
 if __name__ == "__main__":
     unittest.main()
