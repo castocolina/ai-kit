@@ -295,6 +295,14 @@ class TestSkillText(unittest.TestCase):
             self.assertIn(f"`{name}`", flat)
         self.assertIn(f"never below {gp_sections.TURN_FLOOR}", flat)
 
+    def test_the_validator_checks_every_owner_field(self):
+        """OWNER_FIELDS and the validator name the same fields: a wrong type in each is refused
+        by that field's name, so a field cannot be validated without being documented."""
+        for name in goal_prompt.OWNER_FIELDS:
+            with self.subTest(field=name), self.assertRaisesRegex(
+                    goal_prompt.UsageError, f"answers field {name} must be"):
+                goal_prompt._check_owner_fields({name: {"not": "valid"}})
+
     def test_caller_supplied_answers_replace_the_four_questions(self):
         flat = " ".join(SKILL_MD.read_text(encoding="utf-8").split())
         self.assertIn("its answers replace the four questions", flat)
