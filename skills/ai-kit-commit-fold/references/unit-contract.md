@@ -66,7 +66,7 @@ index lock shared with the worktree job, then rewrites `.aikit/brief/SKILL.md`, 
 next agents read. The three points are the unit's start (`start` runs it itself, last), before
 planning, and before the first execution wave; the `wave` point is skipped once every wave-1 plan
 of the unit has its summary. A tool that is missing or fails is one report line, never a refusal.
-The report lines are `codegraph:`, `graphify:`, at most one `note:`, `brief:` and `outcome:`; the
+The report lines are `codebase-memory-mcp:`, `graphify:`, at most one `note:`, `brief:` and `outcome:`; the
 brief lists the previous unit's range and changed files, an explore instruction for the agents,
 and the tracked documents that mention the changed names. The brief says which documents mention
 a name, never what a document describes. A recorded unit whose branch is not HEAD is refused

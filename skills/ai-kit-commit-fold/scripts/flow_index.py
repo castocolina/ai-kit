@@ -1,10 +1,11 @@
-"""Index refresh for one checkout: codegraph and graphify (30-01: R2, R3, D-08, D-12).
+"""Index refresh for one checkout: codebase-memory-mcp and graphify (32.5 R1; 30-01: R3, D-08).
 
-This module never reads files under `.codegraph/` (D-08): every codegraph decision comes
-from `codegraph status --json`. Every tool call passes the checkout as `cwd` and `.` as its
-own argv element, never a joined shell string. A failing or missing tool is reported as a
-line and never raises, so `fold.py index` exits 0. Project-specific copies and locks live in
-the adapter layer (`fold_adapters`), so this flow module names no framework.
+The code index is codebase-memory-mcp's (it replaced codegraph in Phase 32.5): one
+`codebase-memory-mcp cli index_repository` call per refresh, whose JSON result the step reads.
+Every tool call passes the checkout as `cwd` and `.` as its own argv element, never a joined
+shell string. A failing or missing tool is reported as a line and never raises, so
+`fold.py index` exits 0. Project-specific copies and locks live in the adapter layer
+(`fold_adapters`), so this flow module names no framework.
 """
 
 import contextlib
@@ -54,50 +55,55 @@ def _git_out(top, *args):
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
-# ---- codegraph (R2) -------------------------------------------------------------------------
+# ---- codebase-memory-mcp (32.5 R1) ----------------------------------------------------------
+
+CBM = "codebase-memory-mcp"
+# printed, never run: the upstream installer owns the client wiring
+CBM_INSTALL = ("curl -fsSL https://raw.githubusercontent.com/DeusData/"
+               "codebase-memory-mcp/main/install.sh | bash")
+# codegraph's old index folder (codebase-memory-mcp replaced it): left in place, never removed
+LEGACY_INDEX_DIR = ".codegraph"  # codebase-memory-mcp replaced codegraph; never removed
+_CBM_GAPS = (("not_indexed_files_count", "files not indexed"), ("skipped_count", "skipped"),
+             ("parse_partial_count", "partly parsed"), ("parse_unusable_count", "unusable"))
 
 
-def _codegraph_status(top, run, exe):
-    rc, out, _ = run([exe, "status", "--json"], top)
-    if rc != 0:
-        return None
+def _cbm_failure_detail(out, err):
+    text = err if err.strip() else out
     try:
-        data = json.loads(out)
+        data = json.loads(text)
     except ValueError:
-        return None
-    return data if isinstance(data, dict) else None
+        return _first_line(text)
+    if isinstance(data, dict):
+        detail = data.get("hint", data.get("error"))
+        if isinstance(detail, str):
+            return _first_line(detail)
+    return _first_line(text)
 
 
-def _codegraph_run(top, run, exe, verb, reason):
-    """Run one codegraph verb and return its report line (the R2 line forms)."""
-    rc, _, err = run([exe, *verb], top)
-    shown = " ".join(["codegraph", *verb])
-    if rc == 0:
-        return f"codegraph: ran {shown}" + (f" {reason}" if reason else "")
-    if "lock" in err.lower():
-        return f"codegraph: {shown} refused: codegraph's lock is held; retried at the next point"
-    return (f"codegraph: {shown} failed (exit {rc}: {_first_line(err)}); "
-            "retried at the next point")
+def _cbm_gaps(data):
+    parts = [f"{data[key]} {label}" for key, label in _CBM_GAPS
+             if isinstance(data.get(key), int) and data.get(key) > 0]
+    return "; coverage gaps: " + ", ".join(parts) if parts else ""
 
 
-def codegraph_step(top, run=_run_tool, which=shutil.which):
-    """R2 choice order: no own index -> `init -y`; reindex recommended -> `index`; else `sync`."""
-    exe = which("codegraph")
-    own = os.path.isdir(os.path.join(top, ".codegraph"))
+def cbm_step(top, run=_run_tool, which=shutil.which):
+    """One `index_repository` call on the checkout; the report line. Never raises."""
+    exe = which(CBM)
     if exe is None:
-        verb = "sync" if own else "init -y"
-        return f"codegraph: not installed; would run codegraph {verb}"
-    if not own:
-        return _codegraph_run(top, run, exe, ["init", "-y"], "(no index of its own)")
-    status = _codegraph_status(top, run, exe)
-    if status is None:
-        return _codegraph_run(top, run, exe, ["index"], "(status unreadable)")
-    if status.get("worktreeMismatch") or status.get("initialized") is False:
-        reason = "(worktreeMismatch)" if status.get("worktreeMismatch") else "(no index of its own)"
-        return _codegraph_run(top, run, exe, ["init", "-y"], reason)
-    if (status.get("index") or {}).get("reindexRecommended"):
-        return _codegraph_run(top, run, exe, ["index"], "(reindex recommended)")
-    return _codegraph_run(top, run, exe, ["sync"], "")
+        return (f"{CBM}: not installed; would run {CBM} cli index_repository "
+                f"(install: {CBM_INSTALL})")
+    argv = [exe, "cli", "index_repository", "--repo-path", ".", "--mode", "full"]
+    rc, out, err = run(argv, top)
+    if rc == 0:
+        try:
+            data = json.loads(out)
+        except ValueError:
+            data = None
+        if isinstance(data, dict) and data.get("status") == "indexed":
+            return (f"{CBM}: ran index_repository ({data.get('nodes')} nodes, "
+                    f"{data.get('edges')} edges{_cbm_gaps(data)})")
+    return (f"{CBM}: index_repository failed (exit {rc}: {_cbm_failure_detail(out, err)}); "
+            "retried at the next point")
 
 
 # ---- graphify (R3) --------------------------------------------------------------------------
@@ -174,7 +180,7 @@ def ensure_excluded(top, rels):
     notes = []
     exclude = flow_record.common_dir(top) / "info" / "exclude"
     for rel in rels:
-        # The directory itself, not a file inside it: codegraph's own `*` .gitignore hides the
+        # The directory itself, not a file inside it: a tool's own `*` .gitignore hides the folder's
         # contents but leaves its `.gitignore` visible, so a probe inside would never add the entry.
         text = exclude.read_text("utf-8", "surrogateescape") if exclude.is_file() else ""
         if f"{rel}/" in text.splitlines():
@@ -192,19 +198,22 @@ def ensure_excluded(top, rels):
 
 
 def refresh(top, run=_run_tool, which=shutil.which, clock=time.monotonic, sleep=time.sleep):
-    """One refresh of `top`: codegraph line, graphify line, then the note lines."""
+    """One refresh of `top`: codebase-memory-mcp line, graphify line, then the note lines."""
     notes = []
     # the ignore line goes in before the build, so the first graph already excludes milestones
     if fold_adapters.index_project(top) and which("graphify") is not None:
         note = fold_adapters.index_ensure_graphifyignore(top)
         if note:
             notes.append(note)
-    codegraph_line = codegraph_step(top, run, which)
+    cbm_line = cbm_step(top, run, which)
     graphify_line = graphify_step(top, run, which, clock, sleep)
-    rels = [".codegraph", "graphify-out"]
+    rels = ["graphify-out"]
+    if os.path.isdir(os.path.join(top, LEGACY_INDEX_DIR)):
+        # D-07: codegraph's folder (codebase-memory-mcp replaced it) is reported and kept
+        rels.insert(0, LEGACY_INDEX_DIR)
     if fold_adapters.index_copy_applies(top):
         rels.append(".planning/graphs")
-    return [codegraph_line, graphify_line, *notes, *ensure_excluded(top, rels)]
+    return [cbm_line, graphify_line, *notes, *ensure_excluded(top, rels)]
 
 
 # ---- job queue, log and the one-at-a-time lock (30-01: D-03 trigger one) ---------------------

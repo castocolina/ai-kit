@@ -2971,7 +2971,7 @@ class TestStartStep(unittest.TestCase):
         calls = index_fakes.index_calls(index_fakes.fakes_dir(self.root / "home") / "calls.log")
         in_repo = {call["name"] for call in calls
                    if pathlib.Path(call["cwd"]).resolve() == self.repo.resolve()}
-        self.assertTrue({"codegraph", "graphify"} <= in_repo, calls)
+        self.assertTrue({"codebase-memory-mcp", "graphify"} <= in_repo, calls)
         # _run() commits the plan on main first; the boundary adds nothing after that commit
         self.assertEqual(main_before, fold_fixtures.run_git(
             self.repo, self.env, "rev-parse", "main^").strip())

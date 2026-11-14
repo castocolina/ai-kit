@@ -1,6 +1,6 @@
-"""Unit and CLI cases for the index step (30-01): codegraph choice order, graphify freshness.
+"""Unit and CLI cases for the index step: codebase-memory-mcp report lines, graphify freshness.
 
-Every codegraph and graphify call reaches the recording fakes in `tests/index_fakes.py`,
+Every codebase-memory-mcp and graphify call reaches the recording fakes in `tests/index_fakes.py`,
 never a real tool: `git_env` puts the fake bin first on PATH, and the in-process cases pass
 `which` pointing at that bin.
 """
@@ -32,6 +32,9 @@ from tests.fold_fixtures import commit, git_env, make_repo, run_git
 
 FOLD = _SCRIPTS / "fold.py"
 NOT_GSD_LINE = "graphify: ran graphify update .; graphify-out only (not a GSD project)"
+RETIRED_TOOL = "codegraph"  # codebase-memory-mcp replaced it; no argv may name it (SPEC R1)
+CBM_NOT_INSTALLED = (f"codebase-memory-mcp: not installed; would run codebase-memory-mcp "
+                     f"cli index_repository (install: {flow_index.CBM_INSTALL})")
 
 
 class _Base(unittest.TestCase):
@@ -58,75 +61,112 @@ class _Base(unittest.TestCase):
     def calls(self):
         return index_fakes.index_calls(self.log)
 
-    def make_codegraph_dir(self):
-        (self.repo / ".codegraph").mkdir(exist_ok=True)
+    def make_legacy_index_dir(self):
+        legacy = self.repo / flow_index.LEGACY_INDEX_DIR
+        legacy.mkdir(exist_ok=True)
+        (legacy / ".gitignore").write_text("*\n!.gitignore\n", encoding="utf-8")
 
     def refresh(self):
         return flow_index.refresh(self.top, which=self.which)
 
 
-class CodegraphChoiceTests(_Base):
-    def test_no_own_index_runs_init_then_graphify_builds_at_head(self):
+class CbmStepTests(_Base):
+    def cbm_calls(self):
+        return [call for call in self.calls() if call["name"] == flow_index.CBM]
+
+    def test_index_repository_runs_and_graphify_builds_at_head(self):
         lines = self.refresh()
-        self.assertEqual(lines[0], "codegraph: ran codegraph init -y (no index of its own)")
+        self.assertEqual(lines[0],
+                         "codebase-memory-mcp: ran index_repository (32 nodes, 47 edges)")
         self.assertEqual(lines[1], NOT_GSD_LINE)
         graph = json.loads((self.repo / "graphify-out" / "graph.json").read_text("utf-8"))
         head = run_git(self.repo, self.env, "rev-parse", "HEAD").strip()
         self.assertEqual(graph["built_at_commit"], head)
 
-    def test_worktree_mismatch_runs_init(self):
-        self.make_codegraph_dir()
-        self.set_state(codegraph_status={self.top: {
-            "initialized": True, "worktreeMismatch": "/elsewhere",
-            "index": {"reindexRecommended": False}}})
-        self.assertEqual(self.refresh()[0], "codegraph: ran codegraph init -y (worktreeMismatch)")
+    def test_call_is_index_repository_full_mode_on_the_checkout(self):
+        self.refresh()
+        calls = self.cbm_calls()
+        self.assertEqual([call["argv"] for call in calls],
+                         [["cli", "index_repository", "--repo-path", ".", "--mode", "full"]])
+        self.assertEqual(os.path.realpath(calls[0]["cwd"]), os.path.realpath(self.repo))
 
-    def test_reindex_recommended_runs_index(self):
-        self.make_codegraph_dir()
-        self.set_state(codegraph_status={self.top: {
-            "initialized": True, "worktreeMismatch": None,
-            "index": {"reindexRecommended": True}}})
-        self.assertEqual(self.refresh()[0], "codegraph: ran codegraph index (reindex recommended)")
-
-    def test_current_index_runs_only_sync(self):
-        self.make_codegraph_dir()
-        self.assertEqual(self.refresh()[0], "codegraph: ran codegraph sync")
-        verbs = [call["argv"][0] for call in self.calls() if call["name"] == "codegraph"]
-        self.assertEqual(verbs, ["status", "sync"])
-
-    def test_unreadable_status_runs_full_index(self):
-        self.make_codegraph_dir()
-        self.set_state(codegraph_status={self.top: "unreadable"})
-        self.assertEqual(self.refresh()[0], "codegraph: ran codegraph index (status unreadable)")
-
-    def test_failing_index_is_reported_and_graphify_still_runs(self):
-        self.make_codegraph_dir()
-        self.set_state(codegraph_status={self.top: "unreadable"},
-                       codegraph_fail={"index": [1, "boom"]})
+    def test_failing_index_with_json_hint_is_one_line_and_graphify_still_runs(self):
+        self.set_state(cbm_fail=[1, json.dumps({"project": "x", "status": "error",
+                                                "hint": "Pipeline failed."})])
         lines = self.refresh()
         self.assertEqual(
             lines[0],
-            "codegraph: codegraph index failed (exit 1: boom); retried at the next point",
+            "codebase-memory-mcp: index_repository failed (exit 1: Pipeline failed.); "
+            "retried at the next point",
         )
         self.assertEqual(lines[1], NOT_GSD_LINE)
 
-    def test_sync_refused_by_codegraph_lock_is_retried_and_lock_is_kept(self):
-        self.make_codegraph_dir()
-        lock = self.repo / ".codegraph" / "codegraph.lock"
-        lock.write_text("held\n", encoding="utf-8")
-        self.set_state(codegraph_fail={"sync": [1, "error: database is locked"]})
+    def test_failing_index_with_plain_text_error_uses_its_first_line(self):
+        self.set_state(cbm_fail=[1, "repo_path is required"])
         self.assertEqual(
             self.refresh()[0],
-            "codegraph: codegraph sync refused: codegraph's lock is held; "
+            "codebase-memory-mcp: index_repository failed (exit 1: repo_path is required); "
             "retried at the next point",
         )
-        self.assertTrue(lock.exists())
+
+    def test_unreadable_result_on_exit_zero_is_a_failure(self):
+        self.set_state(cbm_raw="not json")
+        self.assertEqual(
+            self.refresh()[0],
+            "codebase-memory-mcp: index_repository failed (exit 0: not json); "
+            "retried at the next point",
+        )
+
+    def test_timeout_maps_to_one_failure_line(self):
+        line = flow_index.cbm_step(self.top, run=lambda argv, cwd: (124, "", "timed out"),
+                                   which=self.which)
+        self.assertEqual(
+            line,
+            "codebase-memory-mcp: index_repository failed (exit 124: timed out); "
+            "retried at the next point",
+        )
 
     def test_missing_tools_report_one_line_each_and_run_nothing(self):
         lines = flow_index.refresh(self.top, which=lambda name: None)
-        self.assertEqual(lines[0], "codegraph: not installed; would run codegraph init -y")
+        self.assertEqual(lines[0], CBM_NOT_INSTALLED)
         self.assertEqual(lines[1], "graphify: not installed; would run graphify update .")
         self.assertEqual(self.calls(), [])
+
+    def test_worktree_checkout_is_indexed_from_its_own_root(self):
+        wt = self.tmp / "wt"
+        run_git(self.repo, self.env, "worktree", "add", "-q", "--detach", str(wt), "HEAD")
+        flow_index.refresh(str(wt.resolve()), which=self.which)
+        calls = self.cbm_calls()
+        self.assertTrue(calls)
+        self.assertEqual(os.path.realpath(calls[0]["cwd"]), os.path.realpath(wt))
+
+    def test_no_recorded_call_names_the_retired_tool(self):
+        self.make_legacy_index_dir()
+        self.refresh()
+        self.refresh()
+        for call in self.calls():
+            self.assertNotIn(RETIRED_TOOL, call["name"])
+            for element in call["argv"]:
+                self.assertNotIn(RETIRED_TOOL, element)
+
+    def test_legacy_index_folder_is_left_in_place_and_excluded_once(self):
+        self.make_legacy_index_dir()
+        lines = self.refresh()
+        self.assertTrue((self.repo / flow_index.LEGACY_INDEX_DIR).is_dir())
+        exclude = (self.repo / ".git" / "info" / "exclude").read_text("utf-8").splitlines()
+        self.assertIn(f"{flow_index.LEGACY_INDEX_DIR}/", exclude)
+        self.assertIn(f"note: ignored {flow_index.LEGACY_INDEX_DIR}/ in .git/info/exclude", lines)
+
+    def test_index_with_coverage_gaps_reports_them_and_is_not_a_failure(self):
+        self.set_state(cbm_raw=json.dumps({
+            "project": "x", "status": "indexed", "nodes": 5, "edges": 7,
+            "not_indexed_files_count": 60, "skipped_count": 0, "parse_partial_count": 7,
+            "parse_unusable_count": 0}))
+        self.assertEqual(
+            self.refresh()[0],
+            "codebase-memory-mcp: ran index_repository (5 nodes, 7 edges; coverage gaps: "
+            "60 files not indexed, 7 partly parsed)",
+        )
 
 
 class GraphifyFreshnessTests(_Base):
@@ -159,6 +199,7 @@ class ArgvTests(_Base):
         self.assertTrue(calls)
         for call in calls:
             self.assertEqual(os.path.realpath(call["cwd"]), os.path.realpath(repo))
+            self.assertNotIn(RETIRED_TOOL, call["name"])
             for element in call["argv"]:
                 self.assertNotIn(str(repo), element)
                 self.assertNotIn(" ", element)
@@ -176,7 +217,7 @@ class CliTests(_Base):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         lines = proc.stdout.splitlines()
         self.assertEqual(lines[0], "flow index -: main")
-        self.assertTrue(lines[1].startswith("codegraph: "), lines)
+        self.assertTrue(lines[1].startswith("codebase-memory-mcp: "), lines)
         self.assertEqual(lines[2], NOT_GSD_LINE)
         self.assertEqual(lines[-1], "outcome: - done")
 
@@ -185,14 +226,15 @@ class CliTests(_Base):
         env["PATH"] = index_fakes.no_tool_path(self.tmp / "notools")
         proc = self.run_fold(env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("codegraph: not installed; would run codegraph init -y", proc.stdout)
+        self.assertIn(CBM_NOT_INSTALLED, proc.stdout)
         self.assertIn("graphify: not installed; would run graphify update .", proc.stdout)
 
     def test_host_path_keeps_the_index_fakes_reachable(self):
         forge_bin = self.tmp / "forge-bin"
         forge_bin.mkdir()
         path = host_fakes.host_path(forge_bin, self.env["PATH"])
-        self.assertEqual(shutil.which("codegraph", path=path), str(self.bin / "codegraph"))
+        self.assertEqual(shutil.which("codebase-memory-mcp", path=path),
+                         str(self.bin / "codebase-memory-mcp"))
 
 
 class _FakeClock:
@@ -442,7 +484,7 @@ class WorktreeQueueTests(_Base):
         self.assertLess(log.index(f"skipped {gone}"), log.index(f"start {self.top}"))
         self.assertIn(f"start {self.top}", log)
         self.assertIn(f"end {self.top}", log)
-        self.assertIn("  codegraph: not installed", log)
+        self.assertIn("  codebase-memory-mcp: not installed", log)
         self.assertEqual(self.queue_text(), "")
 
     def test_lock_holder_hands_queued_work_to_a_runner_on_release(self):

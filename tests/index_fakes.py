@@ -1,12 +1,14 @@
-"""Recording fakes for the codegraph and graphify CLIs used by the index step (30-01).
+"""Recording fakes for the codebase-memory-mcp and graphify CLIs used by the index step (30-01).
 
-Helper only, not a test module. Both fakes append each call to a log in the
+Helper only, not a test module. Each fake appends each call to a log in the
 `tests.host_fakes.fake_calls` format plus `cwd` and an `event` key: a `start` line before
 acting and an `end` line with `rc` after. State is a JSON file (absent or `{}` means
-defaults). Keys: `codegraph_status` (object keyed by absolute cwd; a status object, or the
-string `unreadable`), `codegraph_fail` (verb -> [rc, stderr line]), `delay_s` (sleep before
-acting), `graphify_fail` ([rc, stderr line] or null), `graphify_no_graph` (exit 0, write
-nothing), `explore_raw` (string printed verbatim by `codegraph explore`, or null).
+defaults). Keys: `cbm_fail` ([rc, stderr line]: fails `index_repository`), `cbm_raw` (string
+printed verbatim by `index_repository`), `cbm_projects` (list of project roots that
+`list_projects` pages through, 500 a page; absent means the checkout alone), `cbm_query_fail`
+([rc, stderr line]: fails `query_graph`), `cbm_query_raw` (string printed verbatim by
+`query_graph`), `graphify_fail` ([rc, stderr line] or null), `graphify_no_graph` (exit 0,
+write nothing), `delay_s` (sleep before acting).
 
 `graphify update .` writes `graphify-out/graph.json` with `built_at_commit` (full HEAD sha),
 one node per tracked path not excluded by the root `.graphifyignore`, plus small
@@ -56,53 +58,80 @@ def git(*args):
                           check=False).stdout
 
 
-def codegraph(state):
-    verb = ARGV[0] if ARGV else ""
-    if ARGV[:2] == ["init", "-y"]:
-        os.makedirs(os.path.join(CWD, ".codegraph"), exist_ok=True)
-        with open(os.path.join(CWD, ".codegraph", ".gitignore"), "w", encoding="utf-8") as h:
-            h.write("*\n!.gitignore\n")
-        return 0, "", ""
-    if verb in ("sync", "index"):
-        fail = (state.get("codegraph_fail") or {}).get(verb)
-        if fail:
-            return fail[0], "", fail[1] + "\n"
-        return 0, "", ""
-    if verb == "status":
-        status = (state.get("codegraph_status") or {}).get(CWD)
-        if status == "unreadable":
-            return 1, "not json\n", ""
-        if status is None:
-            if os.path.isdir(os.path.join(CWD, ".codegraph")):
-                status = {"initialized": True,
-                          "pendingChanges": {"added": 0, "modified": 0, "removed": 0},
-                          "worktreeMismatch": None, "index": {"reindexRecommended": False}}
-            else:
-                status = {"initialized": False}
-        return 0, json.dumps(status) + "\n", ""
-    if verb == "explore":
-        if state.get("explore_raw") is not None:
-            return 0, state["explore_raw"], ""
-        query = " ".join(ARGV[1:])
-        out = [f"**Exploration: {query}**"]
-        for token in query.split():
-            path = os.path.join(CWD, token)
+def name_of(root):
+    return root.lstrip("/").replace("/", "-")
+
+
+def in_list_items(query):
+    """Quoted items of the first IN [...] list; a backslash escapes the next character."""
+    start = query.find("IN [")
+    if start < 0:
+        return []
+    items, cur, inside, i = [], [], False, start + 4
+    while i < len(query):
+        char = query[i]
+        if not inside:
+            if char == "]":
+                break
+            if char == "'":
+                inside, cur = True, []
+        elif char == "\\":
+            i += 1
+            cur.append(query[i])
+        elif char == "'":
+            inside = False
+            items.append("".join(cur))
+        else:
+            cur.append(char)
+        i += 1
+    return items
+
+
+def cbm(state):
+    opts = dict(zip(ARGV[2::2], ARGV[3::2]))
+    if ARGV[:2] == ["cli", "index_repository"]:
+        if state.get("cbm_fail"):
+            return state["cbm_fail"][0], "", state["cbm_fail"][1] + "\n"
+        if state.get("cbm_raw") is not None:
+            return 0, state["cbm_raw"], ""
+        root = os.path.realpath(os.path.join(CWD, opts.get("--repo-path", ".")))
+        data = {"project": name_of(root), "excluded": {"dirs": [".git"], "count": 1,
+                                                      "truncated": False},
+                "not_indexed_files_count": 0, "skipped_count": 0, "parse_partial_count": 0,
+                "parse_unusable_count": 0, "nodes": 32, "edges": 47, "status": "indexed"}
+        return 0, json.dumps(data) + "\n", ""
+    if ARGV[:2] == ["cli", "list_projects"]:
+        roots = state.get("cbm_projects")
+        if not isinstance(roots, list):
+            roots = [os.path.realpath(CWD)]
+        limit = min(int(opts.get("--limit", "50")), 500)
+        offset = int(opts.get("--offset", "0"))
+        page = roots[offset:offset + limit]
+        rows = [{"name": name_of(root), "root_path": root, "branch": "main"} for root in page]
+        data = {"projects": rows, "total": len(roots), "offset": offset, "limit": limit,
+                "returned": len(page), "has_more": offset + len(page) < len(roots)}
+        return 0, json.dumps(data) + "\n", ""
+    if ARGV[:2] == ["cli", "query_graph"]:
+        if state.get("cbm_query_fail"):
+            return state["cbm_query_fail"][0], "", state["cbm_query_fail"][1] + "\n"
+        if state.get("cbm_query_raw") is not None:
+            return 0, state["cbm_query_raw"], ""
+        cap = int(opts.get("--max-rows", "200"))
+        rows = []
+        for item in in_list_items(opts.get("--query", "")):
+            path = os.path.join(CWD, item)
             if not os.path.isfile(path):
                 continue
-            items = []
             with open(path, encoding="utf-8", errors="replace") as handle:
                 for line in handle:
                     match = re.match(r"^(\s*)(def|class)\s+([A-Za-z_]\w*)", line)
                     if match:
-                        kind = "class" if match.group(2) == "class" else (
-                            "method" if match.group(1) else "function")
-                        items.append(f"{match.group(3)}({kind})")
-            shown = items[:6]
-            if len(items) > 6:
-                shown.append(f"+{len(items) - 6} more")
-            out.append(f"**`{token}`** — " + ", ".join(shown))
-        return 0, "\n".join(out) + "\n", ""
-    return 2, "", f"codegraph fake: unknown argv {ARGV}\n"
+                        rows.append([item, match.group(3)])
+        data = {"columns": ["f.file_path", "f.name"], "rows": rows[:cap],
+                "returned": min(len(rows), cap), "total": len(rows),
+                "total_relation": "eq", "has_more": len(rows) > cap, "truncated": False}
+        return 0, json.dumps(data) + "\n", ""
+    return 2, "", f"codebase-memory-mcp fake: unknown argv {ARGV}\n"
 
 
 def graphify(state):
@@ -140,8 +169,8 @@ def main():
     record("start")
     if state.get("delay_s"):
         time.sleep(float(state["delay_s"]))
-    if NAME == "codegraph":
-        rc, out, err = codegraph(state)
+    if NAME == "codebase-memory-mcp":
+        rc, out, err = cbm(state)
     else:
         rc, out, err = graphify(state)
     record("end", rc)
@@ -161,10 +190,10 @@ def fakes_dir(home) -> Path:
 
 
 def write_index_fakes(bin_dir, state_path, log_path) -> str:
-    """Write the `codegraph` and `graphify` fakes into `bin_dir`; return the bin dir."""
+    """Write the codebase-memory-mcp and graphify fakes into `bin_dir`."""
     bin_dir = Path(bin_dir)
     bin_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("codegraph", "graphify"):
+    for name in ("codebase-memory-mcp", "graphify"):
         body = (_FAKE.replace("@PY@", sys.executable)
                 .replace("@LOG@", repr(str(log_path)))
                 .replace("@STATE@", repr(str(state_path))))
@@ -177,14 +206,14 @@ def write_index_fakes(bin_dir, state_path, log_path) -> str:
 def tool_path(bin_dir, base=None) -> str:
     """`bin_dir` first, then `base` (default: the current PATH); the fakes must win."""
     result = str(bin_dir) + os.pathsep + (base if base is not None else os.environ.get("PATH", ""))
-    found = shutil.which("codegraph", path=result)
+    found = shutil.which("codebase-memory-mcp", path=result)
     if found is None or Path(found).parent != Path(bin_dir):
-        raise AssertionError(f"codegraph fake not first on PATH: {found}")
+        raise AssertionError(f"codebase-memory-mcp fake not first on PATH: {found}")
     return result
 
 
 def no_tool_path(directory) -> str:
-    """A PATH holding only git, so `codegraph` and `graphify` are not found."""
+    """A PATH holding only git, so `codebase-memory-mcp` and `graphify` are not found."""
     bin_dir = Path(directory) / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     git_bin = shutil.which("git")

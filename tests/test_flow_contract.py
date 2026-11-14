@@ -769,7 +769,7 @@ class TestStartBoundaryReport(_FlowCase):
         self.assertEqual(code, 0, text)
         boundary = [line for line in text.splitlines() if line.startswith("boundary: ")]
         self.assertEqual(len(boundary), 1, text)
-        self.assertIn("codegraph: ran codegraph init -y", boundary[0])
+        self.assertIn("codebase-memory-mcp: ran index_repository", boundary[0])
         self.assertIn("graphify: ran graphify update .", boundary[0])
         self.assertIn("brief: .aikit/brief/SKILL.md (no previous unit)", boundary[0])
         brief = (self.repo / ".aikit" / "brief" / "SKILL.md").read_text(encoding="utf-8")

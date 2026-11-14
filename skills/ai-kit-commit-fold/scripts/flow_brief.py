@@ -1,10 +1,12 @@
 """The unit brief: a plain file the next agents read; it only says which documents mention a name.
 
 The brief names the previous unit's range and changed files, tells each agent to explore the
-changed code with codegraph, and lists the tracked documents that mention the changed names. A
-listed document only mentions a name; the brief never claims that a document explains a symbol.
+changed code with codebase-memory-mcp, and lists the tracked documents that mention the changed
+names. A listed document only mentions a name; the brief never claims that a document explains a
+symbol.
 """
 
+import json
 import os
 import re
 import subprocess
@@ -19,6 +21,9 @@ from flow_record import FlowError
 BRIEF_REL = Path(".aikit") / "brief" / "SKILL.md"
 MENTION_CAP = 10
 MAX_EXPLORE_FILES = 50  # shortcut: explore gets at most 50 code files; raise it when units grow
+MAX_QUERY_ROWS = 2000
+# codebase-memory-mcp caps list_projects --limit at 500 (0.12.1); page with --offset
+PROJECT_PAGE = 500
 CODE_SUFFIXES = (".py", ".js", ".cjs", ".mjs", ".ts", ".tsx", ".jsx", ".sh", ".go", ".rs", ".java",
                  ".kt", ".rb", ".c", ".h", ".cpp", ".cs", ".swift", ".php")
 DOC_SUFFIXES = (".md", ".mdx", ".rst", ".txt")
@@ -29,18 +34,16 @@ _READ_NOTE = (
     "when you are writing the next unit's plan."
 )
 _EXPLORE = (
-    "Run `codegraph_explore` (or `codegraph explore \"<files>\"` in a shell) on the changed code "
-    "files above for their symbols, callers and blast radius. If the index is missing or stale, "
-    "run `codegraph init -y` or `codegraph sync` first."
+    "Explore the changed code files above with codebase-memory-mcp: `search_graph` and "
+    "`trace_path` for their symbols and callers, `get_code_snippet` for source (the MCP tools, "
+    "or `codebase-memory-mcp cli <tool> --flag value` in a shell). If `list_projects` shows no "
+    "project for this checkout, run `index_repository` on it first."
 )
 _NO_CODE = ("No code file changed in this range (documents or config only), "
             "so there is nothing to explore.")
 _MENTION_NOTE = ("A listed document only mentions a name; confirm what it says about the symbol "
-                 "with `codegraph_explore` or by reading it.")
+                 "with `search_graph` or `get_code_snippet`, or by reading it.")
 _STATUS = {"A": "added", "M": "modified", "D": "removed", "T": "modified"}
-_HEADER = re.compile(r"^\*\*`([^`]+)`\*\* — (.*)$")
-_ITEM = re.compile(r"^([A-Za-z_$][\w$.]*)(?:\(([a-z_]+)\))?$")
-_MORE = re.compile(r"^\+(\d+) more$")
 NO_BRIEF = (
     "# Unit brief\n"
     "\n"
@@ -97,34 +100,76 @@ def changed_files(top, base, end):
     return sorted(entries, key=lambda entry: entry[1])
 
 
+def cypher_quote(path):
+    """A Cypher single-quoted literal: each backslash doubled first, then each quote escaped."""
+    return "'" + path.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _cbm_project(top, run):
+    """The project name whose root is this checkout, paging `list_projects`; None when absent."""
+    want = os.path.realpath(top)
+    offset = 0
+    while True:
+        rc, out, _ = run([flow_index.CBM, "cli", "list_projects", "--format", "json",
+                          "--limit", str(PROJECT_PAGE), "--offset", str(offset)], top)
+        if rc != 0:
+            return None
+        try:
+            data = json.loads(out)
+        except ValueError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        projects = data.get("projects")
+        rows = ([row for row in projects if isinstance(row, dict)]
+                if isinstance(projects, list) else [])
+        for row in rows:
+            if row.get("root_path") == want and isinstance(row.get("name"), str):
+                return row["name"]
+        if not data.get("has_more") or not rows:
+            return None  # a page with has_more and no rows would loop forever
+        offset += len(rows)
+
+
+def _query_names(out):
+    """(names, label) from one `query_graph` JSON result: the name column of each row."""
+    try:
+        data = json.loads(out)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        return [], "file names only: codebase-memory-mcp query_graph output unreadable"
+    rows = data.get("rows")
+    if not isinstance(rows, list):
+        rows = []
+    names = {row[1] for row in rows
+             if isinstance(row, list) and len(row) > 1 and isinstance(row[1], str)}
+    if not names:
+        return [], "file names only: codebase-memory-mcp listed no names"
+    if data.get("has_more") or data.get("truncated"):
+        return sorted(names), (f"symbol names from codebase-memory-mcp, partial: more than "
+                               f"{MAX_QUERY_ROWS} rows; plus file names")
+    return sorted(names), "symbol names from codebase-memory-mcp plus file names"
+
+
 def explore_names(top, code_paths, run, which):
-    """(symbol names, label) from one `codegraph explore` call over `code_paths`."""
+    """(symbol names, label): functions, methods and classes of `code_paths` in the index."""
     if not code_paths:
         return [], "file names only: no code file changed in this range"
-    if which("codegraph") is None:
-        return [], "file names only: the codegraph CLI is not installed"
-    rc, out, _err = run(["codegraph", "explore", " ".join(code_paths)], top)
+    if which(flow_index.CBM) is None:
+        return [], "file names only: the codebase-memory-mcp CLI is not installed"
+    project = _cbm_project(top, run)
+    if project is None:
+        return [], "file names only: no codebase-memory-mcp index for this checkout"
+    in_list = ", ".join(cypher_quote(path) for path in code_paths)
+    query = (f"MATCH (f) WHERE f.file_path IN [{in_list}] AND "
+             "(f:Function OR f:Method OR f:Class) RETURN f.file_path, f.name")
+    rc, out, _ = run([flow_index.CBM, "cli", "query_graph", "--project", project,
+                      "--format", "json", "--max-rows", str(MAX_QUERY_ROWS), "--query", query],
+                     top)
     if rc != 0:
-        return [], f"file names only: codegraph explore failed, exit {rc}"
-    names, dropped = set(), 0
-    for line in out.splitlines():
-        header = _HEADER.match(line)
-        if not header:
-            continue
-        for item in header.group(2).split(", "):
-            more = _MORE.match(item)
-            if more:
-                dropped += int(more.group(1))
-                continue
-            found = _ITEM.match(item)
-            if found:
-                names.add(found.group(1))
-    if not names:
-        return [], "file names only: codegraph explore listed no names"
-    if dropped:
-        return sorted(names), (f"symbol names from `codegraph explore`, partial: {dropped} more "
-                               "not listed by codegraph; plus file names")
-    return sorted(names), "symbol names from `codegraph explore` plus file names"
+        return [], f"file names only: codebase-memory-mcp query_graph failed, exit {rc}"
+    return _query_names(out)
 
 
 def mentions(top, names):
