@@ -529,6 +529,14 @@ class TestCli(unittest.TestCase):
             "work_set": missing,
             "numbers": answers(work_set={"kind": "phases", "numbers": [16]}),
             "output_dir": answers(output_dir="/abs/secret-place-xyz"),
+            "push_after_fold": answers(push_after_fold="secret-place-xyz"),
+            "turn_cap": answers(turn_cap="secret-place-xyz"),
+            "models": answers(models="secret-place-xyz"),
+            "review_lens": answers(
+                review_lens={"name": "secret-place-xyz", "skill": "Not A Skill"}
+            ),
+            "phase_end": answers(phase_end="secret-place-xyz"),
+            "report_language": answers(report_language=["secret-place-xyz"]),
         }
         for field, doc in cases.items():
             with self.subTest(field=field):
@@ -536,6 +544,55 @@ class TestCli(unittest.TestCase):
                 self.assertEqual(code, 2)
                 self.assertIn(field, json.loads(err)["error"])
                 self.assertNotIn("secret-place-xyz", err)
+
+    def test_owner_field_boundaries_and_empty_values_are_refused_by_name(self):
+        models = {
+            "planner": {"model": "opus", "effort": "xhigh"},
+            "executor": {"model": "haiku", "effort": "high"},
+        }
+        lens = {"name": "ponytail", "skill": "ponytail:ponytail-review"}
+        accepted = [
+            ("turn_cap", 1),
+            ("turn_cap", 280),
+            ("turn_cap", None),
+            ("push_after_fold", True),
+            ("push_after_fold", False),
+            ("push_after_fold", None),
+            ("review_lens", lens),
+            ("phase_end", ["a"]),
+            ("report_language", "Spanish"),
+            ("models", models),
+        ]
+        for field, value in accepted:
+            with self.subTest(field=field, value=repr(value)):
+                self.assertIsNone(goal_prompt._check_answers(answers(**{field: value})))
+        empty_effort = {
+            "planner": {"model": "opus", "effort": ""},
+            "executor": {"model": "haiku", "effort": "high"},
+        }
+        refused = [
+            ("turn_cap", 0),
+            ("turn_cap", -1),
+            ("turn_cap", 1.5),
+            ("turn_cap", True),
+            ("turn_cap", "7"),
+            ("push_after_fold", "yes"),
+            ("models", {}),
+            ("models", empty_effort),
+            ("review_lens", {"name": "ponytail", "skill": "Bad Skill"}),
+            ("review_lens", {"name": "", "skill": "ponytail:ponytail-review"}),
+            ("review_lens", {**lens, "questions": ""}),
+            ("phase_end", []),
+            ("phase_end", [""]),
+            ("phase_end", [1]),
+            ("report_language", ""),
+            ("report_language", "   "),
+        ]
+        for field, value in refused:
+            with self.subTest(field=field, value=repr(value)):
+                with self.assertRaises(goal_prompt.UsageError) as caught:
+                    goal_prompt._check_answers(answers(**{field: value}))
+                self.assertIn(f"answers field {field}", str(caught.exception))
 
     def test_render_rejects_answers_that_are_not_json(self):
         fx.opengsd_project(self.repo, PHASES)

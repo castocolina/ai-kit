@@ -30,8 +30,8 @@ from gp_host import HostSeams
 from gp_matrix import MatrixInputs
 from gp_render import RenderContext
 
-__all__ = ["CliSeams", "UsageError", "build_detect", "build_parser", "main", "parse_work_set",
-           "real_seams", "run_render"]
+__all__ = ["OWNER_FIELDS", "CliSeams", "UsageError", "build_detect", "build_parser", "main",
+           "parse_work_set", "real_seams", "run_render"]
 
 SCHEMA_VERSION = 1
 GSD_TIMEOUT = 60
@@ -45,6 +45,15 @@ WORK_KINDS = ("phases", "plans", "free")
 STRATEGIES = ("goal", "loop", "autonomous")
 AUTONOMOUS_DROPPED = "/gsd-autonomous needs a GSD phases work set on this scope"
 SKILL_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
+OWNER_FIELDS = (
+    "push_after_fold",
+    "turn_cap",
+    "models",
+    "review_lens",
+    "phase_end",
+    "report_language",
+)
+LENS_SKILL_RE = re.compile(r"[a-z0-9][a-z0-9-]*(?::[a-z0-9][a-z0-9-]*)?")
 
 
 class UsageError(ValueError):
@@ -531,6 +540,75 @@ def _check_output_dir(value: Any) -> None:
         raise UsageError("field output_dir must stay inside the repository")
 
 
+def _text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _turn_cap_ok(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def _models_ok(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return all(
+        isinstance(value.get(role), dict)
+        and _text(value[role].get("model"))
+        and _text(value[role].get("effort"))
+        for role in ("planner", "executor")
+    )
+
+
+def _lens_ok(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    skill = value.get("skill")
+    questions = value.get("questions")
+    return (
+        _text(value.get("name"))
+        and isinstance(skill, str)
+        and LENS_SKILL_RE.fullmatch(skill) is not None
+        and (questions is None or _text(questions))
+    )
+
+
+def _check_owner_fields(answers: dict[str, Any]) -> None:
+    """The six optional owner run rules. A wrong type is refused by field name, never by value."""
+    push = answers.get("push_after_fold")
+    _require(push is None or isinstance(push, bool), "push_after_fold", "true or false")
+    cap = answers.get("turn_cap")
+    _require(
+        "turn_cap" not in answers or cap is None or _turn_cap_ok(cap),
+        "turn_cap",
+        "a whole number of 1 or more, or null",
+    )
+    models = answers.get("models")
+    _require(
+        models is None or _models_ok(models),
+        "models",
+        "an object with planner and executor, each holding a non-empty model and effort",
+    )
+    lens = answers.get("review_lens")
+    _require(
+        lens is None or _lens_ok(lens),
+        "review_lens",
+        "an object with a non-empty name, a skill name and optional non-empty questions",
+    )
+    phase_end = answers.get("phase_end")
+    _require(
+        phase_end is None
+        or (
+            _string_list(phase_end)
+            and len(phase_end) > 0
+            and all(_text(entry) for entry in phase_end)
+        ),
+        "phase_end",
+        "a non-empty list of non-empty strings",
+    )
+    report = answers.get("report_language")
+    _require(report is None or _text(report), "report_language", "a non-empty string")
+
+
 def _check_answers(answers: Any) -> None:
     if not isinstance(answers, dict):
         raise UsageError("--answers must hold a JSON object")
@@ -550,6 +628,7 @@ def _check_answers(answers: Any) -> None:
     _require(_string_list(skills) and all(SKILL_NAME_RE.fullmatch(s) for s in skills),
              "skills", "a list of skill names")
     _check_output_dir(answers.get("output_dir"))
+    _check_owner_fields(answers)
 
 
 def _merged_skills(detect: Mapping[str, Any], answers: Mapping[str, Any]) -> list[str]:
