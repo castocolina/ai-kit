@@ -1818,7 +1818,7 @@ class TestFixture(unittest.TestCase):
 
         xdg = os.path.join(self._tmp, "xdg-config")
         os.makedirs(os.path.join(xdg, "ai-kit"))
-        with open(os.path.join(xdg, "ai-kit", "review-spec.toml"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(xdg, "ai-kit", "config.toml"), "w", encoding="utf-8") as fh:
             fh.write("[[[")
         env = {"XDG_CONFIG_HOME": xdg, "HOME": self._tmp, "PATH": os.environ.get("PATH", "")}
         args = argparse.Namespace(cwd=self._tmp, extra_candidate=[])

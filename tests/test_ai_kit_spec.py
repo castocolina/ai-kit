@@ -33,7 +33,6 @@ from ai_kit_spec import (
     cli,
     commands,
     config_io,
-    config_migrate,
     detection,
     dispatch_guidance,
     execute_dispatch,
@@ -71,7 +70,7 @@ from ai_kit_spec.config_io import (
     cfg_load_toml,
     cfg_local_path,
     cfg_merge_reviewers,
-    cfg_render_toml,
+    cfg_render_lanes,
     cfg_resolve,
     cfg_write_toml,
     tomllib,
@@ -234,7 +233,7 @@ class TestLoadToml(unittest.TestCase):
         self.assertEqual(cfg_load_toml("/no/such/file.toml"), {})
 
     def test_malformed_toml_raises_config_error(self):
-        # D-11/R13 (Plan 16.1-08): a broken review-spec.toml fails LOUDLY (ConfigError with
+        # D-11/R13 (Plan 16.1-08): a broken config.toml fails LOUDLY (ConfigError with
         # the path and parser message) instead of silently disabling cross-AI review.
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "bad.toml")
@@ -273,7 +272,7 @@ class TestMergeReviewers(unittest.TestCase):
         self.assertEqual(merged[0]["model"], "m1-override")
 
     def test_entry_with_no_key_is_skipped_not_raised(self):
-        # one hand-written mistake in review-spec.toml must not crash the
+        # one hand-written mistake in config.toml must not crash the
         # whole orchestrator (matches cfg_load_toml's never-raises contract)
         global_list = [{"key": "a", "model": "m1"}, {"model": "no-key-here"}]
         local_list = [{"model": "also-no-key"}]
@@ -290,27 +289,19 @@ class TestResolveConfig(unittest.TestCase):
         self.env = {"HOME": self.global_home}
         os.makedirs(os.path.join(self.global_home, ".config", "ai-kit"), exist_ok=True)
         with open(
-            os.path.join(self.global_home, ".config", "ai-kit", "review-spec.toml"),
+            os.path.join(self.global_home, ".config", "ai-kit", "config.toml"),
             "w",
             encoding="utf-8",
         ) as f:
             f.write(
-                '[policy]\nmode = "single"\nladder = ["a"]\n'
-                '[[reviewers]]\nkey = "a"\nmodel = "m1"\nvendor = "openai"\n'
+                '[lanes.policy]\nmode = "single"\nladder = ["a"]\n'
+                '[[lanes.review]]\nkey = "a"\nmodel = "m1"\nvendor = "openai"\n'
             )
 
-    def _trust_local_file(self, local_path: str) -> None:
-        with open(local_path, "rb") as f:
-            self._trust_local(f.read())
-
-    def _trust_local(self, raw: bytes) -> None:
-        """Record trust for this test's own local .aikit/review-spec.toml -- a local file is
-        only applied once its exact content is trusted (Plan 16.1-08, HARD-03)."""
-        trust.record_trust(
-            config_io.cfg_trust_store_dir(self.env),
-            os.path.realpath(config_io.cfg_local_path(self.tmp)),
-            raw,
-        )
+    def _trust_local_file(self) -> None:
+        """Trust this test's own project config.toml (D-11: a file with no command lane needs
+        no trust, and one with a command lane is applied only once it is trusted)."""
+        config_io.cfg_trust_project(self.tmp, self.env)
 
     def test_no_local_file_uses_global_only(self):
         resolved = cfg_resolve(self.tmp, self.env)
@@ -319,10 +310,10 @@ class TestResolveConfig(unittest.TestCase):
 
     def test_local_only_strategy_ignores_global(self):
         os.makedirs(os.path.join(self.tmp, ".aikit"), exist_ok=True)
-        local_path = os.path.join(self.tmp, ".aikit", "review-spec.toml")
+        local_path = config_io.cfg_local_path(self.tmp)
         with open(local_path, "w", encoding="utf-8") as f:
-            f.write('strategy = "local-only"\n[policy]\nmode = "double"\n')
-        self._trust_local_file(local_path)
+            f.write('[lanes]\nstrategy = "local-only"\n[lanes.policy]\nmode = "double"\n')
+        self._trust_local_file()
         resolved = cfg_resolve(self.tmp, self.env)
         self.assertEqual(resolved["policy"]["mode"], "double")
         # local declared no reviewers, global not consulted
@@ -330,10 +321,11 @@ class TestResolveConfig(unittest.TestCase):
 
     def test_global_merge_is_the_default_strategy(self):
         os.makedirs(os.path.join(self.tmp, ".aikit"), exist_ok=True)
-        local_path = os.path.join(self.tmp, ".aikit", "review-spec.toml")
+        local_path = config_io.cfg_local_path(self.tmp)
         with open(local_path, "w", encoding="utf-8") as f:
-            f.write('[[reviewers]]\nkey = "a"\nmodel = "m1"\nvendor = "openai"\neffort = "low"\n')
-        self._trust_local_file(local_path)
+            f.write('[[lanes.review]]\nkey = "a"\nmodel = "m1"\n'
+                    'vendor = "openai"\neffort = "low"\n')
+        self._trust_local_file()
         resolved = cfg_resolve(self.tmp, self.env)
         self.assertEqual(resolved["policy"]["mode"], "single")  # inherited from global
         self.assertEqual(resolved["reviewers"][0]["effort"], "low")  # local override applied
@@ -346,66 +338,66 @@ class TestRenderAndWriteToml(unittest.TestCase):
 
         config = {
             "policy": {"mode": "double", "ladder": ["a", "b"]},
-            "reviewers": [{"key": "a", "model": "m1", "vendor": "openai"}],
+            "lanes": [{"key": "a", "model": "m1", "vendor": "openai"}],
         }
-        rendered = cfg_render_toml(config)
+        rendered = cfg_render_lanes(config)
         parsed = tomllib.loads(rendered)
-        self.assertEqual(parsed["policy"]["mode"], "double")
-        self.assertEqual(parsed["policy"]["ladder"], ["a", "b"])
-        self.assertEqual(parsed["reviewers"][0]["key"], "a")
+        self.assertEqual(parsed["lanes"]["policy"]["mode"], "double")
+        self.assertEqual(parsed["lanes"]["policy"]["ladder"], ["a", "b"])
+        self.assertEqual(parsed["lanes"]["review"][0]["key"], "a")
 
     def test_write_toml_creates_parent_dirs(self):
         with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "nested", "review-spec.toml")
-            cfg_write_toml(path, {"policy": {"mode": "single"}, "reviewers": []})
+            path = os.path.join(d, "nested", "config.toml")
+            cfg_write_toml(path, {"policy": {"mode": "single"}, "lanes": []})
             self.assertTrue(os.path.exists(path))
 
     def test_write_toml_replaces_atomically(self):
         with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "review-spec.toml")
-            config = {"policy": {"mode": "single"}, "reviewers": []}
-            cfg_write_toml(path, {"policy": {"mode": "double"}, "reviewers": []})
+            path = os.path.join(d, "config.toml")
+            config = {"policy": {"mode": "single"}, "lanes": []}
+            cfg_write_toml(path, {"policy": {"mode": "double"}, "lanes": []})
             with mock.patch("ai_kit_spec.cache.os.replace", wraps=os.replace) as replace:
                 cfg_write_toml(path, config)
             replace.assert_called_once()
             with open(path, encoding="utf-8") as f:
-                self.assertEqual(f.read(), cfg_render_toml(config))
-            self.assertEqual(os.listdir(d), ["review-spec.toml"])
+                self.assertEqual(f.read(), cfg_render_lanes(config))
+            self.assertEqual(os.listdir(d), ["config.toml"])
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_escapes_quotes_and_backslashes_in_strings(self):
-        rendered = cfg_render_toml(
-            {"policy": {}, "reviewers": [{"key": "a", "command": 'echo "hi" \\ done'}]}
+        rendered = cfg_render_lanes(
+            {"policy": {}, "lanes": [{"key": "a", "command": 'echo "hi" \\ done'}]}
         )
         import tomllib
 
         parsed = tomllib.loads(rendered)
-        self.assertEqual(parsed["reviewers"][0]["command"], 'echo "hi" \\ done')
+        self.assertEqual(parsed["lanes"]["review"][0]["command"], 'echo "hi" \\ done')
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_renders_top_level_strategy_when_present(self):
-        rendered = cfg_render_toml(
-            {"strategy": "local-only", "policy": {"mode": "single"}, "reviewers": []}
+        rendered = cfg_render_lanes(
+            {"strategy": "local-only", "policy": {"mode": "single"}, "lanes": []}
         )
         import tomllib
 
         parsed = tomllib.loads(rendered)
-        self.assertEqual(parsed["strategy"], "local-only")
+        self.assertEqual(parsed["lanes"]["strategy"], "local-only")
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_omits_strategy_line_when_absent(self):
-        rendered = cfg_render_toml({"policy": {"mode": "single"}, "reviewers": []})
+        rendered = cfg_render_lanes({"policy": {"mode": "single"}, "lanes": []})
         import tomllib
 
         parsed = tomllib.loads(rendered)
-        self.assertNotIn("strategy", parsed)
+        self.assertNotIn("strategy", parsed.get("lanes", {}))
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_ladder_renders_as_priority_fallback_comment(self):
-        rendered = cfg_render_toml(
+        rendered = cfg_render_lanes(
             {
                 "policy": {"mode": "double", "ladder": ["codex-gpt", "sonnet-native"]},
-                "reviewers": [],
+                "lanes": [],
             }
         )
         self.assertIn("# Priority fallback order", rendered)
@@ -414,19 +406,19 @@ class TestRenderAndWriteToml(unittest.TestCase):
         import tomllib
 
         parsed = tomllib.loads(rendered)  # comment must not break parsing
-        self.assertEqual(parsed["policy"]["ladder"], ["codex-gpt", "sonnet-native"])
+        self.assertEqual(parsed["lanes"]["policy"]["ladder"], ["codex-gpt", "sonnet-native"])
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_empty_ladder_renders_no_priority_comment(self):
-        rendered = cfg_render_toml({"policy": {"mode": "single", "ladder": []}, "reviewers": []})
+        rendered = cfg_render_lanes({"policy": {"mode": "single", "ladder": []}, "lanes": []})
         self.assertNotIn("# Priority fallback order", rendered)
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_single_mode_ladder_comment_omits_secondary_clause(self):
-        rendered = cfg_render_toml(
+        rendered = cfg_render_lanes(
             {
                 "policy": {"mode": "single", "ladder": ["codex-gpt", "sonnet-native"]},
-                "reviewers": [],
+                "lanes": [],
             }
         )
         self.assertIn("# Priority fallback order", rendered)
@@ -435,39 +427,39 @@ class TestRenderAndWriteToml(unittest.TestCase):
     def test_render_toml_rejects_invalid_purpose_value(self):
         config = {
             "policy": {},
-            "reviewers": [
+            "lanes": [
                 {"key": "a", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"}
             ],
         }
-        output = config_io.cfg_render_toml(config)
+        output = config_io.cfg_render_lanes(config)
         self.assertNotIn("not-a-real-purpose", output)
 
     def test_render_toml_rejects_non_string_purpose_without_raising(self):
         # HIGH finding: a non-string (unhashable) purpose value must be REJECTED, never crash
-        # cfg_render_toml with an unhandled TypeError from a bare `in <set>` membership test.
+        # cfg_render_lanes with an unhandled TypeError from a bare `in <set>` membership test.
         config = {
             "policy": {},
-            "reviewers": [
+            "lanes": [
                 {"key": "a", "model": "m", "vendor": "v", "purpose": ["review", "execute"]}
             ],
         }
-        output = config_io.cfg_render_toml(config)  # must not raise
-        self.assertNotIn("[[reviewers]]", output)
+        output = config_io.cfg_render_lanes(config)  # must not raise
+        self.assertNotIn("[[lanes.review]]", output)
 
     def test_render_toml_keeps_valid_purpose_value(self):
         config = {
             "policy": {},
-            "reviewers": [{"key": "a", "model": "m", "vendor": "v", "purpose": "execute"}],
+            "lanes": [{"key": "a", "model": "m", "vendor": "v", "purpose": "execute"}],
         }
-        output = config_io.cfg_render_toml(config)
+        output = config_io.cfg_render_lanes(config)
         self.assertIn('purpose = "execute"', output)
 
     def test_render_toml_rejects_non_bool_is_router(self):
         config = {
             "policy": {},
-            "reviewers": [{"key": "a", "model": "m", "vendor": "v", "is_router": "yes"}],
+            "lanes": [{"key": "a", "model": "m", "vendor": "v", "is_router": "yes"}],
         }
-        output = config_io.cfg_render_toml(config)
+        output = config_io.cfg_render_lanes(config)
         self.assertNotIn("is_router", output)
 
     def test_render_toml_drops_rejected_reviewer_from_the_ladder_too(self):
@@ -475,12 +467,12 @@ class TestRenderAndWriteToml(unittest.TestCase):
         # a config that LOOKS valid (parses fine) but resolve_ladder_pick can never satisfy.
         config = {
             "policy": {"mode": "single", "ladder": ["bad", "good"]},
-            "reviewers": [
+            "lanes": [
                 {"key": "bad", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"},
                 {"key": "good", "model": "m2", "vendor": "v2"},
             ],
         }
-        output = config_io.cfg_render_toml(config)
+        output = config_io.cfg_render_lanes(config)
         self.assertNotIn('"bad"', output)
         ladder_line = next(line for line in output.splitlines() if line.startswith("ladder"))
         self.assertNotIn("bad", ladder_line)
@@ -489,11 +481,11 @@ class TestRenderAndWriteToml(unittest.TestCase):
     def test_render_toml_no_dangling_ladder_warning_when_rejected_key_not_in_ladder(self):
         # MEDIUM finding: a rejected reviewer whose key was never referenced in policy.ladder
         # at all must not trigger the "dropped dangling reference" stderr warning -- only an
-        # actual ladder/reviewers divergence should. cfg_render_toml prints rejections to
+        # actual ladder/reviewers divergence should. cfg_render_lanes prints rejections to
         # stderr (Step 5's implementation), not into its returned string, so capture stderr.
         config = {
             "policy": {"mode": "single", "ladder": ["good"]},
-            "reviewers": [
+            "lanes": [
                 {"key": "bad", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"},
                 {"key": "good", "model": "m2", "vendor": "v2"},
             ],
@@ -503,26 +495,26 @@ class TestRenderAndWriteToml(unittest.TestCase):
 
         captured = io.StringIO()
         with redirect_stderr(captured):
-            config_io.cfg_render_toml(config)
+            config_io.cfg_render_lanes(config)
         self.assertNotIn("dangling", captured.getvalue())
 
     def test_render_toml_rejects_dict_valued_reviewer_field(self):
-        # WR-03 (code review, 01.2): `_toml_value` had no `dict` branch, so a dict-valued
+        # WR-03 (code review, 01.2): the old writer had no `dict` branch, so a dict-valued
         # reviewer field (e.g. a hand-edited/generated `extra = { timeout_tiers = [...] }`,
         # the exact failure mode SKILL.md documents as a known constraint) fell through to the
         # final `str(v)` branch and rendered Python's str()-of-a-dict as a quoted TOML STRING
         # (corrupted data, not a table) instead of being rejected like every other malformed
         # reviewer field. Must be rejected via the same rejections/WARNING pathway -- the
-        # ENTIRE reviewer entry dropped, `[[reviewers]]` for it never emitted -- not silently
+        # ENTIRE reviewer entry dropped, `[[lanes.review]]` for it never emitted -- not silently
         # written as corrupted TOML.
         config = {
             "policy": {},
-            "reviewers": [
+            "lanes": [
                 {"key": "a", "model": "m", "vendor": "v", "extra": {"timeout_tiers": [900, 1800]}}
             ],
         }
-        output = config_io.cfg_render_toml(config)  # must not raise
-        self.assertNotIn("[[reviewers]]", output)
+        output = config_io.cfg_render_lanes(config)  # must not raise
+        self.assertNotIn("[[lanes.review]]", output)
         self.assertNotIn("timeout_tiers", output)
         self.assertNotIn("{'timeout_tiers'", output)  # the corrupted str(dict) rendering
 
@@ -532,14 +524,14 @@ class TestRenderAndWriteToml(unittest.TestCase):
         # the ladder cfg_resolve sees contains no reference to the dropped key.
         config = {
             "policy": {"mode": "single", "ladder": ["bad", "good"]},
-            "reviewers": [
+            "lanes": [
                 {"key": "bad", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"},
                 {"key": "good", "model": "m2", "vendor": "v2", "runtime": "opencode"},
             ],
         }
         with tempfile.TemporaryDirectory() as d:
-            # the old shape at the old path; the next roster read migrates it (Plan 09)
-            path = config_migrate.legacy_path(config_io.cfg_local_path(d))
+            # the roster as the project's config.toml holds it, read back by cfg_resolve
+            path = config_io.cfg_local_path(d)
             config_io.cfg_write_toml(path, config)
             with open(path, "rb") as f:
                 raw = f.read()
@@ -1237,10 +1229,10 @@ class TestPiHostEndToEnd(unittest.TestCase):
         self.assertEqual(host, "pi")
         # Only Claude Code aliases are per-call selectable today, so a pi host's native
         # entry is the session default: an empty model and no runtime.
-        rendered = config_io.cfg_render_toml(
-            {"policy": {}, "reviewers": [{"key": "native-primary", "model": ""}]}
+        rendered = config_io.cfg_render_lanes(
+            {"policy": {}, "lanes": [{"key": "native-primary", "model": ""}]}
         )
-        self.assertIn("[[reviewers]]", rendered)
+        self.assertIn("[[lanes.review]]", rendered)
         self.assertIn('model = ""', rendered)
         self.assertNotIn("runtime =", rendered)
 
@@ -4296,21 +4288,19 @@ class TestMainCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
             os.makedirs(os.path.join(home, ".config", "ai-kit"))
             cfg_write_toml(
-                os.path.join(home, ".config", "ai-kit", "review-spec.toml"),
+                os.path.join(home, ".config", "ai-kit", "config.toml"),
                 {
                     "policy": {"mode": "single", "ladder": ["codex-gpt"]},
-                    "reviewers": [{"key": "codex-gpt", "model": "gpt-5.2",
-                                  "vendor": "openai", "runtime": "codex"}],
+                    "lanes": [{"key": "codex-gpt", "model": "gpt-5.2",
+                               "vendor": "openai", "runtime": "codex"}],
                 },
             )
             os.makedirs(os.path.join(cwd, ".aikit"))
-            local_path = os.path.join(cwd, ".aikit", "review-spec.toml")
-            raw = b'[[reviewers]]\nkey = "codex-gpt"\nmodel = "gpt-5.2-mini"\n'
+            local_path = config_io.cfg_local_path(cwd)
+            raw = b'[[lanes.review]]\nkey = "codex-gpt"\nmodel = "gpt-5.2-mini"\n'
             with open(local_path, "wb") as f:
                 f.write(raw)
-            trust.record_trust(
-                config_io.cfg_trust_store_dir({"HOME": home}), os.path.realpath(local_path), raw
-            )
+            config_io.cfg_trust_project(cwd, {"HOME": home})
             quota_path = os.path.join(cwd, "quota.json")
             cache_write_json(quota_path, {})
             buf = io.StringIO()
@@ -4347,9 +4337,9 @@ class TestMainCli(unittest.TestCase):
             config_dir = os.path.join(home, ".config", "ai-kit")
             os.makedirs(config_dir)
             cfg_write_toml(
-                os.path.join(config_dir, "review-spec.toml"),
+                os.path.join(config_dir, "config.toml"),
                 {"policy": {"ladder": ["native"]},
-                 "reviewers": [{"key": "native", "model": "opus", "runtime": "claude"}]},
+                 "lanes": [{"key": "native", "model": "opus", "runtime": "claude"}]},
             )
             quota_path = os.path.join(cwd, "quota.json")
             fake_runner = mock.Mock(
@@ -4372,10 +4362,10 @@ class TestMainCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
             os.makedirs(os.path.join(home, ".config", "ai-kit"))
             cfg_write_toml(
-                os.path.join(home, ".config", "ai-kit", "review-spec.toml"),
+                os.path.join(home, ".config", "ai-kit", "config.toml"),
                 {
                     "policy": {"mode": "single", "ladder": ["codex-gpt"]},
-                    "reviewers": [
+                    "lanes": [
                         {
                             "key": "codex-gpt",
                             "model": "gpt-5.2",
@@ -4407,9 +4397,9 @@ class TestMainCli(unittest.TestCase):
                 tempfile.TemporaryDirectory() as other_home:
             os.makedirs(os.path.join(home, ".config", "ai-kit"))
             cfg_write_toml(
-                os.path.join(home, ".config", "ai-kit", "review-spec.toml"),
+                os.path.join(home, ".config", "ai-kit", "config.toml"),
                 {"policy": {"ladder": ["cu"]},
-                 "reviewers": [{"key": "cu", "model": "m", "command": "mycli {model}"}]},
+                 "lanes": [{"key": "cu", "model": "m", "command": "mycli {model}"}]},
             )
             fake_custom = mock.Mock(return_value=_probe_result(None, "ok"))
             with mock.patch.object(os, "environ", {"HOME": other_home}):
@@ -4557,48 +4547,52 @@ class TestMainCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             json_path = os.path.join(d, "config.json")
             with open(json_path, "w", encoding="utf-8") as f:
-                json.dump({"policy": {"mode": "single"}, "reviewers": []}, f)
+                json.dump({"policy": {"mode": "single"}, "lanes": []}, f)
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = main(["render-toml", "--json-config", json_path])
             self.assertEqual(code, 0)
             self.assertIn("mode", buf.getvalue())
-            self.assertFalse(os.path.exists(os.path.join(d, "review-spec.toml")))
+            self.assertFalse(os.path.exists(os.path.join(d, "config.toml")))
 
     def test_render_toml_with_out_writes_via_cfg_write_toml(self):
         with tempfile.TemporaryDirectory() as d:
             json_path = os.path.join(d, "config.json")
             with open(json_path, "w", encoding="utf-8") as f:
-                json.dump({"policy": {"mode": "double", "ladder": ["a"]}, "reviewers": []}, f)
-            out_path = os.path.join(d, "nested", "review-spec.toml")
+                json.dump({"policy": {"mode": "double", "ladder": ["a"]}, "lanes": []}, f)
+            out_path = os.path.join(d, "nested", "config.toml")
             code = main(["render-toml", "--json-config", json_path, "--out", out_path])
             self.assertEqual(code, 0)
             written = cfg_load_toml(out_path)
-            self.assertEqual(written["policy"]["mode"], "double")
+            self.assertEqual(written["lanes"]["policy"]["mode"], "double")
 
     def test_render_toml_out_refuses_existing_file_without_replace(self):
+        # Data safety (C1-17): an existing [lanes] table is replaced only with --replace. A file
+        # with other tables is not refused (see TestRenderTomlCli in test_config_layers.py).
         import io
         from contextlib import redirect_stderr, redirect_stdout
 
         with tempfile.TemporaryDirectory() as d:
             json_path = os.path.join(d, "config.json")
             with open(json_path, "w", encoding="utf-8") as f:
-                json.dump({"policy": {"mode": "double", "ladder": ["a"]}, "reviewers": []}, f)
-            out_path = os.path.join(d, "review-spec.toml")
+                json.dump({"policy": {"mode": "double", "ladder": ["a"]}, "lanes": []}, f)
+            out_path = os.path.join(d, "config.toml")
+            existing = '# user config\n[lanes]\nstrategy = "global-merge"\n'
             with open(out_path, "w", encoding="utf-8") as f:
-                f.write("# user config\n")
+                f.write(existing)
             err = io.StringIO()
             with redirect_stdout(io.StringIO()), redirect_stderr(err):
                 code = main(["render-toml", "--json-config", json_path, "--out", out_path])
             self.assertEqual(code, 1)
-            self.assertIn("refusing to replace", err.getvalue())
+            self.assertIn("refusing to replace the [lanes] table", err.getvalue())
+            self.assertIn("(nothing written)", err.getvalue())
             with open(out_path, encoding="utf-8") as f:
-                self.assertEqual(f.read(), "# user config\n")
+                self.assertEqual(f.read(), existing)
             with redirect_stdout(io.StringIO()):
                 code = main(["render-toml", "--json-config", json_path, "--out", out_path,
                              "--replace"])
             self.assertEqual(code, 0)
-            self.assertEqual(cfg_load_toml(out_path)["policy"]["mode"], "double")
+            self.assertEqual(cfg_load_toml(out_path)["lanes"]["policy"]["mode"], "double")
 
     def test_infer_vendor_prints_matched_vendor(self):
         import io
@@ -4636,7 +4630,7 @@ class TestMainCli(unittest.TestCase):
         self.assertIn("--model", argv)
         self.assertIn("{model}", argv)
         self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
-        self.assertIn("review-spec.toml stores runtime and model", err.getvalue())
+        self.assertIn("a config.toml lane stores runtime and model", err.getvalue())
         self.assertIn("codex", err.getvalue())
 
     def test_build_command_cursor_agent_passes_mode_flag(self):
@@ -4651,7 +4645,7 @@ class TestMainCli(unittest.TestCase):
         self.assertEqual(body["kind"], "runner")
         argv = body["argv"]
         self.assertEqual(argv[argv.index("--cursor-mode") + 1], "plan")
-        self.assertIn("review-spec.toml stores runtime and model", err.getvalue())
+        self.assertIn("a config.toml lane stores runtime and model", err.getvalue())
 
     def test_build_command_grok_prints_custom_template(self):
         import io
@@ -5299,7 +5293,7 @@ class TestExecuteCliRejection(unittest.TestCase):
 
     def test_grok_keeps_its_custom_entry_generator(self):
         # R10/D-29 boundary: the table builders are gone; grok still generates the custom
-        # command a review-spec.toml entry stores.
+        # command a config.toml entry stores.
         self.assertEqual(
             commands.build_grok_command(),
             "grok -p {prompt} -m {model} --output-format plain",
@@ -5427,7 +5421,7 @@ class TestFilterByPurpose(unittest.TestCase):
         self.assertEqual([c["key"] for c in result], ["a"])
 
     def test_missing_purpose_key_entirely_treated_as_no_preference(self):
-        # pre-migration review-spec.toml: the field is absent, not None
+        # pre-migration config.toml: the field is absent, not None
         candidates = [{"key": "a"}]
         result = execute_selection.filter_by_purpose(candidates, "execute")
         self.assertEqual([c["key"] for c in result], ["a"])
@@ -5872,7 +5866,7 @@ class TestDispatchReviewer(unittest.TestCase):
 class TestTimeoutTiers(unittest.TestCase):
     def setUp(self):
         # The CLI tests merge the global layer; without a temp HOME/XDG_CONFIG_HOME they read
-        # the real ~/.config/ai-kit/review-spec.toml (pre-existing, 20-REVIEW WR-11).
+        # the real ~/.config/ai-kit/config.toml (pre-existing, 20-REVIEW WR-11).
         home = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, home, ignore_errors=True)
         isolated = {"HOME": home, "XDG_CONFIG_HOME": os.path.join(home, ".config")}
@@ -5907,8 +5901,8 @@ class TestTimeoutTiers(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, ".aikit"))
-            with open(os.path.join(d, ".aikit", "review-spec.toml"), "w", encoding="utf-8") as f:
-                f.write('[policy]\nmode = "single"\nladder = []\n')
+            with open(os.path.join(d, ".aikit", "config.toml"), "w", encoding="utf-8") as f:
+                f.write('[lanes.policy]\nmode = "single"\nladder = []\n')
             reviewers_path = os.path.join(d, "reviewers.json")
             with open(reviewers_path, "w", encoding="utf-8") as f:
                 json.dump(
@@ -5944,7 +5938,7 @@ class TestTimeoutTiers(unittest.TestCase):
         from contextlib import redirect_stdout
 
         with tempfile.TemporaryDirectory() as d:
-            # No .aikit/review-spec.toml at all -- cfg_resolve degrades to DEFAULT_POLICY.
+            # No .aikit/config.toml at all -- cfg_resolve degrades to DEFAULT_POLICY.
             reviewers_path = os.path.join(d, "reviewers.json")
             with open(reviewers_path, "w", encoding="utf-8") as f:
                 json.dump(
@@ -8013,7 +8007,7 @@ class TestBuildModelCatalog(unittest.TestCase):
         # cfg_resolve/--extra-candidate parsing itself -- build_model_catalog is given the
         # already-fully-reconciled `discovered_models` list by its caller (the CLI command,
         # Step 5) and this test only confirms it treats every one of them uniformly,
-        # regardless of whether the candidate came from a runtimes snapshot, review-spec.toml,
+        # regardless of whether the candidate came from a runtimes snapshot, config.toml,
         # or --extra-candidate -- there's no special-casing by origin inside this function.
         discovered = [
             {"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"},
@@ -8611,7 +8605,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
 
     def test_single_provider_cli_candidate_pulled_from_review_spec_toml(self):
         # Same network-free technique as above (--if-stale + a fresh fetch-meta sidecar).
-        # HIGH finding: this resolves review-spec.toml's global-merge path too (cfg_resolve),
+        # HIGH finding: this resolves config.toml's global-merge path too (cfg_resolve),
         # so `env_fn` MUST point HOME at this tempdir -- never the real dict(os.environ) --
         # or this test would silently read whatever global config exists on the machine
         # actually running the suite.
@@ -8622,18 +8616,16 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             runtimes_path = self._write_runtimes(
                 d, {"codex": {"installed": True}}
             )  # no "models" key -- single-provider
-            local_cfg = os.path.join(d, ".aikit", "review-spec.toml")
+            local_cfg = config_io.cfg_local_path(d)
             os.makedirs(os.path.dirname(local_cfg))
             raw = (
-                b'[[reviewers]]\nkey = "codex-primary"\n'
+                b'[[lanes.review]]\nkey = "codex-primary"\n'
                 b'model = "vendor/already-registered"\n'
                 b'vendor = "vendor"\ncli = "codex"\n'
             )
             with open(local_cfg, "wb") as f:
                 f.write(raw)
-            trust.record_trust(
-                config_io.cfg_trust_store_dir({"HOME": d}), os.path.realpath(local_cfg), raw
-            )
+            config_io.cfg_trust_project(d, {"HOME": d})
             import io
             from contextlib import redirect_stdout
 

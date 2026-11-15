@@ -2671,7 +2671,7 @@ def _drop_model_less_rows(runtimes: dict) -> dict:
     """Every `installed: true` row without a `models` key becomes `{"installed": false}`.
 
     Such a row is the only trigger of `_discovered_catalog_candidates`'s `cfg_resolve`, which
-    reads the ambient `review-spec.toml` before any freshness check (review cycle 3). The
+    reads the ambient `config.toml` roster before any freshness check (review cycle 3). The
     shipped fixture's `grok` is the only such row, and no scenario runs it."""
     clis = {}
     for name, row in (runtimes.get("clis") or {}).items():

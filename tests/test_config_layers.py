@@ -5,11 +5,14 @@ Every test uses its own temporary cwd, HOME and XDG_CONFIG_HOME, never the real 
 Fixtures are synthetic and carry no secret value.
 """
 
+import copy
+import difflib
 import io
 import json
 import os
 import sys
 import tempfile
+import tomllib
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
@@ -345,6 +348,229 @@ class TestTrustLocalRevokeLegacy(_LayerCase):
         self.assertFalse(any(e.get("key") == "c"
                              for e in resolved["review"] + resolved["reviewers"]))
         self.assertFalse(os.path.isdir(self.store) and os.listdir(self.store))
+
+
+class TestLaneWriter(unittest.TestCase):
+    """cfg_render_lanes writes the roster through toml_splice and keeps the rest of the file
+    (D-08, D-24; SPEC R3, R9). It is pure text: no path, HOME or cwd is involved."""
+
+    ROSTER = {
+        "policy": {"mode": "single", "ladder": ["a", "b", "c"]},
+        "lanes": [
+            {"key": "a", "runtime": "codex", "model": "m1"},
+            {"key": "b", "runtime": "codex", "model": "m2"},
+            {"key": "c", "runtime": "codex", "model": "m3"},
+        ],
+    }
+    EXISTING = (
+        "# my top comment\n"
+        "[runner.retry]\n"
+        "  max_attempts   =  3\n"
+        "[foo]\n"
+        "bar = 1\n"
+        "# Priority fallback order (first available reviewer wins the\n"
+        "# primary slot):\n"
+        "#   1. a\n"
+        "#   2. b\n"
+        "#   3. c\n"
+        "[lanes.policy]\n"
+        'mode = "single"\n'
+        'ladder = ["a", "b", "c"]\n'
+        "[[lanes.review]]\n"
+        'key = "a"\nruntime = "codex"\nmodel = "m1"\n'
+        "[[lanes.review]]\n"
+        'key = "b"\nruntime = "codex"\nmodel = "m2"\n'
+        "[[lanes.review]]\n"
+        'key = "c"\nruntime = "codex"\nmodel = "m3"\n'
+    )
+
+    @staticmethod
+    def _changed(before, after):
+        diff = list(difflib.ndiff(before.splitlines(keepends=True),
+                                  after.splitlines(keepends=True)))
+        return [line for line in diff if line.startswith(("- ", "+ "))]
+
+    def test_one_model_change_is_one_line(self):
+        changed = copy.deepcopy(self.ROSTER)
+        changed["lanes"][1]["model"] = "m2x"
+        after = config_io.cfg_render_lanes(changed, self.EXISTING)
+        self.assertEqual(self._changed(self.EXISTING, after),
+                         ['- model = "m2"\n', '+ model = "m2x"\n'])
+
+    def test_entries_file_by_purpose_and_keep_their_order(self):
+        config = {"lanes": [
+            {"key": "a", "runtime": "codex", "model": "m1"},
+            {"key": "b", "runtime": "codex", "model": "m2", "purpose": "execute"},
+            {"key": "c", "runtime": "codex", "model": "m3", "purpose": "both"},
+        ]}
+        parsed = tomllib.loads(config_io.cfg_render_lanes(config, ""))["lanes"]
+        self.assertEqual([e["key"] for e in parsed["review"]], ["a", "c"])
+        self.assertEqual([e["key"] for e in parsed["execute"]], ["b", "c"])
+        self.assertEqual(parsed["execute"][1]["purpose"], "both")
+
+    def test_empty_existing_text_gives_only_the_lanes_tables(self):
+        parsed = tomllib.loads(config_io.cfg_render_lanes(self.ROSTER, ""))
+        self.assertEqual(set(parsed), {"lanes"})
+        self.assertEqual(parsed["lanes"]["policy"], {"mode": "single", "ladder": ["a", "b", "c"]})
+        self.assertEqual([e["key"] for e in parsed["lanes"]["review"]], ["a", "b", "c"])
+
+    def test_reviewers_json_key_is_refused(self):
+        config = {"reviewers": [{"key": "a", "runtime": "codex", "model": "m"}]}
+        with self.assertRaises(ValueError) as ctx:
+            config_io.cfg_render_lanes(config, "")
+        self.assertTrue(str(ctx.exception).startswith(
+            "render-toml: the JSON key 'reviewers' is now 'lanes'"))
+
+    def test_invalid_entry_is_dropped_from_roster_and_ladder_with_a_warning(self):
+        config = {"policy": {"mode": "single", "ladder": ["a", "x"]}, "lanes": [
+            {"key": "a", "runtime": "codex", "model": "m1"},
+            {"key": "x", "runtime": "codex", "model": "m2", "route": "native"},
+        ]}
+        err = io.StringIO()
+        with redirect_stderr(err):
+            text = config_io.cfg_render_lanes(config, "")
+        parsed = tomllib.loads(text)["lanes"]
+        self.assertEqual([e["key"] for e in parsed["review"]], ["a"])
+        self.assertEqual(parsed["policy"]["ladder"], ["a"])
+        self.assertIn("WARNING: 2 issue(s) found and NOT written", err.getvalue())
+        self.assertIn("'route' is decided per run", err.getvalue())
+
+    def test_rendering_the_same_roster_again_is_byte_equal(self):
+        first = config_io.cfg_render_lanes(self.ROSTER, "")
+        self.assertEqual(config_io.cfg_render_lanes(self.ROSTER, first), first)
+
+    def test_unknown_lanes_key_and_unknown_table_are_byte_equal(self):
+        existing = ('[lanes]\nextra = 1\n\n[foo]\nbar = "x"  # keep this\n\n'
+                    '[lanes.policy]\nmode = "single"\nladder = ["a"]\n\n'
+                    '[[lanes.review]]\nkey = "a"\nruntime = "codex"\nmodel = "m1"\n')
+        config = {"policy": {"mode": "single", "ladder": ["a"]},
+                  "lanes": [{"key": "a", "runtime": "codex", "model": "m2"}]}
+        after = config_io.cfg_render_lanes(config, existing)
+        self.assertIn('[foo]\nbar = "x"  # keep this\n', after)
+        self.assertIn("[lanes]\nextra = 1\n", after)
+        self.assertIn('model = "m2"', after)
+
+    def test_strategy_is_written_beside_role_arrays_of_an_existing_lanes_table(self):
+        existing = '[lanes]\nstrategy = "global-merge"\n\n' + self.EXISTING
+        config = dict(self.ROSTER, strategy="local-only")
+        parsed = tomllib.loads(config_io.cfg_render_lanes(config, existing))["lanes"]
+        self.assertEqual(parsed["strategy"], "local-only")
+        self.assertEqual([e["key"] for e in parsed["review"]], ["a", "b", "c"])
+
+    def test_first_write_puts_the_generated_ladder_block_above_the_policy(self):
+        config = {"policy": {"mode": "single", "ladder": ["a", "b"]},
+                  "lanes": [{"key": "a", "runtime": "codex", "model": "m1"},
+                            {"key": "b", "runtime": "codex", "model": "m2"}]}
+        text = config_io.cfg_render_lanes(config, "")
+        self.assertIn("# Priority fallback order (first available reviewer wins the\n"
+                      "# primary slot):\n#   1. a\n#   2. b\n[lanes.policy]\n", text)
+        config["policy"]["ladder"] = ["b", "a"]
+        reordered = config_io.cfg_render_lanes(config, text)
+        self.assertIn("#   1. b\n#   2. a\n[lanes.policy]\n", reordered)
+        changed = self._changed(text, reordered)
+        self.assertTrue(changed)
+        self.assertTrue(all("#" in line or "ladder" in line for line in changed))
+
+    def test_user_comment_above_the_policy_is_kept_and_no_block_is_added(self):
+        existing = ('# my note\n[lanes.policy]\nmode = "single"\nladder = ["a"]\n'
+                    '[[lanes.review]]\nkey = "a"\nruntime = "codex"\nmodel = "m1"\n')
+        config = {"policy": {"mode": "single", "ladder": ["a"]},
+                  "lanes": [{"key": "a", "runtime": "codex", "model": "m1"}]}
+        text = config_io.cfg_render_lanes(config, existing)
+        self.assertTrue(text.startswith("# my note\n[lanes.policy]\n"))
+        self.assertNotIn("# Priority fallback order", text)
+
+
+class TestRenderTomlCli(_LayerCase):
+    """render-toml --out: the guard runs before any write (C1-16, C1-17, C1-18).
+
+    An old roster beside the target migrates only once the guard passes; a broken target is
+    exit 2 (D-08, D-10)."""
+
+    ROSTER = {"policy": {"mode": "single", "ladder": ["a"]},
+              "lanes": [{"key": "a", "runtime": "codex", "model": "m1"}]}
+
+    def _json(self, config):
+        path = os.path.join(self.root, "render.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(config, handle)
+        return path
+
+    def _render(self, out, *extra, config=None):
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = cli.main(["render-toml", "--json-config", self._json(config or self.ROSTER),
+                             "--out", out, *extra])
+        return code, err.getvalue()
+
+    def test_other_tables_are_kept_and_no_replace_is_needed(self):
+        target = self.project_path()
+        runner = '[runner.retry]\n  base_s   =  1  # keep\n'
+        self.write(target, runner.encode())
+        code, _ = self._render(target)
+        self.assertEqual(code, 0)
+        with open(target, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertTrue(text.startswith(runner))
+        self.assertIn("[lanes.policy]", text)
+
+    def test_legacy_roster_beside_the_target_is_refused_and_nothing_is_written(self):
+        old = b'[[reviewers]]\nkey = "old"\nruntime = "codex"\nmodel = "m"\n'
+        legacy = self.write(config_migrate.legacy_path(self.project_path()), old)
+        self._json(self.ROSTER)  # the JSON input is not part of the write under test
+        before = self.tree()
+        code, err = self._render(self.project_path())
+        self.assertEqual(code, 1)
+        self.assertIn("refusing to replace the old roster", err)
+        self.assertIn("(nothing written)", err)
+        self.assertEqual(self.tree(), before)
+        self.assertEqual(_read(legacy), old)
+        self.assertFalse(os.path.exists(legacy + ".migrated"))
+        self.assertFalse(os.path.exists(self.project_path()))
+
+    def test_legacy_roster_beside_the_target_migrates_with_replace(self):
+        legacy = self.write(config_migrate.legacy_path(self.project_path()),
+                            b'[[reviewers]]\nkey = "old"\nruntime = "codex"\nmodel = "m"\n')
+        code, err = self._render(self.project_path(), "--replace")
+        self.assertEqual(code, 0)
+        self.assertIn("migrated", err)
+        self.assertEqual(_read(legacy + ".migrated"),
+                         b'[[reviewers]]\nkey = "old"\nruntime = "codex"\nmodel = "m"\n')
+        self.assertFalse(os.path.exists(legacy))
+        parsed = config_io.cfg_load_toml(self.project_path())
+        self.assertEqual([e["key"] for e in parsed["lanes"]["review"]], ["a"])
+
+    def test_broken_target_is_exit_2_and_stays_byte_equal(self):
+        target = self.project_path()
+        self.write(target, b"[[[")
+        code, err = self._render(target)
+        self.assertEqual(code, 2)
+        self.assertIn("config error", err)
+        self.assertEqual(_read(target), b"[[[")
+
+    def test_non_utf8_target_is_exit_2_and_stays_byte_equal(self):
+        target = self.project_path()
+        self.write(target, b"\xff\xfe")
+        code, _ = self._render(target)
+        self.assertEqual(code, 2)
+        self.assertEqual(_read(target), b"\xff\xfe")
+
+    def test_reviewers_json_key_is_refused_with_the_rename_message(self):
+        config = {"reviewers": [{"key": "a", "runtime": "codex", "model": "m"}]}
+        code, err = self._render(self.project_path(), config=config)
+        self.assertEqual(code, 1)
+        self.assertTrue(err.startswith(
+            "render-toml: the JSON key 'reviewers' is now 'lanes'"))
+        self.assertFalse(os.path.exists(self.project_path()))
+
+    def test_interrupted_publish_leaves_the_old_file_byte_equal(self):
+        target = self.project_path()
+        original = b"# my note\n[runner.retry]\nbase_s = 1\n"
+        self.write(target, original)
+        with mock.patch("ai_kit_spec.cache.os.replace", side_effect=OSError("interrupted")), \
+                self.assertRaises(OSError):
+            self._render(target)
+        self.assertEqual(_read(target), original)
 
 
 if __name__ == "__main__":

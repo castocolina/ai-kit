@@ -2,8 +2,7 @@ import os
 import shlex
 import sys
 
-from ai_kit_spec import config_migrate, trust
-from ai_kit_spec.cache import cache_write_text
+from ai_kit_spec import config_migrate, toml_splice, trust
 from ai_kit_spec.detection import RUNTIMES, runtime_id
 
 try:
@@ -491,6 +490,14 @@ def cfg_migrate_user(env: dict, warn_fn=None) -> str:
     return _migrate(path, env, warn_fn or _cfg_default_warn, project=False)
 
 
+def cfg_migrate_target(path: str, env: dict, warn_fn=None) -> str:
+    """Migrate the old roster beside the config.toml a write targets (D-10): as the user layer when
+    that file sits in the user config folder, else as the project layer, with its trust carried."""
+    emit = warn_fn or _cfg_default_warn
+    in_user_dir = os.path.realpath(os.path.dirname(path)) == os.path.realpath(cfg_config_base(env))
+    return _migrate(path, env, emit, project=not in_user_dir)
+
+
 def cfg_trust_project(cwd: str, env: dict, warn_fn=None) -> tuple[str, str | None]:
     """Record trust for the project config.toml's command-bearing lanes (D-11), migrating it first.
 
@@ -676,17 +683,6 @@ def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None,
     }
 
 
-def _toml_value(v) -> str:
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return str(v)
-    if isinstance(v, list):
-        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
-    escaped = str(v).replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
-
-
 _VALID_PURPOSE = {"review", "execute", "both"}
 _LEGACY_WRITE_FIELDS = ("cli", "native_runtime")
 
@@ -734,12 +730,9 @@ def validate_reviewer_fields(entry: dict) -> str | None:
     subcommand"). Checks purpose/is_router/fallback_quota when present, then the pair rules:
     a table runtime needs a model, a command is custom-only, a pinned model needs a runtime."""
     key = entry.get("key", "<unknown>")
-    # WR-03 fix: `_toml_value` (below) has no `dict` branch -- any dict-valued field falls
-    # through to its final `str(v)` branch and silently corrupts into a quoted TOML STRING
-    # (e.g. a hand-edited/generated `extra = { timeout_tiers = [...] }`, the exact failure
-    # mode SKILL.md documents as a known constraint of this schema) rather than being
-    # rejected. Reject it here, up front, for EVERY field (not just the four this design
-    # specifically added below) so it surfaces through the existing rejections/WARNING
+    # WR-03 fix: a dict-valued field must not reach the writer as a quoted TOML string (e.g. a
+    # hand-edited `extra = { timeout_tiers = [...] }`, a known constraint of this schema), so
+    # reject it here, up front, for EVERY field. It then surfaces through the rejections/WARNING
     # pathway instead of writing corrupted TOML.
     for field, value in entry.items():
         if field == "route":
@@ -779,91 +772,159 @@ def _cfg_partition_reviewers(reviewers: list) -> tuple[list, list, set]:
     return valid_reviewers, rejections, dropped_keys
 
 
-def _cfg_render_policy_lines(policy: dict, dropped_keys: set, rejections: list) -> list[str]:
+def _cfg_render_reviewers(entries: list) -> tuple[list, list[str]]:
+    """The two load steps, in the same order, so a write holds only the new form.
+
+    A stored route is NOT dropped here: save rejects it, so the entry stays intact for
+    validate_reviewer_fields to refuse. Load drops it instead."""
+    reviewers, notes = normalize_legacy_reviewers(entries)
+    reviewers, inferred = infer_legacy_native(reviewers)
+    return reviewers, notes + inferred
+
+
+_RENAMED_REVIEWERS = (
+    "render-toml: the JSON key 'reviewers' is now 'lanes' "
+    "(each entry's purpose picks its role: review, execute or both)"
+)
+_LADDER_COMMENT_HEAD = "# Priority fallback order"
+
+
+def _ladder_comment_lines(policy: dict) -> list[str]:
+    """The generated comment above [lanes.policy] that names the fallback order; none for an empty
+    ladder."""
+    ladder = policy.get("ladder") or []
+    if not ladder:
+        return []
+    lines = ["# Priority fallback order (first available reviewer wins the"]
+    if policy.get("mode") == "double":
+        lines.append("# primary slot; double mode also seats an independent secondary):")
+    else:
+        lines.append("# primary slot):")
+    lines.extend(f"#   {number}. {key}" for number, key in enumerate(ladder, 1))
+    return lines
+
+
+def _refresh_ladder_comment(text: str, policy: dict) -> str:
+    """Keep the generated fallback-order comment above [lanes.policy] in step with its ladder.
+
+    The contiguous comment lines directly above the header are the generated block when the first
+    one starts with _LADDER_COMMENT_HEAD: the block is replaced by the lines for the ladder now
+    written (none when the ladder is empty). With no comment above, the block is inserted. A user's
+    own comment there is left alone. Comments never change a parsed value."""
+    blocks = toml_splice.split_blocks(text)
+    index = next((number for number, block in enumerate(blocks)
+                  if not block.array and block.path == ("lanes", "policy")), None)
+    if index is None:
+        return text
+    block = blocks[index]
+    lead = block.lines[: block.lead]
+    if lead and not lead[0].startswith(_LADDER_COMMENT_HEAD):
+        return text
+    newline = "\r\n" if "\r\n" in text else "\n"
+    generated = [line + newline for line in _ladder_comment_lines(policy)]
+    if generated == lead:
+        return text
+    rewritten = [*generated, *block.lines[block.lead:]]
     lines: list[str] = []
+    for number, item in enumerate(blocks):
+        lines.extend(rewritten if number == index else item.lines)
+    return "".join(lines)
+
+
+def _cfg_lanes_policy(policy, dropped_keys: set, rejections: list) -> dict | None:
+    """The policy as written: its ladder without the rejected entries; None when there is none."""
+    if not policy:
+        return None
     raw_ladder = policy.get("ladder") or []
-    ladder = [key for key in raw_ladder if key not in dropped_keys]
     dangling = dropped_keys & set(raw_ladder)
     if dangling:
         rejections.append(
             f"policy.ladder: dropped dangling reference(s) to rejected reviewer key(s) "
             f"{sorted(dangling)}"
         )
-    if ladder:
-        lines.append("# Priority fallback order (first available reviewer wins the")
-        if policy.get("mode") == "double":
-            lines.append("# primary slot; double mode also seats an independent secondary):")
+    written = dict(policy)
+    if "ladder" in written:
+        written["ladder"] = [key for key in raw_ladder if key not in dropped_keys]
+    return written
+
+
+def _current_lanes(text: str) -> dict:
+    """The [lanes] table the text holds ({} for no text); broken TOML is a ConfigError."""
+    if not text:
+        return {}
+    return cfg_lanes_table(cfg_parse_toml_bytes(text.encode("utf-8"), "render-toml target"),
+                           "render-toml target")
+
+
+def _splice_roster(text: str, current: dict, parts: dict) -> str:
+    """The roster parts spliced into the text one table or array at a time (D-08)."""
+    strategy, policy = parts["strategy"], parts["policy"]
+    if strategy is not None:
+        text = toml_splice.set_table(text, ("lanes",), {"strategy": strategy})
+    elif "strategy" in current:
+        text = toml_splice.set_table(text, ("lanes",), {}, remove=("strategy",))
+    if policy is not None:
+        gone = tuple(name for name in current.get("policy", {}) if name not in policy)
+        text = toml_splice.set_table(text, ("lanes", "policy"), policy, remove=gone)
+    elif "policy" in current:
+        text = toml_splice.remove_table(text, ("lanes", "policy"))
+    text = toml_splice.set_array(text, ("lanes", "review"), parts["review"] or [])
+    text = toml_splice.set_array(text, ("lanes", "execute"), parts["execute"] or [])
+    return _refresh_ladder_comment(text, policy or {})
+
+
+def _expected_lanes(current: dict, parts: dict) -> dict:
+    """The [lanes] table a write must hold: current, with each part set (dropped when None)."""
+    lanes = dict(current)
+    for name, value in parts.items():
+        if value is None:
+            lanes.pop(name, None)
         else:
-            lines.append("# primary slot):")
-        for i, key in enumerate(ladder, 1):
-            lines.append(f"#   {i}. {key}")
-    lines.append("[policy]")
-    for k, v in policy.items():
-        v = ladder if k == "ladder" else v
-        lines.append(f"{k} = {_toml_value(v)}")
-    lines.append("")
-    return lines
+            lanes[name] = value
+    return lanes
 
 
-def _cfg_render_reviewer_lines(valid_reviewers: list) -> list[str]:
-    lines: list[str] = []
-    for r in valid_reviewers:
-        lines.append("[[reviewers]]")
-        for k, v in r.items():
-            lines.append(f"{k} = {_toml_value(v)}")
-        lines.append("")
-    return lines
+def cfg_render_lanes(config: dict, existing_text: str = "") -> str:
+    """Set the [lanes] roster to `config` in config.toml text; every other byte is kept (D-08).
 
-
-def _cfg_render_reviewers(config: dict) -> tuple[list, list[str]]:
-    """The two load steps, in the same order, so a write holds only the new form.
-
-    A stored route is NOT dropped here: save rejects it, so the entry stays intact for
-    validate_reviewer_fields to refuse. Load drops it instead."""
-    reviewers, notes = normalize_legacy_reviewers(config.get("reviewers", []))
-    reviewers, inferred = infer_legacy_native(reviewers)
-    return reviewers, notes + inferred
-
-
-def cfg_render_toml(config: dict) -> str:
-    """Hand-rolled TOML serializer for this schema only (an optional
-    top-level `strategy` string, a flat [policy] table, and an
-    array-of-tables [[reviewers]] with flat string/bool/list values) —
-    tomllib is read-only in stdlib, and adding a writer dependency would
-    break this repo's zero-dependency runtime.
-
-    Reviewers are normalized first (the same two steps load runs), then validated strictly:
-    an entry that fails validate_reviewer_fields is dropped individually (never aborts the
-    rest of the write) AND removed from policy.ladder -- a valid-looking ladder that
-    references a key with no corresponding [[reviewers]] entry is unusable
-    (resolve_ladder_pick can never satisfy it), so the two must never diverge."""
-    lines: list[str] = []
-    reviewers, notes = _cfg_render_reviewers(config)
+    `config` is {"strategy"?, "policy"?, "lanes": [entry, ...]}. Each entry's `purpose` picks its
+    role (D-24). Entries are normalised and validated as before: a rejected one is dropped with a
+    WARNING line on stderr. Only the roster parts are spliced: `strategy`, [lanes.policy] and the
+    [[lanes.review]] / [[lanes.execute]] arrays. Raises ValueError for a JSON still keyed
+    'reviewers', and ConfigError when existing_text is not valid TOML."""
+    if "reviewers" in config:
+        raise ValueError(_RENAMED_REVIEWERS)
+    entries, notes = _cfg_render_reviewers(config.get("lanes", []))
     if notes:
-        print(
-            "ai-kit-spec: render-toml: migrated legacy fields before writing "
-            f"({'; '.join(notes)})",
-            file=sys.stderr,
-        )
-    valid_reviewers, rejections, dropped_keys = _cfg_partition_reviewers(reviewers)
-
-    if "strategy" in config:
-        lines.append(f"strategy = {_toml_value(config['strategy'])}")
-        lines.append("")
-    policy = config.get("policy", {})
-    if policy:
-        lines.extend(_cfg_render_policy_lines(policy, dropped_keys, rejections))
-    lines.extend(_cfg_render_reviewer_lines(valid_reviewers))
+        print("ai-kit-spec: render-toml: migrated legacy fields before writing "
+              f"({'; '.join(notes)})", file=sys.stderr)
+    valid, rejections, dropped = _cfg_partition_reviewers(entries)
+    review, execute = config_migrate.split_by_purpose(valid)
+    parts = {
+        "strategy": config.get("strategy"),
+        "policy": _cfg_lanes_policy(config.get("policy"), dropped, rejections),
+        "review": review or None,
+        "execute": execute or None,
+    }
+    current = _current_lanes(existing_text)
+    text = _splice_roster(existing_text, current, parts)
+    if _current_lanes(text) != _expected_lanes(current, parts):
+        raise ConfigError("render-toml target", "the written roster does not match")
     if rejections:
-        print(
-            f"WARNING: {len(rejections)} issue(s) found and NOT written: {'; '.join(rejections)}",
-            file=sys.stderr,
-        )
-    return "\n".join(lines).rstrip("\n") + "\n"
+        print(f"WARNING: {len(rejections)} issue(s) found and NOT written: {'; '.join(rejections)}",
+              file=sys.stderr)
+    return text
 
 
 def cfg_write_toml(path: str, config: dict) -> None:
-    cache_write_text(path, cfg_render_toml(config))
+    """Write the roster into the config.toml at path through the splicer (D-08). A broken target is
+    a ConfigError before anything is written; the publish is atomic."""
+    existing = ""
+    if os.path.exists(path):
+        raw = cfg_read_bytes(path)
+        cfg_parse_toml_bytes(raw, path)
+        existing = raw.decode("utf-8")
+    toml_splice.publish(path, cfg_render_lanes(config, existing))
 
 
 def resolve_timeout_tiers(reviewer_entry: dict, policy: dict) -> list[int]:

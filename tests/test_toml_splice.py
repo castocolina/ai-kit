@@ -81,6 +81,14 @@ class TestSetTable(unittest.TestCase):
         out = toml_splice.set_table("a = 1", ("lanes",), {"strategy": "x"})
         self.assertEqual(out, 'a = 1\n\n[lanes]\nstrategy = "x"\n')
 
+    def test_parent_table_beside_an_array_of_tables_child_changes_only_its_key(self):
+        # Regression (Plan 33-09): the parent's values carry the [[lanes.review]] array, which
+        # lives in its own blocks and must not be written as an inline key of [lanes].
+        text = '[lanes]\nstrategy = "a"\n\n[[lanes.review]]\nkey = "k"\nmodel = "m"\n'
+        out = toml_splice.set_table(text, ("lanes",), {"strategy": "b"})
+        self.assertEqual(
+            out, '[lanes]\nstrategy = "b"\n\n[[lanes.review]]\nkey = "k"\nmodel = "m"\n')
+
     def test_crlf_file_keeps_crlf_on_every_line(self):
         text = BASE.replace("\n", "\r\n")
         out = toml_splice.set_table(text, ("runner", "retry"), {"base_s": 2})

@@ -434,7 +434,9 @@ def _splice_table(text: str, path: tuple, values: dict, current: dict, table: di
         return text + _new_table_text(text, path, values, nl)
     child = _child_keys([block.path for block in blocks], path)
     old = {k: v for k, v in (_walk_dict(current, path) or {}).items() if k not in child}
-    new = {k: v for k, v in table.items() if not (k in child and isinstance(v, dict))}
+    # A child key (a sub-table or an array of tables, e.g. [[lanes.review]] under [lanes]) lives in
+    # its own blocks, so the parent block never writes it, whatever its value.
+    new = {k: v for k, v in table.items() if k not in child}
     return _join(blocks, {index: _edit_block(blocks[index], old, new, nl)})
 
 

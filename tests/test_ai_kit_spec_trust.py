@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-k
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
                                  "ai-kit-spec-execute-superpowers"))
 
-from ai_kit_spec import cli, config_io, config_migrate, trust
+from ai_kit_spec import cli, config_io, trust
 from ai_kit_spec.runner_dispatch import RunnerResult
 
 
@@ -171,8 +171,8 @@ class TestTrustLifecycle(TrustEnvTestCase):
         # command's placeholders, so --show must render the merged entry.
         cfg_dir = os.path.join(self.xdg, "ai-kit")
         os.makedirs(cfg_dir, exist_ok=True)
-        with open(os.path.join(cfg_dir, "review-spec.toml"), "w", encoding="utf-8") as f:
-            f.write('[[reviewers]]\nkey = "g"\nmodel = "m"\nvendor = "v"\ncli = "codex"\n'
+        with open(os.path.join(cfg_dir, "config.toml"), "w", encoding="utf-8") as f:
+            f.write('[[lanes.review]]\nkey = "g"\nmodel = "m"\nvendor = "v"\ncli = "codex"\n'
                     'flag = "--safe"\ncommand = "codex exec {flag} -m {model}"\n')
         self.write_local(b'[lanes]\n[[lanes.review]]\nkey = "g"\nflag = "--yolo"\n')
         line = self.show_lines()[0]
@@ -290,15 +290,15 @@ class TestTrustLifecycle(TrustEnvTestCase):
         self.assertIn("config error", err.getvalue())
 
     def test_render_toml_out_never_trusts_the_file_it_writes(self):
-        # C-WR-05/D-09: the wizard's write path must leave the local file untrusted. Plan 09
-        # moves render-toml to config.toml; until then it writes the old shape at the old path,
-        # which the next roster read migrates with no trust carried (C1-13).
+        # C-WR-05/D-09: the wizard's write path must leave the local file untrusted. render-toml
+        # writes the project's config.toml, and a command-bearing lane it writes stays untrusted
+        # until trust-local records it (C1-13).
         json_path = os.path.join(self.cwd, "cfg.json")
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump({"policy": {"mode": "single", "ladder": ["local"]},
-                       "reviewers": [{"key": "local", "model": "m", "vendor": "v",
-                                      "cli": "codex", "command": self.PROBE_CMD}]}, f)
-        local = config_migrate.legacy_path(config_io.cfg_local_path(self.cwd))
+                       "lanes": [{"key": "local", "model": "m", "vendor": "v",
+                                  "cli": "codex", "command": self.PROBE_CMD}]}, f)
+        local = config_io.cfg_local_path(self.cwd)
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(cli.main(["render-toml", "--json-config", json_path,
                                        "--out", local]), 0)
@@ -318,9 +318,9 @@ class TestTrustLifecycle(TrustEnvTestCase):
 
         cfg_dir = os.path.join(self.xdg, "ai-kit")
         os.makedirs(cfg_dir, exist_ok=True)
-        with open(os.path.join(cfg_dir, "review-spec.toml"), "w", encoding="utf-8") as f:
-            f.write('[[reviewers]]\nkey = "g"\nmodel = "m"\nvendor = "v"\ncli = "codex"\n'
-                    f'command = "{self.PROBE_CMD}"\n[policy]\nladder = ["g"]\n')
+        with open(os.path.join(cfg_dir, "config.toml"), "w", encoding="utf-8") as f:
+            f.write('[[lanes.review]]\nkey = "g"\nmodel = "m"\nvendor = "v"\ncli = "codex"\n'
+                    f'command = "{self.PROBE_CMD}"\n[lanes.policy]\nladder = ["g"]\n')
         quota_path = os.path.join(self.cwd, "quota.json")
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -381,7 +381,7 @@ class TestLoudConfigErrors(TrustEnvTestCase):
         self.assertEqual(config_io.cfg_load_toml(path), {})
 
     def test_malformed_toml_raises_with_path_and_parser_message(self):
-        path = self.write_local(b"[[reviewers]\nkey=")
+        path = self.write_local(b"[[lanes.review]\nkey=")
         with self.assertRaises(config_io.ConfigError) as ctx:
             config_io.cfg_load_toml(path)
         self.assertIn(path, str(ctx.exception))
@@ -394,14 +394,14 @@ class TestLoudConfigErrors(TrustEnvTestCase):
         self.assertEqual(ctx.exception.path, path)
 
     def test_missing_tomllib_on_existing_file_raises(self):
-        path = self.write_local(b'[policy]\nmode = "single"\n')
+        path = self.write_local(b'[lanes.policy]\nmode = "single"\n')
         with mock.patch.object(config_io, "tomllib", None), \
                 self.assertRaises(config_io.ConfigError) as ctx:
             config_io.cfg_load_toml(path)
         self.assertIn("Python 3.11+", ctx.exception.message)
 
     def test_two_readers_of_one_malformed_file_both_report(self):
-        path = self.write_local(b"[[reviewers]\nkey=")
+        path = self.write_local(b"[[lanes.review]\nkey=")
         errors = []
 
         def reader():
@@ -422,11 +422,11 @@ class TestLoudConfigErrors(TrustEnvTestCase):
     def _write_global(self, raw: bytes) -> None:
         cfg_dir = os.path.join(self.xdg, "ai-kit")
         os.makedirs(cfg_dir, exist_ok=True)
-        with open(os.path.join(cfg_dir, "review-spec.toml"), "wb") as f:
+        with open(os.path.join(cfg_dir, "config.toml"), "wb") as f:
             f.write(raw)
 
     def test_review_spec_main_exits_2_on_malformed_local(self):
-        self.write_local(b"[[reviewers]\n")
+        self.write_local(b"[[lanes.review]\n")
         quota_path = os.path.join(self.cwd, "quota.json")
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -437,7 +437,7 @@ class TestLoudConfigErrors(TrustEnvTestCase):
         self.assertIn(config_io.cfg_local_path(self.cwd), err.getvalue())
 
     def test_review_spec_main_exits_2_on_malformed_global(self):
-        self._write_global(b"[[reviewers]\n")
+        self._write_global(b"[[lanes.review]\n")
         quota_path = os.path.join(self.cwd, "quota.json")
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -445,11 +445,11 @@ class TestLoudConfigErrors(TrustEnvTestCase):
                              "--quota-path", quota_path],
                             which_fn=lambda _name, **_kwargs: None, run_fn=lambda *_a, **_k: None)
         self.assertEqual(code, 2)
-        self.assertIn(os.path.join(self.xdg, "ai-kit", "review-spec.toml"), err.getvalue())
+        self.assertIn(os.path.join(self.xdg, "ai-kit", "config.toml"), err.getvalue())
 
     def test_superpowers_cli_exits_2_on_malformed_local(self):
         from ai_kit_spec_superpowers import cli as superpowers_cli
-        self.write_local(b"[[reviewers]\n")
+        self.write_local(b"[[lanes.review]\n")
         task_path = os.path.join(self.cwd, "task-1-brief.md")
         with open(task_path, "w", encoding="utf-8") as f:
             f.write("### Task 1\n**Files:**\n- Create: `a.py`\n")
@@ -464,7 +464,7 @@ class TestLoudConfigErrors(TrustEnvTestCase):
     def test_malformed_untrusted_local_still_exits_2(self):
         # Parsing happens BEFORE the trust check (D-08 interpretation) -- the malformed
         # file here was never trusted, and the loud error fires regardless.
-        self.write_local(b"[[reviewers]\n")
+        self.write_local(b"[[lanes.review]\n")
         quota_path = os.path.join(self.cwd, "quota.json")
         err = io.StringIO()
         with redirect_stdout(io.StringIO()), redirect_stderr(err):

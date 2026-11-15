@@ -8,12 +8,11 @@ import time
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from ai_kit_spec import config_migrate, provider_check, routing, trust
+from ai_kit_spec import config_migrate, provider_check, routing, toml_splice, trust
 from ai_kit_spec.cache import (
     cache_is_stale,
     cache_read_json,
     cache_write_json,
-    cache_write_text,
 )
 from ai_kit_spec.catalog_build import (
     CatalogSources,
@@ -37,10 +36,11 @@ from ai_kit_spec.config_io import (
     cfg_lanes_view,
     cfg_local_path,
     cfg_migrate_project,
+    cfg_migrate_target,
     cfg_parse_toml_bytes,
     cfg_project_trust_bytes,
     cfg_read_bytes,
-    cfg_render_toml,
+    cfg_render_lanes,
     cfg_resolve,
     cfg_trust_project,
     cfg_trust_store_dir,
@@ -766,19 +766,57 @@ def _cmd_merge_reports(args: argparse.Namespace, deps: CliDeps) -> int:
     print(render_merged_report(merged, args.doc_paths, any_source_issues))
     return 0
 
+def _checked_target(path: str) -> tuple[str, dict]:
+    """The text and parsed document of a render-toml target ("" and {} when it is missing).
+
+    A broken or non-UTF-8 file is a ConfigError (exit 2), raised before any write (C1-16)."""
+    if not os.path.exists(path):
+        return "", {}
+    raw = cfg_read_bytes(path)
+    doc = cfg_parse_toml_bytes(raw, path)
+    return raw.decode("utf-8"), doc
+
+
+def _render_toml_refusal(out: str, doc: dict, replace: bool) -> str | None:
+    """The refusal for a render-toml write that needs --replace (C1-17, C1-18): an existing [lanes]
+    table, or an old roster beside the target that would migrate into it. The check runs before the
+    migration, so a refusal writes nothing at all."""
+    if replace:
+        return None
+    if "lanes" in doc:
+        return (f"render-toml: refusing to replace the [lanes] table in {out} (nothing written); "
+                "pass --replace only after the user approved replacing it")
+    legacy = config_migrate.pending(out)
+    if legacy is not None:
+        return (f"render-toml: refusing to replace the old roster {legacy} that migrates into "
+                f"{out} (nothing written); pass --replace only after the user approved "
+                "replacing it")
+    return None
+
+
 def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
-    if args.out and os.path.exists(args.out) and not args.replace:
-        # Data safety: an existing config is replaced only with explicit consent.
-        print(f"render-toml: refusing to replace existing {args.out} (nothing written); "
-              "pass --replace only after the user approved replacing it", file=sys.stderr)
-        return 1
+    env = deps.env_fn()
     with open(args.json_config, encoding="utf-8") as f:
         config = json.load(f)
-    rendered = cfg_render_toml(config)
+    existing, doc = _checked_target(args.out) if args.out else ("", {})
     if args.out:
-        # Write the already-rendered bytes: rendering again would print the migration note
-        # a second time.
-        cache_write_text(args.out, rendered)
+        refusal = _render_toml_refusal(args.out, doc, args.replace)
+        if refusal is not None:
+            print(refusal, file=sys.stderr)
+            return 1
+        cfg_migrate_target(args.out, env)
+        existing, _ = _checked_target(args.out)  # the migration may have written config.toml
+    try:
+        rendered = cfg_render_lanes(config, existing)
+    except ConfigError:
+        raise
+    except ValueError as exc:
+        message = str(exc)
+        print(message if message.startswith("render-toml") else f"render-toml: {message}",
+              file=sys.stderr)
+        return 1
+    if args.out:
+        toml_splice.publish(args.out, rendered)
     print(rendered)
     return 0
 
@@ -892,7 +930,7 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
         )
         argv = build_runner_argv(spec, "<runner>", "node")
         print(json.dumps({"kind": "runner", "argv": argv}))
-        print(f"build-command: review-spec.toml stores runtime and model for {rid}; "
+        print(f"build-command: a config.toml lane stores runtime and model for {rid}; "
               f"the runner builds this argv at dispatch", file=sys.stderr)
         return 0
     if rid == "grok":
