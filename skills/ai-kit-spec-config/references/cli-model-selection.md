@@ -70,7 +70,7 @@ json.dump(snap, open('$FILTERED_RUNTIMES_JSON', 'w'))
    rather than duplicating the family-grouping judgment call this step already makes with the
    user.
 2. **For any kept CLI with no `models` array (grok always; codex or pi when its listing
-   failed) that has NO existing `review-spec.toml` entry yet** (first-time setup): ask the
+   failed) that has NO existing lane entry in `config.toml` yet** (first-time setup): ask the
    user for a candidate model id now (never guess or trust training knowledge — WebSearch it for
    recency first, per this skill's `NEVER` list; confirmed live 2026-08-28 that guessing here,
    `gpt-5.6-sol-high` instead of the real `gpt-5.6-sol`, produces a candidate that fails
@@ -79,7 +79,7 @@ json.dump(snap, open('$FILTERED_RUNTIMES_JSON', 'w'))
    single-provider-CLI candidate flow through the SAME matching/enrichment/ranking path as
    everything else, instead of being registered blind.
 3. Refresh the catalog (this also picks up, automatically, every model already registered in
-   `review-spec.toml` for a kept CLI with no `models` array — a pair's `runtime`, or a custom
+   the `config.toml` roster for a kept CLI with no `models` array — a pair's `runtime`, or a custom
    grok entry, recognized by the binary its `{model}` command launches). **Capture its printed JSON to a
    file** — `fetch-model-catalog` prints the FULL reconciled `discovered` candidate list
    (runtimes snapshot + registered single-provider-CLI models + `--extra-candidate`, exactly
@@ -298,7 +298,7 @@ for purpose in ('review', 'execute'):
    `purpose` value (`"review"`, `"execute"`, or `"both"`) carried forward into Step 2.4's
    pair and Step 3's write below. **A candidate that comes through this ranked flow
    always gets an explicit `purpose` written — never left absent.** Absent `purpose` is reserved
-   strictly for a pre-migration `review-spec.toml` entry that predates this design; every NEW
+   strictly for an entry migrated from an old roster that predates this design; every NEW
    entry this wizard writes, from this step or from Step 2.7's session-default flow below, states
    its `purpose` explicitly (an absent `purpose` reads as "matches both roles" on the consumer
    side, which must never be an accident of a newly-written entry, only the documented

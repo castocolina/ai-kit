@@ -1,4 +1,4 @@
-[[reviewers]]
+[[lanes.review]]
 key = "oc-gone"
 runtime = "opencode"
 model = "gone/model-x"

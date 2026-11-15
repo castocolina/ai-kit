@@ -5,21 +5,23 @@ config write, no runtimes snapshot, no trust record. `$TOOLS_PY` and `$SCRATCH` 
 paths SKILL.md Step 0 printed.
 
 Report which CLIs are installed (Step 1's `detect-runtimes` output). Then read the target config
-file (`~/.config/ai-kit/review-spec.toml` if `--global` was passed, else
-`./.aikit/review-spec.toml` by default) and note each `[[reviewers]]` entry's `key`/`runtime` (or
-legacy `cli`) if it exists. (This is a raw on-disk read only, not `cfg_resolve`'s merged view.)
+file (`~/.config/ai-kit/config.toml` if `--global` was passed, else
+`./.aikit/config.toml` by default) and note each `[[lanes.review]]` and `[[lanes.execute]]` entry's `key`/`runtime` (or
+legacy `cli`) with its role, if it exists. (This is a raw on-disk read only, not `cfg_resolve`'s merged view.) When that
+config.toml has no `[lanes]` table and an old `review-spec.toml` sits beside it, report that the old roster migrates on
+the next command that reads it, and list its `[[reviewers]]` entries (read-only).
 If any entries exist, probe their **quota availability** — the core purpose of `--check-only` —
 using a throwaway path:
 
 ```bash
-python3 "$TOOLS_PY" probe-quota --cwd "$(pwd)" --no-save-runtimes --quota-path "$SCRATCH/quota.json"
+python3 "$TOOLS_PY" probe-quota --cwd "$(pwd)" --no-save-runtimes --no-migrate --quota-path "$SCRATCH/quota.json"
 ```
 
 `probe-quota` makes live probe calls to each configured CLI (same mechanism as dispatch time),
 but "no writes" means nothing is persisted to ai-kit's caches or config: the throwaway
 `--quota-path` keeps quota rows out of the real `quota.json`, and `--no-save-runtimes` keeps
 `probe-quota`'s routing step from writing the runtimes cache (a cold or stale cache is rebuilt in
-memory only, and a targeted refresh is never written back).
+memory only, and a targeted refresh is never written back). `--no-migrate` reads an old roster read-only: it is used in memory, `migration pending` is printed, and nothing is written.
 
 `probe-quota` has no `--local`/`--global` flag — it always runs the full `cfg_resolve` merge, so
 output may include keys from both local and global configs. Report each `key`'s `available`
@@ -28,7 +30,7 @@ surfaced — so both parts describe the same set of reviewers.
 
 Three edge cases: (1) if `--global` was passed but a local config with `strategy = "local-only"`
 exists, the merge returns only local entries, shadowing the global keys the raw read listed; (2)
-`probe-quota` only probes keys reachable from `policy.ladder`; (3) an untrusted local file is
+`probe-quota` only probes keys reachable from `policy.ladder`; (3) a project file whose command-bearing lanes are untrusted is
 ignored entirely (stderr prints `ignoring untrusted project-local config`), so none of its keys
 are probed. For any raw-read key with no match in probe output, report `available: unknown (not
 probed — absent from policy.ladder, shadowed by local-only strategy, the local config is

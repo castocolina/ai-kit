@@ -23,20 +23,20 @@
     },
     {
       "id": "precise-global-write",
-      "prompt": "Write my reviewer config to the global review-spec file in the ai-kit config directory, not the project.",
+      "prompt": "Write my reviewer config to the global config.toml in the ai-kit config directory, not the project.",
       "expected_output": "Asks before writing the global file, and runs check-providers after detection in the normal setup branch.",
       "files": [],
       "assertions": [
-        "Asks for explicit confirmation before writing the global review-spec file",
+        "Asks for explicit confirmation before writing the global config.toml in the ai-kit config directory",
         "Runs check-providers --cwd after detect-runtimes --save in the normal branch"
       ]
     },
     {
       "id": "precise-stale-opencode-provider-warning",
-      "prompt": "Run setup. My local review-spec has an opencode reviewer on gone/model-x, and the live opencode listing no longer includes gone.",
+      "prompt": "Run setup. My local config.toml has an opencode reviewer on gone/model-x, and the live opencode listing no longer includes gone.",
       "expected_output": "Shows the check-providers warning line naming the provider and the file, and continues setup without stopping on it.",
       "files": [
-        "evals/files/stale-opencode/review-spec.toml"
+        "evals/files/stale-opencode/config.toml"
       ],
       "assertions": [
         "Shows the check-providers warning line naming the provider and the file",
@@ -55,12 +55,22 @@
     },
     {
       "id": "edge-existing-local-config-replace",
-      "prompt": "There is already a ./.aikit/review-spec.toml in this project. Set up my reviewers again.",
+      "prompt": "There is already a ./.aikit/config.toml with a [lanes] table in this project. Set up my reviewers again.",
       "expected_output": "Asks before replacing the existing local config, and still runs check-providers as part of the setup.",
       "files": [],
       "assertions": [
-        "Asks before replacing the existing local review-spec file",
+        "Asks before replacing the existing local [lanes] table",
         "Runs check-providers during setup even when the local config already exists"
+      ]
+    },
+    {
+      "id": "edge-old-roster-migration-pending",
+      "prompt": "Just check my reviewers. This project still has an old .aikit/review-spec.toml that has not migrated yet, and no config.toml.",
+      "expected_output": "Runs the read-only check, reports that the old roster migrates on the next command that reads it, and writes nothing.",
+      "files": [],
+      "assertions": [
+        "Reports the pending migration of the old review-spec.toml and names both files",
+        "Passes --no-migrate to probe-quota and writes no config or trust file"
       ]
     }
   ]

@@ -1,11 +1,13 @@
 ---
 name: ai-kit-spec-config
-description: Cross-AI reviewer config setup — detects installed CLIs/models, asks which to use as reviewers and in what priority order, then writes review-spec.toml. Writes per-project ./.aikit/review-spec.toml by default (always announces the exact path), asks before replacing any existing config (local or global). Use when the user requests cross-AI review setup or when ai-kit-spec-review warns no config exists. Supports --check-only (report availability, no writes), --local (force local write without asking), and --global (force ~/.config/ai-kit/review-spec.toml directly).
+description: "Cross-AI lane setup: detects installed CLIs and models, asks which to use for review and execute lanes and in what priority order, then writes the [lanes] table of ai-kit's config.toml. Writes the per-project ./.aikit/config.toml by default (always announces the exact path), asks before replacing an existing [lanes] table (local or global), and migrates an old review-spec.toml on first use. Use when the user requests cross-AI review or execute setup or when ai-kit-spec-review warns no config exists. Supports --check-only (report availability, no writes), --local (force local write without asking), and --global (force ~/.config/ai-kit/config.toml directly)."
 ---
 
 ## Your task
 
 Set up (or refresh) `ai-kit-spec-review`'s cross-AI reviewer configuration.
+
+**Read [`references/config-file.md`](references/config-file.md) when** the user asks where the config lives, about another table in the file, the migration of an old `review-spec.toml`, or trust.
 
 This skill is a **Process** (a fixed Step 0→4 sequence: locate, detect,
 ask, write, report) executed with **Tool-level rigor** at each step — every
@@ -75,7 +77,7 @@ installed."
 - **Never skip announcing the target path before asking reviewer questions** — user must know where config is headed from the start.
 - **Never re-derive the write target at Step 3** — use what Step 2 already resolved and announced (consistency guarantee).
 - **Never translate literal identifiers** — `purpose` values (REVIEW/EXECUTE), model ids, catalog keys, CLI/runtime names, and field labels stay in their literal, invariant form regardless of what language the rest of this conversation is in. Narrate and explain in the user's own language, but never garble an identifier a user or this skill needs to match against config values by translating it.
-- **Never run `trust-local` (the trusting form) without the user's explicit yes** — not even for the `./.aikit/review-spec.toml` this wizard just wrote. Show `trust-local --cwd <project root> --show` first so the user consents after seeing each reviewer's argv; until then the file stays inactive.
+- **Never run `trust-local` (the trusting form) without the user's explicit yes** — not even for the `./.aikit/config.toml` this wizard just wrote. Show `trust-local --cwd <project root> --show` first so the user consents after seeing each reviewer's argv; until then its command-bearing lanes stay inactive.
 - **Never read or print opencode's `auth.json` or any `apiKey`** — the stale-provider report
   reads provider names only, and a key value never belongs in a reply.
 
@@ -140,17 +142,11 @@ at a glance.
 
 #### Step 2.1 — Resolve the write target
 
-**Resolve the write target first, before asking anything else about reviewers.** Default is **local** (`./.aikit/review-spec.toml`) — a per-project config is the safer default since it can't silently affect other projects. `--global` forces `~/.config/ai-kit/review-spec.toml` directly, skipping the ask below. `--local` also forces local directly, skipping the ask (both flags are an explicit choice, so neither needs confirming). With **neither flag passed** (the common case): `Read` `~/.config/ai-kit/review-spec.toml` to check whether a global config already exists.
+**Resolve the write target first, before asking anything else about reviewers.** Default is **local** (`./.aikit/config.toml`) — a per-project config is the safer default since it can't silently affect other projects. `--global` forces `~/.config/ai-kit/config.toml` directly, skipping the ask below. `--local` also forces local directly, skipping the ask (both flags are an explicit choice, so neither needs confirming). With **neither flag passed** (the common case): `Read` `~/.config/ai-kit/config.toml` and check whether a global roster exists. A global roster exists when that file has a `[lanes]` table, or when an old `review-spec.toml` sits beside it in `~/.config/ai-kit/` (that old roster migrates into the config.toml on the write). A config.toml with neither counts as no roster.
 - If it does **not** exist, proceed with the local default silently.
-- If it **does** exist, use `AskUserQuestion` to ask explicitly before writing anywhere: "A global review-spec.toml already exists at `~/.config/ai-kit/review-spec.toml`. Write a per-project config at `./.aikit/review-spec.toml` instead (recommended — doesn't touch the existing global config), or replace the existing global config?" — with the local option first/default. Picking "replace" here is the replacement consent below for the global file.
+- If it **does** exist, use `AskUserQuestion` to ask explicitly before writing anywhere: "A global roster already exists at `~/.config/ai-kit/config.toml` (or as an old `review-spec.toml` there that migrates into it). Write a per-project roster at `./.aikit/config.toml` instead (recommended — doesn't touch the global roster), or replace the global roster?" — with the local option first/default. Picking "replace" here is the replacement consent below for the global file.
 
-**Replacement gate (every flag combination).** `Read` the resolved target itself. If it
-already exists and the user has not already approved replacing that exact file above, use
-`AskUserQuestion`: "`<resolved absolute path>` already exists. Replace it with the config
-built in this run (its current reviewers and policy are lost unless you re-enter them), or
-stop and keep it?" — with "stop" first/default. `--local`/`--global` choose the target, never
-consent to replace it. On "stop", end the run without writing. Only an explicit "replace"
-lets Step 3 pass `--replace`; without it `render-toml --out` refuses an existing file.
+**Replacement gate (every flag combination).** `Read` the resolved target itself. If it already holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates into the target on the write) and the user has not already approved replacing that exact file above, use `AskUserQuestion`: "`<resolved absolute path>` already holds a roster. Replace it with the roster built in this run (its current reviewers and policy are lost unless you re-enter them; other tables and comments in the file are kept; an old `review-spec.toml` migrates first and stays recoverable as `review-spec.toml.migrated`), or stop and keep it?" — with "stop" first/default. `--local`/`--global` choose the target, never consent to replace it. On "stop", end the run without writing. Only an explicit "replace" lets Step 3 pass `--replace`; without it `render-toml --out` refuses an existing roster and writes nothing.
 
 **Once the target is resolved, announce it immediately** — print "Writing to: `<resolved absolute path>`" before asking any of the reviewer questions below, so the user knows where this run's answers are headed from the start (not just in Step 4's closing report, which restates the same path after the write actually happens).
 
@@ -209,7 +205,7 @@ preview and Step 2.5's live test are then the only sources — never invent quir
 plus the knobs that runtime takes as entry fields (`effort` and `service_tier` for codex,
 `cursor_mode` for cursor, default `ask`). The runner builds the argv from those fields at
 dispatch. `build-command --runtime <id>` is an optional preview of that argv — it prints the
-argv and says that review-spec.toml stores `runtime` and `model`; do not store its output as a
+argv and says that a config.toml lane stores `runtime` and `model`; do not store its output as a
 `command`. How a stored pair is run, waited for and retried is in
 [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md) for runtime/model dispatch; this skill
 only stores the pair, and the runner refuses a model id its runtime's grammar disallows.
@@ -244,7 +240,7 @@ overrides were given). `build-model-id` stays for these cursor bracket ids.
 custom entry with no `runtime`, trust-gated like any custom command. Any other CLI outside the
 runner table — a CLI this catalog of profiles hasn't caught up with yet, a brand-new provider,
 or a fully custom local script — is that same escape hatch: a custom entry with a hand-written
-`command` and no `runtime`. `review-spec.toml`'s `command` field accepts a plain template with
+`command` and no `runtime`. A lane entry's `command` field accepts a plain template with
 just `{model}`/`{prompt}` as placeholders. Hand-written templates are split into argv the way a
 shell splits words; `{model}`, `{prompt}`, and any `extra` fields each fill a whole argument
 (`{prompt}` needs no quoting). Shell operators (`;`, `|`, `&&`, `>`), `$` expansions, and
@@ -275,7 +271,7 @@ quota exhaustion, worth keeping for later) or drop it.
 
 **Also ask, for every entry (a pair or the session default), an optional `strength`**: `"ui"`,
 `"coding"`, `"planning"`, or left unset — free text otherwise, not validated. This is
-informational only — captured in `review-spec.toml` for a human (or a future version of this
+informational only — captured in the lane entry for a human (or a future version of this
 design) to read, but **not yet consumed by any resolution logic today**
 (`resolve_reviewers`/`resolve_ladder_pick` ignore it completely). Tell the user this plainly if
 they ask what it does: it doesn't change dispatch behavior yet, it just gets saved.
@@ -336,12 +332,9 @@ Then ask: `policy.mode` (`single` or `double`) and the `policy.ladder` order —
 slot (`double` mode also seats an independent secondary). Default the order to the order the
 user answered the per-runtime and session-default questions in, combined, but let them reorder;
 once confirmed, echo it back as a numbered list so the user sees the exact fallback order
-before it's written (`cfg_render_toml` also writes this same list as a `#`-comment above
-`[policy]` in the file itself, so it stays readable to anyone opening `review-spec.toml`
-directly later, not just at setup time). If the resolved write target (above) is **local**,
+before it's written (`render-toml` also writes this same list as a `#` comment above `[lanes.policy]` and refreshes it whenever the ladder changes, so it stays readable to anyone opening `config.toml` later, not just at setup time). If the resolved write target (above) is **local**,
 also ask whether this local config should be `local-only` or the default `global-merge` — set
-the JSON config's top-level `strategy` key to `"local-only"` if so (`cfg_render_toml` renders
-it as a bare `strategy = "..."` line at the top of the file); omit the key entirely for the
+the JSON config's top-level `strategy` key to `"local-only"` if so (`render-toml` writes it as `strategy = "..."` under `[lanes]`); omit the key entirely for the
 default (global-merge applies, no line needed).
 
 The `strategy` question does not apply when the resolved target is global — `strategy` only
@@ -354,18 +347,16 @@ one is killed, so the tiers are **cumulative**: the worst case is their sum (60 
 30-minute ceiling. Most users should keep the default; only ask this as an offer, don't require
 an answer. If the user wants a specific reviewer entry to use different tiers (e.g. a known-slow
 `effort=high` combination), that goes in a flat `timeout_tiers = [900, 1800]` key directly on
-that `[[reviewers]]` entry, instead of the policy-wide default. It must be a **flat** key on the
-entry — this config format has no nested-object support (`extra` is derived at read time from
-every `[[reviewers]]` key the schema doesn't recognize, and the TOML writer has no dict branch),
-so a nested `extra = { timeout_tiers = [...] }` would be written out as a string and silently
-fall back to the policy default.
+that lane entry, instead of the policy-wide default. It must be a **flat** key on the
+entry — this config format has no nested-object support (the writer rejects a nested value),
+so a nested `extra = { timeout_tiers = [...] }` is not a way to set it.
 
 ### Step 3 — Write
 
 Build the JSON shape `skills/ai-kit-spec-review/ai-kit-spec.py`'s `render-toml` subcommand
-expects (`{"strategy": "...", "policy": {...}, "reviewers": [...]}` — the
+expects (`{"strategy": "...", "policy": {...}, "lanes": [...]}` — the
 `strategy` key only when Step 2 asked for `local-only`). **Each object in
-`reviewers` now also carries `purpose` (`"review"`/`"execute"`/`"both"`, from
+`lanes` now also carries `purpose` (`"review"`/`"execute"`/`"both"`, from
 Step 2.2 for a ranked pair or Step 2.7 for a session-default one — every entry
 this wizard newly registers gets an explicit `purpose`; absent `purpose` is
 reserved for a pre-migration entry this run is merely carrying forward
@@ -389,26 +380,25 @@ echo "render-toml exit $?"
 ```
 
 `<target path>` is the write target Step 2 resolved and already
-announced — `./.aikit/review-spec.toml` by default (or explicitly via
-`--local`), `~/.config/ai-kit/review-spec.toml` only via `--global` or
+announced — `./.aikit/config.toml` by default (or explicitly via
+`--local`), `~/.config/ai-kit/config.toml` only via `--global` or
 because the user picked "replace the existing global config" at Step 2's
 ask. Never re-derive the target here independently of what Step 2
-already resolved and told the user. Add `--replace` only when Step 2.1's replacement gate
-got an explicit "replace" for an existing target. (The runtimes snapshot was already
+already resolved and told the user. Add `--replace` only when the target holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates) and Step 2.1's replacement gate got an explicit "replace"; with `--replace`, render-toml first migrates that old roster and prints one line. (The runtimes snapshot was already
 persisted in Step 1 via `--save` — no separate write needed here.)
-**Capture stderr to `$SCRATCH/render-toml-stderr.txt`** — `cfg_render_toml`
-prints a `WARNING:` line there for every `[[reviewers]]` entry it
+**Capture stderr to `$SCRATCH/render-toml-stderr.txt`** — `render-toml`
+prints a `WARNING:` line there for every lane entry it
 rejected-and-dropped instead of writing (e.g. a malformed entry), and
 this is the ONLY place that warning is ever emitted — Step 4 below reads
 this file to decide whether to surface it. `$SCRATCH/rendered.toml` holds
-the same TOML as written (stdout adds one trailing newline, so compare with `diff`, not
+the whole written file (stdout adds one trailing newline, so compare with `diff`, not
 `cmp`).
 
 ### Step 4 — Report
 
 **First, check the printed exit status.** Anything but `render-toml exit 0` means the
 write is not confirmed (a rejected config can end in a traceback, with no `WARNING:` line;
-a `refusing to replace existing` line means nothing was written; a failure after the write,
+a `refusing to replace` line means nothing was written (render-toml checks the target before it migrates or writes anything); a `migrated ... to ...` line on stderr means the old roster moved into the target just before the write; a failure after the write,
 such as printing stdout, can leave the target already replaced): show
 `$SCRATCH/render-toml-stderr.txt` verbatim, `Read` the target and report "Config write NOT
 confirmed" with what the target now holds, keep `$SCRATCH` for inspection and stop — never
@@ -416,7 +406,7 @@ offer trust after a nonzero exit.
 
 **On exit 0, check `$SCRATCH/render-toml-stderr.txt` for any `WARNING:`-prefixed
 line.** If one or more are present, the write still succeeded but
-`cfg_render_toml` silently dropped at least one `[[reviewers]]` entry —
+`render-toml` silently dropped at least one lane entry —
 never report a plain success in this case. Surface it clearly, e.g.:
 ```
 Config written to: `<target path>` — but with warnings:
@@ -429,7 +419,7 @@ summary confirming the write, always including the exact absolute path
 confirmation that the write actually happened, not just the plan to do
 it): "Config written to: `<target path>`." Then, either way, the
 resolved `policy.mode`, and the **priority fallback order** as its own
-explicit numbered list, read from the `policy.ladder` line of
+explicit numbered list, read from the `ladder` line of `[lanes.policy]` in
 `$SCRATCH/rendered.toml` (what was actually written, which omits any
 rejected entry), never re-typed from Step 2's confirmed list — e.g.:
 ```
@@ -443,17 +433,16 @@ some order" — the point of this report is that the user can see the
 exact fallback sequence without having to open the file. If that ladder
 differs from the one confirmed in Step 2, name the missing keys.
 
-**When the write target was local** (`./.aikit/review-spec.toml`), tell the user the file
-stays inactive for cross-AI review until trusted. Run
+**When the write target was local** (`./.aikit/config.toml`), tell the user the file
+stays inactive for cross-AI review until trusted (a file with no command-bearing lane needs no trust). Run
 `python3 "$TOOLS_PY" trust-local --cwd <project root> --show`, where `<project root>` is the
-parent of `.aikit/` — never `.aikit/` itself, which looks for `.aikit/.aikit/review-spec.toml`
-and exits 1. `--show` writes nothing; it prints one JSON line per local subprocess or custom
+parent of `.aikit/` — never `.aikit/` itself, which looks for `.aikit/.aikit/config.toml`
+and exits 1. `--show` writes no trust record; it prints one JSON line per local subprocess or custom
 reviewer (an entry with a `runtime` or a `command`): `{"key", "argv", "trusted", "path"}`, where `argv` is the exact argument list
 dispatch would run (already merged with the global config per `strategy`) with the prompt
 shown as the literal `<prompt>` placeholder, or `{"key", "error"}` for an entry that would be
 refused. Show those lines, ask whether to trust the file, and run
-`python3 "$TOOLS_PY" trust-local --cwd <project root>` only after an explicit yes. Trust is tied
-to the file's exact content: any edit needs a new trust. `trust-local --cwd <project root>
+`python3 "$TOOLS_PY" trust-local --cwd <project root>` only after an explicit yes. Trust covers the file's command-bearing lane entries: editing another table, comments or spacing keeps it; changing a command-bearing entry needs a new trust; a file with no command-bearing entry needs none (`trust-local` prints `nothing to trust:`). `trust-local --cwd <project root>
 --revoke` withdraws it, and still works after the file was deleted or moved.
 
 Outside `--check-only`, when `probe-quota` prints `ignoring untrusted project-local config`,

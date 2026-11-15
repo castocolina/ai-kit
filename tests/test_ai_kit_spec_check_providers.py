@@ -350,10 +350,21 @@ class TestSpecConfigStep(unittest.TestCase):
         for index in auth_lines:
             self.assertTrue(never < index < section_end, lines[index])
 
-    def test_skill_evals_have_six_cases(self):
+    def test_skill_evals_have_the_seven_cases(self):
         with open(EVALS_JSON, encoding="utf-8") as handle:
             data = json.load(handle)
-        self.assertEqual(len(data["evals"]), 6)
+        self.assertEqual(
+            [item["id"] for item in data["evals"]],
+            [
+                "casual-set-up-reviewers",
+                "casual-check-only",
+                "precise-global-write",
+                "precise-stale-opencode-provider-warning",
+                "edge-opencode-not-installed-config-fallback",
+                "edge-existing-local-config-replace",
+                "edge-old-roster-migration-pending",
+            ],
+        )
 
 
 if __name__ == "__main__":
