@@ -54,7 +54,11 @@ fills each; the runner reads only `[runner]` and `[runner.retry*]` through its T
   Phase 33.
 - `[hooks]`: hook switches. Phase 49. Not read in Phase 33.
 
-The reader accepts a table or key it does not know and keeps it through a write.
+The Python reader accepts a table or key it does not know and keeps it through a write. The runner's
+subset reader (D-07) reads only `[runner]` and `[runner.retry*]` and skips every other table as opaque. It
+skips the whole file (one notice, next source) for an inline table, a date, a nested array, a multi-line
+string (except inside `[lanes]` and `[[lanes.*]]`, where it is skipped until its delimiter closes) or an
+array of tables outside `[lanes]`. A `'''` or `"""` inside a comment or a one-line string does not count.
 
 ## Roles
 

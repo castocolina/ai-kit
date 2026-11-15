@@ -74,9 +74,10 @@ comments. Anything else there (an inline table, a literal or multi-line string, 
 array, a key or table defined twice, a key that is also a table) makes it skip that file with one
 notice and take every key from the next source. Every other table, the `[lanes]` roster with its
 inline tables included, is skipped unread. Anywhere in the file, a table header whose name the runner cannot read (a name part that is neither a bare key nor a
-double-quoted string, such as a literal-quoted `'lanes'`), a multi-line string, an array of tables outside `[lanes]`, or bytes
-that are not valid UTF-8 make the file skipped the same way; nothing else outside the runner
-tables does.
+double-quoted string, such as a literal-quoted `'lanes'`), a multi-line string outside `[lanes]` and
+`[[lanes.*]]` (inside them it is skipped until its delimiter closes), an array of tables outside `[lanes]`,
+or bytes that are not valid UTF-8 make the file skipped the same way; nothing else outside the runner
+tables does. A `'''` or `"""` inside a comment or a one-line string is not a multi-line string.
 
 Sources, in order, read once at call start, per key:
 

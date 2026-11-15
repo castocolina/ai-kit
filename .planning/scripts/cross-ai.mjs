@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=7dc99608fbf5886016730dfce4d0068b58037e636ad35ca41e870634536d75c4
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=8fc01c19e9a4c56584fa7ab7237f5c460d70d4475ec3fa18fff15e45fe957a20
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
@@ -3259,18 +3259,56 @@ function scanTomlValue(text) {
   return TOML_TAIL_RE.test(s.slice(end)) ? { value } : { error: 'unsupported value' };
 }
 
+// Table or key names that would reach Object.prototype through a plain object (IN-51).
+const TOML_RESERVED_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
+
+// The multi-line string delimiter ('"""' or "'''") still open at the end of an opaque line, or
+// null: `open` is the delimiter already open at its start. A comment and one-line strings are
+// skipped, so a `'''` inside either does not count (WR-51).
+function tomlOpenDelimiter(line, open) {
+  let delim = open;
+  let i = 0;
+  while (i < line.length) {
+    const c = line[i];
+    if (delim) {
+      if (delim === '"""' && c === '\\') i += 2;
+      else if (line.startsWith(delim, i)) { delim = null; i += 3; } else i += 1;
+    } else if (c === '#') {
+      break;
+    } else if (line.startsWith('"""', i) || line.startsWith("'''", i)) {
+      delim = line.slice(i, i + 3);
+      i += 3;
+    } else if (c === '"' || c === "'") {
+      i += 1;
+      while (i < line.length && line[i] !== c) i += c === '"' && line[i] === '\\' ? 2 : 1;
+      i += 1;
+    } else {
+      i += 1;
+    }
+  }
+  return delim;
+}
+
 // Parses the TOML subset (D-07) and keeps only the runner subtree: { obj: { runner: {...} } }, or
 // { error: 'line N: <reason>' } for anything outside the subset or any table/value collision in
-// either order. [[lanes.*]] and every other table are opaque: their lines are skipped.
+// either order. [[lanes.*]] and every other table are opaque: their lines are skipped, and a
+// multi-line string inside [lanes] is skipped until its delimiter closes (elsewhere it is refused).
 function parseTomlSubset(text) {
   const obj = {};
   const defined = new Set();
   let table = null;
   let tableName = '';
+  let seenHeader = false;
+  let inLanes = false;
+  let openString = null;
   const lines = text.split(/\r?\n/);
   for (let idx = 0; idx < lines.length; idx += 1) {
     const n = idx + 1;
     const line = lines[idx];
+    if (openString) {
+      openString = tomlOpenDelimiter(line, openString);
+      continue;
+    }
     const trimmed = line.trim();
     if (trimmed === '' || trimmed.startsWith('#')) continue;
     const arr = TOML_ARRAY_HEADER_RE.exec(line);
@@ -3280,7 +3318,10 @@ function parseTomlSubset(text) {
       if (!segs) return { error: `line ${n}: unsupported table name` };
       if (arr && segs[0] !== 'lanes') return { error: `line ${n}: array of tables outside [lanes]` };
       table = null;
+      seenHeader = true;
+      inLanes = segs[0] === 'lanes';
       if (arr || segs[0] !== 'runner') continue;
+      if (segs.some((s) => TOML_RESERVED_NAMES.has(s))) return { error: `line ${n}: reserved table name` };
       const name = segs.join('.');
       if (defined.has(name)) return { error: `line ${n}: duplicate table ${name}` };
       defined.add(name);
@@ -3298,12 +3339,19 @@ function parseTomlSubset(text) {
       continue;
     }
     if (table === null) {
-      if (/"""|'''/.test(line)) return { error: `line ${n}: multi-line string` };
+      // A root-level `runner.x = 1` or `runner = { }` names the runner subtree outside a header
+      // (CR-51): refuse it, so it is never ignored and a migration never appends a second table.
+      if (!seenHeader && /^\s*(?:runner|"runner"|'runner')\s*[.=]/.test(line)) {
+        return { error: `line ${n}: runner keys outside a [runner] table` };
+      }
+      openString = tomlOpenDelimiter(line, null);
+      if (openString && !inLanes) return { error: `line ${n}: multi-line string` };
       continue;
     }
     const kv = /^\s*([A-Za-z0-9_-]+)\s*=\s*(.*)$/.exec(line);
     if (!kv) return { error: `line ${n}: not a key = value line` };
     const key = kv[1];
+    if (TOML_RESERVED_NAMES.has(key)) return { error: `line ${n}: reserved key ${key}` };
     if (Object.hasOwn(table, key)) {
       if (isPlainObject(table[key])) return { error: `line ${n}: key ${key} conflicts with table ${tableName}.${key}` };
       return { error: `line ${n}: duplicate key ${key}` };
@@ -3312,6 +3360,7 @@ function parseTomlSubset(text) {
     if (got.error) return { error: `line ${n}: ${got.error}` };
     table[key] = got.value;
   }
+  if (openString) return { error: `line ${lines.length}: multi-line string not closed` };
   return { obj };
 }
 
@@ -3818,6 +3867,35 @@ function mergeTomlTable(target, root, segments, entries, replaceKeys = []) {
   return { error: 'changed during the migration; the next run retries' };
 }
 
+// A legacy retry block split into the entries the TOML subset can hold and one notice line per
+// entry it cannot (WR-52): a key that is not bare or is a reserved name, or a value outside the
+// subset. A refused entry is named with its value, so nothing is dropped silently.
+function splitRetryEntries(block) {
+  const ok = [];
+  const refused = [];
+  for (const [key, value] of Object.entries(block)) {
+    if (!/^[A-Za-z0-9_-]+$/.test(key) || TOML_RESERVED_NAMES.has(key)) {
+      refused.push(`retry key ${JSON.stringify(key)} not migrated: not a usable key (value ${JSON.stringify(value)})`);
+    } else if (tomlValueText(value) === null) {
+      refused.push(`retry key ${key} not migrated: a value outside the TOML subset (${JSON.stringify(value)})`);
+    } else {
+      ok.push([key, value]);
+    }
+  }
+  return { ok, refused };
+}
+
+// The project .aikit folder as a link, or as the user's own config folder, would send a project
+// migration into the user layer (SEC-W1): a reason string, or null when it is a plain folder.
+function aikitFolderUnsafe(aikitRoot, env) {
+  try {
+    if (fs.lstatSync(aikitRoot).isSymbolicLink()) return 'is a link';
+    const userDir = aiKitConfigDir(env);
+    if (userDir !== null && fs.realpathSync(aikitRoot) === fs.realpathSync(userDir)) return 'is the user config folder';
+  } catch { /* absent: nothing to migrate into yet */ }
+  return null;
+}
+
 // The one-time migration of the legacy retry sources (D-13, D-14, D-15, D-25, D-26). Each source is
 // merged into its config.toml first (its own keys win; a conflict is named), retired second (only
 // while it still equals the snapshot that was merged, C1-6) and recorded in [runner] migrated_from
@@ -3829,7 +3907,9 @@ function migrateRetrySources(cwd, env) {
     const aikitRoot = path.join(cwd, '.aikit');
     const target = path.join(aikitRoot, 'config.toml');
     const planningRoot = path.join(cwd, '.planning');
-    for (const file of scopedConfigPaths(cwd, env)) {
+    const unsafe = aikitFolderUnsafe(aikitRoot, env);
+    if (unsafe) say(`workflow.cross_ai_retry not migrated: .aikit ${unsafe}; the project migration is refused`);
+    for (const file of unsafe ? [] : scopedConfigPaths(cwd, env)) {
       const rel = path.relative(cwd, file).split(path.sep).join('/');
       const read = readTomlSubset(target, aikitRoot);
       if (read.error) {
@@ -3858,14 +3938,16 @@ function migrateRetrySources(cwd, env) {
       }
       if (!isPlainObject(doc.workflow) || !Object.hasOwn(doc.workflow, 'cross_ai_retry')) continue;
       const block = doc.workflow.cross_ai_retry;
-      if (!isPlainObject(block) || !Object.values(block).every((v) => tomlValueText(v) !== null)) {
-        say(`${rel} workflow.cross_ai_retry not migrated: a value outside the TOML subset`);
+      if (!isPlainObject(block)) {
+        say(`${rel} workflow.cross_ai_retry not migrated: not an object`);
         continue;
       }
+      const split = splitRetryEntries(block);
+      for (const line of split.refused) say(`${rel} ${line}`);
       const scope = path.relative(planningRoot, path.dirname(file)).split(path.sep).join('/');
       const segments = scope === '' ? ['runner', 'retry'] : ['runner', 'retry', 'scopes', scope];
       const tableName = scope === '' ? 'runner.retry' : `runner.retry.scopes."${scope}"`;
-      const merged = mergeTomlTable(target, aikitRoot, segments, Object.entries(block));
+      const merged = mergeTomlTable(target, aikitRoot, segments, split.ok);
       if (merged.error) {
         say(`${rel} workflow.cross_ai_retry not migrated: .aikit/config.toml ${merged.error}`);
         continue;
@@ -3924,13 +4006,14 @@ function migrateRetrySources(cwd, env) {
         return;
       }
       const has = Object.hasOwn(doc2, 'cross_ai_retry');
-      if (has && (!isPlainObject(doc2.cross_ai_retry)
-        || !Object.values(doc2.cross_ai_retry).every((v) => tomlValueText(v) !== null))) {
-        say(`${userJson} cross_ai_retry not migrated: a value outside the TOML subset`);
+      if (has && !isPlainObject(doc2.cross_ai_retry)) {
+        say(`${userJson} cross_ai_retry not migrated: not an object`);
         return;
       }
       const block2 = has ? doc2.cross_ai_retry : {};
-      const merged2 = mergeTomlTable(userToml, userDir, ['runner', 'retry'], Object.entries(block2));
+      const split2 = splitRetryEntries(block2);
+      for (const line of split2.refused) say(`${userJson} ${line}`);
+      const merged2 = mergeTomlTable(userToml, userDir, ['runner', 'retry'], split2.ok);
       if (merged2.error) {
         say(`${userJson} cross_ai_retry not migrated: ${userToml} ${merged2.error}`);
         return;
@@ -8827,6 +8910,29 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
+        // WR-53: --print-argv runs no retry migration and changes no file in the project or the user dir.
+        name: 'print-argv-no-migration',
+        kind: 'logic',
+        args: ['--print-argv', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* action=stop$/,
+        setup: (c) => {
+          c.gsdBytes = '{"workflow": {"cross_ai_retry": {"max_retries": 2}}}';
+          c.userBytes = '{"cross_ai_retry": {"max_retries": 3}}\n';
+          writeCaseFile(path.join(c.repo, '.planning', 'config.json'), c.gsdBytes);
+          writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'cross-ai.json'), c.userBytes);
+          return null;
+        },
+        check: (r, c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          if (fs.readFileSync(path.join(c.repo, '.planning', 'config.json'), 'utf8') !== c.gsdBytes) return 'GSD file changed';
+          if (fs.readFileSync(path.join(dir, 'cross-ai.json'), 'utf8') !== c.userBytes) return 'cross-ai.json changed';
+          if (fs.readdirSync(dir).join(',') !== 'cross-ai.json') return `user dir holds ${fs.readdirSync(dir).join(',')}`;
+          if (fs.existsSync(path.join(c.repo, '.aikit'))) return '.aikit created';
+          return (r.stderr || '').includes('migrated') ? 'a migration notice was logged' : null;
+        },
+      },
+      {
         name: 'list-hang',
         kind: 'runtime',
         env: { FAKE_PI_LIST: 'hang' },
@@ -10120,6 +10226,18 @@ async function blackBoxSelfTest(listOnly = false) {
               'table runner.retry conflicts with key runner.retry'],
             ['[runner]\nretry = "x"\n[runner.retry.scopes."p"]\n', 'conflicts with key runner.retry'],
             ["['lanes']\nstrategy = \"x\"\n", 'line 1: unsupported table name'],
+            // CR-51: root-level keys that name the runner subtree are refused, in each spelling.
+            ['runner.retry.base_s = 9\n[lanes]\n', 'line 1: runner keys outside a [runner] table'],
+            ['# c\nrunner = { retry = { base_s = 9 } }\n', 'line 2: runner keys outside a [runner] table'],
+            ['"runner".retry.base_s = 9\n', 'runner keys outside a [runner] table'],
+            ["'runner'.retry.base_s = 9\n", 'runner keys outside a [runner] table'],
+            // IN-51: names that reach Object.prototype are refused.
+            ['[runner.__proto__.retry]\nbase_s = 60\n', 'line 1: reserved table name'],
+            ['[runner.constructor]\n', 'reserved table name'],
+            ['[runner.retry]\nprototype = 1\n', 'line 2: reserved key prototype'],
+            // WR-51 / D-07: a multi-line string outside [lanes] stays refused, and one never closed.
+            ['[models]\nx = """a\nb"""\n', 'line 2: multi-line string'],
+            ["[lanes]\nx = '''a\nb\n", 'multi-line string not closed'],
           ];
           for (const [text, fragment] of refusals) {
             const got = parseTomlSubset(text);
@@ -10127,10 +10245,34 @@ async function blackBoxSelfTest(listOnly = false) {
               return `${JSON.stringify(text)} gave ${JSON.stringify(got)}, want ${fragment}`;
             }
           }
+          // A root key that is not the runner's, and a runner-like key after a header, stay opaque.
+          const other = parseTomlSubset('runners = 1\nmodels.x = 2\n[lanes]\nrunner = 3\n');
+          if (other.error) return `unrelated root keys refused: ${other.error}`;
           // A super-table defined after its sub-table is valid TOML.
           const ok = parseTomlSubset('[runner.retry]\nbase_s = 1\n[runner]\nmigrated_from = ["a"]\n');
           if (ok.error) return `super-table after sub-table: ${ok.error}`;
           return ok.obj.runner.retry.base_s === 1 ? null : 'base_s not read';
+        },
+      },
+      {
+        // WR-51 / D-07: a '''/""" in a comment or a one-line string does not refuse the file, and a
+        // multi-line string inside [lanes] is opaque until it closes (its fake headers hide nothing).
+        name: 'pure-toml-subset-opaque-strings',
+        kind: 'logic',
+        pure: () => {
+          const texts = [
+            '[runner.retry]\nbase_s = 2 # don\'\'\'t\n',
+            '[models]\nnote = "x\'\'\'y" # """\n[runner.retry]\nbase_s = 2\n',
+            '[[lanes.review]]\ncommand = """\n[runner.retry]\nbase_s = 99\n"""\n[runner.retry]\nbase_s = 2\n',
+            "[lanes]\nx = '''\n[runner.retry]\nbase_s = 99\n''' # done\n[runner.retry]\nbase_s = 2\n",
+            '[lanes]\nx = """a\\"""b\n[runner.retry]\nbase_s = 99\n"""\n[runner.retry]\nbase_s = 2\n',
+          ];
+          for (const text of texts) {
+            const got = parseTomlSubset(text);
+            if (got.error) return `${JSON.stringify(text)} refused: ${got.error}`;
+            if (got.obj.runner.retry.base_s !== 2) return `${JSON.stringify(text)} gave ${JSON.stringify(got.obj)}`;
+          }
+          return null;
         },
       },
       {
@@ -10521,6 +10663,30 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
+        // CR-51: a root-level runner key is refused with a notice; the migration appends no second
+        // runner table and the GSD block stays.
+        name: 'retry-migrate-root-runner-key',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1 } } },
+        setup: (c) => {
+          c.projectText = 'runner.retry.base_s = 9\n';
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), c.projectText);
+          return null;
+        },
+        check: (r, c) => {
+          if (fs.readFileSync(path.join(c.repo, '.aikit', 'config.toml'), 'utf8') !== c.projectText) {
+            return 'config.toml was changed';
+          }
+          if (!(r.stderr || '').includes('runner keys outside a [runner] table')) return 'missing refusal notice';
+          const gsd = JSON.parse(fs.readFileSync(path.join(c.repo, '.planning', 'config.json'), 'utf8'));
+          return Object.hasOwn(gsd.workflow, 'cross_ai_retry') ? null : 'the GSD block was migrated anyway';
+        },
+      },
+      {
         // CR-01: the same link while the user config.toml is absent creates no user file.
         name: 'retry-migrate-project-link-dangling',
         kind: 'logic',
@@ -10540,6 +10706,62 @@ async function blackBoxSelfTest(listOnly = false) {
             return 'a user config.toml was created through the link';
           }
           return null;
+        },
+      },
+      {
+        // SEC-W1: a project .aikit that links to the user config folder migrates nothing into it.
+        name: 'retry-migrate-aikit-link',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1 } } },
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          c.userBytes = Buffer.from('[runner.retry]\nbase_s = 4\n');
+          writeCaseFile(path.join(dir, 'config.toml'), c.userBytes.toString('utf8'));
+          fs.symlinkSync(dir, path.join(c.repo, '.aikit'));
+          return null;
+        },
+        check: (r, c) => {
+          if (!fs.readFileSync(path.join(c.home, '.config', 'ai-kit', 'config.toml')).equals(c.userBytes)) {
+            return 'the user config.toml was written through the .aikit link';
+          }
+          if (!(r.stderr || '').includes('.aikit is a link')) return 'missing link notice';
+          const gsd = JSON.parse(fs.readFileSync(path.join(c.repo, '.planning', 'config.json'), 'utf8'));
+          return Object.hasOwn(gsd.workflow, 'cross_ai_retry') ? null : 'the GSD block was migrated anyway';
+        },
+      },
+      {
+        // WR-52: one unusable key or value is named with its value; the valid keys still migrate.
+        name: 'retry-migrate-odd-key',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        planningConfig: { workflow: { cross_ai_retry: { base_s: 5, 'my key': 1, max_retries: null } } },
+        setup: (c) => {
+          writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'cross-ai.json'),
+            '{"cross_ai_retry": {"factor": 3, "a.b": 2, "session_resets": {"x": 1}}}\n');
+          return null;
+        },
+        check: (r, c) => {
+          const err = r.stderr || '';
+          for (const want of ['retry key "my key" not migrated: not a usable key (value 1)',
+            'retry key max_retries not migrated: a value outside the TOML subset (null)',
+            'retry key "a.b" not migrated: not a usable key (value 2)',
+            'retry key session_resets not migrated: a value outside the TOML subset ({"x":1})']) {
+            if (!err.includes(want)) return `missing notice: ${want}`;
+          }
+          const project = parseTomlSubset(fs.readFileSync(path.join(c.repo, '.aikit', 'config.toml'), 'utf8'));
+          if (project.error || project.obj.runner.retry.base_s !== 5) return 'project base_s not migrated';
+          const gsd = JSON.parse(fs.readFileSync(path.join(c.repo, '.planning', 'config.json'), 'utf8'));
+          if (gsd.workflow && Object.hasOwn(gsd.workflow, 'cross_ai_retry')) return 'block not retired';
+          const user = parseTomlSubset(fs.readFileSync(path.join(c.home, '.config', 'ai-kit', 'config.toml'), 'utf8'));
+          if (user.error || user.obj.runner.retry.factor !== 3) return 'user factor not migrated';
+          return retryLine(r, 'base_s=5 factor=3');
         },
       },
       {
@@ -12315,7 +12537,8 @@ async function main(argv) {
   }
   // Read once: an edit during the call has no effect until the next call. runCli reads these
   // in 25.1-02; this call only resolves and logs them.
-  migrateRetrySources(process.cwd(), process.env);
+  // --print-argv is the documented read-only check (WR-53): it migrates and writes nothing.
+  if (!o.printArgv) migrateRetrySources(process.cwd(), process.env);
   const resolved = resolveRetry(process.cwd(), process.env);
   if (o.codexSandbox && o.mode !== 'exec') {
     log('cross-ai: --codex-sandbox applies to exec mode only; review already runs read-only');
