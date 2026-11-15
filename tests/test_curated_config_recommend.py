@@ -2136,7 +2136,9 @@ class TestCliRecommendIo(unittest.TestCase):
             self.assertIn(os.path.realpath(inv_path), touched)
             self.assertIn(affinity_real, touched)
             for path in touched:
-                if path == affinity_real:
+                # The output folder itself is opened read-only for the folder fsync that makes
+                # the atomic write durable (SPEC R2, D-09); nothing else may be opened.
+                if path in (affinity_real, real_tmp):
                     continue
                 self.assertEqual(os.path.dirname(path), real_tmp, path)
             self.assertEqual(sorted(os.listdir(tmp)), ["inventory.json", "plan.json"])

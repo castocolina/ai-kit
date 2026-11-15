@@ -25,7 +25,8 @@ def cache_write_json(path: str, data: dict) -> None:
 
 
 def cache_write_bytes(path: str, data: bytes, mode: int | None = None) -> None:
-    """Crash-safe atomic binary write (mkstemp in the target dir, optional chmod, os.replace)."""
+    """Crash-safe atomic binary write: mkstemp in the target dir, optional chmod, fsync of the
+    file, os.replace, then fsync of the folder (a folder fsync failure is not a write failure)."""
     parent = os.path.dirname(path)
     os.makedirs(parent, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=parent, suffix=".tmp")
@@ -34,12 +35,27 @@ def cache_write_bytes(path: str, data: bytes, mode: int | None = None) -> None:
             os.chmod(tmp, mode)
         with os.fdopen(fd, "wb") as f:
             f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
         raise
+    _fsync_folder(parent)
+
+
+def _fsync_folder(folder: str) -> None:
+    """Best effort: the rename already happened, so a folder fsync error is ignored."""
+    try:
+        fd = os.open(folder, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
 
 
 def _proc_umask() -> int | None:
