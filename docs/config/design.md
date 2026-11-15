@@ -55,10 +55,14 @@ fills each; the runner reads only `[runner]` and `[runner.retry*]` through its T
 - `[hooks]`: hook switches. Phase 49. Not read in Phase 33.
 
 The Python reader accepts a table or key it does not know and keeps it through a write. The runner's
-subset reader (D-07) reads only `[runner]` and `[runner.retry*]` and skips every other table as opaque. It
-skips the whole file (one notice, next source) for an inline table, a date, a nested array, a multi-line
-string (except inside `[lanes]` and `[[lanes.*]]`, where it is skipped until its delimiter closes) or an
-array of tables outside `[lanes]`. A `'''` or `"""` inside a comment or a one-line string does not count.
+subset reader (D-07) reads only `[runner]` and `[runner.retry*]` and skips every other table as opaque.
+Inside the runner tables it takes only `key = value` lines with basic strings, integers, floats, booleans
+and arrays of numbers or strings; anything else there (an inline table, a date, a nested array, a
+multi-line string) skips the whole file (one notice, next source). Anywhere in the file it also skips the
+file for a multi-line string outside `[lanes]` and `[[lanes.*]]` (inside them it is skipped until its
+delimiter closes), an array of tables outside `[lanes]`, a `runner` key before the first table header, or a
+line shaped like a table header it cannot name (a nested array element alone on its line counts). A `'''`
+or `"""` inside a comment or a one-line string does not count.
 
 ## Roles
 
@@ -106,7 +110,7 @@ Copies of the rule, one per code boundary that cannot share code (D-19):
 - `jev_review._config_dir`: `skills/jev-fast-decision/scripts/jev_review.py:984`
 - `common_config.cfg_ai_kit_dir`: `tools/common_config.py:263-271`
 - `setup.resolve_paths`: `tools/setup.py:103`
-- the runner's `aiKitConfigDir`: `skills/ai-kit-spec-review/references/cross-ai.mjs:3311-3316`
+- the runner's `aiKitConfigDir`: `skills/ai-kit-spec-review/references/cross-ai.mjs:3360-3365`
 
 `tests/test_config_dir_parity.py` runs every copy on the same cases: absolute, relative, empty and
 whitespace `XDG_CONFIG_HOME`, and HOME unset, empty or relative.
@@ -142,18 +146,18 @@ Settings locations ai-kit owns (section 1 of the scratch inventory, refreshed). 
 
 | Location | Layer | Format | Key names | Writer | Readers | Atomic | Comments kept |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `.aikit/config.toml` | project | TOML | the tables in Tables | `_cmd_render_toml` (`skills/ai-kit-spec-review/ai_kit_spec/cli.py:797`) through `cfg_render_lanes` (`config_io.py:887`) and `cfg_write_toml` (`config_io.py:919`); the migrations (`config_migrate.py:360`, `cross-ai.mjs:3807`) | `cfg_resolve` (`config_io.py:592`), `cfg_combine` (`config_io.py:660`), `resolveRetry` (`cross-ai.mjs:3454`) | yes: `toml_splice.publish` (`toml_splice.py:742`) | yes: a splice changes only the lines it owns |
-| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml` | user | TOML | the tables in Tables | the same writers, with the user target chosen by `cfg_migrate_target` (`config_io.py:493`) | `cfg_global_path` (`config_io.py:291-293`), `resolveRetry` (`cross-ai.mjs:3471-3472`) | yes | yes |
-| `.aikit/review-spec.toml` | project | TOML (old) | the old roster keys, copied under `[lanes]` | none after the migration | `legacy_path` (`config_migrate.py:42`), `migrate_layer` (`config_migrate.py:360`) | the old file is renamed to `.migrated` | the old file is kept as the `.migrated` copy |
-| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/review-spec.toml` | user | TOML (old) | the old roster keys, copied under `[lanes]` | none after the migration | `migrate_layer` (`config_migrate.py:360`) | renamed to `.migrated` | kept in the `.migrated` copy |
-| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config-trust/` | user | JSON, one file per trusted content | `path`, `sha256`, `trusted_at` | `record_trust` (`trust.py:47`) through `cache_write_json` (`cache.py:23`) | `is_trusted` (`trust.py:37`), `revoke_trust` (`trust.py:59`) | yes (`cache_write_bytes`) | n/a (generated) |
+| `.aikit/config.toml` | project | TOML | the tables in Tables | `_cmd_render_toml` (`skills/ai-kit-spec-review/ai_kit_spec/cli.py:797`) through `cfg_render_lanes` (`config_io.py:909`) and `cfg_write_toml` (`config_io.py:941`); the migrations (`config_migrate.py:360`, `cross-ai.mjs:3807`) | `cfg_resolve` (`config_io.py:614`), `cfg_combine` (`config_io.py:682`), `resolveRetry` (`cross-ai.mjs:3503`) | yes: `toml_splice.publish` (`toml_splice.py:780`) | yes: a splice changes only the lines it owns |
+| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml` | user | TOML | the tables in Tables | the same writers, with the user target chosen by `cfg_migrate_target` (`config_io.py:512`) | `cfg_global_path` (`config_io.py:291-293`), `resolveRetry` (`cross-ai.mjs:3515-3516`) | yes | yes |
+| `.aikit/review-spec.toml` | project | TOML (old) | the old roster keys, copied under `[lanes]` | none after the migration | `legacy_path` (`config_migrate.py:42`), `migrate_layer` (`config_migrate.py:363`) | the old file is renamed to `.migrated` | the old file is kept as the `.migrated` copy |
+| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/review-spec.toml` | user | TOML (old) | the old roster keys, copied under `[lanes]` | none after the migration | `migrate_layer` (`config_migrate.py:363`) | renamed to `.migrated` | kept in the `.migrated` copy |
+| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config-trust/` | user | JSON, one file per trusted content | `path`, `sha256`, `trusted_at` | `record_trust` (`trust.py:49`) through `cache_write_json` (`cache.py:23`) | `is_trusted` (`trust.py:39`), `revoke_trust` (`trust.py:61`) | yes (`cache_write_bytes`) | n/a (generated) |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/review-spec-trust/` | user | JSON (old) | the old record keys | none after the migration | `legacy_trust_dir` (`config_migrate.py:47`), `revoke_legacy_trust` (`config_migrate.py:58`) | n/a | n/a |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/claude-statusline.toml` | user | TOML | `[segments]`, `[[line]]`, `[palette]`, `[ramp.*]`, `[git]`, `[external]` | `save_statusline_config` (`tools/setup.py:3098`) through `write_toml_preserving` (`tools/setup.py:818`); recovery `_recover_incompatible_config` (`tools/setup.py:3471`) | `cfg_load_toml` (`tools/common_config.py:288`) | yes: `os.replace` (`tools/setup.py:862`); recovery publishes by `os.replace` (`tools/setup.py:3512`) after a `.bak` copy (`tools/setup.py:3500`) | yes: surgical patches keep other bytes |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cursor-statusline.toml` | user | TOML | as the Claude file, plus `[cursor]` | the same writers with the Cursor host | `cfg_load_toml` (`tools/common_config.py:288`) | yes | yes |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/segments/` and `segments-cursor/` | user | executables with a `# ai-kit-segment:` header | header fields `line`, `id`, `timeout`, `ttl`, `position` | `install_example_segments` (`tools/setup.py:1143`) through `_atomic_write_executable` (`tools/setup.py:1126`) | `cfg_segments_dir` (`tools/common_config.py:509`) | yes | n/a |
-| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai-errors.json` | user | JSON array of pattern rows | row fields checked by the runner | none: hand-edited | `loadOverlay` (`cross-ai.mjs:3318`, file at `cross-ai.mjs:3324`) | n/a | n/a |
-| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json` | user | JSON (old) | `cross_ai_retry` | none after the migration | `migrateRetrySources` (`cross-ai.mjs:3883-3885`) | renamed to `cross-ai.json.migrated` | kept in the `.migrated` copy |
-| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env` | user | env-style `KEY=VALUE` lines | `ARTIFICIAL_ANALYSIS_API_KEY` (`cli.py:519`), `JEV_API_KEY`, `TYPESAFE_API_KEY` (`jev_review.py:783-791`) | none: hand-edited | `load_secret` (`local_secrets.py:23`), `_secrets_env_value` (`jev_review.py:684`) | n/a | n/a |
+| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai-errors.json` | user | JSON array of pattern rows | row fields checked by the runner | none: hand-edited | `loadOverlay` (`cross-ai.mjs:3367`, file at `cross-ai.mjs:3324`) | n/a | n/a |
+| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json` | user | JSON (old) | `cross_ai_retry` | none after the migration | `migrateRetrySources` (`cross-ai.mjs:3964-3965`) | renamed to `cross-ai.json.migrated` | kept in the `.migrated` copy |
+| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env` | user | env-style `KEY=VALUE` lines | `ARTIFICIAL_ANALYSIS_API_KEY` (`cli.py:518`), `JEV_API_KEY`, `TYPESAFE_API_KEY` (`jev_review.py:783-791`) | none: hand-edited | `load_secret` (`local_secrets.py:23`), `_secrets_env_value` (`jev_review.py:684`) | n/a | n/a |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/jev-consent.json` | user | JSON | per backend: `host`, `granted` | `write_consent` (`jev_review.py:1013`, temp file at `jev_review.py:1018`) | `read_consent` (`jev_review.py:1003`), `record_consent` (`jev_review.py:1050`) | yes (`mkstemp` and `os.replace`) | n/a |
 | `.aikit/flow.json` | project (main worktree) | JSON | `schema`, `repo`, `consent`, `granted`, `remote`, `targets`, `gates` | `write_settings` (`flow_record.py:189`) through `_atomic_write_json` (`flow_record.py:112`) | `read_settings` (`flow_record.py:176`), `_settings_path` (`flow_record.py:172-173`) | yes | n/a |
 | `${XDG_CACHE_HOME:-~/.cache}/ai-kit/spec/model-catalog.json` | cache | JSON | catalog entries keyed `provider/model`; `_meta` reserved | `cache_write_json` (`cache.py:23`) | `cache_catalog_path` (`model_catalog.py:54-55`) | yes | n/a |
@@ -174,9 +178,9 @@ These settings have no file home today. Phase 34 gives the jev ones a `[jev]` ho
 - `JEV_LAYA_MODEL` (`jev_review.py:844`), `JEV_TYPESAFE_URL` (`jev_review.py:770`),
   `JEV_TYPESAFE_MODEL` (`jev_review.py:872`).
 - `JEV_BACKEND` (`jev_review.py:949`), `JEV_ALLOW_REMOTE` (`jev_review.py:976`),
-  `JEV_MIN_CONFIDENCE` (`jev_review.py:1140`).
-- `GSD_PATH_JEV_TIMEOUT_SECONDS` (`jev_review.py:1711`) and `GSD_PATH_JEV_DEADLINE_SECONDS`
-  (`jev_review.py:1724`).
+  `JEV_MIN_CONFIDENCE` (`jev_review.py:1144`).
+- `GSD_PATH_JEV_TIMEOUT_SECONDS` (`jev_review.py:1715`) and `GSD_PATH_JEV_DEADLINE_SECONDS`
+  (`jev_review.py:1728`).
 - The status-line override names: `CC_AI_KIT_CONFIG_FILE` and `AI_KIT_CURSOR_CONFIG_FILE` take the
   host's env prefix (`tools/common_config.py:281`).
 
@@ -187,11 +191,11 @@ each write site; `tests/test_config_callers.py` (TestForeignKeys) scans the Pyth
 template for writes to a GSD config and fails on any site it does not allow.
 
 - GSD `.planning/config.json` (and `.planning/workstreams/<ws>/config.json`). The runner reads
-  `workflow.cross_ai_timeout` from the scoped files (`scopedConfigPaths`, `cross-ai.mjs:3019-3032`).
-  The runner's one-time migration removes the legacy `workflow.cross_ai_retry` block in place: the
-  span scanner `findJsonKeySpan` (`cross-ai.mjs:3606`) and `removeRetryBlock` (`cross-ai.mjs:3629`)
-  find it, and `writeFileAtomic` (`cross-ai.mjs:3533`) publishes the file, so every other byte stays.
-  The migration is `migrateRetrySources` (`cross-ai.mjs:3807`). A block added again later is ignored
+  `workflow.cross_ai_timeout` from the scoped files (`scopedConfigPaths`, `cross-ai.mjs:3019-3028`).
+  The runner's one-time migration removes the legacy `workflow.cross_ai_retry` block by temp file and rename: the
+  span scanner `findJsonKeySpan` (`cross-ai.mjs:3655`) and `removeRetryBlock` (`cross-ai.mjs:3678`)
+  find it, and `writeFileAtomic` (`cross-ai.mjs:3582`) publishes the file, so every other byte stays.
+  The migration is `migrateRetrySources` (`cross-ai.mjs:3885`). A block added again later is ignored
   with a notice. GSD keys written by ai-kit go through `gsd-tools config-set`, which rejects keys
   outside gsd-core's list (`skills/ai-kit-spec-review/ai_kit_spec/gsd_tools.py:263`), and curated-config
   writes its pairs through `_write_config_pairs` (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cli.py:111`).
@@ -237,11 +241,11 @@ State is persistent and machine-written; a cache is rebuilt when it is lost.
 - Unit brief `.aikit/brief/SKILL.md` (`BRIEF_REL`, `flow_brief.py:21`), a generated artifact written
   atomically.
 - Runner quota cycles `${XDG_STATE_HOME}/ai-kit/spec/cycles/...` written by `writeCycleState`
-  (`cross-ai.mjs:4088`) through a temp file and rename.
+  (`cross-ai.mjs:4171`) through a temp file and rename.
 - Session wake state `${XDG_STATE_HOME}/ai-kit/session-wake/...` written atomically by `_atomic_write`
   (`skills/ai-kit-session-wake/ai_kit_session_wake/state.py:75`) and `write_text_atomic`
   (`state.py:99`).
-- jev answer log `${XDG_STATE_HOME:-~/.local/state}/ai-kit/jev-answers.jsonl` (`jev_review.py:1609-1610`),
+- jev answer log `${XDG_STATE_HOME:-~/.local/state}/ai-kit/jev-answers.jsonl` (`jev_review.py:1613-1614`),
   one JSON line per item.
 - Usage-metrics store `${XDG_DATA_HOME:-~/.local/share}/ai-kit/usage-metrics`
   (`skills/ai-kit-usage-metrics/ai_kit_usage_metrics/paths.py:15`).

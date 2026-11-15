@@ -60,7 +60,7 @@ ai-kit keeps its settings in one `config.toml` per layer: the project file `.aik
 
 Every write keeps your comments, unknown tables and key order, and publishes through a temporary file, so a reader never sees a half-written file. ai-kit never writes a key that is outside another tool's own schema, and it runs in a repository without `.planning/`.
 
-An old `review-spec.toml` migrates into `[lanes]` on the first command that reads the roster, and the runner migrates a GSD `workflow.cross_ai_retry` block and the old `cross-ai.json` once. The old roster stays recoverable as `review-spec.toml.migrated` and the old `cross-ai.json` as `cross-ai.json.migrated`; a GSD block's values move into `config.toml` and the block is removed from the GSD file, with no copy kept.
+An old `review-spec.toml` migrates into `[lanes]` on the first command that reads the roster, and the runner migrates a GSD `workflow.cross_ai_retry` block and the old `cross-ai.json` once. The old roster stays recoverable as `review-spec.toml.migrated` and the old `cross-ai.json` as `cross-ai.json.migrated`; a GSD block's values move into `config.toml` (a key the file already sets keeps the file's value, and the block's value is dropped) and the block is removed from the GSD file, with no copy kept.
 
 Trust covers the project file's command-bearing lane entries; every other table is ordinary settings, so editing `[runner.retry]` keeps trust, and editing a command entry needs `trust-local` again. Trust records, consent records, `secrets.env`, the model catalog cache, the unit flow's `.aikit/flow.json` and the status-line files stay in their own files, each with a reason in the design record.
 
