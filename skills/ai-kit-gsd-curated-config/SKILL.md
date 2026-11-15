@@ -269,7 +269,7 @@ Check the active runner's line-2 `template=` header, never the `.new` file, to s
 template a project runs. Never treat `.new` as live. **Read
 [`references/runner.md`](references/runner.md) when** a runner upgrade, a `.new` merge,
 `ensure-runner`, the template flags, the live timeout, hand-edited CONFIG `extraArgs`, retry
-tuning (`workflow.cross_ai_retry`), or a dispatch whose `AIKIT-XAI` line shows a `status=` other
+tuning ([runner.retry] in ai-kit's config.toml), or a dispatch whose `AIKIT-XAI` line shows a `status=` other
 than `ok` comes up.
 
 ## Skills
@@ -361,9 +361,9 @@ than `ok` comes up.
   those two steps are where the user sees what changes and what is removed. The v1 path has
   neither; its approval rule is in `references/v1-path.md`.
 - **Never hand-write `.planning/config.json` or `plan.json`.** Hand edits bypass gsd-core's
-  schema check and the plan's own validation; use the subcommands. The one owner-edited
-  exception is the `workflow.cross_ai_retry` block, which `config-set` refuses (runner.md): the
-  owner edits it, this skill never writes it.
+  schema check and the plan's own validation; use the subcommands. Retry tuning is not a GSD key: it lives in ai-kit's `config.toml` table `[runner.retry]`
+  (runner.md). The runner migrates an old `workflow.cross_ai_retry` block out of the GSD config
+  once; this skill writes neither.
 - **Never run `inventory` on an untrusted checkout** — it executes that project's JavaScript.
 - **Never pass `--force` to `plan-set` by habit.** It bypasses the candidate check, the
   trusted-root drop refusal and the full-permissions guard on every key gsd-core runs as a

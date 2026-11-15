@@ -1,7 +1,7 @@
 # Runner details (template 8)
 
 Read when a runner upgrade, a `.new` merge, `ensure-runner`, the template flags, the live
-timeout, hand-edited CONFIG `extraArgs`, retry tuning (`workflow.cross_ai_retry`), or a dispatch
+timeout, hand-edited CONFIG `extraArgs`, retry tuning ([runner.retry] in ai-kit's config.toml), or a dispatch
 whose `AIKIT-XAI` line shows a
 `status=` other than `ok` comes up. Every status line carries `action=stop`, a clean exit 0
 included, so `action=stop` alone is not a trigger. Do NOT load for the stock v2 flow otherwise.
@@ -38,9 +38,11 @@ read-only and still reaches that shared service.
 ## Failure ladder
 
 The soft retry series and one session reset plus second soft series run inside a call, configured by
-`workflow.cross_ai_retry` in the project config or by `{"cross_ai_retry": {...}}` in
-`${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json`. The owner hand-edits these sources
-(`config-set` refuses the project key); this skill never writes them. CONFIG also keeps a `retry`
+ai-kit's `config.toml` table `[runner.retry]` (the project `.aikit/config.toml` over the user
+`${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml`, per key; a GSD scope's own values under
+`[runner.retry.scopes."<scope>"]`). The owner edits that table; this skill never writes it. The runner
+migrates an old `workflow.cross_ai_retry` block and the old user `cross-ai.json` into it once (see the
+policy reference). CONFIG also keeps a `retry`
 object, the last fallback below those two: do not tune it there, because CONFIG edits only
 receive `.new` upgrades. The caller owns the hard waits and notice. CONFIG retains `capS` (at
 most 14400), `attemptTimeoutS`, `routerBacked` and `runtime`. For caller actions on any non-ok

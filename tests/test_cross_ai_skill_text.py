@@ -101,14 +101,20 @@ def _section(text, heading):
     return text[start:] if nxt < 0 else text[start:nxt]
 
 
-def _first_json_block(text, heading):
+def _first_toml_block(text, heading):
     body = _section(text, heading)
-    fence = body.find("```json")
+    fence = body.find("```toml")
     if fence < 0:
         return ""
     start = body.find("\n", fence)
     end = body.find("```", start + 1)
     return body[start + 1:end].strip("\n")
+
+
+def _toml_line_value(value):
+    if isinstance(value, list):
+        return "[" + ", ".join(json.dumps(item) for item in value) + "]"
+    return json.dumps(value)
 
 
 def _policy_links(text):
@@ -191,7 +197,8 @@ class CuratedConfigPins(unittest.TestCase):
         self.assertRegex(skill, r"template[- ]8")
         self.assertIn("script:cross-ai.runtime", skill)
         failure = _section(runner, "## Failure ladder")
-        self.assertIn("workflow.cross_ai_retry", failure)
+        self.assertIn("[runner.retry]", failure)
+        self.assertIn("migrates", failure)
         upgrade = _section(runner, "## Runner upgrade")
         self.assertIn("template 8", upgrade)
         self.assertIn("ensure-runner", upgrade)
@@ -292,18 +299,19 @@ class LaunchAndWait(unittest.TestCase):
 
 
 class PolicyContent(unittest.TestCase):
-    def test_configuration_json_matches_the_template(self):
+    def test_configuration_toml_matches_the_template(self):
         text = POLICY.read_text(encoding="utf-8")
-        block = _first_json_block(text, "## Configuration")
+        block = _first_toml_block(text, "## Configuration")
         retry = template_config(TEMPLATE.read_bytes())["retry"]
-        want = json.dumps({"workflow": {"cross_ai_retry": retry}}, indent=2, sort_keys=True)
-        regen = ("PYTHONPATH=skills/ai-kit-gsd-curated-config python3 -c "
-                 "'import json; from ai_kit_gsd_curated_config.cross_ai_script import "
-                 "template_config; ...' with json.dumps({\"workflow\": {\"cross_ai_retry\": "
-                 "template_config(<template bytes>)[\"retry\"]}}, indent=2, sort_keys=True)")
+        want = "\n".join(
+            ["[runner.retry]"]
+            + [f"{key} = {_toml_line_value(retry[key])}" for key in sorted(retry)]
+        )
+        regen = ("ai_kit_gsd_curated_config.cross_ai_script.template_config(<template bytes>)"
+                 "[\"retry\"] rendered as [runner.retry], keys sorted, one `key = value` line each")
         self.assertEqual(block, want, msg=f"regenerate with: {regen}")
 
-    def test_defaults_bounds_and_the_user_file(self):
+    def test_defaults_bounds_and_the_config_files(self):
         text = POLICY.read_text(encoding="utf-8")
         self.assertIn("1, 1.5, 2.25, 3.4, 5.1 s", text)
         self.assertIn("600, 900, 1800", text)
@@ -311,8 +319,13 @@ class PolicyContent(unittest.TestCase):
                       "`session_resets` 0..3", "`hard_waits_s` 1..6 entries each 0..`capS`"):
             self.assertIn(bound, text)
         self.assertIn("`capS` (14400) cannot be raised", text)
-        self.assertIn("`config-set` refuses `workflow.cross_ai_retry.*`", text)
-        self.assertIn("${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json", text)
+        self.assertIn("${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml", text)
+        self.assertIn(".aikit/config.toml", text)
+        self.assertIn("migrates a `workflow.cross_ai_retry` block", text)
+        self.assertIn("cross-ai.json.migrated", text)
+        self.assertIn("is skipped unread", text)
+        self.assertIn("not valid UTF-8", text)
+        self.assertIn("whose name the runner cannot read", text)
         self.assertIn("The owner reset is deleting that named state file", text)
         self.assertIn("refuses every later call on its lane", text)
 
