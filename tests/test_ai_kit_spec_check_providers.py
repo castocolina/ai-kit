@@ -350,7 +350,7 @@ class TestSpecConfigStep(unittest.TestCase):
         for index in auth_lines:
             self.assertTrue(never < index < section_end, lines[index])
 
-    def test_skill_evals_have_the_seven_cases(self):
+    def test_skill_evals_have_the_eight_cases(self):
         with open(EVALS_JSON, encoding="utf-8") as handle:
             data = json.load(handle)
         self.assertEqual(
@@ -363,8 +363,25 @@ class TestSpecConfigStep(unittest.TestCase):
                 "edge-opencode-not-installed-config-fallback",
                 "edge-existing-local-config-replace",
                 "edge-old-roster-migration-pending",
+                "edge-unconfirmed-read-only-asks-before-test",
             ],
         )
+
+    def test_write_risk_ask_comes_before_the_live_test(self):
+        # Judge loop 33 finding D6: the read_only: unconfirmed ask must precede check-reviewer.
+        with open(SKILL_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        step = text[text.index("#### Step 2.5"):text.index("#### Step 2.6")]
+        self.assertLess(step.index("read_only: unconfirmed"), step.index("check-reviewer --key"))
+
+    def test_check_only_asks_write_risk_before_the_probe(self):
+        # Judge loop 33 finding D8-1: --check-only asks the same question before probe-quota.
+        with open(CHECK_ONLY_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        probe = text.index("probe-quota --cwd")
+        self.assertLess(text.index("read_only: unconfirmed"), probe)
+        self.assertLess(text.index("AskUserQuestion"), probe)
+        self.assertIn("write-risk probe was declined", text)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,8 @@
       "expected_output": "Runs the --check-only path: detection, a quota probe on a throwaway path, and check-providers, with no writes to config or caches.",
       "files": [],
       "assertions": [
-        "Keeps the run read-only and removes its scratch path before stopping",
+        "Asks the write-risk question before probe-quota when a listed entry has no confirmed read-only invocation, and on a skip runs no probe and reports every listed key as unknown",
+  "Keeps the run read-only and removes its scratch path before stopping",
         "Runs check-providers in the --check-only branch and relays its lines"
       ]
     },
@@ -71,6 +72,16 @@
       "assertions": [
         "Reports the pending migration of the old review-spec.toml and names both files",
         "Passes --no-migrate to probe-quota and writes no config or trust file"
+      ]
+    },
+    {
+      "id": "edge-unconfirmed-read-only-asks-before-test",
+      "prompt": "Set up an opencode reviewer on my-provider/my-model for this project and test it.",
+      "expected_output": "Reads opencode's profile, sees read_only: unconfirmed, and asks whether to run the live test call before running check-reviewer; on a skip it saves the entry as untested and names it in the report.",
+      "files": [],
+      "assertions": [
+        "Asks about the unconfirmed read-only invocation before any check-reviewer call",
+        "On a declined test, runs no check-reviewer call and reports the entry as untested"
       ]
     }
   ]

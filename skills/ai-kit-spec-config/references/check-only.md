@@ -1,16 +1,28 @@
 # `--check-only` branch
 
 Read this only when `--check-only` was passed. It reports reviewer availability and stops: no
-config write, no runtimes snapshot, no trust record. `$TOOLS_PY` and `$SCRATCH` are the literal
-paths SKILL.md Step 0 printed.
+config write, no runtimes snapshot, no trust record. `$TOOLS_PY`, `$CLI_PROFILES_DIR` and
+`$SCRATCH` are the literal paths SKILL.md Step 0 printed.
 
 Report which CLIs are installed (Step 1's `detect-runtimes` output). Then read the target config
-file (`~/.config/ai-kit/config.toml` if `--global` was passed, else
+file (the user `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml` if `--global` was passed, else
 `./.aikit/config.toml` by default) and note each `[[lanes.review]]` and `[[lanes.execute]]` entry's `key`/`runtime` (or
 legacy `cli`) with its role, if it exists. (This is a raw on-disk read only, not `cfg_resolve`'s merged view.) When that
 config.toml has no `[lanes]` table and an old `review-spec.toml` sits beside it, report that the old roster migrates on
 the next command that reads it, and list its `[[reviewers]]` entries (read-only).
-If any entries exist, probe their **quota availability** — the core purpose of `--check-only` —
+If any entries exist, their **quota availability** is the core purpose of `--check-only`, but the
+probe is a live call to each CLI, so check write risk first, exactly as SKILL.md Step 2.5 does.
+For each listed entry with a `runtime`, read `read_only` from `$CLI_PROFILES_DIR/<runtime>.md`
+(only those profiles). An entry whose profile says `read_only: unconfirmed`, a runtime with no
+profile (pi today) and a custom `command` entry all run with the CLI's normal write permissions
+against the working tree; the throwaway paths below keep ai-kit's caches clean, not the tree. When
+any such entry exists, use `AskUserQuestion` before any live call: "Note: `<keys>` have no
+confirmed read-only invocation — the quota probe runs them with their normal write permissions
+against your working tree. Run the probe now, or skip it?" — with "skip the probe" first/default.
+`probe-quota` cannot probe a subset, so the answer covers the whole probe. On skip, run no
+`probe-quota` call and report every listed key as
+`available: unknown (not probed — the write-risk probe was declined)`, then continue with the
+stale-provider report below. On yes, or when every entry is confirmed read-only or native, probe
 using a throwaway path:
 
 ```bash

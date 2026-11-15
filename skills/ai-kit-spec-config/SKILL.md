@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-config
-description: "Cross-AI lane setup: detects installed CLIs and models, asks which to use for review and execute lanes and in what priority order, then writes the [lanes] table of ai-kit's config.toml. Writes the per-project ./.aikit/config.toml by default (always announces the exact path), asks before replacing an existing [lanes] table (local or global), and migrates an old review-spec.toml on first use. Use when the user requests cross-AI review or execute setup or when ai-kit-spec-review warns no config exists. Supports --check-only (report availability, no writes), --local (force local write without asking), and --global (force ~/.config/ai-kit/config.toml directly)."
+description: "Cross-AI lane setup: detects installed CLIs and models, asks which to use for review and execute lanes and in what priority order, then writes the [lanes] table of ai-kit's config.toml. Writes the per-project ./.aikit/config.toml by default (always announces the exact path), asks before replacing an existing [lanes] table (local or global), and migrates an old review-spec.toml on first use. Use when the user requests cross-AI review or execute setup or when ai-kit-spec-review warns no config exists. Supports --check-only (report availability, no writes), --local (force local write without asking), and --global (force the user ${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml directly)."
 ---
 
 ## Your task
@@ -62,7 +62,7 @@ installed."
 
 - **Never infer a model's vendor from its name** — always call `infer-vendor` (training knowledge is stale, consistency matters).
 - **Never hand-write a `command` for a runtime the runner knows** — a table runtime stores `runtime` and `model` (plus its knobs); the runner builds the argv. Only a CLI outside the runner table gets a custom `command`.
-- **Never save a CLI reviewer entry without testing it via `check-reviewer` first** — catch auth/model/entitlement problems before persisting.
+- **Never save a CLI reviewer entry without testing it via `check-reviewer` first** — catch auth/model/entitlement problems before persisting. The one exception: the user declined the test at Step 2.5's write-risk ask; that entry is saved untested and named so at Step 4.
 - **Never silently pre-filter model families based on your own judgment** — always let the user decide, informed by your research (user agency over paternalism).
 - **Never paste a multi-provider CLI's raw model list ungrouped** — always run `group-models` first (raw lists can be hundreds of ids; grouping makes them readable).
 - **Never write to the global config without asking** — unless `--global` or `--local` was explicitly passed (global changes affect all projects; default is local).
@@ -77,7 +77,7 @@ installed."
 - **Never skip announcing the target path before asking reviewer questions** — user must know where config is headed from the start.
 - **Never re-derive the write target at Step 3** — use what Step 2 already resolved and announced (consistency guarantee).
 - **Never translate literal identifiers** — `purpose` values (REVIEW/EXECUTE), model ids, catalog keys, CLI/runtime names, and field labels stay in their literal, invariant form regardless of what language the rest of this conversation is in. Narrate and explain in the user's own language, but never garble an identifier a user or this skill needs to match against config values by translating it.
-- **Never run `trust-local` (the trusting form) without the user's explicit yes** — not even for the `./.aikit/config.toml` this wizard just wrote. Show `trust-local --cwd <project root> --show` first so the user consents after seeing each reviewer's argv; until then its command-bearing lanes stay inactive.
+- **Never run `trust-local` (the trusting form) without the user's explicit yes** — not even for the `./.aikit/config.toml` this wizard just wrote. Show `trust-local --cwd <project root> --show` first so the user consents after seeing each reviewer's argv; until then a file with a command-bearing entry (defined at Step 4) has its whole `[lanes]` table inactive.
 - **Never read or print opencode's `auth.json` or any `apiKey`** — the stale-provider report
   reads provider names only, and a key value never belongs in a reply.
 
@@ -99,7 +99,8 @@ mention which of these are present on this machine — this is the data
 `ai-kit-spec-execute` will need later; this step only surfaces it.
 
 **If `--check-only` was passed**, read [references/check-only.md](references/check-only.md)
-and follow it: it reports availability and stale providers, then stops with no writes.
+and follow it: it asks Step 2.5's write-risk question before any live probe, reports availability
+and stale providers, then stops with no writes.
 
 **Otherwise**, persist the snapshot before continuing to Step 2:
 ```bash
@@ -142,9 +143,9 @@ at a glance.
 
 #### Step 2.1 — Resolve the write target
 
-**Resolve the write target first, before asking anything else about reviewers.** Default is **local** (`./.aikit/config.toml`) — a per-project config is the safer default since it can't silently affect other projects. `--global` forces `~/.config/ai-kit/config.toml` directly, skipping the ask below. `--local` also forces local directly, skipping the ask (both flags are an explicit choice, so neither needs confirming). With **neither flag passed** (the common case): `Read` `~/.config/ai-kit/config.toml` and check whether a global roster exists. A global roster exists when that file has a `[lanes]` table, or when an old `review-spec.toml` sits beside it in `~/.config/ai-kit/` (that old roster migrates into the config.toml on the write). A config.toml with neither counts as no roster.
+**Resolve the write target first, before asking anything else about reviewers.** Default is **local** (`./.aikit/config.toml`) — a per-project config is the safer default since it can't silently affect other projects. The global file is the user layer, `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml` (the same rule the config reader uses; a relative or blank `XDG_CONFIG_HOME` counts as unset); resolve it once to an absolute path, called `<user config>` below. `--global` forces `<user config>` directly, skipping the ask below. `--local` also forces local directly, skipping the ask (both flags are an explicit choice, so neither needs confirming). With **neither flag passed** (the common case): `Read` `<user config>` and check whether a global roster exists. A global roster exists when that file has a `[lanes]` table, or when an old `review-spec.toml` sits beside it in the same folder (that old roster migrates into the config.toml on the write). A config.toml with neither counts as no roster.
 - If it does **not** exist, proceed with the local default silently.
-- If it **does** exist, use `AskUserQuestion` to ask explicitly before writing anywhere: "A global roster already exists at `~/.config/ai-kit/config.toml` (or as an old `review-spec.toml` there that migrates into it). Write a per-project roster at `./.aikit/config.toml` instead (recommended — doesn't touch the global roster), or replace the global roster?" — with the local option first/default. Picking "replace" here is the replacement consent below for the global file.
+- If it **does** exist, use `AskUserQuestion` to ask explicitly before writing anywhere: "A global roster already exists at `<user config>` (or as an old `review-spec.toml` there that migrates into it). Write a per-project roster at `./.aikit/config.toml` instead (recommended — doesn't touch the global roster), or replace the global roster?" — with the local option first/default. Picking "replace" here is the replacement consent below for the global file.
 
 **Replacement gate (every flag combination).** `Read` the resolved target itself. If it already holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates into the target on the write) and the user has not already approved replacing that exact file above, use `AskUserQuestion`: "`<resolved absolute path>` already holds a roster. Replace it with the roster built in this run (its current reviewers and policy are lost unless you re-enter them; other tables and comments in the file are kept; an old `review-spec.toml` migrates first and stays recoverable as `review-spec.toml.migrated`), or stop and keep it?" — with "stop" first/default. `--local`/`--global` choose the target, never consent to replace it. On "stop", end the run without writing. Only an explicit "replace" lets Step 3 pass `--replace`; without it `render-toml --out` refuses an existing roster and writes nothing.
 
@@ -250,7 +251,16 @@ non-interactively with a model and a prompt can become a reviewer entry.
 
 #### Step 2.5 — Test the pair before saving
 
-**Before finalizing any table-runtime entry, actually test the pair — don't just trust that
+**Check write risk first, before any live call.** When the runtime's profile (read at Step 2.4)
+has `read_only: unconfirmed`, the test below already runs that CLI with its normal write
+permissions against the working tree. Before running it, use `AskUserQuestion`: "Note: `<id>` has
+no confirmed read-only invocation — its test call and every later run use the CLI's normal write
+permissions against your working tree. Run the one test call now, or skip the test?" — with "skip
+the test" first/default. On skip, run no call, keep the entry and report it as untested at Step 4;
+on yes, continue below. A runtime with no profile (pi today) is treated the same way, because
+nothing confirms a read-only invocation for it.
+
+**Then, before finalizing any table-runtime entry, actually test the pair — don't just trust that
 the model id works.** Run:
 ```bash
 python3 "$TOOLS_PY" check-reviewer --key <candidate-key> --model <model-id> \
@@ -265,7 +275,7 @@ error text — e.g. a bad model id, an auth problem, or a plan/entitlement gate 
 Free-plan restriction) and ask whether to save the entry anyway (it may just be a temporary
 quota exhaustion, worth keeping for later) or drop it.
 
-**If the profile's `read_only:` field says `unconfirmed`**, print one line before writing that entry: "Note: `<id>` has no confirmed read-only invocation — this reviewer runs with the CLI's normal write permissions against your working tree." — inform, don't block; the user is choosing to accept that CLI's default risk.
+The write-risk answer is about the test call only: saving the entry stays the user's choice, because every later dispatch accepts that CLI's default risk the same way.
 
 #### Step 2.6 — Ask about the optional strength attribute; `purpose` comes from Step 2.2
 
@@ -381,7 +391,7 @@ echo "render-toml exit $?"
 
 `<target path>` is the write target Step 2 resolved and already
 announced — `./.aikit/config.toml` by default (or explicitly via
-`--local`), `~/.config/ai-kit/config.toml` only via `--global` or
+`--local`), `<user config>` only via `--global` or
 because the user picked "replace the existing global config" at Step 2's
 ask. Never re-derive the target here independently of what Step 2
 already resolved and told the user. Add `--replace` only when the target holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates) and Step 2.1's replacement gate got an explicit "replace"; with `--replace`, render-toml first migrates that old roster and prints one line. (The runtimes snapshot was already
@@ -431,14 +441,24 @@ Priority fallback order:
 not folded into a single vague sentence about "reviewers configured in
 some order" — the point of this report is that the user can see the
 exact fallback sequence without having to open the file. If that ladder
-differs from the one confirmed in Step 2, name the missing keys.
+differs from the one confirmed in Step 2, name the missing keys. Name every entry saved
+untested at Step 2.5 ("untested: `<key>` — its availability is unverified").
 
-**When the write target was local** (`./.aikit/config.toml`), tell the user the file
-stays inactive for cross-AI review until trusted (a file with no command-bearing lane needs no trust). Run
+**When the write target was local** (`./.aikit/config.toml`), check whether it holds a
+command-bearing entry. **Command-bearing** (the one definition, same as
+[`references/config-file.md`](references/config-file.md) and `trust.command_lanes_bytes`): an
+entry with a `command`, or an entry whose `key` equals the `key` of a `command` entry in this
+file or in the user config (the user config only without `strategy = "local-only"`), in any
+role (its fields fill that command's placeholders, so a
+`runtime` entry that overrides a user command entry counts). A plain (runtime, model) pair with
+its own key is not command-bearing. When the file holds at least one, tell the user the whole
+project `[lanes]` table stays inactive for cross-AI review until trusted; with none it needs no
+trust and is active at once. Run
 `python3 "$TOOLS_PY" trust-local --cwd <project root> --show`, where `<project root>` is the
 parent of `.aikit/` — never `.aikit/` itself, which looks for `.aikit/.aikit/config.toml`
-and exits 1. `--show` writes no trust record; it prints one JSON line per local subprocess or custom
-reviewer (an entry with a `runtime` or a `command`): `{"key", "argv", "trusted", "path"}`, where `argv` is the exact argument list
+and exits 1. `--show` writes no trust record; it prints one JSON line per project entry that runs
+as a subprocess (an entry with a `runtime` or a `command`, so more entries than the
+command-bearing ones): `{"key", "argv", "trusted", "path"}`, where `argv` is the exact argument list
 dispatch would run (already merged with the global config per `strategy`) with the prompt
 shown as the literal `<prompt>` placeholder, or `{"key", "error"}` for an entry that would be
 refused. Show those lines, ask whether to trust the file, and run

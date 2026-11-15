@@ -41,16 +41,15 @@ Every key is kept, `purpose` included. A lane is never shared across roles: a la
 
 ## Trust
 
-Trust covers the project file's command-bearing lane entries, the entries that carry a `command` key.
+Trust covers the project file's command-bearing lane entries. **Command-bearing** (the same definition as the skill's Step 4 and `trust.command_lanes_bytes`): an entry with a `command`, or an entry whose `key` equals the `key` of a `command` entry in this file or in the user config (the user config only without `strategy = "local-only"`), in any role. Such an entry's fields fill the command's placeholders, so a `runtime` entry that overrides a user command entry counts. A plain (runtime, model) pair with its own key is not command-bearing.
 
 - Editing another table, a comment or the spacing keeps trust.
 - Changing a command-bearing entry, or adding one, needs a new trust.
-- A project entry whose key overrides a user entry that carries a `command` counts as command-bearing too.
 - A project file with no command-bearing entry needs no trust.
 
-A trust record lives under `config-trust/` in the user config folder. It is tied to the file's real path and to a digest of its command-bearing entries. An untrusted project file has its command-bearing entries ignored, and the CLIs print `ignoring untrusted project-local config`.
+A trust record lives under `config-trust/` in the user config folder. It is tied to the file's real path and to a digest of its command-bearing entries. While a project file that needs trust is untrusted, its whole `[lanes]` table is ignored (not only the command-bearing entries), and the CLIs print `ignoring untrusted project-local config`.
 
-`trust-local --show` prints the entries and writes no trust record. `trust-local` records trust after an explicit yes, and `trust-local --revoke` withdraws it.
+`trust-local --show` writes no trust record. It prints one line per project entry that runs as a subprocess (a `runtime` or a `command`, so more entries than the command-bearing ones), each with its argv and whether the file is trusted. `trust-local` records trust after an explicit yes, and `trust-local --revoke` withdraws it.
 
 ## Migration from review-spec.toml
 
