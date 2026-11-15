@@ -400,6 +400,51 @@ class TestRemoveTable(unittest.TestCase):
         self.assertIs(toml_splice.remove_table(text, ("nope",)), text)
 
 
+SECTIONED = (
+    '[[lanes.review]]\nkey = "a"\n\n[[lanes.review]]\nkey = "b"\n\n'
+    "# ---- runner settings ----\n\n[runner]\nx = 1\n"
+)
+
+
+class TestSectionComments(unittest.TestCase):
+    """WR-02: a comment group after a blank line and before the next table belongs to that table."""
+
+    def test_removing_the_last_entry_keeps_the_section_comment(self):
+        out = toml_splice.set_array(SECTIONED, REVIEW, [{"key": "a"}])
+        self.assertIn("# ---- runner settings ----\n\n[runner]\nx = 1\n", out)
+        self.assertNotIn('key = "b"', out)
+        self.assertEqual(tomllib.loads(out),
+                         {"lanes": {"review": [{"key": "a"}]}, "runner": {"x": 1}})
+
+    def test_removing_the_only_entry_keeps_the_section_comment(self):
+        text = '[[lanes.review]]\nkey = "a"\n\n# ---- runner ----\n\n[runner]\nx = 1\n'
+        out = toml_splice.set_array(text, REVIEW, [])
+        self.assertEqual(out, "# ---- runner ----\n\n[runner]\nx = 1\n")
+
+    def test_appended_entry_goes_before_the_section_comment_with_a_blank_line(self):
+        entries = [{"key": "a"}, {"key": "b"}, {"key": "c"}]
+        out = toml_splice.set_array(SECTIONED, REVIEW, entries)
+        self.assertIn('key = "c"\n\n# ---- runner settings ----\n\n[runner]\n', out)
+        self.assertTrue(out.startswith(SECTIONED[: SECTIONED.index("# ----")]))
+        self.assertEqual(tomllib.loads(out), {"lanes": {"review": entries}, "runner": {"x": 1}})
+
+    def test_a_comment_right_under_the_last_key_stays_with_its_entry(self):
+        text = '[[lanes.review]]\nkey = "a"\n# about a\n\n[runner]\nx = 1\n'
+        out = toml_splice.set_array(text, REVIEW, [])
+        self.assertNotIn("about a", out)
+
+    def test_remove_table_keeps_a_file_comment_separated_by_a_blank_line(self):
+        text = '# ai-kit config, keep me\n\n[lanes.policy]\nmode = "single"\n\n[runner]\nx = 1\n'
+        out = toml_splice.remove_table(text, ("lanes", "policy"))
+        self.assertTrue(out.startswith("# ai-kit config, keep me\n"))
+        self.assertEqual(tomllib.loads(out), {"runner": {"x": 1}})
+
+    def test_remove_table_keeps_the_section_comment_that_follows_it(self):
+        text = '[lanes.policy]\nmode = "single"\n\n# ---- runner ----\n\n[runner]\nx = 1\n'
+        out = toml_splice.remove_table(text, ("lanes", "policy"))
+        self.assertEqual(out, "# ---- runner ----\n\n[runner]\nx = 1\n")
+
+
 class TestSpliceRefusals(unittest.TestCase):
     def test_wrong_value_writer_is_refused_by_the_reparse(self):
         with mock.patch.object(toml_splice, "toml_value", lambda value: "0"), \

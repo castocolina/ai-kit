@@ -268,6 +268,28 @@ def _lead_start(lines: list, spans: list, headers: list, number: int) -> int:
     return first
 
 
+def _trailer_start(lines: list):
+    """Index of the first line of a section comment that closes `lines`: a comment group that
+    follows a blank line after the last statement and is not directly above the next header
+    (WR-02). It belongs to the next table, so a removal keeps it and a new entry goes before it.
+    None when there is no such group."""
+    end = len(lines)
+    while end and (not lines[end - 1].strip() or lines[end - 1].strip().startswith("#")):
+        end -= 1
+    at = end
+    while at < len(lines) and lines[at].strip().startswith("#"):
+        at += 1  # comments right under the last statement stay with it
+    blank = at
+    while at < len(lines) and not lines[at].strip():
+        at += 1
+    return at if blank < at < len(lines) else None
+
+
+def _trailer(lines: list) -> list:
+    at = _trailer_start(lines)
+    return [] if at is None else lines[at:]
+
+
 def _block_spans(spans: list, start: int, stop: int) -> list:
     """The spans that start inside [start, stop), with indexes relative to start."""
     inside = [(s, e, key, value) for s, e, key, value in spans if start <= s < stop]
@@ -603,14 +625,17 @@ def _edit_group(group: list, path: tuple, old_entry: dict, new_entry: dict, nl: 
     return out
 
 
-def _group_results(blocks: list, plan: _ArrayPlan) -> dict:
-    """The lines each old group keeps: its text when unchanged, edited lines when changed, none
-    when its entry is gone from the list."""
+def _group_results(blocks: list, plan: _ArrayPlan) -> tuple:
+    """(the lines each old group keeps, the section comments of removed groups): a group's text
+    when unchanged, edited lines when changed, none when its entry is gone from the list; a gone
+    entry's closing section comment stays (WR-02)."""
     new_of_old = {old: new for new, old in enumerate(plan.pairs) if old is not None}
     results = {}
+    kept = {}
     for old_index, members in enumerate(plan.groups):
         if old_index not in new_of_old:
             results[old_index] = []
+            kept[old_index] = _trailer(blocks[members[-1]].lines)
             continue
         group = [blocks[index] for index in members]
         old_entry = plan.old[old_index]
@@ -619,7 +644,7 @@ def _group_results(blocks: list, plan: _ArrayPlan) -> dict:
             results[old_index] = [line for block in group for line in block.lines]
         else:
             results[old_index] = _edit_group(group, plan.path, old_entry, new_entry, plan.nl)
-    return results
+    return results, kept
 
 
 def _append_pieces(lines: list, pieces: list, nl: str) -> list:
@@ -663,7 +688,7 @@ def _reorder(plan: _ArrayPlan, results: dict, rendered: list) -> dict:
     return emptied
 
 
-def _assemble(blocks: list, groups: list, results: dict, before: dict) -> list:
+def _assemble(blocks: list, groups: list, results: dict, before: dict, kept: dict) -> list:
     first = {members[0]: group for group, members in enumerate(groups)}
     inside = {index for members in groups for index in members}
     out = []
@@ -671,6 +696,7 @@ def _assemble(blocks: list, groups: list, results: dict, before: dict) -> list:
         if index in first:
             out.extend(before.get(first[index], []))
             out.extend(results[first[index]])
+            out.extend(kept.get(first[index], []))
         elif index not in inside:
             out.extend(block.lines)
     return out
@@ -678,17 +704,24 @@ def _assemble(blocks: list, groups: list, results: dict, before: dict) -> list:
 
 def _array_lines(blocks: list, plan: _ArrayPlan) -> list:
     rendered = [_render_entry(plan.path, entry, plan.nl) for entry in plan.entries]
-    results = _group_results(blocks, plan)
+    results, kept = _group_results(blocks, plan)
     if not _keeps_order(plan.pairs):
-        out = _assemble(blocks, plan.groups, _reorder(plan, results, rendered), {})
-        return out
+        return _assemble(blocks, plan.groups, _reorder(plan, results, rendered), {}, {})
     before, tails = _place_new_entries(plan, rendered)
     if plan.groups:
         last = len(plan.groups) - 1
-        results[last] = _append_pieces(results[last], tails, plan.nl)
+        results[last] = _append_before_trailer(results[last], tails, plan.nl)
         tails = []
-    out = _assemble(blocks, plan.groups, results, before)
+    out = _assemble(blocks, plan.groups, results, before, kept)
     return _append_pieces(out, tails, plan.nl)
+
+
+def _append_before_trailer(lines: list, pieces: list, nl: str) -> list:
+    """`_append_pieces`, but ahead of a closing section comment, with a blank line before it."""
+    at = _trailer_start(lines)
+    if at is None or not pieces:
+        return _append_pieces(lines, pieces, nl)
+    return [*_append_pieces(lines[:at], pieces, nl), nl, *lines[at:]]
 
 
 def set_array(text: str, path: tuple, entries: list, match: str = "key") -> str:
@@ -730,7 +763,12 @@ def remove_table(text: str, path: tuple) -> str:
     _remove_path(expected, path, blocks)
     if expected == current:
         return original
-    dropped = {index: [] for index, block in enumerate(blocks) if block.path[: len(path)] == path}
+    def under(index: int) -> bool:
+        return index < len(blocks) and blocks[index].path[: len(path)] == path
+
+    # The last dropped block of a run keeps its closing section comment (WR-02).
+    dropped = {index: [] if under(index + 1) else _trailer(blocks[index].lines)
+               for index in range(len(blocks)) if under(index)}
     result = _join(blocks, dropped)
     _verify(result, expected)
     return result
