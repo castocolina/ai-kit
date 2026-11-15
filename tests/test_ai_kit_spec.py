@@ -33,6 +33,7 @@ from ai_kit_spec import (
     cli,
     commands,
     config_io,
+    config_migrate,
     detection,
     dispatch_guidance,
     execute_dispatch,
@@ -203,15 +204,15 @@ def tearDownModule():
 
 class TestConfigPaths(unittest.TestCase):
     def test_local_path_under_cwd_aikit(self):
-        self.assertEqual(cfg_local_path("/repo"), "/repo/.aikit/review-spec.toml")
+        self.assertEqual(cfg_local_path("/repo"), "/repo/.aikit/config.toml")
 
     def test_global_path_uses_xdg_config_home(self):
         env = {"XDG_CONFIG_HOME": "/x/config"}
-        self.assertEqual(cfg_global_path(env), "/x/config/ai-kit/review-spec.toml")
+        self.assertEqual(cfg_global_path(env), "/x/config/ai-kit/config.toml")
 
     def test_global_path_falls_back_to_home_dot_config(self):
         env = {"HOME": "/home/u"}
-        self.assertEqual(cfg_global_path(env), "/home/u/.config/ai-kit/review-spec.toml")
+        self.assertEqual(cfg_global_path(env), "/home/u/.config/ai-kit/config.toml")
 
     def test_base_is_never_relative_to_the_cwd(self):
         # A-WR-01 / C1-3: an unset, empty or relative HOME or XDG_CONFIG_HOME must not resolve
@@ -537,7 +538,8 @@ class TestRenderAndWriteToml(unittest.TestCase):
             ],
         }
         with tempfile.TemporaryDirectory() as d:
-            path = config_io.cfg_local_path(d)  # ./.aikit/review-spec.toml under d
+            # the old shape at the old path; the next roster read migrates it (Plan 09)
+            path = config_migrate.legacy_path(config_io.cfg_local_path(d))
             config_io.cfg_write_toml(path, config)
             with open(path, "rb") as f:
                 raw = f.read()
@@ -8668,19 +8670,17 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             self._write_current_schema_catalog(catalog_path)
             self._write_fresh_fetch_meta(catalog_path)
             runtimes_path = self._write_runtimes(d, {"grok": {"installed": True}})
-            local_cfg = os.path.join(d, ".aikit", "review-spec.toml")
+            local_cfg = config_io.cfg_local_path(d)
             os.makedirs(os.path.dirname(local_cfg))
             raw = (
-                b'[[reviewers]]\nkey = "grok-flagship"\nmodel = "grok-x"\nvendor = "xai"\n'
+                b'[[lanes.review]]\nkey = "grok-flagship"\nmodel = "grok-x"\nvendor = "xai"\n'
                 b'command = "grok -p {prompt} -m {model} --output-format plain"\n'
-                b'[[reviewers]]\nkey = "script"\nmodel = "m"\nvendor = "v"\n'
+                b'[[lanes.review]]\nkey = "script"\nmodel = "m"\nvendor = "v"\n'
                 b'command = "my-script {model} {prompt}"\n'
             )
             with open(local_cfg, "wb") as f:
                 f.write(raw)
-            trust.record_trust(
-                config_io.cfg_trust_store_dir({"HOME": d}), os.path.realpath(local_cfg), raw
-            )
+            config_io.cfg_trust_project(d, {"HOME": d})
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = main(

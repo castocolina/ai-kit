@@ -348,7 +348,7 @@ class TestRouting(unittest.TestCase):
                 stream.write('[[reviewers]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
                              f"command={json.dumps(factory)}\n")
             custom = "mycli --fast {model}"
-            merged = cfg_combine({"reviewers": [{"key": "k", "command": custom}]},
+            merged = cfg_combine({"review": [{"key": "k", "command": custom}]},
                                  {"HOME": os.path.join(root, "home"), "XDG_CONFIG_HOME": xdg},
                                  warn_fn=lambda _msg: None, local_path="local.toml")
             self.assertEqual(
@@ -735,9 +735,10 @@ class TestRouteNeverStored(unittest.TestCase):
             os.makedirs(os.path.join(root, "cache"))
             env = {"HOME": os.path.join(root, "home"), "XDG_CONFIG_HOME": xdg,
                    "XDG_CACHE_HOME": os.path.join(root, "cache")}
-            path = os.path.join(xdg, "ai-kit", "review-spec.toml")
-            cfg_write_toml(path, {"policy": {"mode": "single", "ladder": ["k"]},
-                                  "reviewers": [{"key": "k", "model": "", "vendor": ""}]})
+            path = os.path.join(xdg, "ai-kit", "config.toml")
+            with open(path, "w", encoding="utf-8") as stream:
+                stream.write('[lanes.policy]\nmode = "single"\nladder = ["k"]\n\n'
+                             '[[lanes.review]]\nkey = "k"\nmodel = ""\nvendor = ""\n')
             with open(path, "rb") as stream:
                 before = stream.read()
             out = io.StringIO()

@@ -164,7 +164,7 @@ def compute_resume_exclusions(tried: list, reasons: dict, prior_excluded_keys: l
 
 def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tuple:
     """Reads the SAME shared candidate roster that the GSD flow's assemble_candidates reads
-    (review-spec.toml's [[reviewers]], design spec Section 4) -- the "superpowers has no config
+    (the flat view of config.toml's [lanes] roles, D-24) -- the "superpowers has no config
     surface" constraint (Global Constraints) is about a superpowers-specific config file like
     GSD's .planning/config.json, which genuinely doesn't exist; it is not about this shared
     roster, which every ai-kit-spec-execute-* adapter reads identically. Duplicated here (not

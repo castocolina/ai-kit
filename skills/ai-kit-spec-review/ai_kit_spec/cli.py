@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from ai_kit_spec import provider_check, routing, trust
+from ai_kit_spec import config_migrate, provider_check, routing, trust
 from ai_kit_spec.cache import (
     cache_is_stale,
     cache_read_json,
@@ -33,11 +33,16 @@ from ai_kit_spec.config_io import (
     DEFAULT_POLICY,
     ConfigError,
     cfg_combine,
+    cfg_lanes_table,
+    cfg_lanes_view,
     cfg_local_path,
+    cfg_migrate_project,
     cfg_parse_toml_bytes,
+    cfg_project_trust_bytes,
     cfg_read_bytes,
     cfg_render_toml,
     cfg_resolve,
+    cfg_trust_project,
     cfg_trust_store_dir,
     resolve_timeout_tiers,
 )
@@ -166,7 +171,7 @@ def _register_cache_detect_parsers(sub: argparse._SubParsersAction) -> None:
         help="report opencode providers configured but no longer served (read-only)")
     p_check_providers.add_argument(
         "--cwd", default=None,
-        help="project dir holding .aikit/review-spec.toml; defaults to the process cwd")
+        help="project dir holding .aikit/config.toml; defaults to the process cwd")
 
 
 
@@ -177,13 +182,14 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
         help="path to a detect-runtimes snapshot (as saved via --save/--if-stale)")
     p_catalog.add_argument("--catalog-path", required=True)
     p_catalog.add_argument("--cwd", default=None,
-                            help="for resolving review-spec.toml's already-registered "
+                            help="for resolving config.toml's already-registered "
                                  "single-provider-CLI models; defaults to the process cwd")
     p_catalog.add_argument(
         "--extra-candidate", action="append", default=[], metavar="CLI:MODEL_ID",
         help="repeatable; a wizard-typed single-provider-CLI candidate not yet in "
-             "review-spec.toml (e.g. a first-time codex/grok setup with nothing registered "
-             "yet) -- still goes through the same matching/enrichment path as anything else.")
+             "the config.toml [lanes] roster (e.g. a first-time codex/grok setup with "
+             "nothing registered yet) -- still goes through the same matching/enrichment "
+             "path as anything else.")
     p_catalog.add_argument(
         "--if-stale", action="store_true",
         help="gate NETWORK CALLS ONLY: when --catalog-path exists, is fresher than "
@@ -226,6 +232,10 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
         "--no-save-runtimes", action="store_true",
         help="route from the runtimes cache but never write it (pair with a throwaway "
              "--quota-path for a run that persists nothing)")
+    p_quota.add_argument(
+        "--no-migrate", action="store_true",
+        help="read an old roster read-only and report the pending migration instead of "
+             "migrating it (the --check-only flow)")
 
     p_resolve = sub.add_parser("resolve-reviewers")
     p_resolve.add_argument("--cwd", required=True)
@@ -686,7 +696,7 @@ def _cmd_apply_heuristic_correction(args: argparse.Namespace, deps: CliDeps) -> 
     return 0
 
 def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
-    config = cfg_resolve(args.cwd, deps.env_fn())
+    config = cfg_resolve(args.cwd, deps.env_fn(), migrate=not args.no_migrate)
     routes = _route_reviewers(config, deps, persist=not args.no_save_runtimes)
     ladder = routing.probe_keys(config.get("policy", {}).get("ladder", []), routes)
     existing = cache_read_json(args.quota_path) or {}
@@ -813,15 +823,15 @@ def _cmd_resolve_timeout_tiers(args: argparse.Namespace, deps: CliDeps) -> int:
     print(",".join(str(t) for t in tiers))
     return 0
 
-def _trust_local_argv_lines(config: dict, env: dict) -> list[dict]:
-    """One {key, argv} (or {key, error}) per local reviewer with a command, rendered as
-    dispatch would see it once trusted: merged with the global config per `strategy`, same
+def _trust_local_argv_lines(lanes: dict, env: dict) -> list[dict]:
+    """One {key, argv} (or {key, error}) per project lane with a command, rendered as
+    dispatch would see it once trusted: merged with the user layer per `strategy`, same
     to_resolved split, so every value the file substitutes is visible and only the prompt
     stays symbolic (A-CR-01)."""
-    local_keys = {r.get("key") for r in config.get("reviewers", [])}
+    local_keys = {r.get("key") for r in cfg_lanes_view(lanes)["reviewers"]}
     lines = []
-    # the parsed local file, not cfg_resolve: --show must render a file that is not trusted yet
-    for r in cfg_combine(config, env)["reviewers"]:
+    # the parsed project lanes, not cfg_resolve: --show must render a file that is not trusted yet
+    for r in cfg_combine(lanes, env)["reviewers"]:
         if not (r.get("runtime") or r.get("command")) or r.get("key") not in local_keys:
             continue
         try:
@@ -838,22 +848,33 @@ def _cmd_trust_local(args: argparse.Namespace, deps: CliDeps) -> int:
     env = dict(os.environ)
     store = cfg_trust_store_dir(env)
     if args.revoke:  # works after the file was deleted or moved (A-IN-07)
-        n = trust.revoke_trust(store, real)
+        # Before any migration (C2-3): an old roster's own record goes too, so the next read
+        # migrates it untrusted instead of carrying the revoked consent into config-trust/.
+        n = trust.revoke_trust(store, real) + config_migrate.revoke_legacy_trust(local_path, store)
         print(f"revoked {n} trust record(s) for {real}")
         return 0
+    cfg_migrate_project(args.cwd, env)
     if not os.path.exists(local_path):
         print(f"no project-local config at {local_path}", file=sys.stderr)
         return 1
     raw = cfg_read_bytes(local_path)
-    for line in _trust_local_argv_lines(cfg_parse_toml_bytes(raw, local_path), env):
+    lanes = cfg_lanes_table(cfg_parse_toml_bytes(raw, local_path), local_path)
+    if not lanes:
+        print(f"no [lanes] table in {local_path}", file=sys.stderr)
+        return 1
+    canonical = cfg_project_trust_bytes(lanes, env)
+    for line in _trust_local_argv_lines(lanes, env):
         if args.show and "argv" in line:
-            line.update(trusted=trust.is_trusted(store, real, raw), path=real)
+            line.update(trusted=canonical is None or trust.is_trusted(store, real, canonical),
+                        path=real)
         print(json.dumps(line))
     if args.show:
         return 0
-    sha = trust.content_sha256(raw)
-    trust.record_trust(store, real, raw)
-    print(f"trusted {real} sha256={sha}")
+    real, digest = cfg_trust_project(args.cwd, env)
+    if digest is None:
+        print(f"nothing to trust: {real} has no command-bearing lane entries")
+        return 0
+    print(f"trusted {real} sha256={digest}")
     return 0
 
 def _cmd_infer_vendor(args: argparse.Namespace, deps: CliDeps) -> int:

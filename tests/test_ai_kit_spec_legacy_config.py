@@ -118,8 +118,13 @@ class TestLegacyLoad(unittest.TestCase):
             self.assertEqual(err.getvalue().count("legacy reviewer fields loaded"), 1)
             # The migrated file exists, so a bare `render-toml --out` would be refused.
             self.assertIn("--replace", err.getvalue())
-            with open(path, "rb") as stream:
+            # The read migrated the old user file (Plan 33-07): its lanes are in config.toml and
+            # its bytes are kept under the .migrated name.
+            self.assertFalse(os.path.exists(path))
+            with open(path + ".migrated", "rb") as stream:
                 self.assertEqual(stream.read(), before)
+            self.assertTrue(os.path.exists(os.path.join(xdg, "ai-kit", "config.toml")))
+            self.assertIn(f"migrated {path} to", err.getvalue())
 
     def test_local_only_never_reads_the_global_file(self):
         # B-WR-01/B-IN-04: a malformed or legacy global file is not in effect under local-only.
@@ -127,7 +132,7 @@ class TestLegacyLoad(unittest.TestCase):
             env, xdg = self._env(root)
             self._write(os.path.join(xdg, "ai-kit", "review-spec.toml"), "this = is = broken\n")
             local = {"strategy": "local-only",
-                     "reviewers": [{"key": "c", "runtime": "codex", "model": "m"}]}
+                     "review": [{"key": "c", "runtime": "codex", "model": "m"}]}
             warnings = []
             config = cfg_combine(local, env, warn_fn=warnings.append)
             self.assertEqual([r["key"] for r in config["reviewers"]], ["c"])
@@ -141,10 +146,12 @@ class TestLegacyLoad(unittest.TestCase):
             warnings = []
             for _ in range(2):
                 cfg_resolve(root, env, warn_fn=warnings.append)
-            self.assertEqual(len(warnings), 1)
-            self.assertIn(path, warnings[0])
-            self.assertIn("old", warnings[0])
-            self.assertIn("re-save", warnings[0])
+            # the first read migrates the old user file (one notice), then its legacy note
+            self.assertEqual(len(warnings), 2)
+            self.assertIn(f"migrated {path} to", warnings[0])
+            self.assertIn(os.path.join(xdg, "ai-kit", "config.toml"), warnings[1])
+            self.assertIn("old", warnings[1])
+            self.assertIn("re-save", warnings[1])
 
     def test_mixed_file_names_only_old_entries(self):
         with tempfile.TemporaryDirectory() as root:
@@ -155,9 +162,10 @@ class TestLegacyLoad(unittest.TestCase):
             warnings = []
             result = cfg_resolve(root, env, warn_fn=warnings.append)
             self.assertEqual([r["key"] for r in result["reviewers"]], ["old", "new"])
-            self.assertEqual(len(warnings), 1)
-            self.assertIn("old", warnings[0])
-            self.assertNotIn("new", warnings[0])
+            self.assertEqual(len(warnings), 2)
+            self.assertIn(f"migrated {path} to", warnings[0])
+            self.assertIn("old", warnings[1])
+            self.assertNotIn("new", warnings[1])
 
     def test_load_never_writes(self):
         from ai_kit_spec.trust import is_trusted, record_trust
@@ -165,7 +173,7 @@ class TestLegacyLoad(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             env, _ = self._env(root)
             path = cfg_local_path(root)
-            self._write(path, '[[reviewers]]\nkey="old"\ncli="codex"\nmodel="m"\n')
+            self._write(path, '[[lanes.review]]\nkey="old"\ncli="codex"\nmodel="m"\n')
             with open(path, "rb") as stream:
                 before = stream.read()
             stat_before = os.stat(path)
@@ -187,7 +195,7 @@ class TestLegacyLoad(unittest.TestCase):
             self._write(os.path.join(xdg, "ai-kit", "review-spec.toml"),
                         '[[reviewers]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
                         f"command={json.dumps(command)}\n[policy]\nladder=[\"k\"]\n")
-            local = {"reviewers": [{"key": "k", "model": "opus"}]}
+            local = {"review": [{"key": "k", "model": "opus"}]}
             merged = cfg_combine(local, env, warn_fn=lambda _: None, local_path="local.toml")
             entry = merged["reviewers"][0]
             self.assertEqual(entry["runtime"], "codex")
@@ -198,20 +206,20 @@ class TestLegacyLoad(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             env, xdg = self._env(root)
             factory = "codex exec --sandbox read-only --skip-git-repo-check -m {model}"
-            self._write(os.path.join(xdg, "ai-kit", "review-spec.toml"),
-                        '[[reviewers]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
+            self._write(os.path.join(xdg, "ai-kit", "config.toml"),
+                        '[[lanes.review]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
                         f"command={json.dumps(factory)}\n")
             custom = "mycli --fast {model}"
-            merged = cfg_combine({"reviewers": [{"key": "k", "command": custom}]}, env,
+            merged = cfg_combine({"review": [{"key": "k", "command": custom}]}, env,
                                 warn_fn=lambda _: None, local_path="local.toml")
             self.assertNotIn("runtime", merged["reviewers"][0])
             self.assertEqual(merged["reviewers"][0]["command"], custom)
 
-            self._write(os.path.join(xdg, "ai-kit", "review-spec.toml"),
-                        '[[reviewers]]\nkey="g"\ncli="mycli"\nmodel="m"\n'
+            self._write(os.path.join(xdg, "ai-kit", "config.toml"),
+                        '[[lanes.review]]\nkey="g"\ncli="mycli"\nmodel="m"\n'
                         'command="mycli {model}"\n')
-            merged = cfg_combine({"reviewers": [{"key": "g", "runtime": "codex",
-                                                "model": "gpt-5.6-sol"}]}, env,
+            merged = cfg_combine({"review": [{"key": "g", "runtime": "codex",
+                                             "model": "gpt-5.6-sol"}]}, env,
                                 warn_fn=lambda _: None, local_path="local.toml")
             self.assertEqual(merged["reviewers"][0]["runtime"], "codex")
             self.assertNotIn("command", merged["reviewers"][0])
@@ -504,17 +512,17 @@ class TestSaveSide(unittest.TestCase):
             xdg = os.path.join(root, "xdg")
             os.makedirs(os.path.join(xdg, "ai-kit"))
             env = {"HOME": home, "XDG_CONFIG_HOME": xdg}
-            global_path = os.path.join(xdg, "ai-kit", "review-spec.toml")
+            global_path = os.path.join(xdg, "ai-kit", "config.toml")
             with open(global_path, "w", encoding="utf-8") as stream:
-                stream.write('[[reviewers]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
+                stream.write('[[lanes.review]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
                              f"command={json.dumps(self._FACTORY)}\n")
-            merged = cfg_combine({"reviewers": [{"key": "k", "command": self._CUSTOM}]},
+            merged = cfg_combine({"review": [{"key": "k", "command": self._CUSTOM}]},
                                  env, warn_fn=lambda _: None, local_path="local.toml")
             with open(global_path, "w", encoding="utf-8") as stream:
-                stream.write('[[reviewers]]\nkey="g"\ncli="mycli"\nmodel="m"\n'
+                stream.write('[[lanes.review]]\nkey="g"\ncli="mycli"\nmodel="m"\n'
                              'command="mycli {model}"\n')
-            second = cfg_combine({"reviewers": [{"key": "g", "runtime": "codex",
-                                                  "model": "gpt-5.6-sol"}]},
+            second = cfg_combine({"review": [{"key": "g", "runtime": "codex",
+                                              "model": "gpt-5.6-sol"}]},
                                  env, warn_fn=lambda _: None, local_path="local.toml")
             config = {"reviewers": merged["reviewers"] + second["reviewers"]}
             rendered = cfg_render_toml(config)

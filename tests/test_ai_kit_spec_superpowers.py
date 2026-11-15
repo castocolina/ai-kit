@@ -2422,17 +2422,16 @@ class TestUntrustedLocalExecuteEntry(unittest.TestCase):
     def test_untrusted_local_execute_entry_absent_until_trusted(self):
         import tempfile
 
-        from ai_kit_spec import config_io, trust
+        from ai_kit_spec import config_io
 
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as xdg:
             env = {"HOME": home, "XDG_CONFIG_HOME": xdg}
             cwd = tempfile.mkdtemp()
             self.addCleanup(shutil.rmtree, cwd, True)
-            local_dir = os.path.join(cwd, ".aikit")
-            os.makedirs(local_dir)
-            local_path = os.path.join(local_dir, "review-spec.toml")
+            local_path = config_io.cfg_local_path(cwd)
+            os.makedirs(os.path.dirname(local_path))
             raw = (
-                b'strategy = "local-only"\n[[reviewers]]\nkey = "x1"\nmodel = "m"\n'
+                b'[lanes]\nstrategy = "local-only"\n[[lanes.execute]]\nkey = "x1"\nmodel = "m"\n'
                 b'vendor = "v"\ncli = "codex"\ncommand = "codex exec -m {model}"\n'
                 b'purpose = "execute"\n'
             )
@@ -2441,9 +2440,7 @@ class TestUntrustedLocalExecuteEntry(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 candidates, _ = dispatch_injection.assemble_candidates(cwd, env)
             self.assertNotIn("x1", [c["key"] for c in candidates])
-            trust.record_trust(
-                config_io.cfg_trust_store_dir(env), os.path.realpath(local_path), raw
-            )
+            config_io.cfg_trust_project(cwd, env)
             with contextlib.redirect_stderr(io.StringIO()):
                 candidates, _ = dispatch_injection.assemble_candidates(cwd, env)
             self.assertIn("x1", [c["key"] for c in candidates])

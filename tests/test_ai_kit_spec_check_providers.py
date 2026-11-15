@@ -18,7 +18,7 @@ from unittest import mock
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import cli, config_io, trust
+from ai_kit_spec import cli, config_io
 
 SKILL_MD = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-config", "SKILL.md")
 CHECK_ONLY_MD = os.path.join(
@@ -48,8 +48,8 @@ class _Scratch(unittest.TestCase):
             "XDG_CACHE_HOME": os.path.join(self.root, "cache"),
             "XDG_DATA_HOME": os.path.join(self.root, "data"),
         }
-        self.local = os.path.join(self.proj, ".aikit", "review-spec.toml")
-        self.global_path = os.path.join(self.env["XDG_CONFIG_HOME"], "ai-kit", "review-spec.toml")
+        self.local = os.path.join(self.proj, ".aikit", "config.toml")
+        self.global_path = os.path.join(self.env["XDG_CONFIG_HOME"], "ai-kit", "config.toml")
         self.catalog = os.path.join(
             self.env["XDG_CACHE_HOME"], "ai-kit", "spec", "model-catalog.json"
         )
@@ -58,9 +58,8 @@ class _Scratch(unittest.TestCase):
         self.binary = True
 
     def _trust(self, path):
-        with open(path, "rb") as handle:
-            raw = handle.read()
-        trust.record_trust(config_io.cfg_trust_store_dir(self.env), os.path.realpath(path), raw)
+        self.assertEqual(path, self.local)
+        config_io.cfg_trust_project(self.proj, self.env)
 
     def _deps(self):
         def which_fn(name, *_args, **_kwargs):
@@ -80,11 +79,11 @@ class _Scratch(unittest.TestCase):
 
     @staticmethod
     def _opencode_reviewer(key, model):
-        return f'[[reviewers]]\nkey = "{key}"\nruntime = "opencode"\nmodel = "{model}"\n'
+        return f'[[lanes.review]]\nkey = "{key}"\nruntime = "opencode"\nmodel = "{model}"\n'
 
     def _local_reviewers(self, *reviewers):
         text = "".join(
-            f'[[reviewers]]\nkey = "{key}"\nruntime = "{runtime}"\nmodel = "{model}"\n'
+            f'[[lanes.review]]\nkey = "{key}"\nruntime = "{runtime}"\nmodel = "{model}"\n'
             for key, runtime, model in reviewers
         )
         _write(self.local, text)
@@ -128,22 +127,24 @@ class TestCheckProvidersTracer(_Scratch):
 
 class TestCheckProvidersSources(_Scratch):
     def test_trusted_local_only_marks_global_inactive(self):
-        _write(self.local, 'strategy = "local-only"\n')
+        _write(self.local, '[lanes]\nstrategy = "local-only"\n')
         self._trust(self.local)
         _write(self.global_path, self._opencode_reviewer("g", "gone/m"))
         lines = self._report()
         self.assertIn(f"cross-reference: {self.global_path} scanned-inactive", lines)
         self.assertIn(
             f'warning: "gone" is referenced in {self.global_path}: g model=gone/m'
-            ' (not active: local review-spec sets strategy = "local-only")',
+            ' (not active: project config.toml sets strategy = "local-only")',
             lines,
         )
 
     def test_untrusted_local_does_not_deactivate_global(self):
+        # The lane carries a command, so it is command-bearing and needs trust (D-11); the
+        # command-free case is test_command_free_local_only_deactivates_global below.
         _write(
             self.local,
-            'strategy = "local-only"\n[[reviewers]]\nkey = "l"\nruntime = "opencode"\n'
-            'model = "gone2/m"\n',
+            '[lanes]\nstrategy = "local-only"\n[[lanes.review]]\nkey = "l"\nruntime = "opencode"\n'
+            'model = "gone2/m"\ncommand = "codex exec -m {model}"\n',
         )
         _write(self.global_path, self._opencode_reviewer("g", "gone/m"))
         lines = self._report()
@@ -151,10 +152,40 @@ class TestCheckProvidersSources(_Scratch):
         self.assertIn(f"cross-reference: {self.global_path} scanned", lines)
         self.assertIn(
             f'warning: "gone2" is referenced in {self.local}: l model=gone2/m'
-            " (not active: local review-spec is not trusted)",
+            " (not active: project config.toml is not trusted)",
             lines,
         )
         self.assertIn(f'warning: "gone" is referenced in {self.global_path}: g model=gone/m', lines)
+
+    def test_command_free_local_only_deactivates_global_without_trust(self):
+        # D-11: a project [lanes] with no command-bearing entry needs no trust, so its
+        # local-only strategy applies at once and the user layer is inactive.
+        _write(
+            self.local,
+            '[lanes]\nstrategy = "local-only"\n[[lanes.review]]\nkey = "l"\nruntime = "opencode"\n'
+            'model = "gone2/m"\n',
+        )
+        _write(self.global_path, self._opencode_reviewer("g", "gone/m"))
+        lines = self._report()
+        self.assertIn(f"cross-reference: {self.local} scanned", lines)
+        self.assertIn(f"cross-reference: {self.global_path} scanned-inactive", lines)
+        self.assertIn(f'warning: "gone2" is referenced in {self.local}: l model=gone2/m', lines)
+        self.assertIn(
+            f'warning: "gone" is referenced in {self.global_path}: g model=gone/m'
+            ' (not active: project config.toml sets strategy = "local-only")',
+            lines,
+        )
+
+    def test_pending_legacy_roster_is_reported_and_nothing_is_written(self):
+        # check-providers reads a pending old roster read-only: it is reported, never migrated.
+        legacy = os.path.join(self.proj, ".aikit", "review-spec.toml")
+        _write(legacy, '[[reviewers]]\nkey = "p"\nruntime = "opencode"\nmodel = "gone/m"\n')
+        lines = self._report()
+        self.assertIn(f"cross-reference: {self.local} scanned (migration pending: {legacy})",
+                      lines)
+        self.assertIn(f'warning: "gone" is referenced in {legacy}: p model=gone/m', lines)
+        self.assertFalse(os.path.exists(self.local))
+        self.assertTrue(os.path.exists(legacy))
 
     def test_invalid_local_toml_is_unreadable_not_fatal(self):
         _write(self.local, "not = [valid\n")
