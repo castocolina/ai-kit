@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 33
-current_phase_name: One config design
-status: executing
-stopped_at: Phase 32.5 complete, ready to plan Phase 33
-last_updated: "2026-11-15T11:28:21.713Z"
-last_activity: 2026-11-14
-last_activity_desc: Phase 32.5 complete, transitioned to Phase 33
-state_head: 19190dc59a17d19738e8895b2ff26496e50ca132
+current_phase: 34
+current_phase_name: jev backends by host and Laya calibration
+status: planning
+stopped_at: Phase 33 complete, ready to plan Phase 34
+last_updated: "2026-11-15T17:51:08.488Z"
+last_activity: 2026-11-15
+last_activity_desc: Phase 33 complete, transitioned to Phase 34
+state_head: 6ebd054065ade964b5d068d5595ad3c0d841eeda
 progress:
   total_phases: 38
-  completed_phases: 13
+  completed_phases: 14
   total_plans: 114
-  completed_plans: 102
-  percent: 34
+  completed_plans: 114
+  percent: 37
 ---
 
 # Project State
@@ -25,22 +25,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 32.5 — codebase-memory-mcp replaces codegraph (INSERTED)
+**Current focus:** Phase 33 — One config design
 
 ## Current Position
 
-Phase: 33 (One config design) — READY TO EXECUTE
+Phase: 34 — jev backends by host and Laya calibration
 Plan: Not started
-Status: Ready to execute
-Last activity: 2026-11-14 — Phase 32.5 complete, transitioned to Phase 33
+Status: Ready to plan
+Last activity: 2026-11-15 — Phase 33 complete, transitioned to Phase 34
 
-Progress: [███░░░░░░░] 34%
+Progress: [████░░░░░░] 37%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 256
+- Total plans completed: 268
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -95,6 +95,7 @@ Progress: [███░░░░░░░] 34%
 | 32.3 | 5 | - | - |
 | 32.4 | 9 | - | - |
 | 32.5 | 10 | - | - |
+| 33 | 12 | - | - |
 
 **Recent Trend:**
 
@@ -688,8 +689,8 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-14T22:33:43.858Z
-Stopped at: Phase 32.5 complete, ready to plan Phase 33
+Last session: 2026-11-15T15:38:40.455Z
+Stopped at: Phase 33 complete, ready to plan Phase 34
 Resume file: None
 
 ## Operator Next Steps

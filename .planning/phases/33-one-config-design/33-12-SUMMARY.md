@@ -189,5 +189,35 @@ None.
 
 Loop 33 closes with the bar met for both judged skills; 33-VERIFICATION.md can copy the bar results and facts above. The two open high findings on ai-kit-spec-config are recorded, not gating.
 
+## Round 2 (ai-kit-spec-config only, close-out part 1)
+
+Fix commit 715c230 addressed the two round 1 high findings: D6 (Step 2.5 asks about a `read_only: unconfirmed` or missing profile before `check-reviewer` makes its live call; a declined test saves the entry untested and Step 4 names it) and D8 (one definition of command-bearing in SKILL.md Step 4 and `references/config-file.md`, matching `trust.command_lanes_bytes`), plus the XDG-aware user path and eval `edge-unconfirmed-read-only-asks-before-test`. Round 2 ran at HEAD 715c230 with the configured referees (no substitute; referee-three not needed): lanes 2 ok, 0 failed. Records commit 7a599aa.
+
+### Round 2 bar results
+
+| Skill | Round | Worst percent | Grade | Bar | Lowest percent | Prior loop base | Delta |
+|---|---|---|---|---|---|---|---|
+| ai-kit-gsd-curated-config | 1 | 97.6 | A | met | 97.6 | 88.0 | +9.6 |
+| ai-kit-spec-config | 2 | 90.4 | A | met | 85.6 | 79.2 | +6.4 |
+
+`unmet.txt`: 0 skills. Round 2 verdicts: referee-one 90.4 A (critical 0, high 1), referee-two 85.6 B (critical 0, high 0). The bar is met by grade B or better with no regression (lowest valid percent 85.6 against the loop 32 base 79.2). The open high (referee-one D8-1, `references/check-only.md:20`): the `--check-only` branch runs `probe-quota` live calls without the write-risk ask Step 2.5 now requires for unconfirmed read-only runtimes. Recorded, not gating.
+
+`check .planning/judge` exit 0; `stale_after.py`: `stale ok` (stale after: ai-kit-cross-ai ai-kit-gsd-spec-discuss ai-kit-session-wake ai-kit-spec-execute-superpowers ai-kit-spec-review ai-kit-spec-review-checklist ai-kit-usage-metrics jev-fast-decision, each fact-only or carried from before the loop); `make check-dogfood` rc 0.
+
+## Round 3 (ai-kit-spec-config only, close-out part 2; the last round)
+
+Fix commit 2ce2c0b addressed round 2's open high (referee-one D8-1): `references/check-only.md` reads each listed runtime's profile and asks Step 2.5's write-risk question before any `probe-quota` call (skip first; on a skip no probe runs and every listed key is reported `available: unknown`), with an eval assertion and the pinning test `test_check_only_asks_write_risk_before_the_probe`. Round 3 ran at HEAD 2ce2c0b with the configured referees (no substitute): lanes 2 ok, 0 failed (referee-one 58 s, referee-two 57 s, both `tree=clean`). Records commit b43ae32.
+
+### Round 3 bar results
+
+| Skill | Round | Worst percent | Grade | Bar | Lowest percent | Prior loop base | Delta |
+|---|---|---|---|---|---|---|---|
+| ai-kit-gsd-curated-config | 1 | 97.6 | A | met | 97.6 | 88.0 | +9.6 |
+| ai-kit-spec-config | 3 | 88.8 | B | met | 83.2 | 79.2 | +4.0 |
+
+`unmet.txt`: 0 skills. Round 3 verdicts: referee-one 88.8 B (critical 0, high 2), referee-two 83.2 B (critical 0, high 0). The bar is met by grade B or better with no regression against the loop 32 base (lowest valid percent 83.2 against 79.2). Against round 2 (90.4 A / 85.6 B) both judges scored 1.6 and 2.4 points lower, within judge variation; the loop stops here (three-round cap). Open highs, recorded, not gating: referee-one D8-1 (`references/check-only.md:15`: the write-risk check covers the raw target's entries, but `probe-quota` probes the merged set, so an entry from the other layer can be probed unchecked) and D8-2 (`references/cli-model-selection.md:20`: `CATALOG_JSON` and `FILTERED_RUNTIMES_JSON` are set in one shell block and used in later ones, against SKILL.md's fresh-shell rule).
+
+`check .planning/judge` exit 0; `check ... --skills ai-kit-gsd-curated-config ai-kit-spec-config --require-current --gate` exit 0; `stale_after.py`: `stale ok` (the same eight fact-only or carried skills as round 2); `make check-dogfood` rc 0.
+
 ---
 *Phase: 33-one-config-design*

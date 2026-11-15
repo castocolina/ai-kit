@@ -119,7 +119,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 32.3: Batch 3, execution and session skills** - spec-execute-superpowers and session-wake keep their bar; one shared secret scanner; cross-ai deferred to Phases 37-38 *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
 - [x] **Phase 32.4: Batch 4, planning skills and the closing report** - goal-prompt, spec-discuss and curated-config keep their bar with their fixes; the closing report shows all 15 judged skills *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
 - [x] **Phase 32.5: codebase-memory-mcp replaces codegraph** - every live index, check, rule, lane guidance and doc uses codebase-memory-mcp; history unchanged; `.planning/` kept out of the index *(inserted 2026-11-14, owner decision; run with Phases 33-34 through `/gsd-autonomous`)* (completed 2026-11-14)
-- [ ] **Phase 33: One config design** - One neutral config.toml per layer with role-keyed lanes; review-spec.toml and the retry block migrate on their own; no foreign keys, runs without GSD *(rewritten 2026-11-14, owner decisions)*
+- [x] **Phase 33: One config design** - One neutral config.toml per layer with role-keyed lanes; review-spec.toml and the retry block migrate on their own; no foreign keys, runs without GSD *(rewritten 2026-11-14, owner decisions)* (completed 2026-11-15)
 - [ ] **Phase 34: jev backends by host and Laya calibration** - jev picks its backend per host from ai-kit's config; Laya measured against its floor
 - [ ] **Phase 35: Model discovery and catalog** - spec-config lists every model on every host with honest source, usability and tier labels
 - [ ] **Phase 36: spec-config as the hub** - Every spec skill chains spec-config; reviewers and executors kept apart with opt-in escalation
@@ -596,34 +596,34 @@ Plans:
   7. A test shows no ai-kit writer puts a key outside gsd-core's key list into a GSD config, and the roster resolve, the runner's retry resolution and spec-config's check-only path work in a repository without `.planning/` (CFG-06).
   *(criteria 1 and 3 amended 2026-11-14: criterion 1's choice is made — one `config.toml` per layer; criterion 3's settings live in `[runner.retry]`, and the user `cross-ai.json` migrates too)*
 
-**Plans**: 12 plans in 8 waves *(replanned 2026-11-14 from the rewritten SPEC and CONTEXT; the 2026-11-13 draft's plans are history under `.planning/research/2026-11-13-phase-33-agent-draft/`)*
+**Plans**: 12/12 plans complete in 8 waves *(replanned 2026-11-14 from the rewritten SPEC and CONTEXT; the 2026-11-13 draft's plans are history under `.planning/research/2026-11-13-phase-33-agent-draft/`)*
 **Wave 1**
-- [ ] 33-01-PLAN.md — comment-keeping TOML splicer and fsync'd atomic publish (wave 1)
-- [ ] 33-02-PLAN.md — runner reads `[runner.retry]` from config.toml through a TOML-subset reader (wave 1)
+- [x] 33-01-PLAN.md — comment-keeping TOML splicer and fsync'd atomic publish (wave 1)
+- [x] 33-02-PLAN.md — runner reads `[runner.retry]` from config.toml through a TOML-subset reader (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 33-03-PLAN.md — one user-config-dir rule with a parity test; atomic status-line recovery (wave 2)
-- [ ] 33-04-PLAN.md — runner migrates the GSD retry block and the user cross-ai.json once (wave 2)
+- [x] 33-03-PLAN.md — one user-config-dir rule with a parity test; atomic status-line recovery (wave 2)
+- [x] 33-04-PLAN.md — runner migrates the GSD retry block and the user cross-ai.json once (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 33-05-PLAN.md — roster migration module (purpose picks the role) and the trust digest (wave 3)
-- [ ] 33-06-PLAN.md — retry docs move to `[runner.retry]` with their pins (wave 3)
+- [x] 33-05-PLAN.md — roster migration module (purpose picks the role) and the trust digest (wave 3)
+- [x] 33-06-PLAN.md — retry docs move to `[runner.retry]` with their pins (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 33-07-PLAN.md — every roster reader uses config.toml lanes by role, with migration and trust (wave 4)
-- [ ] 33-08-PLAN.md — fact-only config.toml renames in other skills (wave 4)
+- [x] 33-07-PLAN.md — every roster reader uses config.toml lanes by role, with migration and trust (wave 4)
+- [x] 33-08-PLAN.md — fact-only config.toml renames in other skills (wave 4)
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 33-09-PLAN.md — render-toml writes `[lanes]` through the splicer; fixtures move (wave 5)
+- [x] 33-09-PLAN.md — render-toml writes `[lanes]` through the splicer; fixtures move (wave 5)
 
 **Wave 6** *(blocked on Wave 5 completion)*
-- [ ] 33-10-PLAN.md — spec-config text and evals for config.toml (wave 6)
+- [x] 33-10-PLAN.md — spec-config text and evals for config.toml (wave 6)
 
 **Wave 7** *(blocked on Wave 6 completion)*
-- [ ] 33-11-PLAN.md — decision record, scans, no-.planning runs, README section, phase gate (wave 7)
+- [x] 33-11-PLAN.md — decision record, scans, no-.planning runs, README section, phase gate (wave 7)
 
 **Wave 8** *(blocked on Wave 7 completion)*
-- [ ] 33-12-PLAN.md — judge loop 33 for spec-config and curated-config (wave 8)
+- [x] 33-12-PLAN.md — judge loop 33 for spec-config and curated-config (wave 8)
 
 ### Phase 34: jev backends by host and Laya calibration
 
@@ -1030,7 +1030,7 @@ Plans:
 | 32.3. Batch 3, execution and session skills | 5/5 | Complete    | 2026-11-13 |
 | 32.4. Batch 4, planning skills and the closing report | 9/9 | Complete    | 2026-11-13 |
 | 32.5. codebase-memory-mcp replaces codegraph | 10/10 | Complete    | 2026-11-14 |
-| 33. One config design | 0/TBD | Not started | - |
+| 33. One config design | 12/12 | Complete    | 2026-11-15 |
 | 34. jev backends by host and Laya calibration | 0/TBD | Not started | - |
 | 35. Model discovery and catalog | 0/TBD | Not started | - |
 | 36. spec-config as the hub | 0/TBD | Not started | - |

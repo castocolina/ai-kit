@@ -170,24 +170,24 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### One config design
 
-- [ ] **CFG-01**: A recorded decision, backed by an inventory of every setting ai-kit keeps (reviewers and executors
+- [x] **CFG-01**: A recorded decision, backed by an inventory of every setting ai-kit keeps (reviewers and executors
   with the trust file, hooks, project rules, status line, jev consent, secrets, runner retry), chooses between one
   file with a section per area and one file per concern, under neutral names, project layer over user layer.
   *(amended 2026-11-14, owner decision, 33 D-01/D-02: chosen — one neutral `config.toml` per layer, project
   `.aikit/config.toml` over user `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml`, one table per concern;
   machine-written state stays in its own files with the reason recorded)*
-- [ ] **CFG-02**: `review-spec.toml` is replaced by the chosen config with automatic migration from the old name, and
+- [x] **CFG-02**: `review-spec.toml` is replaced by the chosen config with automatic migration from the old name, and
   every caller reads the new one. *(amended 2026-11-14, 33 D-03/D-12: the roster becomes `[[lanes.review]]` in
   `config.toml`)*
-- [ ] **CFG-03**: The runner's retry settings live in ai-kit's config, not GSD's `config.json`; the runner migrates a
+- [x] **CFG-03**: The runner's retry settings live in ai-kit's config, not GSD's `config.json`; the runner migrates a
   `workflow.cross_ai_retry` block once. *(amended 2026-11-14, owner decision, 33 D-13: the settings live in
   `config.toml` `[runner.retry]`; the GSD block and the user `cross-ai.json` are migrated out once and removed)*
-- [ ] **CFG-04**: Every config write stays atomic and lossless (comments, formatting and unrelated entries kept).
-- [ ] **CFG-05**: `config.toml` entries are structured by concern and role: `[models]`, `[lanes]` with
+- [x] **CFG-04**: Every config write stays atomic and lossless (comments, formatting and unrelated entries kept).
+- [x] **CFG-05**: `config.toml` entries are structured by concern and role: `[models]`, `[lanes]` with
   `[[lanes.review]]` and `[[lanes.execute]]` (the coding role), `[runner]`/`[runner.retry]`, `[jev]`, `[hooks]`; no
   table or file is named after one skill or host; the reader keeps unknown tables. *(added 2026-11-14, owner
   decision: the old config labelled everything "reviews")*
-- [ ] **CFG-06**: ai-kit never writes a key outside another tool's own schema into that tool's config (GSD,
+- [x] **CFG-06**: ai-kit never writes a key outside another tool's own schema into that tool's config (GSD,
   Claude Code, opencode, Codex, Cursor, pi, Copilot), and every ai-kit skill CLI and the runner work in a
   repository without `.planning/`. *(added 2026-11-14, owner decision: `workflow.cross_ai_retry` was never requested
   and third-party schemas can drop unknown keys)*
@@ -891,12 +891,12 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | JDG-06 | Phase 32 | Complete |
 | JDG-07 | Phase 32 | Complete |
 | JDG-08 | Phase 32 | Complete |
-| CFG-01 | Phase 33 | Pending |
-| CFG-02 | Phase 33 | Pending |
-| CFG-03 | Phase 33 | Pending |
-| CFG-04 | Phase 33 | Pending |
-| CFG-05 | Phase 33 | Pending |
-| CFG-06 | Phase 33 | Pending |
+| CFG-01 | Phase 33 | Complete |
+| CFG-02 | Phase 33 | Complete |
+| CFG-03 | Phase 33 | Complete |
+| CFG-04 | Phase 33 | Complete |
+| CFG-05 | Phase 33 | Complete |
+| CFG-06 | Phase 33 | Complete |
 | HUB-01 | Phase 36 | Pending |
 | HUB-02 | Phase 35 | Pending |
 | HUB-03 | Phase 35 | Pending |
