@@ -173,11 +173,24 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **CFG-01**: A recorded decision, backed by an inventory of every setting ai-kit keeps (reviewers and executors
   with the trust file, hooks, project rules, status line, jev consent, secrets, runner retry), chooses between one
   file with a section per area and one file per concern, under neutral names, project layer over user layer.
+  *(amended 2026-11-14, owner decision, 33 D-01/D-02: chosen — one neutral `config.toml` per layer, project
+  `.aikit/config.toml` over user `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml`, one table per concern;
+  machine-written state stays in its own files with the reason recorded)*
 - [ ] **CFG-02**: `review-spec.toml` is replaced by the chosen config with automatic migration from the old name, and
-  every caller reads the new one.
+  every caller reads the new one. *(amended 2026-11-14, 33 D-03/D-12: the roster becomes `[[lanes.review]]` in
+  `config.toml`)*
 - [ ] **CFG-03**: The runner's retry settings live in ai-kit's config, not GSD's `config.json`; the runner migrates a
-  `workflow.cross_ai_retry` block once.
+  `workflow.cross_ai_retry` block once. *(amended 2026-11-14, owner decision, 33 D-13: the settings live in
+  `config.toml` `[runner.retry]`; the GSD block and the user `cross-ai.json` are migrated out once and removed)*
 - [ ] **CFG-04**: Every config write stays atomic and lossless (comments, formatting and unrelated entries kept).
+- [ ] **CFG-05**: `config.toml` entries are structured by concern and role: `[models]`, `[lanes]` with
+  `[[lanes.review]]` and `[[lanes.execute]]` (the coding role), `[runner]`/`[runner.retry]`, `[jev]`, `[hooks]`; no
+  table or file is named after one skill or host; the reader keeps unknown tables. *(added 2026-11-14, owner
+  decision: the old config labelled everything "reviews")*
+- [ ] **CFG-06**: ai-kit never writes a key outside another tool's own schema into that tool's config (GSD,
+  Claude Code, opencode, Codex, Cursor, pi, Copilot), and every ai-kit skill CLI and the runner work in a
+  repository without `.planning/`. *(added 2026-11-14, owner decision: `workflow.cross_ai_retry` was never requested
+  and third-party schemas can drop unknown keys)*
 
 ### spec-config as the hub
 
@@ -185,19 +198,27 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   fails with a message naming the fix; `--no-cross-ai` still runs on the session model with no config.
 - [ ] **HUB-02**: spec-config discovers providers and models on claude, opencode, pi, cursor, codex and copilot, and
   records per model where it was listed from and a separate usability state (verified with date, rejected with the
-  error, or unverified, shown visibly).
+  error, or unverified, shown visibly). *(amended 2026-11-14, owner decision: running spec-config builds the
+  catalog of every model the machine can reach before any role is proposed)*
 - [ ] **HUB-03**: The model catalog merges models.dev, Artificial Analysis and the Arena leaderboard into tier (four
   or more, effort-aware), class, relative cost, modalities and strengths, each value labeled measured or judged,
   with cache times; it shows each source's required attribution, never commits or ships Artificial Analysis data
   (its free tier forbids redistribution), and takes Arena data from the official dataset under its CC-BY-4.0 terms.
+  *(amended 2026-11-14, owner decision: models.dev and Artificial Analysis are the primary sources and the LM Arena
+  leaderboard the alternative when Artificial Analysis is unavailable; the merged classification feeds HUB-07)*
 - [x] **HUB-04**: The cheap-execution ranking still yields candidates although Artificial Analysis returns its coding
   and agentic indexes as null.
 - [ ] **HUB-05**: The config separates reviewers from executors, each with priorities, effort per model and opt-in
   runtime and model escalation flags (off by default); an effort is passed only when the model supports it (detected
   per model), in the runtime's own form, and is never dropped silently (today only codex receives it).
+  *(amended 2026-11-14, 33 D-03: reviewers are `[[lanes.review]]` and executors `[[lanes.execute]]` in
+  `config.toml`; a lane is never reused across roles)*
 - [ ] **HUB-06**: spec-config flags stale entries (removed models, providers no longer configured).
 - [ ] **HUB-07**: jev ranks candidates and the user picks; by default the ranking proposes flagship-class models for
   review and coding-class models for execution; no skill, rail or default hardcodes a referee name.
+  *(amended 2026-11-14, owner decision: from the classified catalog, spec-config proposes a coding set and a
+  review set separately and the user confirms each before anything is written; nothing is labelled review by
+  default)*
 - [ ] **HUB-08**: The opencode CLI profile and the runner's comments match the installed opencode as its own
   `--help` reports it (current providers, the effort levels the model API lists, the `opencode models` flags), and a
   test fails when the profile names a flag the recorded help text lacks.
@@ -622,7 +643,9 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   before calibrating, Laya is upgraded from 0.4.2 to 0.4.27 or the reason to stay is recorded; the calibration
   records how accurate confident Laya answers are, tied to the Laya version and checkpoint revision; and the skill
   text states that a confident Laya answer is not proven accurate, since the 32-case live run measured about half
-  right when confident)*
+  right when confident)* *(amended 2026-11-14, owner decision: no upgrade step — the owner upgraded Laya in
+  `llm-env`; the calibration runs on the version at the configured address and records its version or
+  fingerprint)*
 - [ ] **JEV-04**: A short jev marker block reaches the four global instruction files through ai-kit's atomic writers,
   with the owner's consent. *(amended 2026-11-03, 30 spec: it reuses the marked-block editor FLOW-12 builds in Phase 30; the four files are the global ones codegraph's (replaced by codebase-memory-mcp in Phase 32.5) installer also writes: `~/.claude/CLAUDE.md`, `$CODEX_HOME/AGENTS.md`, `~/.gemini/GEMINI.md`, `${XDG_CONFIG_HOME:-~/.config}/opencode/AGENTS.md`)*
 - [ ] **JEV-05**: jev answers image and bounding-box questions after a TypeSafe spike, with a key and consent; a
@@ -653,11 +676,23 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   without ever upgrading a capability cell to verified; the package version is labelled not exposed. An on-demand
   `--check-updates`, cached for 7 days and never run on a normal call, follows the official skill's doc flow and
   PyPI with public requests only (no key, no question) and lists each fact to re-verify. Tests use fake servers.
-  *(added 2026-11-07, owner decision from the jev and typesafe-ai research)*
+  *(added 2026-11-07, owner decision from the jev and typesafe-ai research)* *(amended 2026-11-14, owner decision:
+  the probe determines the version at the configured address — server field, then `[jev] laya_version`, then
+  "not exposed" with a server fingerprint — and when that version's capabilities are unknown it fetches Laya's
+  published notes (PyPI, README) once and records them; a record stays valid until the version or fingerprint
+  changes, replacing the fixed 24-hour and 7-day caches; `--check-updates` stays as the on-demand refresh)*
 - [ ] **JEV-11**: Two decision-path records: Laya's official MCP server stays outside jev's decision path, because it
   would bypass the one-item-per-call rule, the size guard, the thresholds, the receipts and the answer log; and a
   spike records whether several questions over one shared state answer better on TypeSafe than the merged contexts
   jev sends today. *(added 2026-11-07, owner decision from the jev and typesafe-ai research)*
+- [ ] **JEV-12**: When the remote TypeSafe backend answers with a model id the skill has not recorded, or a
+  primitive or option it does not know, the skill follows the official skill's doc flow once (`llms.txt`,
+  `changelog.md`, `models.md`) and records what changed and which of its features it could serve; public
+  requests only, never on the answer path. *(added 2026-11-14, owner decision: learn from `typesafe-ai`'s remote
+  usage)*
+- [ ] **JEV-13**: A guard test keeps Zen and any other removed backend out of jev-fast-decision and fails on a
+  step that hands Laya's or the official skill's install or upgrade to tools-installer or another repository.
+  *(added 2026-11-14, owner decision)*
 
 ### Features and live checks
 
@@ -860,6 +895,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | CFG-02 | Phase 33 | Pending |
 | CFG-03 | Phase 33 | Pending |
 | CFG-04 | Phase 33 | Pending |
+| CFG-05 | Phase 33 | Pending |
+| CFG-06 | Phase 33 | Pending |
 | HUB-01 | Phase 36 | Pending |
 | HUB-02 | Phase 35 | Pending |
 | HUB-03 | Phase 35 | Pending |
@@ -972,6 +1009,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | JEV-09 | Phase 32.1 | Complete |
 | JEV-10 | Phase 34 | Pending |
 | JEV-11 | Phase 34 | Pending |
+| JEV-12 | Phase 34 | Pending |
+| JEV-13 | Phase 34 | Pending |
 | FEAT-01 | Phase 30.1 | Complete |
 | FEAT-02 | Phase 54 | Pending |
 | FEAT-03 | Phase 54 | Pending |
@@ -1007,8 +1046,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | IDX-07 | Phase 32.5 | Complete |
 
 **Coverage:**
-- v2.0 requirements: 179 total
-- Mapped to phases: 179
+- v2.0 requirements: 183 total
+- Mapped to phases: 183
 - Unmapped: 0
 
 ---
