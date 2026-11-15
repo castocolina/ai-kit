@@ -100,6 +100,7 @@ Live facts checked for this spec (2026-11-13 at `bb34055`, re-checked 2026-11-14
    - Current: only `review-spec.toml` is read.
    - Target: each `[[reviewers]]` entry becomes a `[[lanes.review]]` entry with every key and value kept, `strategy` and `[policy]` move under `[lanes]`, comments and legacy fields are kept; the old file's full text stays recoverable; a one-line notice names both paths; a second run changes nothing; when both an old and a new roster exist the new one wins and the old one is reported, never merged again.
    - Acceptance: tests in a scratch home cover local only, global only, both, a `local-only` strategy, a file with comments and legacy fields, a second run (no byte change) and old-and-new present; parsed values of old and new are equal in each case.
+   - Amendment (2026-11-14, CONTEXT D-24): an entry's `purpose` picks its role — `review` or none to `[[lanes.review]]`, `execute` to `[[lanes.execute]]`, `both` to one entry in each — with every key kept; a test covers an `execute` and a `both` entry.
 
 5. **Trust survives migration and covers only command-bearing lanes**: a project roster that was trusted before migration is trusted after it with no new trust step, an untrusted one stays untrusted, and editing an unrelated table of `config.toml` does not drop trust.
    - Current: trust is pinned to the realpath and every byte of `.aikit/review-spec.toml`.
@@ -223,7 +224,7 @@ unclassified)
 | encoding | R7 | ✅ covered | The subset reader accepts UTF-8 and the listed value types; anything else is a notice and that file is skipped |
 | ordering | R7 | ✅ covered | Per key: project, user, `CONFIG.retry`, defaults |
 | idempotency | R7 | ✅ covered | A second run finds no GSD block and no user JSON to migrate and writes nothing |
-| concurrency | R7 | ✅ covered | Two runners starting together: the migration takes the runner's existing lock or loses to a newer file and re-reads; the GSD file is rewritten by temp and rename |
+| concurrency | R7 | ✅ covered | Two runners starting together: the runner has no lock (amended 2026-11-14, CONTEXT D-25), so the migration re-reads the target before publishing, merges idempotently and loses to a newer file by re-reading; the GSD file is rewritten by temp and rename |
 | adjacency | R8 | ✅ covered | A GSD key ai-kit legitimately sets (through `config-set`) is allowed; any key gsd-core does not list is refused |
 | empty | R8 | ✅ covered | A repository with no `.planning/` at all: every listed command runs and creates no `.planning/` |
 | ordering | R8 | 🧪 backstop | No ordering involved |

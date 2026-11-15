@@ -596,7 +596,34 @@ Plans:
   7. A test shows no ai-kit writer puts a key outside gsd-core's key list into a GSD config, and the roster resolve, the runner's retry resolution and spec-config's check-only path work in a repository without `.planning/` (CFG-06).
   *(criteria 1 and 3 amended 2026-11-14: criterion 1's choice is made — one `config.toml` per layer; criterion 3's settings live in `[runner.retry]`, and the user `cross-ai.json` migrates too)*
 
-**Plans**: TBD *(the draft's plans below are superseded and replaced when the phase is replanned)*
+**Plans**: 12 plans in 8 waves *(replanned 2026-11-14 from the rewritten SPEC and CONTEXT; the 2026-11-13 draft's plans are history under `.planning/research/2026-11-13-phase-33-agent-draft/`)*
+**Wave 1**
+- [ ] 33-01-PLAN.md — comment-keeping TOML splicer and fsync'd atomic publish (wave 1)
+- [ ] 33-02-PLAN.md — runner reads `[runner.retry]` from config.toml through a TOML-subset reader (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 33-03-PLAN.md — one user-config-dir rule with a parity test; atomic status-line recovery (wave 2)
+- [ ] 33-04-PLAN.md — runner migrates the GSD retry block and the user cross-ai.json once (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 33-05-PLAN.md — roster migration module (purpose picks the role) and the trust digest (wave 3)
+- [ ] 33-06-PLAN.md — retry docs move to `[runner.retry]` with their pins (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 33-07-PLAN.md — every roster reader uses config.toml lanes by role, with migration and trust (wave 4)
+- [ ] 33-08-PLAN.md — fact-only config.toml renames in other skills (wave 4)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 33-09-PLAN.md — render-toml writes `[lanes]` through the splicer; fixtures move (wave 5)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 33-10-PLAN.md — spec-config text and evals for config.toml (wave 6)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 33-11-PLAN.md — decision record, scans, no-.planning runs, README section, phase gate (wave 7)
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 33-12-PLAN.md — judge loop 33 for spec-config and curated-config (wave 8)
 
 ### Phase 34: jev backends by host and Laya calibration
 

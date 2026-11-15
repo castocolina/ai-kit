@@ -173,6 +173,29 @@ the no-GSD run (R8); atomic lossless writes (R9); one resolver rule (R10); docs 
   `archive/phase-33-agent-draft` marks the draft tip) so no GSD scan sees them as this phase's plans; the phase is
   replanned from this CONTEXT.
 
+### Planning amendments (2026-11-14, plan convergence; live facts from 33-RESEARCH.md, jev advisory)
+
+- **D-24: A roster entry's `purpose` decides its role on migration (amends D-12 step 2 and SPEC R4's "each
+  `[[reviewers]]` entry becomes a `[[lanes.review]]` entry").** Live fact: the user roster has an entry with
+  `purpose = "execute"` (and `strength = "coding"`) inside `[[reviewers]]`; migrating it into `[[lanes.review]]`
+  would keep labelling a coding lane as review, the owner's complaint, and break D-03/R3 (a lane is never reused
+  across roles; a lane under both roles is two entries). Rule: `purpose = "review"` or no `purpose` goes to
+  `[[lanes.review]]`, `purpose = "execute"` to `[[lanes.execute]]`, `purpose = "both"` to one entry in each role;
+  every key and value, `purpose` included, is kept, and the value-equality check compares per role under this
+  mapping. `strategy` and `[lanes.policy]` (with its shared `ladder` of keys) stay as D-12 says; per-role ladders
+  are Phase 36's. Readers that consume the roster's flat `reviewers` view get both roles' entries, one per `key`.
+  jev: choice split_by_purpose, typesafe 0.93 (laya same choice, low).
+- **D-25: Migration concurrency without a lock.** Live fact: the runner has no lock (`writeCycleState` is a
+  temp file plus rename only), so SPEC's R7 concurrency edge ("takes the runner's existing lock") has nothing to
+  reuse. Both migrations instead re-read the target before publishing, merge idempotently (identical values are
+  a no-op) and publish by temp file plus rename; a run that loses the race re-reads and finds nothing to do.
+- **D-26: Scope key for `[runner.retry.scopes."<scope>"]`** is the config directory's path relative to
+  `.planning/` with `/` separators (for example `"myproj"` or `"myproj/workstreams/ws1"`); the top-level
+  `.planning/config.json` block maps to `[runner.retry]` itself. Own reasoning (jev typesafe leaned the same at
+  0.66, below its bar).
+- **D-27: A whitespace-only `XDG_CONFIG_HOME` is treated like an empty one (unset)** in every resolver copy.
+  jev: choice ignore, typesafe 0.82.
+
 ### Claude's Discretion
 
 - Module and function names inside `ai_kit_spec` beyond those named above; the exact notice wording (one line, both
