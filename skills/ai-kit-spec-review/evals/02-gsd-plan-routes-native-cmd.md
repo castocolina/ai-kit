@@ -16,7 +16,7 @@ User invokes `review-spec` on a GSD plan document that has issues.
 2. Resolves codebase root via `git -C <doc-dir> rev-parse --show-toplevel` (Step 0.1).
 3. Detects framework as `gsd` from `.planning/` path prefix and project markers.
 4. Resolves GSD profile from SEEDS_DIR (absolute). ARCHETYPE = `plan`.
-5. Runs Step 0.7 — resolves `TOOLS_PY`/`CHECKLIST_SKILL_MD`, `RUN_TMP_DIR`, and `REVIEWER_LIST` (1 entry unless `review-spec.toml` configures cross-AI `double` mode; in this eval's default no-config state, `REVIEWER_LIST` is the single-entry `NO_CONFIG_FALLBACK`).
+5. Runs Step 0.7 — resolves `TOOLS_PY`/`CHECKLIST_SKILL_MD`, `RUN_TMP_DIR`, and `REVIEWER_LIST` (1 entry unless ai-kit's `config.toml` `[lanes]` configures cross-AI `double` mode; in this eval's default no-config state, `REVIEWER_LIST` is the single-entry `NO_CONFIG_FALLBACK`).
 6. Dispatches reviewer subagent; reviewer returns `Issues Found`; report written to `$RUN_TMP_DIR/iter<N>-<key>.md`, read as `EFFECTIVE_REPORT_PATH` by Step 2 (Step 1.5 runs every iteration to bind that name; its merge call itself is skipped here since `REVIEWER_LIST` has only 1 entry).
 7. Orchestrator checks GSD profile's `revise_protocol.routes` for archetype `plan` → finds `slash_command` → attempts to invoke `/gsd-plan-phase {phase_id} --reviews` with findings.
 8. If slash-command tool unavailable: surfaces pre-filled command + report path to user (Step 3b surface fallback). Does NOT edit files directly.

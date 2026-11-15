@@ -16,7 +16,7 @@ User invokes `review-spec` on a superpowers plan document.
 2. Resolves codebase root from the plan file's directory using `git -C` (Step 0.1).
 3. Detects framework as `superpowers` (conversation signal: file lives under `docs/superpowers/plans/`).
 4. Resolves profile from SEEDS_DIR — absolute path. ARCHETYPE = `plan`.
-5. Runs Step 0.7 — resolves `TOOLS_PY`/`CHECKLIST_SKILL_MD`, `RUN_TMP_DIR`, and `REVIEWER_LIST` (1 entry unless `review-spec.toml` configures cross-AI `double` mode; in this eval's default no-config state, `REVIEWER_LIST` is the single-entry `NO_CONFIG_FALLBACK`).
+5. Runs Step 0.7 — resolves `TOOLS_PY`/`CHECKLIST_SKILL_MD`, `RUN_TMP_DIR`, and `REVIEWER_LIST` (1 entry unless ai-kit's `config.toml` `[lanes]` configures cross-AI `double` mode; in this eval's default no-config state, `REVIEWER_LIST` is the single-entry `NO_CONFIG_FALLBACK`).
 6. Dispatches reviewer subagent (review-spec-checklist skill) with the plan path, archetype, profile path, and codebase root. Prompt contains NO document content; report written to `$RUN_TMP_DIR/iter<N>-<key>.md`, read as `EFFECTIVE_REPORT_PATH` by Step 2 (Step 1.5 runs every iteration to bind that name; its merge call itself is skipped here since `REVIEWER_LIST` has only 1 entry).
 7. If reviewer returns `Issues Found`: checks profile's `revise_protocol.routes` for `plan` archetype → finds `skill:superpowers:writing-plans` → dispatches a fresh subagent invoking the `superpowers:writing-plans` skill with the report path + plan path.
 8. Re-reviews after the skill-based fix. If approved, surfaces success message.

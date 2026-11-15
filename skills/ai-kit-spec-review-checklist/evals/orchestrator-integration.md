@@ -29,8 +29,8 @@ This means the slash command cannot be TDD-verified end-to-end via a subagent si
 
 | Check | Expected |
 |---|---|
-| Step 0.7 resolves REVIEWER_LIST before the first dispatch (1 entry unless review-spec.toml configures cross-AI double mode) | Yes — visible as the Bash calls to ai-kit-spec.py detect-runtimes/probe-quota/resolve-reviewers, before the first reviewer Agent/Bash dispatch |
-| Reviewer subagent dispatched (visible as `Agent` tool call) | Yes — native reviewers use the model `REVIEWER_LIST` resolved (omitted/session-default unless `review-spec.toml` pins one); external reviewers (if configured) run via `Bash`, not the `Agent` tool; paths only in prompt |
+| Step 0.7 resolves REVIEWER_LIST before the first dispatch (1 entry unless ai-kit's config.toml [lanes] configures cross-AI double mode) | Yes — visible as the Bash calls to ai-kit-spec.py detect-runtimes/probe-quota/resolve-reviewers, before the first reviewer Agent/Bash dispatch |
+| Reviewer subagent dispatched (visible as `Agent` tool call) | Yes — native reviewers use the model `REVIEWER_LIST` resolved (omitted/session-default unless a `config.toml` lane pins one); external reviewers (if configured) run via `Bash`, not the `Agent` tool; paths only in prompt |
 | Step 1.5 binds EFFECTIVE_REPORT_PATH every iteration (merging two reports only when REVIEWER_LIST has 2 entries) | Yes — Step 2 reads EFFECTIVE_REPORT_PATH from disk, never text still in a subagent's context |
 | Each iteration is a NEW reviewer subagent | Yes, separate dispatches |
 | If Issues Found and iter < cap, fixer subagent dispatched | Yes, separate dispatch |

@@ -20,7 +20,7 @@ You are the orchestrator running as the `ai-kit-spec-review` skill (invocable vi
   real vendor explicitly when this host's model comes from another vendor.
   A Claude Code session is one example of an `anthropic` author, not the
   rule. This is a **vendor** (`anthropic`, `openai`, `xai`, ...) matching the
-  `vendor` field in `review-spec.toml` reviewer entries, not a model id.
+  `vendor` field of a lane entry in ai-kit's `config.toml`, not a model id.
 
 ## Step 0 — Persist before dispatch (ALWAYS)
 
@@ -173,7 +173,7 @@ Record every entry `probe-quota` marked unavailable, with the reason it printed.
 message lists each as `unavailable: <entry> (<reason>)`.
 
 When `probe-quota` or `resolve-reviewers` prints `ignoring untrusted project-local config`
-(on stderr), a project-local `.aikit/review-spec.toml` is present but not trusted yet — show
+(on stderr), a project-local `.aikit/config.toml` has command-bearing lanes that are not trusted yet — show
 the user `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT> --show` (writes nothing; one JSON
 line per local reviewer with the argv dispatch would run, merged with the global config, the
 prompt shown as `<prompt>`), ask whether to trust it, and run

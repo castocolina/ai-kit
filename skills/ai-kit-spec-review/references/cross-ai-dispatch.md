@@ -140,7 +140,7 @@ Runs once per invocation, after Step 0.6.
    line — "No cross-AI config saved yet — run `ai-kit-spec-config` so
    this doesn't repeat every invocation." — then continue to step 4
    regardless; do NOT skip reviewer resolution (there's usually no
-   `review-spec.toml` yet either, so `resolve-reviewers` in step 5
+   `config.toml` roster yet either, so `resolve-reviewers` in step 5
    degrades to `NO_CONFIG_FALLBACK` on its own — no special-casing needed
    here beyond the detection call and the hint).
 4. Refresh quota for anything the config's ladder might need. `--cwd`
@@ -189,7 +189,7 @@ Runs once per invocation, after Step 0.6.
    `CODEBASE_ROOT` is a labeled set, that means the root of `<DOC_PATHS>`'s
    first entry, same rule as point 4 above).
    **If either command's stderr prints `ignoring untrusted project-local config`**, the
-   project-local `.aikit/review-spec.toml` under `<CODEBASE_ROOT>` is ignored until the user
+   project-local `.aikit/config.toml` lanes under `<CODEBASE_ROOT>` are ignored until the user
    trusts it. Show them `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT> --show` (each
    reviewer's exact argv), ask whether to trust it, and run
    `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT>` only after an explicit yes — never
