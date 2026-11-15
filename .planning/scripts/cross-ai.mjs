@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=8cde9ef2542d6e8075e7fad5a2db1ce03ff346ab3abc87f36a132db8c7b1a1da
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=b68944d20eba5186f7c30ebbef7e7fc028951ed77cc4adae1939598d2cd65d57
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
@@ -59,9 +59,9 @@
  * Live outer timeout reads workflow.cross_ai_timeout the way gsd-tools config-get does:
  * .planning[/$GSD_PROJECT][/workstreams/$GSD_WORKSTREAM]/config.json, then the root config
  * under GSD_WORKSTREAM, else 300.
- * Retry config reads workflow.cross_ai_retry through the same files, then
- * ${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json key cross_ai_retry, then CONFIG.retry,
- * per key. The error catalog is PATTERNS (generated from cross-ai-errors.json) plus the owner
+ * Retry config reads [runner.retry] (and the active GSD scope's [runner.retry.scopes."<scope>"])
+ * from the project .aikit/config.toml, then the user ${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml,
+ * then CONFIG.retry, per key. The error catalog is PATTERNS (generated from cross-ai-errors.json) plus the owner
  * overlay ${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai-errors.json.
  * No idle watchdog in this version (D-43); only the overall deadline bounds each child.
  */
@@ -3044,6 +3044,18 @@ function scopedConfigPaths(cwd, env) {
   if (ws) paths.push(path.join(root, 'config.json'));
   return paths;
 }
+// The active scope key (D-26): the scoped config folder's path under .planning/ with '/'
+// separators, the same rule as scopedConfigPaths, so a scope may hold [ ] " or spaces; the
+// quote-aware header constants read such a scope table back (C2-2). No scope means no table.
+function retryScope(cwd, env) {
+  const ws = (env.GSD_WORKSTREAM || '').trim();
+  const project = (env.GSD_PROJECT || '').trim();
+  if (/[/\\]|\.\./.test(ws) || /[/\\]|\.\./.test(project)) return '';
+  const parts = [];
+  if (project) parts.push(project);
+  if (ws) parts.push('workstreams', ws);
+  return parts.join('/');
+}
 function liveOuterTimeoutS(cwd, env) {
   const paths = scopedConfigPaths(cwd, env);
   let t = paths.length ? ownTimeout(paths[0]) : undefined;
@@ -3074,8 +3086,10 @@ function confinementError(file, rootDir) {
 // A config read never blocks or fills memory before the deadlines exist.
 const CONFIG_READ_MAX = 1024 * 1024;
 
-function readJsonObject(file, rootDir = null) {
-  if (!fs.existsSync(file)) return { obj: null };
+// A config read refuses invalid UTF-8 rather than replace bytes (Python's ConfigError does the
+// same). Existence, confinement, file type and size are checked here once, for JSON and TOML.
+function readConfigText(file, rootDir = null) {
+  if (!fs.existsSync(file)) return { text: null };
   if (rootDir != null) {
     const error = confinementError(file, rootDir);
     if (error) return { error };
@@ -3084,20 +3098,247 @@ function readJsonObject(file, rootDir = null) {
   try { stat = fs.statSync(file); } catch (e) { return { error: `unreadable (${e.code || e.message})` }; }
   if (!stat.isFile()) return { error: 'not a regular file' };
   if (stat.size > CONFIG_READ_MAX) return { error: `larger than ${CONFIG_READ_MAX} bytes` };
-  const parsed = parseJson(readOr(file, ''));
+  let bytes;
+  try { bytes = fs.readFileSync(file); } catch (e) { return { error: `unreadable (${e.code || e.message})` }; }
+  try {
+    return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) };
+  } catch {
+    return { error: 'not valid UTF-8' };
+  }
+}
+function readJsonObject(file, rootDir = null) {
+  const read = readConfigText(file, rootDir);
+  if (read.error) return { error: read.error };
+  if (read.text === null) return { obj: null };
+  const parsed = parseJson(read.text);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { error: 'not a JSON object' };
   return { obj: parsed };
 }
 
-// ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit, for the overlay and the user retry file alike. An
-// unset HOME is the account's own home, never a path relative to the working directory.
+// The TOML subset reader (D-07). Header names are quote-aware (C2-2): a double-quoted segment may
+// hold [ ] # or an escaped quote. The line splicer of Plan 04 matches headers through these names.
+const TOML_ARRAY_HEADER_RE = /^\s*\[\[((?:[^\[\]"]|"(?:[^"\\]|\\.)*")+)\]\]\s*(#.*)?$/;
+const TOML_TABLE_HEADER_RE = /^\s*\[((?:[^\[\]"]|"(?:[^"\\]|\\.)*")+)\]\s*(#.*)?$/;
+const TOML_NUMBER_RE = /^[+-]?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?/;
+const TOML_TAIL_RE = /^\s*(#.*)?$/;
+const TOML_ESCAPES = Object.freeze({ '"': '"', '\\': '\\', n: '\n', t: '\t', r: '\r', b: '\b', f: '\f' });
+
+// A TOML basic string whose opening quote is s[i]: { value, end } with end just past the closing
+// quote, or null for an unknown escape, a bad \u or \U code point, a raw control character or no
+// closing quote.
+function scanBasicString(s, i) {
+  let out = '';
+  let j = i + 1;
+  while (j < s.length) {
+    const c = s[j];
+    if (c === '"') return { value: out, end: j + 1 };
+    if (c === '\\') {
+      const e = s[j + 1];
+      if (e === 'u' || e === 'U') {
+        const width = e === 'u' ? 4 : 8;
+        const hex = s.slice(j + 2, j + 2 + width);
+        if (!new RegExp(`^[0-9A-Fa-f]{${width}}$`).test(hex)) return null;
+        const code = parseInt(hex, 16);
+        if (code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return null;
+        out += String.fromCodePoint(code);
+        j += 2 + width;
+      } else if (Object.hasOwn(TOML_ESCAPES, e)) {
+        out += TOML_ESCAPES[e];
+        j += 2;
+      } else {
+        return null;
+      }
+      continue;
+    }
+    const code = c.charCodeAt(0);
+    if ((code < 0x20 && c !== '\t') || code === 0x7f) return null;
+    out += c;
+    j += 1;
+  }
+  return null;
+}
+
+// A dotted header name split into its keys: a quoted segment is decoded by scanBasicString, a bare
+// segment must be a key, and any other segment (empty, a literal 'quoted' name) makes it null.
+function splitTomlName(name) {
+  const pieces = [];
+  let cur = '';
+  let quoted = false;
+  for (let i = 0; i < name.length; i += 1) {
+    const c = name[i];
+    if (quoted && c === '\\') { cur += c + (name[i + 1] ?? ''); i += 1; continue; }
+    if (c === '"') quoted = !quoted;
+    if (c === '.' && !quoted) { pieces.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  pieces.push(cur);
+  const out = [];
+  for (const piece of pieces) {
+    const seg = piece.trim();
+    if (seg.startsWith('"')) {
+      const got = scanBasicString(seg, 0);
+      if (!got || got.end !== seg.length) return null;
+      out.push(got.value);
+    } else if (/^[A-Za-z0-9_-]+$/.test(seg)) {
+      out.push(seg);
+    } else {
+      return null;
+    }
+  }
+  return out;
+}
+
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+// A one-line array of basic strings and numbers, closed on the same line; a trailing comma is
+// allowed. { value, end } or null (nested arrays, inline tables, literal strings, a missing bracket).
+function scanTomlArray(s) {
+  const items = [];
+  let i = 1;
+  const skip = () => { while (s[i] === ' ' || s[i] === '\t') i += 1; };
+  skip();
+  if (s[i] === ']') return { value: items, end: i + 1 };
+  for (;;) {
+    skip();
+    if (s[i] === '"') {
+      const got = scanBasicString(s, i);
+      if (!got) return null;
+      items.push(got.value);
+      i = got.end;
+    } else {
+      const num = TOML_NUMBER_RE.exec(s.slice(i));
+      if (!num) return null;
+      items.push(Number(num[0]));
+      i += num[0].length;
+    }
+    skip();
+    if (s[i] === ',') {
+      i += 1;
+      skip();
+      if (s[i] === ']') return { value: items, end: i + 1 };
+    } else if (s[i] === ']') {
+      return { value: items, end: i + 1 };
+    } else {
+      return null;
+    }
+  }
+}
+
+// One value after `=`: a basic string, true or false, a number or a one-line array of strings and
+// numbers, then only spaces and an optional comment. Anything else (a date, an inline table, a
+// literal string, a multi-line string) is an error.
+function scanTomlValue(text) {
+  const s = text.replace(/^\s+/, '');
+  if (s.startsWith('"""')) return { error: 'multi-line string' };
+  let value;
+  let end;
+  if (s.startsWith('"')) {
+    const got = scanBasicString(s, 0);
+    if (!got) return { error: 'unsupported value' };
+    ({ value, end } = got);
+  } else if (s.startsWith('[')) {
+    const got = scanTomlArray(s);
+    if (!got) return { error: 'unsupported value' };
+    ({ value, end } = got);
+  } else {
+    const bool = /^(true|false)(?![A-Za-z0-9_])/.exec(s);
+    const num = bool ? null : TOML_NUMBER_RE.exec(s);
+    if (bool) {
+      value = bool[1] === 'true';
+      end = bool[0].length;
+    } else if (num) {
+      value = Number(num[0]);
+      end = num[0].length;
+    } else {
+      return { error: 'unsupported value' };
+    }
+  }
+  return TOML_TAIL_RE.test(s.slice(end)) ? { value } : { error: 'unsupported value' };
+}
+
+// Parses the TOML subset (D-07) and keeps only the runner subtree: { obj: { runner: {...} } }, or
+// { error: 'line N: <reason>' } for anything outside the subset or any table/value collision in
+// either order. [[lanes.*]] and every other table are opaque: their lines are skipped.
+function parseTomlSubset(text) {
+  const obj = {};
+  const defined = new Set();
+  let table = null;
+  let tableName = '';
+  const lines = text.split(/\r?\n/);
+  for (let idx = 0; idx < lines.length; idx += 1) {
+    const n = idx + 1;
+    const line = lines[idx];
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    const arr = TOML_ARRAY_HEADER_RE.exec(line);
+    const hdr = arr || TOML_TABLE_HEADER_RE.exec(line);
+    if (hdr) {
+      const segs = splitTomlName(hdr[1]);
+      if (!segs) return { error: `line ${n}: unsupported table name` };
+      if (arr && segs[0] !== 'lanes') return { error: `line ${n}: array of tables outside [lanes]` };
+      table = null;
+      if (arr || segs[0] !== 'runner') continue;
+      const name = segs.join('.');
+      if (defined.has(name)) return { error: `line ${n}: duplicate table ${name}` };
+      defined.add(name);
+      let node = obj;
+      for (let k = 0; k < segs.length; k += 1) {
+        if (!Object.hasOwn(node, segs[k])) {
+          node[segs[k]] = {};
+        } else if (!isPlainObject(node[segs[k]])) {
+          return { error: `line ${n}: table ${name} conflicts with key ${segs.slice(0, k + 1).join('.')}` };
+        }
+        node = node[segs[k]];
+      }
+      table = node;
+      tableName = name;
+      continue;
+    }
+    if (table === null) {
+      if (/"""|'''/.test(line)) return { error: `line ${n}: multi-line string` };
+      continue;
+    }
+    const kv = /^\s*([A-Za-z0-9_-]+)\s*=\s*(.*)$/.exec(line);
+    if (!kv) return { error: `line ${n}: not a key = value line` };
+    const key = kv[1];
+    if (Object.hasOwn(table, key)) {
+      if (isPlainObject(table[key])) return { error: `line ${n}: key ${key} conflicts with table ${tableName}.${key}` };
+      return { error: `line ${n}: duplicate key ${key}` };
+    }
+    const got = scanTomlValue(kv[2]);
+    if (got.error) return { error: `line ${n}: ${got.error}` };
+    table[key] = got.value;
+  }
+  return { obj };
+}
+
+function readTomlSubset(file, rootDir = null) {
+  const read = readConfigText(file, rootDir);
+  if (read.error) return { error: read.error };
+  if (read.text === null) return { obj: null };
+  return parseTomlSubset(read.text);
+}
+
+// ${XDG_CONFIG_HOME}/ai-kit or ${HOME}/.config/ai-kit: the one user-dir rule (D-19, D-27; SPEC
+// R10), shared with config_io, local_secrets, jev_review and tools/common_config. An absolute
+// XDG_CONFIG_HOME (surrounding whitespace removed) is used; a relative or blank one is ignored,
+// then HOME must be absolute. Otherwise there is no user dir (null). No ambient home lookup, so
+// every copy gives the same answer for an unset or empty HOME.
 function aiKitConfigDir(env) {
-  const configHome = env.XDG_CONFIG_HOME || path.join(env.HOME || os.homedir(), '.config');
-  return path.join(configHome, 'ai-kit');
+  const xdg = (env.XDG_CONFIG_HOME || '').trim();
+  if (xdg && path.isAbsolute(xdg)) return path.join(xdg, 'ai-kit');
+  const home = env.HOME || '';
+  return path.isAbsolute(home) ? path.join(home, '.config', 'ai-kit') : null;
 }
 
 function loadOverlay(env) {
   const root = aiKitConfigDir(env);
+  if (root === null) {
+    log('cross-ai: no absolute home directory; the user overlay is skipped');
+    return [];
+  }
   const file = path.join(root, 'cross-ai-errors.json');
   if (!fs.existsSync(file)) return [];
   // Confinement, file type and size are checked before any byte is read: a FIFO or a huge file
@@ -3224,38 +3465,53 @@ function validateRetryKey(key, value, capS) {
   return null;
 }
 
-// Read once per call. Nothing here writes a config file. Each key falls through the sources
-// on its own; a refusal names the key and the source and the next source fills it in.
+// Read once per call from ai-kit's config.toml layers (D-13): project .aikit/config.toml, then the
+// user config.toml, then CONFIG.retry, then RETRY_DEFAULTS, per key. Each key falls through the
+// sources on its own; a refusal names the key and the source and the next source fills it in.
 function resolveRetry(cwd, env) {
   const rawCap = CONFIG.capS;
   const capS = clampCapS(rawCap);
   if (typeof rawCap === 'number' && rawCap > 14400) {
     log(`cross-ai: config capS ${rawCap} refused (CONFIG): above 14400; using 14400`);
   }
+  const scope = retryScope(cwd, env);
+  const layers = [{
+    label: '.aikit/config.toml',
+    file: path.join(cwd, '.aikit', 'config.toml'),
+    root: path.join(cwd, '.aikit'),
+  }];
+  const userDir = aiKitConfigDir(env);
+  if (userDir === null) {
+    log('cross-ai: no absolute home directory; the user config layer is skipped');
+  } else {
+    layers.push({
+      label: `user ${path.join(userDir, 'config.toml')}`,
+      file: path.join(userDir, 'config.toml'),
+      root: userDir,
+    });
+  }
   const sources = [];
-  for (const cfgPath of scopedConfigPaths(cwd, env)) {
-    const label = path.relative(cwd, cfgPath);
-    const got = workflowValue(cfgPath, 'cross_ai_retry', path.join(cwd, '.planning'));
+  for (const layer of layers) {
+    const got = readTomlSubset(layer.file, layer.root);
     if (got.error) {
-      log(`cross-ai: config ${label} ${got.error}; retry keys from the next source`);
+      log(`cross-ai: config ${layer.label} ${got.error}; retry keys from the next source`);
       continue;
     }
-    if (got.value === undefined) continue;
-    sources.push({ label, value: got.value });
-  }
-  const userRoot = aiKitConfigDir(env);
-  const userFile = path.join(userRoot, 'cross-ai.json');
-  const userLabel = `user ${userFile}`;
-  const userRead = readJsonObject(userFile, userRoot);
-  if (userRead.error) {
-    log(`cross-ai: config ${userLabel} ${userRead.error}; retry keys from the next source`);
-  } else if (userRead.obj && Object.hasOwn(userRead.obj, 'cross_ai_retry')) {
-    sources.push({ label: userLabel, value: userRead.obj.cross_ai_retry });
+    const table = got.obj && got.obj.runner && got.obj.runner.retry;
+    if (!isPlainObject(table)) continue;
+    if (scope && isPlainObject(table.scopes) && isPlainObject(table.scopes[scope])) {
+      sources.push({
+        label: `${layer.label} [runner.retry.scopes."${scope}"]`,
+        value: table.scopes[scope],
+      });
+    }
+    const { scopes: _scopes, ...top } = table;
+    sources.push({ label: `${layer.label} [runner.retry]`, value: top });
   }
   sources.push({ label: 'CONFIG', value: CONFIG.retry, config: true });
   const usable = [];
   for (const src of sources) {
-    const named = src.config ? 'retry' : 'cross_ai_retry';
+    const named = src.config ? 'retry' : 'runner.retry';
     if (!src.value || typeof src.value !== 'object' || Array.isArray(src.value)) {
       log(`cross-ai: config ${src.label} ${named} is not an object; retry keys from the next source`);
       continue;
@@ -3273,7 +3529,7 @@ function resolveRetry(cwd, env) {
       if (!Object.hasOwn(src.value, key)) continue;
       const reason = validateRetryKey(key, src.value[key], capS);
       if (reason) {
-        const named = src.config ? 'retry' : 'cross_ai_retry';
+        const named = src.config ? 'retry' : 'runner.retry';
         log(`cross-ai: config ${named}.${key} refused (${src.label}): ${reason}`);
         continue;
       }
@@ -5319,6 +5575,22 @@ function statusLineOk(stderr, pattern) {
   return null;
 }
 
+// Writes one config fixture (TOML text) for a self-test case, creating its folder first.
+function writeCaseFile(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+}
+// The TOML subset sample for the values and CRLF cases: runner tables, a scope table, opaque
+// [lanes] and [[lanes.review]] tables, and a string-final array.
+const TOML_SAMPLE_TEXT = '# top\n[runner]\nmigrated_from = [".planning/config.json", "a,b]"]\n' +
+  '[runner.retry]\nbase_s = 0.5\nfactor = 2\nhard_waits_s = [600, 900,]\nflag = true\n' +
+  'name = "x\\"y" # note\n[runner.retry.scopes."p/workstreams/w"]\nmax_retries = 4\n' +
+  '[lanes]\nstrategy = "local-only"\n[[lanes.review]]\nkey = "k"\nextra = { a = [1, 2] }\n' +
+  '[lanes.policy]\nladder = ["a", "b"]\n';
+const TOML_SAMPLE_OBJ = '{"runner":{"migrated_from":[".planning/config.json","a,b]"],"retry":' +
+  '{"base_s":0.5,"factor":2,"hard_waits_s":[600,900],"flag":true,"name":"x\\"y",' +
+  '"scopes":{"p/workstreams/w":{"max_retries":4}}}}}';
+
 function retryLine(r, fragment) {
   const lines = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: retry '));
   if (lines.length !== 1) return `retry lines=${lines.length}`;
@@ -6015,8 +6287,8 @@ async function blackBoxSelfTest(listOnly = false) {
           'cross-ai: --prefer reads only its first entry (pi); ignored: nosuchcli') ? null : 'missing notice'),
       },
       {
-        // With HOME and XDG_CONFIG_HOME unset, the user retry file is the account's own
-        // ~/.config/ai-kit/cross-ai.json, never one relative to the working directory.
+        // With HOME and XDG_CONFIG_HOME unset there is no user layer (C1-3): neither the account
+        // home nor the working folder's .config/ai-kit is read, and os.homedir is never called.
         name: 'pure-retry-user-config-without-home',
         kind: 'logic',
         pure: () => {
@@ -6024,19 +6296,21 @@ async function blackBoxSelfTest(listOnly = false) {
           const home = path.join(root, 'home');
           const work = path.join(root, 'work');
           for (const [dir, base] of [[home, 3], [work, 7]]) {
-            fs.mkdirSync(path.join(dir, '.config', 'ai-kit'), { recursive: true });
-            fs.writeFileSync(path.join(dir, '.config', 'ai-kit', 'cross-ai.json'),
-              JSON.stringify({ cross_ai_retry: { base_s: base } }));
+            writeCaseFile(path.join(dir, '.config', 'ai-kit', 'config.toml'),
+              `[runner.retry]\nbase_s = ${base}\n`);
           }
           const savedHome = os.homedir;
           const savedLog = log;
           const savedCwd = process.cwd();
-          os.homedir = () => home;
-          log = () => {};
+          const lines = [];
+          os.homedir = () => { throw new Error('ambient home lookup'); };
+          log = (line) => { lines.push(line); };
           try {
             process.chdir(work);
             const got = resolveRetry(work, {}).retry.base_s;
-            return got === 3 ? null : `base_s=${got}`;
+            if (got === 3 || got === 7) return `base_s=${got} read from an ambient home`;
+            return lines.some((l) => l.includes('the user config layer is skipped'))
+              ? null : 'no skipped-layer notice';
           } finally {
             process.chdir(savedCwd);
             os.homedir = savedHome;
@@ -6941,7 +7215,10 @@ async function blackBoxSelfTest(listOnly = false) {
         // The hard_waits list itself is project config: precedence over the rendered copy.
         name: 'hard-tier-config-waits',
         kind: 'logic',
-        planningConfig: { workflow: { cross_ai_retry: { hard_waits_s: [60] } } },
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nhard_waits_s = [60]\n');
+          return null;
+        },
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
         config: { retry: { max_retries: 1, session_resets: 0 } },
         exit: 75,
@@ -8520,7 +8797,10 @@ async function blackBoxSelfTest(listOnly = false) {
         name: 'retry-config-drives-ladder',
         kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
-        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1, session_resets: 0 } } },
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nmax_retries = 1\nsession_resets = 0\n');
+          return null;
+        },
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
           'exit=75 .* action=stop$'),
@@ -9070,9 +9350,14 @@ async function blackBoxSelfTest(listOnly = false) {
         kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
-        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1, session_resets: 0 } } },
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          fs.mkdirSync(path.join(c.repo, '.aikit'), { recursive: true });
+          fs.writeFileSync(path.join(c.repo, '.aikit', 'config.toml'),
+            '[runner.retry]\nmax_retries = 1\nsession_resets = 0\n');
+          return null;
+        },
         check: (r) => {
           const lines = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: retry '));
           if (lines.length !== 1) return `retry lines=${lines.length}`;
@@ -9089,11 +9374,8 @@ async function blackBoxSelfTest(listOnly = false) {
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
         setup: (c) => {
-          const dir = path.join(c.home, '.config', 'ai-kit');
-          fs.mkdirSync(dir, { recursive: true });
-          fs.writeFileSync(path.join(dir, 'cross-ai.json'), JSON.stringify({
-            cross_ai_retry: { max_retries: 2, session_resets: 0 },
-          }));
+          writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'config.toml'),
+            '[runner.retry]\nmax_retries = 2\nsession_resets = 0\n');
           return null;
         },
         check: (r) => retryLine(r, 'max_retries=2 session_resets=0'),
@@ -9104,15 +9386,12 @@ async function blackBoxSelfTest(listOnly = false) {
         kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
-        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1 } } },
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
         setup: (c) => {
-          const dir = path.join(c.home, '.config', 'ai-kit');
-          fs.mkdirSync(dir, { recursive: true });
-          fs.writeFileSync(path.join(dir, 'cross-ai.json'), JSON.stringify({
-            cross_ai_retry: { max_retries: 3, session_resets: 0 },
-          }));
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nmax_retries = 1\n');
+          writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'config.toml'),
+            '[runner.retry]\nmax_retries = 3\nsession_resets = 0\n');
           return null;
         },
         check: (r) => retryLine(r, 'max_retries=1 session_resets=0'),
@@ -9123,10 +9402,13 @@ async function blackBoxSelfTest(listOnly = false) {
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         env: { GSD_WORKSTREAM: 'ws1' },
-        planningConfig: { workflow: { cross_ai_retry: { max_retries: 2 } } },
-        workstream: { ws: 'ws1', config: { workflow: { cross_ai_retry: { max_retries: 1 } } } },
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'),
+            '[runner.retry]\nmax_retries = 2\n\n[runner.retry.scopes."workstreams/ws1"]\nmax_retries = 1\n');
+          return null;
+        },
         check: (r) => retryLine(r, 'max_retries=1'),
       },
       {
@@ -9136,10 +9418,13 @@ async function blackBoxSelfTest(listOnly = false) {
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         env: { GSD_WORKSTREAM: 'ws1' },
-        planningConfig: { workflow: { cross_ai_retry: { max_retries: 2 } } },
-        workstream: { ws: 'ws1', config: { workflow: {} } },
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'),
+            '[runner.retry]\nmax_retries = 2\n\n[runner.retry.scopes."workstreams/ws1"]\n');
+          return null;
+        },
         check: (r) => retryLine(r, 'max_retries=2'),
       },
       {
@@ -9147,21 +9432,19 @@ async function blackBoxSelfTest(listOnly = false) {
         kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
-        planningConfig: { workflow: { cross_ai_retry: { base_s: 61, max_retries: '1' } } },
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
         setup: (c) => {
-          const dir = path.join(c.home, '.config', 'ai-kit');
-          fs.mkdirSync(dir, { recursive: true });
-          fs.writeFileSync(path.join(dir, 'cross-ai.json'), JSON.stringify({
-            cross_ai_retry: { max_retries: 1, session_resets: 0 },
-          }));
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'),
+            '[runner.retry]\nbase_s = 61\nmax_retries = "1"\n');
+          writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'config.toml'),
+            '[runner.retry]\nmax_retries = 1\nsession_resets = 0\n');
           return null;
         },
         check: (r) => {
           const err = r.stderr || '';
           for (const key of ['base_s', 'max_retries']) {
-            const line = `cross-ai: config cross_ai_retry.${key} refused (.planning/config.json):`;
+            const line = `cross-ai: config runner.retry.${key} refused (.aikit/config.toml [runner.retry]):`;
             if (!err.includes(line)) return `missing refusal ${key}`;
           }
           return retryLine(r, 'base_s=0') || retryLine(r, 'max_retries=1');
@@ -9178,7 +9461,7 @@ async function blackBoxSelfTest(listOnly = false) {
         setup: (c) => {
           const dir = path.join(c.home, '.config', 'ai-kit');
           fs.mkdirSync(dir, { recursive: true });
-          const made = spawnSync('mkfifo', [path.join(dir, 'cross-ai.json')]);
+          const made = spawnSync('mkfifo', [path.join(dir, 'config.toml')]);
           return made.status === 0 ? null : 'mkfifo unavailable';
         },
         check: (r) => ((r.stderr || '').includes('not a regular file') ? null : 'missing notice'),
@@ -9191,12 +9474,11 @@ async function blackBoxSelfTest(listOnly = false) {
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
         setup: (c) => {
-          fs.mkdirSync(path.join(c.repo, '.planning'), { recursive: true });
-          fs.writeFileSync(path.join(c.repo, '.planning', 'config.json'), '{');
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nmax_retries =\n');
           return null;
         },
         check: (r) => {
-          const notice = 'cross-ai: config .planning/config.json not a JSON object; ' +
+          const notice = 'cross-ai: config .aikit/config.toml line 2: unsupported value; ' +
             'retry keys from the next source';
           if (!(r.stderr || '').includes(notice)) return 'missing malformed notice';
           return retryLine(r, 'base_s=0 factor=1.5 max_retries=5 session_resets=1 hard_waits_s=0,0,0 cap_s=14400');
@@ -9207,11 +9489,14 @@ async function blackBoxSelfTest(listOnly = false) {
         kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
-        planningConfig: { workflow: { cross_ai_retry: { cap_s: 99999 } } },
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\ncap_s = 99999\n');
+          return null;
+        },
         check: (r) => {
-          const notice = 'cross-ai: config cross_ai_retry.cap_s refused (.planning/config.json): unknown key';
+          const notice = 'cross-ai: config runner.retry.cap_s refused (.aikit/config.toml [runner.retry]): unknown key';
           if (!(r.stderr || '').includes(notice)) return 'missing unknown-key notice';
           return retryLine(r, 'cap_s=14400');
         },
@@ -9235,7 +9520,6 @@ async function blackBoxSelfTest(listOnly = false) {
         kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
-        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1 } } },
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
         second: {
@@ -9246,17 +9530,15 @@ async function blackBoxSelfTest(listOnly = false) {
         },
         setup: (c) => {
           const dir = path.join(c.home, '.config', 'ai-kit');
-          fs.mkdirSync(dir, { recursive: true });
-          fs.writeFileSync(path.join(dir, 'cross-ai.json'), JSON.stringify({
-            cross_ai_retry: { session_resets: 0 },
-          }));
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nmax_retries = 1\n');
+          writeCaseFile(path.join(dir, 'config.toml'), '[runner.retry]\nsession_resets = 0\n');
           const stamp = (p) => {
             const st = fs.statSync(p);
             return { bytes: fs.readFileSync(p), mtime: st.mtimeMs };
           };
           c.retryStamp = {
-            project: stamp(path.join(c.repo, '.planning', 'config.json')),
-            user: stamp(path.join(dir, 'cross-ai.json')),
+            project: stamp(path.join(c.repo, '.aikit', 'config.toml')),
+            user: stamp(path.join(dir, 'config.toml')),
           };
           return null;
         },
@@ -9267,8 +9549,8 @@ async function blackBoxSelfTest(listOnly = false) {
           };
           const dir = path.join(both.home, '.config', 'ai-kit');
           const now = {
-            project: stamp(path.join(both.repo, '.planning', 'config.json')),
-            user: stamp(path.join(dir, 'cross-ai.json')),
+            project: stamp(path.join(both.repo, '.aikit', 'config.toml')),
+            user: stamp(path.join(dir, 'config.toml')),
           };
           for (const which of ['project', 'user']) {
             const before = both.retryStamp[which];
@@ -9293,8 +9575,7 @@ async function blackBoxSelfTest(listOnly = false) {
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
         // An empty project file: no earlier source supplies hard_waits_s, so only CONFIG is refused.
         setup: (c) => {
-          fs.mkdirSync(path.join(c.repo, '.planning'), { recursive: true });
-          fs.writeFileSync(path.join(c.repo, '.planning', 'config.json'), '{}');
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '');
           return null;
         },
         check: (r) => {
@@ -9304,7 +9585,8 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
-        // The retry read refuses a symlink out of .planning; the timeout read still follows it.
+        // The retry read refuses a symlink out of .aikit; the timeout read still follows a symlink
+        // out of .planning (GSD's workflow.cross_ai_timeout, which stays a GSD key).
         name: 'retry-config-outside',
         kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
@@ -9312,17 +9594,16 @@ async function blackBoxSelfTest(listOnly = false) {
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
         setup: (c) => {
-          const outside = path.join(c.tmp, 'outside-config.json');
-          fs.writeFileSync(outside, JSON.stringify({
-            workflow: { cross_ai_retry: { max_retries: 7 }, cross_ai_timeout: 600 },
-          }));
+          const outsideToml = path.join(c.tmp, 'outside-config.toml');
+          fs.writeFileSync(outsideToml, '[runner.retry]\nmax_retries = 7\n');
+          fs.mkdirSync(path.join(c.repo, '.aikit'), { recursive: true });
+          fs.symlinkSync(outsideToml, path.join(c.repo, '.aikit', 'config.toml'));
+          const outsideJson = path.join(c.tmp, 'outside-config.json');
+          fs.writeFileSync(outsideJson, JSON.stringify({ workflow: { cross_ai_timeout: 600 } }));
           fs.mkdirSync(path.join(c.repo, '.planning'), { recursive: true });
-          fs.symlinkSync(outside, path.join(c.repo, '.planning', 'config.json'));
-          const dir = path.join(c.home, '.config', 'ai-kit');
-          fs.mkdirSync(dir, { recursive: true });
-          fs.writeFileSync(path.join(dir, 'cross-ai.json'), JSON.stringify({
-            cross_ai_retry: { max_retries: 2 },
-          }));
+          fs.symlinkSync(outsideJson, path.join(c.repo, '.planning', 'config.json'));
+          writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'config.toml'),
+            '[runner.retry]\nmax_retries = 2\n');
           return null;
         },
         check: (r) => {
@@ -9334,6 +9615,211 @@ async function blackBoxSelfTest(listOnly = false) {
           const line = retryLine(r, 'max_retries=2');
           if (line) return line;
           return err.includes('max_retries=7') ? 'symlink value used' : null;
+        },
+      },
+      {
+        // The subset reader keeps the runner tables and skips every other table as opaque (D-07).
+        name: 'pure-toml-subset-values',
+        kind: 'logic',
+        pure: () => {
+          const got = parseTomlSubset(TOML_SAMPLE_TEXT);
+          if (got.error) return got.error;
+          return JSON.stringify(got.obj) === JSON.stringify(JSON.parse(TOML_SAMPLE_OBJ))
+            ? null : JSON.stringify(got.obj);
+        },
+      },
+      {
+        // The same text with CRLF line ends parses to the same object (run rule 5).
+        name: 'pure-toml-subset-crlf',
+        kind: 'logic',
+        pure: () => {
+          const lf = parseTomlSubset(TOML_SAMPLE_TEXT);
+          const crlf = parseTomlSubset(TOML_SAMPLE_TEXT.replace(/\n/g, '\r\n'));
+          if (lf.error || crlf.error) return lf.error || crlf.error;
+          return JSON.stringify(crlf.obj) === JSON.stringify(lf.obj)
+            ? null : 'CRLF text parsed differently';
+        },
+      },
+      {
+        // Each text is refused with its reason (C1-4 collisions in both orders, C1-11 header names).
+        name: 'pure-toml-subset-refusals',
+        kind: 'logic',
+        pure: () => {
+          const refusals = [
+            ['[runner.retry]\nx = { a = 1 }\n', 'unsupported value'],
+            ['[[lanes.review]]\ncommand = """a\n', 'multi-line string'],
+            ["[runner.retry]\nx = 'a'\n", 'unsupported value'],
+            ['[runner.retry]\nd = 1979-05-27\n', 'unsupported value'],
+            ['[runner.retry]\nx = [[1]]\n', 'unsupported value'],
+            ['[[runner.retry]]\n', 'array of tables outside [lanes]'],
+            ['[runner.retry]\nx = 1\nx = 2\n', 'duplicate key x'],
+            ['[runner.retry]\n[runner.retry]\n', 'duplicate table runner.retry'],
+            ['[runner.retry]\nmax_retries = 9\n[runner]\nretry = 0\n',
+              'key retry conflicts with table runner.retry'],
+            ['[runner]\nretry = 0\n[runner.retry]\nmax_retries = 9\n',
+              'table runner.retry conflicts with key runner.retry'],
+            ['[runner]\nretry = [1]\n[runner.retry]\n',
+              'table runner.retry conflicts with key runner.retry'],
+            ['[runner]\nretry = "x"\n[runner.retry.scopes."p"]\n', 'conflicts with key runner.retry'],
+            ["['lanes']\nstrategy = \"x\"\n", 'line 1: unsupported table name'],
+          ];
+          for (const [text, fragment] of refusals) {
+            const got = parseTomlSubset(text);
+            if (!got.error || !got.error.includes(fragment)) {
+              return `${JSON.stringify(text)} gave ${JSON.stringify(got)}, want ${fragment}`;
+            }
+          }
+          // A super-table defined after its sub-table is valid TOML.
+          const ok = parseTomlSubset('[runner.retry]\nbase_s = 1\n[runner]\nmigrated_from = ["a"]\n');
+          if (ok.error) return `super-table after sub-table: ${ok.error}`;
+          return ok.obj.runner.retry.base_s === 1 ? null : 'base_s not read';
+        },
+      },
+      {
+        // The one user-dir rule (D-19, D-27): an absolute XDG_CONFIG_HOME, else an absolute HOME,
+        // else none; os.homedir is never called (it throws in this case).
+        name: 'pure-config-dir-rule',
+        kind: 'logic',
+        pure: () => {
+          const savedHomedir = os.homedir;
+          os.homedir = () => { throw new Error('ambient home lookup'); };
+          try {
+            const rows = [
+              [{ XDG_CONFIG_HOME: '/abs/xdg', HOME: '/srv/u' }, '/abs/xdg/ai-kit'],
+              [{ XDG_CONFIG_HOME: '/abs/xdg' }, '/abs/xdg/ai-kit'],
+              [{ XDG_CONFIG_HOME: 'rel/xdg', HOME: '/srv/u' }, '/srv/u/.config/ai-kit'],
+              [{ XDG_CONFIG_HOME: '', HOME: '/srv/u' }, '/srv/u/.config/ai-kit'],
+              [{ XDG_CONFIG_HOME: '   ', HOME: '/srv/u' }, '/srv/u/.config/ai-kit'],
+              [{ XDG_CONFIG_HOME: '/srv/u/.config', HOME: '/srv/u' }, '/srv/u/.config/ai-kit'],
+              [{ HOME: 'rel-home' }, null],
+              [{}, null],
+              [{ HOME: '' }, null],
+              [{ XDG_CONFIG_HOME: 'rel/xdg', HOME: '' }, null],
+            ];
+            for (const [env, want] of rows) {
+              const got = aiKitConfigDir(env);
+              if (got !== want) return `${JSON.stringify(env)} gave ${got}, want ${want}`;
+            }
+            return null;
+          } finally {
+            os.homedir = savedHomedir;
+          }
+        },
+      },
+      {
+        // A config.toml with an invalid UTF-8 byte is skipped with one notice (C1-8); the user file fills.
+        name: 'retry-config-invalid-utf8',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          fs.mkdirSync(path.join(c.repo, '.aikit'), { recursive: true });
+          fs.writeFileSync(path.join(c.repo, '.aikit', 'config.toml'), Buffer.concat([
+            Buffer.from('[runner.retry]\n# '), Buffer.from([0xff]), Buffer.from('\nmax_retries = 1\n'),
+          ]));
+          writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'config.toml'),
+            '[runner.retry]\nmax_retries = 4\n');
+          return null;
+        },
+        check: (r) => {
+          const notice = 'cross-ai: config .aikit/config.toml not valid UTF-8; retry keys from the next source';
+          if (!(r.stderr || '').includes(notice)) return 'missing UTF-8 notice';
+          return retryLine(r, 'max_retries=4');
+        },
+      },
+      {
+        // Per key: the project value wins for base_s, the user file supplies factor, CONFIG the
+        // max_retries and the default fills session_resets.
+        name: 'retry-config-precedence',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        config: { retry: { max_retries: 3 } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nbase_s = 2\n');
+          writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'config.toml'),
+            '[runner.retry]\nbase_s = 9\nfactor = 2\n');
+          return null;
+        },
+        check: (r) => retryLine(r, 'base_s=2 factor=2 max_retries=3 session_resets=1'),
+      },
+      {
+        // Only the active scope's table is read: GSD_PROJECT=p selects [runner.retry.scopes."p"].
+        name: 'retry-config-scope-active-only',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        env: { GSD_PROJECT: 'p' },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'),
+            '[runner.retry]\nmax_retries = 5\n[runner.retry.scopes."other"]\nmax_retries = 9\n' +
+            '[runner.retry.scopes."p"]\nmax_retries = 2\n');
+          return null;
+        },
+        check: (r) => retryLine(r, 'max_retries=2'),
+      },
+      {
+        // A value outside the subset skips that file with a notice and the user file fills the key.
+        name: 'retry-config-out-of-subset',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nmax_retries = { a = 1 }\n');
+          writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'config.toml'), '[runner.retry]\nmax_retries = 4\n');
+          return null;
+        },
+        check: (r) => {
+          const notice = 'cross-ai: config .aikit/config.toml line 2: unsupported value; retry keys from the next source';
+          if (!(r.stderr || '').includes(notice)) return 'missing out-of-subset notice';
+          return retryLine(r, 'max_retries=4');
+        },
+      },
+      {
+        // Quote-aware headers (C2-2): brackets, an escaped quote and a tab escape in quoted names.
+        name: 'pure-toml-subset-bracket-names',
+        kind: 'logic',
+        pure: () => {
+          const text = '[runner.retry.scopes."p[1]"] # c\nmax_retries = 2\n' +
+            '[runner.retry.scopes."a\\"b"]\nmax_retries = 3\n' +
+            '[runner.retry.scopes."t\\tx"]\nmax_retries = 4\n' +
+            '[[lanes."x]y"]]\nkey = "k"\n';
+          const got = parseTomlSubset(text);
+          if (got.error) return got.error;
+          const want = { runner: { retry: { scopes: {
+            'p[1]': { max_retries: 2 }, 'a"b': { max_retries: 3 }, 't\tx': { max_retries: 4 },
+          } } } };
+          if (JSON.stringify(got.obj) !== JSON.stringify(want)) return JSON.stringify(got.obj);
+          const names = JSON.stringify(splitTomlName('runner.retry.scopes."p[1]"'));
+          return names === JSON.stringify(['runner', 'retry', 'scopes', 'p[1]'])
+            ? null : `splitTomlName gave ${names}`;
+        },
+      },
+      {
+        // A scope holding brackets (GSD_PROJECT=p[1]) reads back from its quoted table (C2-2).
+        name: 'retry-config-bracket-scope',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        env: { GSD_PROJECT: 'p[1]' },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'),
+            '[runner.retry]\nmax_retries = 5\n\n[runner.retry.scopes."p[1]"]\nmax_retries = 2\n');
+          return null;
+        },
+        check: (r) => {
+          if ((r.stderr || '').includes('retry keys from the next source')) return 'unexpected refusal notice';
+          return retryLine(r, 'max_retries=2');
         },
       },
       {
