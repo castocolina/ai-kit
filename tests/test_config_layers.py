@@ -287,6 +287,71 @@ class TestMigrationThroughResolve(_LayerCase):
         self.assertTrue(os.path.exists(self.project_path()))
 
 
+class TestProjectConfigLink(_LayerCase):
+    """CR-01: a project config.toml that links to the user config.toml is never written."""
+
+    EVIL = (b'[[reviewers]]\nkey = "evil"\nmodel = "m"\n'
+            b'command = "sh -c touch-pwned {prompt}"\n')
+
+    def _link(self, user_text):
+        if user_text is not None:
+            self.write(self.user_path(), user_text)
+        else:
+            os.makedirs(os.path.dirname(self.user_path()), exist_ok=True)
+        self.write(config_migrate.legacy_path(self.project_path()), self.EVIL)
+        os.symlink(self.user_path(), self.project_path())
+
+    def _assert_refused(self, user_text):
+        self._link(user_text)
+        before = _read(self.user_path()) if user_text is not None else None
+        with self.assertRaises(config_io.ConfigError) as caught:
+            self.resolve()
+        self.assertIn(self.project_path(), str(caught.exception))
+        if before is None:
+            self.assertFalse(os.path.exists(self.user_path()))
+        else:
+            self.assertEqual(_read(self.user_path()), before)
+
+    def test_link_to_an_absent_user_config_is_refused_and_nothing_is_written(self):
+        self._assert_refused(None)
+
+    def test_link_to_a_runner_only_user_config_leaves_it_unchanged(self):
+        self._assert_refused(b"[runner.retry]\nattempts = 3\n")
+
+    def test_linked_old_roster_is_refused(self):
+        outside = self.write(os.path.join(self.root, "elsewhere.toml"), self.EVIL)
+        os.makedirs(os.path.dirname(self.project_path()), exist_ok=True)
+        os.symlink(outside, config_migrate.legacy_path(self.project_path()))
+        with self.assertRaises(config_io.ConfigError):
+            self.resolve()
+        self.assertFalse(os.path.exists(self.project_path()))
+
+    def test_trust_local_refuses_a_linked_project_config(self):
+        self._link(b'[[lanes.review]]\nkey = "e"\ncommand = "x"\n')
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = cli.main(["trust-local", "--cwd", self.cwd])
+        self.assertEqual(code, 2)
+        self.assertFalse(os.path.isdir(self.store) and os.listdir(self.store))
+
+    def test_render_toml_out_refuses_a_linked_project_config(self):
+        self._link(b"[runner.retry]\nattempts = 3\n")
+        before = _read(self.user_path())
+        config = os.path.join(self.root, "cfg.json")
+        self.write(config, b'{"lanes": [{"key": "a", "runtime": "codex", "model": "m1"}]}')
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = cli.main(["render-toml", "--json-config", config, "--out",
+                             self.project_path(), "--replace"])
+        self.assertEqual(code, 2)
+        self.assertEqual(_read(self.user_path()), before)
+
+    def test_a_regular_project_config_still_migrates(self):
+        self.write(config_migrate.legacy_path(self.project_path()), self.EVIL)
+        self.resolve()
+        self.assertTrue(os.path.exists(self.project_path()))
+        self.assertFalse(os.path.islink(self.project_path()))
+
+
 class TestReadOnlyMode(_LayerCase):
     def test_probe_quota_no_migrate_reports_pending_and_writes_nothing(self):
         legacy_project = self.write(config_migrate.legacy_path(self.project_path()),

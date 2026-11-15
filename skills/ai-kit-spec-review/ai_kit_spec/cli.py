@@ -32,6 +32,7 @@ from ai_kit_spec.config_io import (
     DEFAULT_POLICY,
     ConfigError,
     cfg_combine,
+    cfg_confine_project_file,
     cfg_lanes_table,
     cfg_lanes_view,
     cfg_local_path,
@@ -891,6 +892,7 @@ def _cmd_trust_local(args: argparse.Namespace, deps: CliDeps) -> int:
         n = trust.revoke_trust(store, real) + config_migrate.revoke_legacy_trust(local_path, store)
         print(f"revoked {n} trust record(s) for {real}")
         return 0
+    cfg_confine_project_file(local_path, env)
     cfg_migrate_project(args.cwd, env)
     if not os.path.exists(local_path):
         print(f"no project-local config at {local_path}", file=sys.stderr)

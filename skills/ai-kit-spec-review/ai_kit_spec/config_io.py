@@ -463,8 +463,27 @@ def cfg_project_trust_bytes(lanes: dict, env: dict) -> bytes | None:
     return trust.command_lanes_bytes(lanes, keys)
 
 
+def cfg_confine_project_file(path: str, env: dict) -> None:
+    """Refuse to read-modify-write a project layer file that leaves its `.aikit/` folder (CR-01).
+
+    A cloned repo can ship `.aikit/config.toml` as a link to the user config.toml (or link its
+    old roster file); a publish through it would plant lanes in the trust-free user layer. The
+    user layer itself may be a link (dotfiles), so only project-layer callers use this guard."""
+    folder = os.path.realpath(os.path.dirname(path))
+    for name in (path, config_migrate.legacy_path(path)):
+        if os.path.islink(name):
+            raise ConfigError(name, "is a link; the project config is not migrated or written "
+                                    "through a link (replace the link with a regular file)")
+    real = os.path.realpath(path)
+    if os.path.dirname(real) != folder or real == os.path.realpath(cfg_global_path(env)):
+        raise ConfigError(path, "resolves outside the project's .aikit/ folder or onto the user "
+                                "config; it is not migrated or written")
+
+
 def _migrate(path: str, env: dict, warn_fn, project: bool) -> str:
     """Run config_migrate.migrate_layer on one layer; a failed migration is a ConfigError."""
+    if project:
+        cfg_confine_project_file(path, env)
     trust_dir = cfg_trust_store_dir(env) if project else None
     trust_bytes_fn = (lambda lanes: cfg_project_trust_bytes(lanes, env)) if project else None
     try:

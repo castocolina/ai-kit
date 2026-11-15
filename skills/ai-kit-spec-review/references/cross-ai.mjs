@@ -10476,6 +10476,54 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
+        // CR-01: a project .aikit/config.toml that links to the user config.toml is never written
+        // through: the user file keeps its bytes and the GSD block stays where it is.
+        name: 'retry-migrate-project-link',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1 } } },
+        setup: (c) => {
+          const user = path.join(c.home, '.config', 'ai-kit', 'config.toml');
+          writeCaseFile(user, '[runner.retry]\nmax_retries = 4\n');
+          c.userBytes = fs.readFileSync(user);
+          fs.mkdirSync(path.join(c.repo, '.aikit'), { recursive: true });
+          fs.symlinkSync(user, path.join(c.repo, '.aikit', 'config.toml'));
+          return null;
+        },
+        check: (r, c) => {
+          const user = path.join(c.home, '.config', 'ai-kit', 'config.toml');
+          if (!fs.readFileSync(user).equals(c.userBytes)) return 'the user config.toml was written through the link';
+          if (!(r.stderr || '').includes('resolves outside')) return 'missing confinement notice';
+          const gsd = JSON.parse(fs.readFileSync(path.join(c.repo, '.planning', 'config.json'), 'utf8'));
+          return Object.hasOwn(gsd.workflow, 'cross_ai_retry') ? null : 'the GSD block was migrated anyway';
+        },
+      },
+      {
+        // CR-01: the same link while the user config.toml is absent creates no user file.
+        name: 'retry-migrate-project-link-dangling',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1 } } },
+        setup: (c) => {
+          const user = path.join(c.home, '.config', 'ai-kit', 'config.toml');
+          fs.mkdirSync(path.join(c.repo, '.aikit'), { recursive: true });
+          fs.symlinkSync(user, path.join(c.repo, '.aikit', 'config.toml'));
+          return null;
+        },
+        check: (r, c) => {
+          if (fs.existsSync(path.join(c.home, '.config', 'ai-kit', 'config.toml'))) {
+            return 'a user config.toml was created through the link';
+          }
+          return null;
+        },
+      },
+      {
         // A project value wins over the GSD block; the conflict is named and the block still goes.
         name: 'retry-migrate-conflict',
         kind: 'logic',

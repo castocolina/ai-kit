@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=b74ec9e2b3492f19d9874e67a5cfdf87f7a20ee49615a6a8f1e6c82c6b042151
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=7dc99608fbf5886016730dfce4d0068b58037e636ad35ca41e870634536d75c4
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
@@ -10492,6 +10492,54 @@ async function blackBoxSelfTest(listOnly = false) {
           const real = JSON.parse(fs.readFileSync(path.join(c.repo, '.planning', 'real-config.json'), 'utf8'));
           if (Object.hasOwn(real.workflow, 'cross_ai_retry')) return 'the linked file still holds the block';
           return retryLine(r, 'max_retries=1');
+        },
+      },
+      {
+        // CR-01: a project .aikit/config.toml that links to the user config.toml is never written
+        // through: the user file keeps its bytes and the GSD block stays where it is.
+        name: 'retry-migrate-project-link',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1 } } },
+        setup: (c) => {
+          const user = path.join(c.home, '.config', 'ai-kit', 'config.toml');
+          writeCaseFile(user, '[runner.retry]\nmax_retries = 4\n');
+          c.userBytes = fs.readFileSync(user);
+          fs.mkdirSync(path.join(c.repo, '.aikit'), { recursive: true });
+          fs.symlinkSync(user, path.join(c.repo, '.aikit', 'config.toml'));
+          return null;
+        },
+        check: (r, c) => {
+          const user = path.join(c.home, '.config', 'ai-kit', 'config.toml');
+          if (!fs.readFileSync(user).equals(c.userBytes)) return 'the user config.toml was written through the link';
+          if (!(r.stderr || '').includes('resolves outside')) return 'missing confinement notice';
+          const gsd = JSON.parse(fs.readFileSync(path.join(c.repo, '.planning', 'config.json'), 'utf8'));
+          return Object.hasOwn(gsd.workflow, 'cross_ai_retry') ? null : 'the GSD block was migrated anyway';
+        },
+      },
+      {
+        // CR-01: the same link while the user config.toml is absent creates no user file.
+        name: 'retry-migrate-project-link-dangling',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1 } } },
+        setup: (c) => {
+          const user = path.join(c.home, '.config', 'ai-kit', 'config.toml');
+          fs.mkdirSync(path.join(c.repo, '.aikit'), { recursive: true });
+          fs.symlinkSync(user, path.join(c.repo, '.aikit', 'config.toml'));
+          return null;
+        },
+        check: (r, c) => {
+          if (fs.existsSync(path.join(c.home, '.config', 'ai-kit', 'config.toml'))) {
+            return 'a user config.toml was created through the link';
+          }
+          return null;
         },
       },
       {
