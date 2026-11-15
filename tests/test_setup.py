@@ -3478,6 +3478,45 @@ class TestRecoverIncompatibleConfig(unittest.TestCase):
         self.assertFalse(os.path.exists(cfg + ".bak"))     # dry: no write
         self.assertIn("branch", self._read(cfg))           # unchanged
 
+    def test_live_file_is_never_written_in_place(self):
+        # D-09: the regenerated recipe is published by rename; the live file is never the
+        # destination of a copy or an in-place write.
+        cfg = self._tmp_cfg()
+        self._write(cfg, "[segments]\nbranch = true\n")
+        real_copyfile = shutil.copyfile
+
+        def guarded_copyfile(src, dst, *args, **kwargs):
+            if os.path.realpath(dst) == os.path.realpath(cfg):
+                raise AssertionError("live config written in place")
+            return real_copyfile(src, dst, *args, **kwargs)
+
+        with mock.patch.object(shutil, "copyfile", side_effect=guarded_copyfile):
+            self.assertTrue(setup._recover_incompatible_config(self._paths(cfg), dry=False))
+        rc = subprocess.run([sys.executable, "-S", self._paths(cfg).statusline_doctor,
+                             "--check", cfg], check=False).returncode
+        self.assertEqual(rc, 0)
+
+    def test_interrupted_replace_keeps_the_live_file(self):
+        cfg = self._tmp_cfg()
+        stale = "[segments]\nbranch = true\n"
+        self._write(cfg, stale)
+        with mock.patch.object(os, "replace", side_effect=OSError("interrupted")), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertFalse(setup._recover_incompatible_config(self._paths(cfg), dry=False))
+        self.assertEqual(self._read(cfg), stale)                 # live file unchanged
+        self.assertTrue(os.path.exists(cfg + ".bak"))            # backup kept
+        self.assertIn("warn: could not reset incompatible config", err.getvalue())
+        leftovers = [name for name in os.listdir(os.path.dirname(cfg))
+                     if name.endswith(".candidate")]
+        self.assertEqual(leftovers, [])                          # no temp file left behind
+
+    def test_recovery_keeps_the_file_mode(self):
+        cfg = self._tmp_cfg()
+        self._write(cfg, "[segments]\nbranch = true\n")
+        os.chmod(cfg, 0o644)
+        self.assertTrue(setup._recover_incompatible_config(self._paths(cfg), dry=False))
+        self.assertEqual(stat.S_IMODE(os.stat(cfg).st_mode), 0o644)
+
 
 class TestExternalSegmentToggle(unittest.TestCase):
     """User drop-in externals: discovered default-ON (mirroring the renderer),

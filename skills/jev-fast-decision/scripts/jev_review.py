@@ -779,7 +779,10 @@ def _typesafe_key():
     0600; `~/.mycreds` is parsed, never sourced."""
     key_file = os.path.expanduser(os.environ.get("JEV_API_KEY_FILE", "").strip())
     state = os.environ.get("XDG_STATE_HOME", "").strip() or os.path.expanduser("~/.local/state")
-    secrets = os.path.join(_config_dir(), "secrets.env")
+    try:
+        secrets = os.path.join(_config_dir(), "secrets.env")
+    except OSError:
+        secrets = ""  # no absolute home: an empty path reads as missing_file
     mycreds = os.path.expanduser("~/.mycreds")
     return _first_key(("TYPESAFE_API_KEY", "JEV_API_KEY"), [
         (lambda: "file:JEV_API_KEY_FILE" if key_file else None,
@@ -979,10 +982,17 @@ def _gate_open(name):
 # ─── consent record (D-06: format unchanged from the pre-move spec-discuss ladder, 24 D-10) ───
 
 def _config_dir():
-    """ai-kit's per-user config dir: ${XDG_CONFIG_HOME:-~/.config}/ai-kit."""
-    base = os.environ.get("XDG_CONFIG_HOME", "").strip() or os.path.join(
-        os.environ.get("HOME", "~"), ".config")
-    return os.path.join(os.path.expanduser(base), "ai-kit")
+    """ai-kit's per-user config dir by ai-kit's one user-dir rule (a copy of
+    config_io.cfg_config_base, pinned by tests/test_config_dir_parity.py): an absolute
+    XDG_CONFIG_HOME (surrounding whitespace removed), else an absolute HOME/.config. With no
+    absolute home there is no user dir, so this raises OSError."""
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    if os.path.isabs(xdg):
+        return os.path.join(xdg, "ai-kit")
+    home = os.environ.get("HOME", "")
+    if os.path.isabs(home):
+        return os.path.join(home, ".config", "ai-kit")
+    raise OSError("no absolute home directory to hold ai-kit's config")
 
 
 def consent_path():

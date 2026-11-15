@@ -2,6 +2,7 @@ import importlib
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -367,7 +368,11 @@ class TestResolveExternal(unittest.TestCase):
         self.assertIsNone(cfg.external)
 
     def test_defaults(self):
-        d, ttl = common_config.cfg_resolve_external({}, {}, claude_host.SPEC.provider_dir)
+        # The one user-dir rule needs an absolute HOME: give this test its own temporary one.
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        d, ttl = common_config.cfg_resolve_external({}, {"HOME": home},
+                                                    claude_host.SPEC.provider_dir)
         self.assertEqual(ttl, 10)
         self.assertTrue(d.endswith(os.path.join("ai-kit", "segments")))
 

@@ -214,15 +214,18 @@ class TestConfigPaths(unittest.TestCase):
         self.assertEqual(cfg_global_path(env), "/home/u/.config/ai-kit/review-spec.toml")
 
     def test_base_is_never_relative_to_the_cwd(self):
-        # A-WR-01: an unset/relative HOME or XDG_CONFIG_HOME must not resolve under the
-        # project (a repo could then ship its own "global" config and trust store).
-        with unittest.mock.patch.object(config_io.os.path, "expanduser", lambda p: "/pw/home"):
-            self.assertEqual(config_io.cfg_config_base({}), "/pw/home/.config/ai-kit")
+        # A-WR-01 / C1-3: an unset, empty or relative HOME or XDG_CONFIG_HOME must not resolve
+        # under the project (a repo could then ship its own "global" config and trust store).
+        # HOME comes from env only: any ambient home lookup fails the test.
+        with unittest.mock.patch.object(config_io.os.path, "expanduser",
+                                        side_effect=AssertionError("ambient home lookup")):
             self.assertEqual(config_io.cfg_config_base({"XDG_CONFIG_HOME": "rel", "HOME": "/h"}),
                              "/h/.config/ai-kit")
-        with unittest.mock.patch.object(config_io.os.path, "expanduser", lambda p: "~"), \
-                self.assertRaises(config_io.ConfigError):
-            config_io.cfg_trust_store_dir({})
+            for env in ({}, {"HOME": ""}, {"HOME": "rel"}):
+                with self.assertRaises(config_io.ConfigError):
+                    config_io.cfg_config_base(env)
+            with self.assertRaises(config_io.ConfigError):
+                config_io.cfg_trust_store_dir({})
 
 
 class TestLoadToml(unittest.TestCase):
@@ -5883,7 +5886,7 @@ class TestTimeoutTiers(unittest.TestCase):
             return {}
 
         with unittest.mock.patch.object(config_io, "cfg_load_toml", fake_load):
-            resolved = config_io.cfg_resolve("/nonexistent", {})
+            resolved = config_io.cfg_resolve("/nonexistent", dict(os.environ))
         self.assertEqual(resolved["policy"]["timeout_tiers"], [600, 1200, 1800])
 
     def test_resolve_timeout_tiers_uses_reviewer_override_when_present(self):

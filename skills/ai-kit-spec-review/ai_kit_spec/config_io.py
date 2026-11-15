@@ -267,14 +267,17 @@ def cfg_local_path(cwd: str) -> str:
 
 def cfg_config_base(env: dict) -> str:
     """${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit -- the base for ai-kit's own config files
-    (the global review-spec.toml and the trust store). Never relative: an unset HOME would
-    otherwise resolve under the cwd -- the project -- letting a repo ship its own "global"
-    config and trust store (A-WR-01). A relative XDG_CONFIG_HOME is ignored (XDG spec); no
-    absolute home at all raises ConfigError (exit 2 in the CLI mains)."""
-    xdg = env.get("XDG_CONFIG_HOME", "")
+    (the global review-spec.toml and the trust store). HOME comes from env only, never from
+    an ambient lookup, so an unset or empty HOME is an error rather than a guess: a repo could
+    otherwise ship its own "global" config and trust store under the cwd (A-WR-01, C1-3). A
+    whitespace-only XDG_CONFIG_HOME counts as unset (D-27); a relative one is ignored (XDG
+    spec); no absolute home at all raises ConfigError (exit 2 in the CLI mains). The same rule
+    as local_secrets, jev_review, tools/common_config and the runner
+    (tests/test_config_dir_parity.py)."""
+    xdg = env.get("XDG_CONFIG_HOME", "").strip()
     if os.path.isabs(xdg):
         return os.path.join(xdg, "ai-kit")
-    home = env.get("HOME") or os.path.expanduser("~")
+    home = env.get("HOME", "")
     if not os.path.isabs(home):
         raise ConfigError("$HOME", "no absolute home directory to hold ai-kit's config")
     return os.path.join(home, ".config", "ai-kit")

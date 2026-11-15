@@ -103,7 +103,9 @@ def _config_doctor_checks():
 def resolve_paths(env):
     """Resolve every path the installer touches, mirroring install.sh's env
     precedence: AI_KIT_DIR > the checkout holding this script; CLAUDE_CONFIG_DIR > ~/.claude;
-    CURSOR_CONFIG_DIR > ~/.cursor; XDG_CONFIG_HOME/ai-kit > ~/.config/ai-kit.
+    CURSOR_CONFIG_DIR > ~/.cursor; ai-kit's own folder is the one user-dir rule
+    (common_config.cfg_ai_kit_dir: absolute XDG_CONFIG_HOME, else absolute HOME/.config);
+    with no absolute home the installer exits with a message.
 
     The Cursor *config* pair (`cursor_config_dir`/`cursor_cli_config`, D-21) is the
     CLI's own layout — non-blank CURSOR_CONFIG_DIR, then non-blank
@@ -119,10 +121,12 @@ def resolve_paths(env):
     pi_dir = env.get("PI_CODING_AGENT_DIR") or os.path.join(home, ".pi", "agent")
     backups_dir = _sibling("config_doctor_appliers").backups_root(env)
     cursor_dir = env.get("CURSOR_CONFIG_DIR") or os.path.join(home, ".cursor")
-    config_base = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    config_base = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")  # opencode only
     opencode_dir = (env.get("OPENCODE_CONFIG_DIR") or
                     os.path.join(config_base, "opencode"))
-    config_dir = os.path.join(config_base, "ai-kit")
+    config_dir = _sibling("common_config").cfg_ai_kit_dir(env)
+    if not config_dir:
+        raise SystemExit("setup: no absolute home directory to hold ai-kit's config (set HOME)")
     cursor_cli_config = _config_doctor_checks().resolve_runtime_config_paths(env)["cursor"]
     cursor_config_dir = os.path.dirname(cursor_cli_config)
     return Paths(
@@ -3494,7 +3498,22 @@ def _recover_incompatible_config(paths, dry, host="claude"):
         return True
     try:
         shutil.copyfile(cfg, bak)
-        shutil.copyfile(sample, cfg)
+        # The live file is replaced by rename, never written in place (D-09): the recipe goes to
+        # a temp file beside it, keeps the live file's mode, and os.replace publishes it.
+        target = os.path.realpath(cfg)
+        mode = stat.S_IMODE(os.stat(target).st_mode)
+        with open(sample, encoding="utf-8") as handle:
+            text = handle.read()
+        tmp = _candidate_file(target, text)
+        if tmp is None:
+            raise OSError("could not write a temp file beside the config")
+        try:
+            os.chmod(tmp, mode)
+            os.replace(tmp, target)
+        except OSError:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
     except OSError as exc:
         print(f"warn: could not reset incompatible config ({exc})", file=sys.stderr)
         return False
