@@ -1,17 +1,20 @@
-"""Per-content-hash trust for project-local review-spec.toml files (D-08/D-09, Plan 16.1-08).
+"""Per-content-hash trust for project-local roster files (D-08/D-09 Plan 16.1-08, D-11 Plan 33-05).
 
-A cloned repository's `.aikit/review-spec.toml` names commands a third party controls, so its
-exact content must be trusted before any of those commands can be spawned -- direnv/mise style:
-the user reviews the exact argv once (`trust-local --show`), records consent, and any later edit
-(byte-level, including line endings or encoding) invalidates it because the trust record is keyed
-by realpath and sha256 of the raw bytes.
+A cloned repository's project roster names commands a third party controls, so its command-bearing
+entries must be trusted before any of those commands can be spawned -- direnv/mise style: the user
+reviews the exact argv once (`trust-local --show`), records consent, and a later change to a
+command-bearing entry invalidates it. A record pins the file's realpath and the sha256 of the
+bytes it is given. For the legacy `review-spec.toml` those bytes are the raw file bytes
+(`content_sha256`); for `config.toml` they are the canonical JSON of the command-bearing lane
+entries (`command_lanes_bytes`, D-11), so reformatting or an unrelated table keeps trust.
 
-Records live under ai-kit's OWN config dir (`${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/
-review-spec-trust/`), never in the project -- a repo must not be able to trust itself. Writes go
-through cache.cache_write_json (mkstemp + os.replace), so two sessions trusting the same file
-concurrently never collide or leave a half-written record.
+Records live under ai-kit's OWN config dir (`${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/`), never in
+the project -- a repo must not be able to trust itself. Writes go through cache.cache_write_json
+(mkstemp + os.replace), so two sessions trusting the same file concurrently never collide or leave
+a half-written record.
 """
 import hashlib
+import json
 import os
 import time
 
@@ -73,3 +76,36 @@ def revoke_trust(store_dir: str, real_path: str) -> int:
             except OSError:
                 pass
     return count
+
+
+def _entry_key(entry: dict):
+    key = entry.get("key")
+    return key if isinstance(key, str) else None
+
+
+def command_lanes_bytes(lanes: dict, user_command_keys: frozenset = frozenset()) -> bytes | None:
+    """Canonical bytes of the command-running lane entries (D-11), or None when there are none.
+
+    The list holds `[role, entry]` for roles in sorted order and entries in file order, for every
+    entry that has a `command` key, and for every entry whose `key` is in the command keys: the
+    user roster's command keys (`user_command_keys`, passed by the caller; an entry that overrides
+    a user command entry changes its arguments) plus the `key` of every command entry in this
+    file, in any role. cfg_merge_reviewers folds a row with the same `key` into the command entry
+    and its fields fill the command's placeholders, so such a row is part of the digest (review
+    concern C1-12). Over-inclusion is fail-closed: an extra entry in the digest only means an edit
+    to it needs a new trust. Reformatting, comments and unrelated tables do not change these bytes.
+    """
+    roles = sorted(role for role, items in lanes.items() if isinstance(items, list))
+    entries = [(role, entry) for role in roles for entry in lanes[role] if isinstance(entry, dict)]
+    command_keys = set(user_command_keys)
+    for _role, entry in entries:
+        key = _entry_key(entry)
+        if "command" in entry and key is not None:
+            command_keys.add(key)
+    picked = [[role, entry] for role, entry in entries
+              if "command" in entry or (_entry_key(entry) is not None
+                                        and _entry_key(entry) in command_keys)]
+    if not picked:
+        return None
+    return json.dumps(picked, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True).encode("utf-8")
