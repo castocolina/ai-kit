@@ -514,7 +514,10 @@ def cfg_migrate_target(path: str, env: dict, warn_fn=None) -> str:
     that file sits in the user config folder, else as the project layer, with its trust carried."""
     emit = warn_fn or _cfg_default_warn
     in_user_dir = os.path.realpath(os.path.dirname(path)) == os.path.realpath(cfg_config_base(env))
-    return _migrate(path, env, emit, project=not in_user_dir)
+    # A `.aikit/config.toml` path is a project layer even when `.aikit` links to the user config
+    # folder (WR-102): the project guard then refuses it instead of writing the user file.
+    named_project = os.path.basename(os.path.dirname(os.path.abspath(path))) == ".aikit"
+    return _migrate(path, env, emit, project=named_project or not in_user_dir)
 
 
 def cfg_trust_project(cwd: str, env: dict, warn_fn=None) -> tuple[str, str | None]:

@@ -345,6 +345,30 @@ class TestProjectConfigLink(_LayerCase):
         self.assertEqual(code, 2)
         self.assertEqual(_read(self.user_path()), before)
 
+    def test_trust_local_trusts_an_in_repo_link_with_nothing_to_migrate(self):
+        # WR-101: the guard belongs to the migration; a link with no old roster is only read.
+        target = self.write(os.path.join(os.path.dirname(self.project_path()), "lanes.toml"),
+                            b'[[lanes.review]]\nkey = "e"\ncommand = "x {prompt}"\n')
+        os.symlink(target, self.project_path())
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = cli.main(["trust-local", "--cwd", self.cwd])
+        self.assertEqual(code, 0)
+        self.assertTrue(os.listdir(self.store))
+
+    def test_render_toml_refuses_a_project_aikit_dir_linked_to_the_user_folder(self):
+        # WR-102: `.aikit` itself links to the user config folder; the write is refused.
+        user_dir = os.path.dirname(self.user_path())
+        self.write(self.user_path(), b"[runner.retry]\nattempts = 3\n")
+        os.symlink(user_dir, os.path.dirname(self.project_path()))
+        before = _read(self.user_path())
+        config = os.path.join(self.root, "cfg.json")
+        self.write(config, b'{"lanes": [{"key": "a", "runtime": "codex", "model": "m1"}]}')
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = cli.main(["render-toml", "--json-config", config, "--out",
+                             self.project_path(), "--replace"])
+        self.assertEqual(code, 2)
+        self.assertEqual(_read(self.user_path()), before)
+
     def test_a_regular_project_config_still_migrates(self):
         self.write(config_migrate.legacy_path(self.project_path()), self.EVIL)
         self.resolve()
@@ -414,6 +438,7 @@ class TestTrustLocalOneRead(_LayerCase):
         real = os.path.realpath(self.project_path())
         for raw, expect in ((self.SHOWN, True), (evil, False)):
             canonical = config_io.cfg_project_trust_bytes(_lanes(raw), self.env)
+            assert canonical is not None  # both files carry a command entry
             self.assertEqual(trust.is_trusted(self.store, real, canonical), expect)
 
 
@@ -618,6 +643,19 @@ class TestRenderTomlCli(_LayerCase):
         self.assertEqual(_read(legacy), old)
         self.assertFalse(os.path.exists(legacy + ".migrated"))
         self.assertFalse(os.path.exists(self.project_path()))
+
+    def test_other_out_name_neither_refuses_nor_migrates_a_sibling_roster(self):
+        old = b'[[reviewers]]\nkey = "old"\nruntime = "codex"\nmodel = "m"\n'
+        legacy = self.write(config_migrate.legacy_path(self.project_path()), old)
+        preview = os.path.join(os.path.dirname(self.project_path()), "preview.toml")
+        code, _err = self._render(preview, "--replace")
+        self.assertEqual(code, 0)
+        self.assertEqual(_read(legacy), old)
+        self.assertFalse(os.path.exists(legacy + ".migrated"))
+        self.assertFalse(os.path.exists(self.project_path()))
+        self.assertTrue(os.path.exists(preview))
+        code, _err = self._render(os.path.join(os.path.dirname(preview), "preview2.toml"))
+        self.assertEqual(code, 0)  # no --replace needed: no roster migrates into this name
 
     def test_legacy_roster_beside_the_target_migrates_with_replace(self):
         legacy = self.write(config_migrate.legacy_path(self.project_path()),

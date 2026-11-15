@@ -1671,6 +1671,13 @@ class TestConsent(_ClientCase):
         self.assertEqual(code, 0)
         self.assertEqual(out, {"ok": False, "reason": "not_remote"})
 
+    def test_consent_without_an_absolute_home_is_a_clear_error_not_a_traceback(self):
+        for action in ("grant", "revoke", "show"):
+            with mock.patch.dict(os.environ, {"HOME": "", "XDG_CONFIG_HOME": ""}):
+                code, out = self.run_cli(["consent", action, "typesafe"])
+            self.assertEqual(code, 2, action)
+            self.assertEqual(out, {"ok": False, "reason": "no_user_config_dir"}, action)
+
     def test_consent_grant_unknown_backend(self):
         _code, out = self.run_cli(["consent", "grant", "ghost"])
         self.assertEqual(out, {"ok": False, "reason": "unknown_backend"})

@@ -1097,6 +1097,10 @@ def _consent_used(run):
 def consent_command(action, backend):
     """`consent grant|revoke|show <backend>` (D-06): the record's own output keys, and on a
     grant the minimal announcement — TypeSafe's retention terms are unverified (RESEARCH 11)."""
+    try:
+        consent_path()
+    except OSError:  # no absolute home: there is no record file to read or write (IN-05)
+        return {"ok": False, "reason": "no_user_config_dir"}
     row = row_named(backend)
     if row is None:
         if action in ("show", "revoke") and backend in {e["name"] for e in leftover_entries()}:
@@ -1998,6 +2002,9 @@ def main(argv=None):
         return jev_ladder.main(args)
     if args.command == "consent":
         out = consent_command(args.action, args.backend)
+        if out.get("reason") == "no_user_config_dir":
+            print(json.dumps(out, sort_keys=True))
+            return 2
     elif args.probe:
         out = probe_report()
     else:

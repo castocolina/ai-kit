@@ -32,7 +32,6 @@ from ai_kit_spec.config_io import (
     DEFAULT_POLICY,
     ConfigError,
     cfg_combine,
-    cfg_confine_project_file,
     cfg_lanes_table,
     cfg_lanes_view,
     cfg_local_path,
@@ -786,7 +785,8 @@ def _render_toml_refusal(out: str, doc: dict, replace: bool) -> str | None:
     if "lanes" in doc:
         return (f"render-toml: refusing to replace the [lanes] table in {out} (nothing written); "
                 "pass --replace only after the user approved replacing it")
-    legacy = config_migrate.pending(out)
+    # Only a config.toml has a sibling old roster that migrates into it (IN-06).
+    legacy = config_migrate.pending(out) if os.path.basename(out) == "config.toml" else None
     if legacy is not None:
         return (f"render-toml: refusing to replace the old roster {legacy} that migrates into "
                 f"{out} (nothing written); pass --replace only after the user approved "
@@ -804,8 +804,9 @@ def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
         if refusal is not None:
             print(refusal, file=sys.stderr)
             return 1
-        cfg_migrate_target(args.out, env)
-        existing, _ = _checked_target(args.out)  # the migration may have written config.toml
+        if os.path.basename(args.out) == "config.toml":
+            cfg_migrate_target(args.out, env)
+            existing, _ = _checked_target(args.out)  # the migration may have written config.toml
     try:
         rendered = cfg_render_lanes(config, existing)
     except ConfigError:
@@ -891,7 +892,8 @@ def _cmd_trust_local(args: argparse.Namespace, deps: CliDeps) -> int:
         n = trust.revoke_trust(store, real) + config_migrate.revoke_legacy_trust(local_path, store)
         print(f"revoked {n} trust record(s) for {real}")
         return 0
-    cfg_confine_project_file(local_path, env)
+    # The CR-01 guard runs inside the migration, only when an old roster is pending (WR-101):
+    # a linked config.toml with nothing to migrate is read, never written, so it can be trusted.
     cfg_migrate_project(args.cwd, env)
     if not os.path.exists(local_path):
         print(f"no project-local config at {local_path}", file=sys.stderr)
