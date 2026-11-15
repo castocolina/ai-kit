@@ -4,8 +4,9 @@ A cloned repository's project roster names commands a third party controls, so i
 entries must be trusted before any of those commands can be spawned -- direnv/mise style: the user
 reviews the exact argv once (`trust-local --show`), records consent, and a later change to a
 command-bearing entry invalidates it. A record pins the file's realpath and the sha256 of the
-bytes it is given. For the legacy `review-spec.toml` those bytes are the raw file bytes
-(`content_sha256`); for `config.toml` they are the canonical JSON of the command-bearing lane
+bytes it is given. For the legacy roster file (a migration source, see config_migrate) those bytes
+are the raw file bytes (`content_sha256`); for `config.toml` they are the canonical JSON of the
+command-bearing lane
 entries (`command_lanes_bytes`, D-11), so reformatting or an unrelated table keeps trust.
 
 Records live under ai-kit's OWN config dir (`${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/`), never in

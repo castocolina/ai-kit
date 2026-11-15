@@ -32,7 +32,7 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`ai-kit-cross-ai`](skills/ai-kit-cross-ai/SKILL.md) | skill | Canonical guide to calling, waiting for and chaining the cross-AI runner, with the caller-owned hard tier and never switching harness, provider or model. |
 | [`ai-kit-session-wake`](skills/ai-kit-session-wake/SKILL.md) | skill | Arms, checks and disarms a per-session systemd user-timer wake that resumes this exact session id after the orchestrating agent stalls on its own usage limit or its process dies. Not for cross-AI subprocess limits. |
 | [`ai-kit-spec-review`](skills/ai-kit-spec-review/SKILL.md) | skill | Review-and-fix loop over (runtime, model) pairs: native when the host can select the model, otherwise the supervised runner (`claude` is review-only). Loops until approved. |
-| [`ai-kit-spec-config`](skills/ai-kit-spec-config/SKILL.md) | skill | Wizard for the reviewer config: picks (runtime, model) pairs, writes `review-spec.toml`; a runtime outside the runner table is a trust-gated custom command. |
+| [`ai-kit-spec-config`](skills/ai-kit-spec-config/SKILL.md) | skill | Wizard for the cross-AI lanes: picks (runtime, model) pairs and writes the `[lanes]` roster of ai-kit's `config.toml`; a runtime outside the runner table is a trust-gated custom command. |
 | [`ai-kit-spec-execute`](skills/ai-kit-spec-execute/SKILL.md) | skill | Router: detects which framework (GSD, superpowers, …) generated a plan/phase, then hands a GSD phase to GSD's own `/gsd-execute-phase` and a superpowers plan to `ai-kit-spec-execute-superpowers`. |
 | [`ai-kit-spec-execute-superpowers`](skills/ai-kit-spec-execute-superpowers/SKILL.md) | skill | Resolves a live-quota-checked (runtime, model) pair for each task of a superpowers implementation plan and injects it at `superpowers:subagent-driven-development`'s implementer-dispatch point, leaving that harness's TDD enforcement, review and fix-loop intact and, after the final review, folds the finished plan into one commit per logical feature through `ai-kit-commit-fold` (push and PR stay with ai-kit's unit flow). Not for `superpowers:executing-plans`. |
 | [`ai-kit-project-rules-agents`](skills/ai-kit-project-rules-agents/SKILL.md) | skill | Checks an AGENTS.md/CLAUDE.md file against ai-kit's own 19-rule house ruleset, then wraps `/agent-md-refactor` to remediate gaps. |
@@ -49,6 +49,22 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`ai-kit-usage-metrics`](skills/ai-kit-usage-metrics/SKILL.md) | skill | Runs the local capture-refine-dashboard pipeline over Claude Code, opencode, Codex and Cursor session logs, plus previously stored CLI command history, then opens a static, filterable HTML usage-metrics dashboard. Does not export or import data. |
 | [`jev-fast-decision`](skills/jev-fast-decision/SKILL.md) | skill | Shared System One client: one backend table (local Laya, TypeSafe), `--probe`, one escalation ladder with a per-item trail, a consent record, an answer log, a dated capability matrix, one entry point for every caller (`ladder`, `detect`, `consent`) and the installed-skill lookup callers copy — advisory only. Linked for claude/opencode and pi; codex is a documented gap (`~/.agents/skills` is shared by other hosts) and cursor is reached through its `~/.claude/skills` compatibility read (cited in `reference.md`, not live-verified). |
 | [`ai-kit-judge`](agents/ai-kit-judge.md) | agent | Read-only native judge lane for Claude Code (Opus at xhigh effort, set in its frontmatter; Read, Grep and Glob only): follows the given prompt and replies only with what it asks, such as verdict JSON lines. Linked to `~/.claude/agents/ai-kit-judge.md`. |
+
+## ai-kit configuration
+
+ai-kit keeps its settings in one `config.toml` per layer: the project file `.aikit/config.toml` (per checkout) over the user file `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml`. Each key takes the project value when the project file sets it, then the user value, then the built-in default.
+
+- `[lanes]` holds the cross-AI lanes: `[[lanes.review]]` and `[[lanes.execute]]` entries, each routed by its `purpose` (`review`, `execute` or `both`); `strategy` and `[lanes.policy]` sit beside them.
+- `[runner.retry]` holds the cross-AI runner's retry tuning; `[runner.retry.scopes."<scope>"]` overrides it for one GSD scope.
+- `[models]`, `[jev]` and `[hooks]` are reserved for later features and are not read yet.
+
+Every write keeps your comments, unknown tables and key order, and publishes through a temporary file, so a reader never sees a half-written file. ai-kit never writes a key that is outside another tool's own schema, and it runs in a repository without `.planning/`.
+
+An old `review-spec.toml` migrates into `[lanes]` on the first command that reads the roster, and the runner migrates a GSD `workflow.cross_ai_retry` block and the old `cross-ai.json` once. The old roster stays recoverable as `review-spec.toml.migrated` and the old `cross-ai.json` as `cross-ai.json.migrated`; a GSD block's values move into `config.toml` and the block is removed from the GSD file, with no copy kept.
+
+Trust covers the project file's command-bearing lane entries; every other table is ordinary settings, so editing `[runner.retry]` keeps trust, and editing a command entry needs `trust-local` again. Trust records, consent records, `secrets.env`, the model catalog cache, the unit flow's `.aikit/flow.json` and the status-line files stay in their own files, each with a reason in the design record.
+
+The full inventory and decision record is [docs/config/design.md](docs/config/design.md).
 
 ## How the installer works
 
