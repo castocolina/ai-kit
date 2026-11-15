@@ -312,9 +312,12 @@ def _publish_lanes(old: str, new_path: str, old_text: str, expected: dict, warn_
 
 
 def _published_intact(new_path: str, new_text: str) -> bool:
-    """True while config.toml still parses to the whole document that was published (C1-9)."""
+    """True while config.toml's [lanes] table is still the published one (C1-9). Only the table
+    that trust covers is compared: another writer's change to a different table (the runner adding
+    `[runner.retry]`) must not defer the migration and drop the carried trust (WR-04)."""
     now = _read_bytes(new_path) or b""
-    return _parse_text(new_path, _decode(new_path, now)) == _parse_text(new_path, new_text)
+    return (_parse_text(new_path, _decode(new_path, now)).get("lanes")
+            == _parse_text(new_path, new_text).get("lanes"))
 
 
 def _carry_trust(old: str, new_path: str, raw: bytes, trust_dir: str, canonical) -> None:

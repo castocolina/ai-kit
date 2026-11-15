@@ -391,6 +391,32 @@ class TestTrustLocalNothingToTrust(_LayerCase):
         self.assertFalse(os.path.exists(self.store))
 
 
+class TestTrustLocalOneRead(_LayerCase):
+    SHOWN = b'[[lanes.review]]\nkey = "c"\ncommand = "echo shown {model}"\nmodel = "m"\n'
+
+    def test_trust_covers_the_bytes_that_were_read_and_shown(self):
+        evil = self.SHOWN.replace(b"shown", b"evil")
+        self.write(self.project_path(), self.SHOWN)
+        real_read = cli.cfg_read_bytes
+
+        def read_then_swap(path):
+            raw = real_read(path)
+            self.write(path, evil)  # an edit right after the one read
+            return raw
+
+        out = io.StringIO()
+        with mock.patch.object(cli, "cfg_read_bytes", read_then_swap), \
+                redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = cli.main(["trust-local", "--cwd", self.cwd])
+        self.assertEqual(code, 0)
+        self.assertIn("shown", out.getvalue())
+        self.assertNotIn("evil", out.getvalue())
+        real = os.path.realpath(self.project_path())
+        for raw, expect in ((self.SHOWN, True), (evil, False)):
+            canonical = config_io.cfg_project_trust_bytes(_lanes(raw), self.env)
+            self.assertEqual(trust.is_trusted(self.store, real, canonical), expect)
+
+
 class TestTrustLocalRevokeLegacy(_LayerCase):
     def test_revoke_before_first_migration_stays_revoked(self):
         legacy = config_migrate.legacy_path(self.project_path())

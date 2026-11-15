@@ -14,6 +14,7 @@ the project -- a repo must not be able to trust itself. Writes go through cache.
 (mkstemp + os.replace), so two sessions trusting the same file concurrently never collide or leave
 a half-written record.
 """
+import datetime
 import hashlib
 import json
 import os
@@ -108,5 +109,13 @@ def command_lanes_bytes(lanes: dict, user_command_keys: frozenset = frozenset())
                                         and _entry_key(entry) in command_keys)]
     if not picked:
         return None
-    return json.dumps(picked, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=True).encode("utf-8")
+    return json.dumps(picked, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+                      default=_toml_scalar).encode("utf-8")
+
+
+def _toml_scalar(value):
+    """The canonical form of a TOML date or time value, which json cannot encode (WR-01): its type
+    name and ISO text, so a changed date still changes the digest."""
+    if isinstance(value, (datetime.date, datetime.time)):  # datetime is a date subclass
+        return [type(value).__name__, value.isoformat()]
+    raise TypeError(f"{type(value).__name__} has no canonical form")

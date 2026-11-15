@@ -436,6 +436,22 @@ class TestConcurrency(MigrationCase):
         self.assertEqual(parsed["runner"]["retry"]["max_retries"], 2)
         self.assertEqual(parsed["lanes"], self.expected_lanes(LOCAL_ROSTER))
 
+    def test_other_table_added_after_the_publish_keeps_the_carried_trust(self):
+        self.record_legacy_trust(COMMAND_ROSTER.encode("utf-8"))
+        real_publish = toml_splice.publish
+
+        def racing_publish(path, text):
+            real_publish(path, text)
+            self.write(path, text + "\n" + RETRY_TEXT)  # another table, [lanes] intact
+
+        with mock.patch.object(toml_splice, "publish", side_effect=racing_publish):
+            self.assertEqual(self.migrate(**self.trust_kwargs()), "migrated")
+        self.assertTrue(trust.is_trusted(self.store, os.path.realpath(self.local_config),
+                                         canonical_bytes(self.lanes(self.local_config))))
+        self.assertTrue(os.path.exists(self.local_old + config_migrate.MIGRATED_SUFFIX))
+        self.assertEqual(tomllib.loads(self.read(self.local_config))["runner"]["retry"],
+                         {"max_retries": 2})
+
     def test_old_file_changed_before_the_rename_is_kept(self):
         self.write(self.local_old, LOCAL_ROSTER)
         changed = LOCAL_ROSTER.replace('model = "m1"', 'model = "m9"').encode("utf-8")
@@ -501,6 +517,35 @@ class TestCanonicalBytes(unittest.TestCase):
                  '  command = "x"   # trailing\n  key = "a"\n')
         self.assertEqual(trust.command_lanes_bytes(tomllib.loads(plain)["lanes"]),
                          trust.command_lanes_bytes(tomllib.loads(loose)["lanes"]))
+
+    def test_a_date_free_lane_list_keeps_its_pinned_digest(self):
+        # The digest taken before dates were encoded: existing trust records stay valid (WR-01).
+        raw = canonical_bytes({"review": [{"key": "a", "command": "x"}]})
+        self.assertEqual(raw, b'[["review",{"command":"x","key":"a"}]]')
+        self.assertEqual(trust.content_sha256(raw),
+                         "4b064776fe7b70f04f5474b8b4fb1a16d6eed220cc9bea27537260257c85a492")
+
+    def test_toml_dates_and_times_are_encoded_and_change_the_digest(self):
+        def digest(added: str) -> bytes:
+            text = f'[[lanes.review]]\nkey = "a"\ncommand = "x"\nadded = {added}\n'
+            return canonical_bytes(tomllib.loads(text)["lanes"])
+        first = digest("2026-01-01")
+        self.assertIn(b'["date","2026-01-01"]', first)
+        self.assertNotEqual(first, digest("2026-01-02"))
+        self.assertIn(b'["time","07:32:00"]', digest("07:32:00"))
+        self.assertIn(b'["datetime","1979-05-27T07:32:00"]', digest("1979-05-27T07:32:00"))
+
+    def test_a_dated_command_entry_resolves_without_a_traceback(self):
+        from ai_kit_spec import config_io
+        with tempfile.TemporaryDirectory() as root:
+            project, home = os.path.join(root, "proj"), os.path.join(root, "home")
+            os.makedirs(os.path.join(project, ".aikit"))
+            os.makedirs(home)
+            with open(os.path.join(project, ".aikit", "config.toml"), "w", encoding="utf-8") as f:
+                f.write('[[lanes.review]]\nkey = "x"\ncommand = "echo {prompt}"\n'
+                        "added = 2026-01-01\n")
+            resolved = config_io.cfg_resolve(project, {"HOME": home}, warn_fn=lambda _m: None)
+        self.assertEqual(resolved["review"], [])  # untrusted: ignored, not a crash
 
     def test_entries_are_ordered_by_sorted_role_then_position(self):
         lanes = {"review": [{"key": "b", "command": "x"}, {"key": "a", "command": "x"}],

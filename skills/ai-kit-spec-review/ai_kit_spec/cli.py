@@ -43,7 +43,6 @@ from ai_kit_spec.config_io import (
     cfg_read_bytes,
     cfg_render_lanes,
     cfg_resolve,
-    cfg_trust_project,
     cfg_trust_store_dir,
     resolve_timeout_tiers,
 )
@@ -910,11 +909,12 @@ def _cmd_trust_local(args: argparse.Namespace, deps: CliDeps) -> int:
         print(json.dumps(line))
     if args.show:
         return 0
-    real, digest = cfg_trust_project(args.cwd, env)
-    if digest is None:
+    # Trust is recorded for the bytes already read and shown above: no second read (WR-03).
+    if canonical is None:
         print(f"nothing to trust: {real} has no command-bearing lane entries")
         return 0
-    print(f"trusted {real} sha256={digest}")
+    trust.record_trust(store, real, canonical)
+    print(f"trusted {real} sha256={trust.content_sha256(canonical)}")
     return 0
 
 def _cmd_infer_vendor(args: argparse.Namespace, deps: CliDeps) -> int:
