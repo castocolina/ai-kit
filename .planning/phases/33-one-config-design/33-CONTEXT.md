@@ -113,6 +113,9 @@ the no-GSD run (R8); atomic lossless writes (R9); one resolver rule (R10); docs 
   (creating it if absent; an existing `[lanes]` there means the new roster wins: report the old file, never merge);
   (4) re-read and compare parsed values; (5) carry trust (D-11); (6) rename the old file to
   `review-spec.toml.migrated`; (7) print one notice naming both paths. (draft D-10, adapted to a shared file)
+  *(amended 2026-11-16, 36 D-10, owner observation that the backup was never needed: step (6) deletes the old roster
+  file after the step (4) comparison passes, and a keep-backup opt-in leaves the `.migrated` rename; the runner's
+  `cross-ai.json.migrated` (D-13) is not changed here; needs owner confirmation)*
 
 ### Runner retry (SPEC R7)
 
