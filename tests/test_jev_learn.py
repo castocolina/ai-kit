@@ -5,15 +5,29 @@ folder is a temp directory, so nothing touches the network or the real environme
 
 import copy
 import importlib.util
+import io
 import json
 import os
 import re
 import shutil
 import stat
+import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
+
+from tests.test_jev_fast_decision import (
+    _REAL_PUBLIC_GET,
+    JR,
+    JevStub,
+    _ClientCase,
+    closed_port_url,
+    noul_item,
+    payload,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 MODULE = REPO / "skills" / "jev-fast-decision" / "scripts" / "jev_learn.py"
@@ -409,6 +423,216 @@ class TestLayaRecords(unittest.TestCase):
         self.assertIn(jev_learn.README_URL, out["notice"])
         self.assertIn("OSError", out["notice"])
         self.assertIn("recorded from the sources that answered", out["notice"])
+
+
+def _lowered(headers):
+    """Header names in lower case, so an assertion does not depend on how the client spelt them."""
+    return {name.lower(): value for name, value in headers.items()}
+
+
+class TestProbeLearning(_ClientCase):
+    """The probe learns from a local Laya and from upstream, end to end against in-process stubs:
+    the upstream URL constants point at a 127.0.0.1 stub, and the real keyless fetcher runs."""
+
+    def setUp(self):
+        super().setUp()
+        # The real keyless fetcher, wrapped so each test can count its calls.
+        self.fetch = mock.Mock(wraps=_REAL_PUBLIC_GET)
+        patcher = mock.patch.object(JR, "_public_get", self.fetch)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_argv(self, argv):
+        """main(argv): (exit code, the parsed stdout JSON)."""
+        out = io.StringIO()
+        with mock.patch.object(sys, "stdout", out):
+            code = JR.main(argv)
+        return code, json.loads(out.getvalue())
+
+    def closed_base(self):
+        """An upstream origin on a port nothing listens on: every fetch to it fails."""
+        return closed_port_url().replace("/v1/systemone", "")
+
+    def upstream(self, stub):
+        """Point the three upstream URL constants at `stub`: the only place a fetch may go."""
+        base = f"http://127.0.0.1:{stub.port}"
+        urls = {
+            "PYPI_VERSION_URL": base + "/pypi/laya/{version}/json",
+            "PYPI_LATEST_URL": base + "/pypi/laya/json",
+            "README_URL": base + "/README.md",
+        }
+        for name, url in urls.items():
+            patcher = mock.patch.object(JR._LEARN, name, url)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def write_user_config(self, text):
+        folder = os.path.join(os.environ["XDG_CONFIG_HOME"], "ai-kit")
+        os.makedirs(folder, exist_ok=True)
+        Path(folder, "config.toml").write_text(text, encoding="utf-8")
+
+    def records_file(self):
+        return os.path.join(os.environ["XDG_STATE_HOME"], "ai-kit", "jev",
+                            jev_learn.LAYA_RECORDS)
+
+    def records_bytes(self):
+        with open(self.records_file(), "rb") as handle:
+            return handle.read()
+
+    def test_probe_records_the_configured_version_once(self):
+        self.write_user_config('[jev]\nlaya_version = "0.4.27"\n')
+        pages = {
+            "/pypi/laya/0.4.27/json": _bytes(FIX["pypi_0_4_27"]),
+            "/README.md": _bytes(FIX["readme"]),
+        }
+        with JevStub(health_body=FIX["health_loaded"], openapi=FIX["openapi"]) as laya, \
+                JevStub(pages=pages) as upstream:
+            self.point_at(laya)
+            self.upstream(upstream)
+            code, report = self.run_probe()
+            self.assertEqual(code, 0)
+            entry = self.backend_entry(report, "laya")
+            self.assertEqual(entry["version"], "0.4.27")
+            self.assertEqual(entry["version_source"], "config")
+            self.assertRegex(entry["fingerprint"], HEX12)
+            self.assertEqual(entry["record"], "new")
+            self.assertEqual(entry["documented_upstream"], ["batch", "long_context"])
+            with open(self.records_file(), encoding="utf-8") as handle:
+                self.assertIn("0.4.27", json.load(handle))
+            gets = [record for record in upstream.requests if record["method"] == "GET"]
+            self.assertEqual([record["path"] for record in gets],
+                             ["/pypi/laya/0.4.27/json", "/README.md"])
+            for record in gets:
+                headers = _lowered(record["headers"])
+                self.assertNotIn("authorization", headers)
+                self.assertEqual(headers["user-agent"], "jev-fast-decision/2.0")
+            _code, again = self.run_probe()
+            self.assertEqual(self.backend_entry(again, "laya")["record"], "known")
+            self.assertEqual(len(upstream.requests), 2, "a second probe makes no upstream request")
+
+    def test_check_updates_refreshes_the_known_key(self):
+        self.write_user_config('[jev]\nlaya_version = "0.4.27"\n')
+        pages = {
+            "/pypi/laya/0.4.27/json": _bytes(FIX["pypi_0_4_27"]),
+            "/README.md": _bytes(FIX["readme"]),
+        }
+        with JevStub(health_body=FIX["health_loaded"], openapi=FIX["openapi"]) as laya, \
+                JevStub(pages=pages) as upstream:
+            self.point_at(laya)
+            self.upstream(upstream)
+            self.run_probe()
+            seen = len(upstream.requests)
+            code, out = self.run_argv(["--check-updates"])
+            self.assertEqual(code, 0)
+            self.assertEqual(out["status"], "ok")
+            self.assertEqual(out["updates"]["laya"]["record"], "refreshed")
+            self.assertEqual(len(upstream.requests) - seen, 2)
+            # The Laya stays up; only the upstream moves to a closed port, so the refresh fails.
+            before = self.records_bytes()
+            closed = self.closed_base()
+            with mock.patch.object(JR._LEARN, "PYPI_VERSION_URL",
+                                   closed + "/pypi/laya/{version}/json"), \
+                    mock.patch.object(JR._LEARN, "README_URL", closed + "/README.md"):
+                _code, failed = self.run_argv(["--check-updates"])
+            self.assertEqual(failed["updates"]["laya"]["record"], "fetch_failed")
+            self.assertIn("previous records kept", failed["updates"]["laya"]["notice"])
+            self.assertEqual(self.records_bytes(), before)
+
+    def test_check_updates_is_disabled_with_the_knob_off(self):
+        os.environ["GSD_PATH_JEV"] = "0"
+        code, out = self.run_argv(["--check-updates"])
+        self.assertEqual(code, 0)
+        self.assertEqual(out["status"], "disabled")
+        self.fetch.assert_not_called()
+
+    def test_probe_under_a_deadline_never_fetches(self):
+        self.write_user_config('[jev]\nlaya_version = "0.4.27"\n')
+        os.environ["GSD_PATH_JEV_DEADLINE_SECONDS"] = "30"
+        with JevStub(health_body=FIX["health_loaded"], openapi=FIX["openapi"]) as laya:
+            self.point_at(laya)
+            code, report = self.run_probe()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.backend_entry(report, "laya")["record"], "skipped_deadline")
+        self.fetch.assert_not_called()
+
+    def test_unreachable_laya_reports_no_version(self):
+        self.write_user_config('[jev]\nlaya_version = "0.4.27"\n')
+        code, report = self.run_probe()  # the base case points Laya at a closed port
+        self.assertEqual(code, 0)
+        entry = self.backend_entry(report, "laya")
+        self.assertEqual(entry["version_source"], "unreachable")
+        self.assertIsNone(entry["fingerprint"])
+        self.assertEqual(entry["record"], "unknown")
+        self.fetch.assert_not_called()
+
+    def test_new_upstream_feature_keeps_the_cell(self):
+        self.write_user_config('[jev]\nlaya_version = "0.4.27"\n')
+        pages = {
+            "/pypi/laya/0.4.27/json": _bytes(FIX["pypi_0_4_27"]),
+            "/README.md": _bytes(FIX["readme"]),
+        }
+        with JevStub(health_body=FIX["health_loaded"], openapi=FIX["openapi"]) as laya, \
+                JevStub(pages=pages) as upstream:
+            self.point_at(laya)
+            self.upstream(upstream)
+            _code, report = self.run_probe()
+        self.assertEqual(self.backend_entry(report, "laya")["documented_upstream"],
+                         ["batch", "long_context"])
+        cells = JR.row_named("laya")["cells"]
+        self.assertEqual(cells[JR.LONG_CONTEXT][0], "unsupported")
+        self.assertEqual(cells[JR.BATCH][0], "unsupported")
+
+    def test_answer_path_never_fetches(self):
+        self.write_user_config('[jev]\nlaya_version = "0.4.27"\n')
+        self.fetch.side_effect = AssertionError("the answer path fetched")
+        self.enable(None)
+        with JevStub() as laya:
+            self.point_at(laya)
+            out = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(out["status"], "ok")
+        self.fetch.assert_not_called()
+
+    def test_probe_and_fetch_carry_no_key(self):
+        self.write_user_config('[jev]\nlaya_version = "0.4.27"\n')
+        sentinel = "sk-sentinel-" + "7" * 20
+        os.environ["LAYA_API_KEY"] = sentinel
+        os.environ["TYPESAFE_API_KEY"] = sentinel
+        pages = {
+            "/pypi/laya/0.4.27/json": _bytes(FIX["pypi_0_4_27"]),
+            "/README.md": _bytes(FIX["readme"]),
+        }
+        with JevStub(health_body=FIX["health_loaded"], openapi=FIX["openapi"]) as laya, \
+                JevStub(pages=pages) as upstream:
+            self.point_at(laya)
+            self.upstream(upstream)
+            _code, text = self.run_probe_text()
+        self.assertNotIn(sentinel, text)
+        self.assertTrue(upstream.requests)
+        for record in upstream.requests:
+            headers = _lowered(record["headers"])
+            self.assertNotIn("authorization", headers)
+            self.assertNotIn(sentinel, " ".join(headers.values()))
+
+    def test_public_fetch_stops_at_its_deadline(self):
+        drip = {"drip": 0.05, "body": "x" * 400, "headers": {"Content-Length": "400"}}
+        with JevStub(pages={"/README.md": drip}) as upstream, \
+                mock.patch.object(JR, "_FETCH_TIMEOUT", 0.5):
+            started = time.monotonic()
+            with self.assertRaises(OSError):
+                _REAL_PUBLIC_GET(f"http://127.0.0.1:{upstream.port}/README.md")
+            self.assertLess(time.monotonic() - started, 3.0)
+
+    def test_trickling_laya_identity_stops_at_its_deadline(self):
+        drip = {"drip": 0.05, "body": "x" * 400, "headers": {"Content-Length": "400"}}
+        with JevStub(health_body=FIX["health_loaded"], pages={"/openapi.json": drip}) as laya:
+            self.point_at(laya)
+            started = time.monotonic()
+            code, report = self.run_probe()
+            self.assertLess(time.monotonic() - started, 3.0)
+        self.assertEqual(code, 0)
+        entry = self.backend_entry(report, "laya")
+        self.assertIsNone(entry["fingerprint"])
+        self.assertEqual(entry["record"], "unknown")
 
 
 if __name__ == "__main__":

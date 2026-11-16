@@ -50,6 +50,7 @@ def load():
 
 
 JR = load()
+_REAL_PUBLIC_GET = JR._public_get  # the keyless fetcher; _ClientCase replaces it with a failure
 JEV_LADDER = SCRIPT.with_name("jev_ladder.py")
 
 
@@ -135,7 +136,11 @@ class JevStub:
     ``model`` is the answering id it echoes, ``top`` the winning probability, ``tops`` the
     per-question overrides, ``truncated`` sets ``usage.truncated``, ``uniform`` answers with
     flat 4-decimal probabilities, ``delay`` sleeps before each answer, ``health`` is the
-    ``GET /health`` status, and ``script`` is a per-request queue of
+    ``GET /health`` status, ``health_body`` is the JSON object ``GET /health`` returns and
+    ``openapi`` the one ``GET /openapi.json`` returns (both default to today's
+    ``{"status":"ok"}``), ``pages`` maps a GET path to raw bytes or to a dict for
+    ``drip_reply`` (a trickled reply), ``extra`` is merged into every answer's top-level JSON
+    object, and ``script`` is a per-request queue of
     ``{"status": ..., "headers": ..., "body": ...}`` entries (a ``None`` entry answers
     normally, an ``{"answer": True, "truncated": bool}`` entry answers that request's
     questions with the given ``usage.truncated`` value), which is how the error-taxonomy and
@@ -146,7 +151,8 @@ class JevStub:
     """
 
     def __init__(self, model: str | None = "laya-rl-agent", top=0.9, tops=None, truncated=False,
-                 uniform=False, delay=0.0, health=200, script=None, places=4):
+                 uniform=False, delay=0.0, health=200, script=None, places=4, health_body=None,
+                 openapi=None, pages=None, extra=None):
         self.model = model
         self.top = top
         self.tops = dict(tops or {})
@@ -154,6 +160,10 @@ class JevStub:
         self.uniform = uniform
         self.delay = delay
         self.health = health
+        self.health_body = health_body
+        self.openapi = openapi
+        self.pages = dict(pages or {})
+        self.extra = dict(extra or {})
         self.script = list(script or [])
         self.places = places  # how the provider rounds: Laya 4 decimals, TypeSafe 2
         self.stopped = False  # set when __exit__ begins: an in-flight drip must stop at once
@@ -168,8 +178,19 @@ class JevStub:
             def do_GET(self):
                 # Any path answers with `health`: the local row probes GET /health, the remote
                 # rows probe their own paths, and each test asserts on the recorded path.
-                stub.record("GET", self.path, {}, b"")
-                self.reply(stub.health, b'{"status":"ok"}')
+                stub.record("GET", self.path, dict(self.headers), b"")
+                if self.path in stub.pages:
+                    page = stub.pages[self.path]
+                    if isinstance(page, dict):
+                        stub.drip_reply(self, page)
+                    else:
+                        self.reply(200, page)
+                elif self.path == "/health" and stub.health_body is not None:
+                    self.reply(stub.health, json.dumps(stub.health_body).encode())
+                elif self.path == "/openapi.json" and stub.openapi is not None:
+                    self.reply(200, json.dumps(stub.openapi).encode())
+                else:
+                    self.reply(stub.health, b'{"status":"ok"}')
 
             def do_POST(self):
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
@@ -289,7 +310,8 @@ class JevStub:
         if forced:
             usage["truncated"] = True
         answers = {qid: self.answer_for(qid, spec or {}) for qid, spec in questions.items()}
-        return json.dumps({"model": self.model, "answers": answers, "usage": usage}).encode()
+        body = {"model": self.model, "answers": answers, "usage": usage, **self.extra}
+        return json.dumps(body).encode()
 
     def answer_for(self, qid, spec):
         qtype = spec.get("type", "noul")
@@ -332,6 +354,11 @@ class _ClientCase(unittest.TestCase):
         cwd_patcher = mock.patch.object(JR, "_cwd", return_value=str(project))
         cwd_patcher.start()
         self.addCleanup(cwd_patcher.stop)
+        # No unit test can fetch from the web: a fetch fails the way an offline machine does.
+        fetch_patcher = mock.patch.object(JR, "_public_get",
+                                          side_effect=OSError("network is off in unit tests"))
+        fetch_patcher.start()
+        self.addCleanup(fetch_patcher.stop)
 
     def point_at(self, stub):
         os.environ["JEV_LAYA_URL"] = stub.url
@@ -428,7 +455,9 @@ class TestProbe(_ClientCase):
         self.assertEqual(self.backend_entry(report, "laya"),
                          {"name": "laya", "remote": False, "batch": False,
                           "host": "127.0.0.1", "usable": True, "key_source": None,
-                          "url_source": "env:JEV_LAYA_URL"})
+                          "url_source": "env:JEV_LAYA_URL", "version": None,
+                          "version_source": "not_exposed", "fingerprint": None, "idle": False,
+                          "record": "unknown"})
         self.assert_no_posts(stub)
 
     def test_probe_laya_url_sources(self):
@@ -491,7 +520,7 @@ class TestProbe(_ClientCase):
             _code, report = self.run_probe()
         self.assertEqual(report["status"], "ok")
         self.assertEqual([(entry["method"], entry["path"]) for entry in stub.requests],
-                         [("GET", "/health")])
+                         [("GET", "/health"), ("GET", "/health"), ("GET", "/openapi.json")])
         self.assert_no_posts(stub)
 
     def test_probe_backend_choice_narrows_candidates(self):
@@ -2964,6 +2993,7 @@ def _isolated_ladder(tmp):
     shutil.copy2(JEV_LADDER, scripts / "jev_ladder.py")
     shutil.copy2(JEV_LADDER.with_name("secret_shapes.py"), scripts / "secret_shapes.py")
     shutil.copy2(SCRIPT.with_name("jev_config.py"), scripts / "jev_config.py")
+    shutil.copy2(SCRIPT.with_name("jev_learn.py"), scripts / "jev_learn.py")
     return scripts
 
 
@@ -3691,6 +3721,8 @@ class TestLadderBackstops(_TmpHome):
         client.parent.mkdir(parents=True)
         shutil.copy2(SCRIPT, client)
         shutil.copy2(SCRIPT.with_name("jev_config.py"), client.parent / "jev_config.py")
+        shutil.copy2(SCRIPT.with_name("jev_learn.py"), client.parent / "jev_learn.py")
+        shutil.copy2(SCRIPT.with_name("secret_shapes.py"), client.parent / "secret_shapes.py")
         scripts = _isolated_ladder(self.tmp)
         proc = subprocess.run([sys.executable, "-B", str(scripts / "jev_review.py"), "detect"],
                               capture_output=True, text=True, check=False, cwd=self.tmp,

@@ -91,12 +91,14 @@ class TestCopyInstall(unittest.TestCase):
         result = self._caught(["jev-fast-decision"], "jev-fast-decision/scripts", ENTRIES["jev"])
         self.assertEqual("secret_pattern_context", result)
 
-    def _copied_alone_fails(self, script, module, sibling):
-        """A lone copy of one jev script, imported in a child, fails with ImportError naming its
-        missing sibling."""
+    def _copied_alone_fails(self, script, module, sibling, present=()):
+        """A copy of one jev script, with only the `present` siblings beside it, imported in a
+        child: it fails with ImportError naming the missing `sibling`."""
         tmp = Path(tempfile.mkdtemp(prefix="ai-kit-shapes-lone-"))
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        shutil.copy2(SKILLS / "jev-fast-decision" / "scripts" / script, tmp)
+        scripts = SKILLS / "jev-fast-decision" / "scripts"
+        for name in (script, *present):
+            shutil.copy2(scripts / name, tmp)
         proc = subprocess.run(
             [sys.executable, "-I", "-B", "-c",
              f"import sys\nsys.path.insert(0, sys.argv[1])\nimport {module}\n", str(tmp)],
@@ -112,6 +114,10 @@ class TestCopyInstall(unittest.TestCase):
 
     def test_jev_review_copied_without_jev_config_fails_with_import_error(self):
         self._copied_alone_fails("jev_review.py", "jev_review", "jev_config.py")
+
+    def test_jev_review_copied_without_jev_learn_fails_with_import_error(self):
+        self._copied_alone_fails("jev_review.py", "jev_review", "jev_learn.py",
+                                 present=("jev_config.py",))
 
     def test_commit_fold_copy_redacts_a_new_shape(self):
         result = self._caught(["ai-kit-commit-fold"], "ai-kit-commit-fold/scripts",

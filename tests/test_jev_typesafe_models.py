@@ -12,7 +12,9 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from tests.test_jev_fast_decision import JR, JevStub, _ClientCase, noul_item, payload
 from tests.test_jev_learn import FakeFetch
 
 REPO = Path(__file__).resolve().parents[1]
@@ -217,6 +219,138 @@ class TestModelRecords(unittest.TestCase):
         self.assertTrue(kept)
         self.assertEqual(self._stored()["jev-1.14.0"]["unknown_seen"], ["primitive:rank"])
         self.assertNotIn("AKIA", self._bytes_on_disk().decode("utf-8"))
+
+
+def _no_fetch(testcase, label):
+    """Patch the public fetcher to fail the test if anything calls it; returns the mock."""
+    patcher = mock.patch.object(JR, "_public_get", side_effect=AssertionError(label))
+    fetch = patcher.start()
+    testcase.addCleanup(patcher.stop)
+    return fetch
+
+
+class TestAnswerPathModels(_ClientCase):
+    """The answer path notes a new TypeSafe model id, and the next probe reads the docs once for
+    it (plan 34-06, SPEC R4, D-09). No answer, refusal or probe path fetches on the answer side."""
+
+    def setUp(self):
+        super().setUp()
+        self.records = os.path.join(JR._state_dir(), "jev", "typesafe-models.json")
+
+    def stored(self):
+        with open(self.records, encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def bytes_on_disk(self):
+        with open(self.records, "rb") as handle:
+            return handle.read()
+
+    def write_records(self, data):
+        os.makedirs(os.path.dirname(self.records), exist_ok=True)
+        with open(self.records, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+
+    def test_answer_notes_a_new_model_id_without_fetching(self):
+        self.enable_remote("typesafe")
+        fetch = _no_fetch(self, "the answer path fetched")
+        with JevStub(model="jev-1.15.0", places=2) as stub:
+            self.point_remote("typesafe", stub)
+            out = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(out["status"], "ok")
+        self.assertEqual(out["model"], "jev-1.15.0")
+        self.assertEqual(self.stored()["jev-1.15.0"]["status"], "pending")
+        fetch.assert_not_called()
+
+    def test_probe_reads_the_docs_once_for_a_pending_id(self):
+        self.enable_remote("typesafe")
+        _no_fetch(self, "the answer path fetched")
+        with JevStub(model="jev-1.15.0", places=2) as stub:
+            self.point_remote("typesafe", stub)
+            self.run_screen(payload(noul_item("a")))
+        docs = _docs_fetch()
+        with mock.patch.object(JR, "_public_get", docs):
+            code, report = self.run_probe()
+        self.assertEqual(code, 0)
+        typesafe = self.backend_entry(report, "typesafe")
+        self.assertEqual(typesafe["model_record"], "new")
+        self.assertEqual(typesafe["model_ids"], ["jev-1.15.0"])
+        self.assertEqual(len(docs.calls), 3)
+        again = _docs_fetch()
+        with mock.patch.object(JR, "_public_get", again):
+            _code, second = self.run_probe()
+        self.assertEqual(self.backend_entry(second, "typesafe")["model_record"], "known")
+        self.assertEqual(again.calls, [])
+
+    def test_known_id_and_laya_answers_record_nothing(self):
+        self.enable_remote("typesafe")
+        JR._LEARN.note_model(JR._state_dir(), "jev-1.14.0")
+        before = self.bytes_on_disk()
+        _no_fetch(self, "the answer path fetched")
+        with JevStub(model="jev-1.14.0", places=2) as stub:
+            self.point_remote("typesafe", stub)
+            self.run_screen(payload(noul_item("a")))
+        self.assertEqual(self.bytes_on_disk(), before)
+        for name in ("JEV_BACKEND", "JEV_ALLOW_REMOTE", "TYPESAFE_API_KEY"):
+            os.environ.pop(name, None)
+        self.enable(None)  # auto: Laya answers first, and no TypeSafe row is configured
+        with JevStub(model="laya-rl-agent") as laya:
+            self.point_at(laya)
+            out = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(out["backend"], "laya")
+        self.assertEqual(self.bytes_on_disk(), before)
+
+    def test_answer_with_an_unknown_field_is_noted_without_fetching(self):
+        self.enable_remote("typesafe")
+        fetch = _no_fetch(self, "the answer path fetched")
+        with JevStub(model="jev-1.14.0", places=2, extra={"explanation": "x"}) as stub:
+            self.point_remote("typesafe", stub)
+            out = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(out["status"], "ok")
+        fetch.assert_not_called()
+        entry = self.stored()["jev-1.14.0"]
+        self.assertEqual(entry["status"], "pending")
+        self.assertEqual(entry["unknown_seen"], ["option:explanation"])
+        docs = _docs_fetch()
+        with mock.patch.object(JR, "_public_get", docs):
+            _code, report = self.run_probe()
+        typesafe = self.backend_entry(report, "typesafe")
+        self.assertEqual(typesafe["model_record"], "new")
+        self.assertEqual(typesafe["unknown_seen"], ["option:explanation"])
+
+    def test_item_with_an_unknown_type_is_noted_at_refusal(self):
+        self.enable(None)
+        self.write_records({"jev-1.14.0": {"status": "recorded",
+                                           "first_seen": "2026-11-15T00:00:00+00:00"}})
+        item = {"id": "r1", "type": "rank", "instructions": "Rank the fixes.",
+                "criteria": {"a": "one", "b": "two"}}
+        fetch = _no_fetch(self, "the refusal fetched")
+        with JevStub(model="laya-rl-agent") as laya:
+            self.point_at(laya)
+            out = self.run_screen(payload(item))
+        self.assertEqual(out["status"], "unavailable")
+        self.assertTrue(out["reason"].startswith("invalid_input"), out["reason"])
+        entry = self.stored()["jev-1.14.0"]
+        self.assertEqual(entry["status"], "pending")
+        self.assertEqual(entry["unknown_seen"], ["primitive:rank"])
+        self.assertEqual(laya.requests, [], "the refusal comes before any request")
+        fetch.assert_not_called()
+
+    def test_item_refused_by_the_feature_pass_is_noted(self):
+        self.enable(None)
+        self.write_records({"jev-1.14.0": {"status": "recorded",
+                                           "first_seen": "2026-11-15T00:00:00+00:00"}})
+        item = {"id": "r2", "type": "rank", "instructions": "Rank the screenshots.",
+                "criteria": {"a": "one", "b": "two"}, "images": ["one.png"]}
+        fetch = _no_fetch(self, "the refusal fetched")
+        with JevStub(model="laya-rl-agent") as laya:
+            self.point_at(laya)
+            out = self.run_screen(payload(item))
+        self.assertEqual(out["status"], "unavailable")
+        self.assertEqual(out["reason"], "unsupported_feature")
+        entry = self.stored()["jev-1.14.0"]
+        self.assertEqual(entry["status"], "pending")
+        self.assertEqual(entry["unknown_seen"], ["primitive:rank"])
+        fetch.assert_not_called()
 
 
 if __name__ == "__main__":

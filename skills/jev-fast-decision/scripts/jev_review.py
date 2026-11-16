@@ -12,8 +12,10 @@ then one batch per consented remote row, and returns a per-item rung trail so th
 map rungs to its own columns. The persisted remote-consent record lives here too (D-06):
 `consent grant|revoke|show <backend>` owns `${XDG_CONFIG_HOME:-~/.config}/ai-kit/jev-consent.json`.
 
-Commands: `jev_review.py [--probe | --skip-local]` screens stdin; `config set <key> <value>` saves
-one `[jev]` setting in the user config.toml (the first-run answer); `consent grant|revoke|show
+Commands: `jev_review.py [--probe | --check-updates | --skip-local]` screens stdin (`--probe`
+also learns the Laya version and the TypeSafe docs; `--check-updates` re-fetches both now);
+`config set <key> <value>` saves one `[jev]` setting in the user config.toml (the first-run
+answer); `consent grant|revoke|show
 <backend>` manages the record; `ladder [--second-opinion]` and `detect` answer through the
 ladder caller in `jev_ladder.py`. `consent` takes `--client PATH` only to delegate through that
 caller too; `ladder` and `detect` take `--client PATH` as well.
@@ -39,7 +41,6 @@ import os
 import re
 import socket
 import sys
-import tempfile
 import threading
 import time
 import urllib.error
@@ -71,6 +72,7 @@ def _load_sibling(filename, module_name):
 
 
 _CONFIG = _load_sibling("jev_config.py", "jev_config_sibling")
+_LEARN = _load_sibling("jev_learn.py", "jev_learn_sibling")
 
 
 def _cwd():
@@ -105,6 +107,7 @@ _VALIDATION_MODEL = "x"  # request_body needs a model string to validate with; n
 # A real answer is a few KiB; anything bigger is refused, never parsed (T-21.1-11).
 _MAX_RESPONSE_BYTES = 1 << 20
 _PROBE_TIMEOUT = 0.7  # SPEC R9: --probe with nothing reachable must stay under 3 s
+_FETCH_TIMEOUT = 5.0  # D-06: one public fetch (PyPI, GitHub raw, docs) gets 5 s in total
 _RETRY_AFTER_CAP = 2.0
 _LAYA_CALLER_CODES = (400, 413, 422)  # a caller bug fails remotely too, so it never escalates
 _UNAUTHORIZED_CODES = (401, 403)
@@ -653,14 +656,96 @@ def _laya_url():
     return _systemone_url(raw), None
 
 
-def _laya_learn(_row, entry):
-    """Probe-only fields of the Laya row: where its address came from (`url_source`), and the
-    first-run question (`needs_answer`) when nothing names a Laya and nothing answers at the
-    default (D-03). An address the user configured never asks, even one equal to the default."""
+def _laya_configured_version():
+    """The `laya_version` the project or user [jev] table names, or None (D-04, second source)."""
+    try:
+        value = _CONFIG.jev_table(_cwd(), os.environ).get("laya_version")
+    except _CONFIG.ConfigError:
+        return None
+    text = value.strip() if isinstance(value, str) else ""
+    return text if text and _CONFIG.valid_version(text) else None
+
+
+def _get_json(url, timeout, remote):
+    """One JSON object from a local endpoint under its own deadline, or None (review C1-13).
+
+    Only the User-Agent goes out. The deadline is armed in `_exchange` and checked in `_read_body`,
+    so a server that trickles bytes ends at that instant instead of at the size cap.
+    """
+    deadline = _Deadline(timeout)
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with (_exchange(deadline, timeout, remote) as opener,
+              opener.open(request, timeout=timeout) as stream):
+            data, over_cap = _read_body(stream, _MAX_RESPONSE_BYTES, deadline)
+    except urllib.error.HTTPError as answered:
+        answered.close()
+        return None
+    except (_DeadlineHit, OSError, ValueError, http.client.HTTPException, RecursionError):
+        return None
+    if deadline.fired or over_cap:
+        return None
+    try:
+        value = json.loads(data)
+    except (ValueError, RecursionError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _public_get(url):
+    """The bytes of one public keyless GET (D-06, D-09). Only `--probe` and `--check-updates`
+    call it, never the answer path. Only the User-Agent goes out (T-34-19); https, or loopback
+    http for the tests, is the only scheme that passes. Five seconds in total, 1 MiB at most,
+    and no redirect. Raises OSError or ValueError when the fetch fails.
+    """
+    checked, reason = _remote_url(url)
+    if checked is None:
+        raise ValueError(reason)
+    deadline = _Deadline(_FETCH_TIMEOUT)
+    request = urllib.request.Request(checked, headers={"User-Agent": USER_AGENT})
+    try:
+        with (_exchange(deadline, _FETCH_TIMEOUT, True) as opener,
+              opener.open(request, timeout=_FETCH_TIMEOUT) as stream):
+            data, over_cap = _read_body(stream, _MAX_RESPONSE_BYTES, deadline)
+    except _DeadlineHit:
+        raise OSError("deadline") from None
+    except urllib.error.HTTPError as answered:
+        answered.close()
+        raise OSError(f"http_{answered.code}") from None
+    except http.client.HTTPException as broken:
+        raise OSError(type(broken).__name__) from broken
+    if deadline.fired:
+        raise OSError("deadline")
+    if over_cap:
+        raise ValueError("response over the size cap")
+    return data
+
+
+def _laya_learn(row, entry, force=False, fetch_allowed=True):
+    """The Laya probe fields: where its address came from (`url_source`), the first-run question
+    (`needs_answer`) when nothing names a Laya and nothing answers at the default (D-03), and
+    the version, its source, the fingerprint and the record word (D-04..D-07).
+
+    An address the user configured never asks, even one equal to the default. A Laya that does not
+    answer reports no version and learns nothing, so the ladder falls through as before (SPEC R2).
+    """
     _raw, source = _laya_url_source()
     fields = {"url_source": source}
-    if source == "default" and not entry["usable"]:
-        fields["needs_answer"] = ["laya_url"]
+    if not entry["usable"]:
+        if source == "default":
+            fields["needs_answer"] = ["laya_url"]
+        fields.update(version=None, version_source="unreachable", fingerprint=None,
+                      record="unknown")
+        return fields
+    endpoint = row["url"]()[0]
+    health = _get_json(_origin(endpoint, "/health"), _PROBE_TIMEOUT, row["remote"]) or {}
+    openapi = _get_json(_origin(endpoint, "/openapi.json"), _PROBE_TIMEOUT, row["remote"])
+    verified = frozenset(feature for feature, cell in row["cells"].items()
+                         if cell[0] in SUPPORTED_CELL_STATUSES)
+    server = {"health": health, "openapi": openapi,
+              "configured_version": _laya_configured_version()}
+    options = {"force": force, "fetch_allowed": fetch_allowed, "verified": verified}
+    fields.update(_LEARN.learn_laya(server, _state_dir(), _public_get, options))
     return fields
 
 
@@ -908,6 +993,24 @@ def _typesafe_classify(error):
     return "escalate", f"http_{error.code}"
 
 
+def _typesafe_note_model(model_id):
+    """D-09: a new versioned model id an answer named becomes a local pending note. No network."""
+    return _LEARN.note_model(_state_dir(), model_id)
+
+
+def _typesafe_note_unknown(model_id, names):
+    """Primitive or option names this skill does not know, noted under a model id (review C1-10).
+    `model_id` None means the latest recorded id. No network."""
+    return _LEARN.note_unknown(_state_dir(), model_id, names)
+
+
+def _typesafe_learn(_row, _entry, force=False, fetch_allowed=True):
+    """Read the official TypeSafe doc flow once per pending model id (D-09, SPEC R4). Only the
+    probe and `--check-updates` call this; the answer path never does."""
+    return _LEARN.learn_models(_state_dir(), _public_get,
+                               {"force": force, "fetch_allowed": fetch_allowed})
+
+
 Row = dict[str, Any]
 
 # SPEC R5 / RESEARCH Pitfall 5: a remote answer names the versioned id that answered
@@ -968,6 +1071,9 @@ TABLE: tuple[Row, ...] = (
         "probe": _typesafe_probe,
         "key_check": "documented",  # its GET /v1/models needs the key (docs.typesafe.ai)
         "classify": _typesafe_classify,
+        "learn": _typesafe_learn,  # probe-only: the doc flow of the pending model ids
+        "note_model": _typesafe_note_model,  # answer path: a local pending note, no fetch
+        "note_unknown": _typesafe_note_unknown,  # answer path: unknown names, no fetch
         "cells": {CHOICE: ("verified-live", "todo notes 2026-10-13/14", "2026-10-14"),
                   NOUL: ("verified-live", "todo notes 2026-10-13/14", "2026-10-14"),
                   BATCH: ("verified-live", "todo notes 2026-10-13/14", "2026-10-14"),
@@ -1104,16 +1210,7 @@ def write_consent(data):
     0600 temp mode carries over to the file (T-21.1-06)."""
     path = consent_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".jev-consent-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        os.replace(tmp, path)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+    _LEARN.write_json_atomic(path, data, ".jev-consent-")
 
 
 def leftover_entries():
@@ -1366,13 +1463,14 @@ def _backend_entry(row, reason):
     return entry
 
 
-def _probe_fields(entries):
+def _probe_fields(entries, fetch_allowed=True):
     """Merge each row's probe-only fields into its entry (a row with a `learn` adapter, in table
-    order) and return the questions they ask: the agent asks the user, then saves the answer."""
+    order) and return the questions they ask: the agent asks the user, then saves the answer.
+    `fetch_allowed` False (a hook or detect probe under a deadline) lets no public fetch run."""
     questions = []
     for row, entry in zip(TABLE, entries, strict=True):
         if "learn" in row:
-            fields = row["learn"](row, entry)
+            fields = row["learn"](row, entry, False, fetch_allowed)
             questions += fields.pop("needs_answer", [])
             entry.update(fields)
     return questions
@@ -1388,7 +1486,9 @@ def probe_report():
         return {"status": "disabled", "settings": _settings(knob), "needs_answer": []}
     choice = _backend_choice()
     usable, unavailable, entries = _probe_reasons(TABLE)
-    questions = _probe_fields(entries)
+    # Pitfall 3: a probe under a run deadline (a hook, detect) never fetches upstream.
+    fetch_allowed = not os.environ.get("GSD_PATH_JEV_DEADLINE_SECONDS", "").strip()
+    questions = _probe_fields(entries, fetch_allowed)
     names = {row["name"] for row in usable}
     candidates = [row["name"] for row in rows_in_order()
                   if row["name"] in names and choice in ("auto", row["name"])]
@@ -1412,6 +1512,19 @@ def probe_report():
         return report
     report["reason"] = _unusable_reason(choice, unavailable)
     return report
+
+
+def check_updates():
+    """`--check-updates` (D-08, Resolved Open Question 4): re-fetch the current Laya key and the
+    pending plus latest TypeSafe ids now, and say what each record did. A failed refresh keeps the
+    old entry and says so (the learn adapters report it). Knob off: nothing is fetched."""
+    knob = _knob()
+    if not knob["on"]:
+        return {"status": "disabled", "settings": _settings(knob)}
+    _usable, _unavailable, entries = _probe_reasons(TABLE)
+    updates = {row["name"]: row["learn"](row, entry, True, True)
+               for row, entry in zip(TABLE, entries, strict=True) if "learn" in row}
+    return {"status": "ok", "updates": updates}
 
 
 # ─── sending ──────────────────────────────────────────────────────────────────
@@ -1450,6 +1563,7 @@ class _Run:
         self.failed: dict[str, str] = {}      # final item errors by id
         self.last_error: dict[str, str] = {}  # last escalate-class reason per still-pending id
         self.trail: dict[str, list] = {}      # id -> ordered rung entries
+        self.unknown: dict[tuple, set] = {}   # (row name, answering model id) -> unknown names
 
     def no_time(self):
         """True once the run's total deadline has passed: no new request may start."""
@@ -1677,6 +1791,10 @@ def _group_answer(row, group, timeout, run):
         if str(failure).startswith("invalid_input"):
             raise
         return {}, ("escalate", "invalid_response"), sent_body
+    if row.get("note_unknown"):
+        names = _unknown_response_names(response)
+        if names:
+            run.unknown.setdefault((row["name"], checked["model"]), set()).update(names)
     return _finalize(row, checked, run), None, sent_body
 
 
@@ -1970,6 +2088,62 @@ def _refused_result(refused, run):
              "request_sha256": _request_sha256(refused.sent_bodies), **run.provenance}
 
 
+# The keys this skill reads from a response, its usage object and each answer type. A key outside
+# these sets is an unknown option: it is noted once per model id (SPEC R4, review C1-10).
+_RESPONSE_KEYS = frozenset({"model", "answers", "usage"})
+_USAGE_KEYS = frozenset({"input_tokens", "output_tokens", "truncated"})
+_ANSWER_KEYS = {
+    CHOICE: frozenset({"type", "choice", "probabilities", "confidence"}),
+    NOUL: frozenset({"type", "noul"}),
+    SCORE: frozenset({"type", "score", "confidence", "legend", "probabilities"}),
+}
+_KNOWN_ITEM_KEYS = frozenset({"id", "type", "instructions", "criteria", "context", "images",
+                              "assets"}) | _LEGACY_KEYS
+
+
+def _unknown_response_names(response):
+    """Sorted `option:<key>` names for the fields a response carries that this skill never reads.
+
+    Covers the top level, each `usage` key and each key of an answer whose type the skill knows.
+    A field the live API already sends outside these sets is noted once per model id and read about
+    once, since the note makes the next probe read the docs (a known limit, not a bug).
+    """
+    names = {f"option:{key}" for key in response if key not in _RESPONSE_KEYS}
+    usage = response.get("usage")
+    if isinstance(usage, dict):
+        names.update(f"option:{key}" for key in usage if key not in _USAGE_KEYS)
+    answers = response.get("answers")
+    for answer in answers.values() if isinstance(answers, dict) else ():
+        if isinstance(answer, dict) and answer.get("type") in _ANSWER_KEYS:
+            known = _ANSWER_KEYS[answer["type"]]
+            names.update(f"option:{key}" for key in answer if key not in known)
+    return sorted(names)
+
+
+def _unknown_item_names(payload):
+    """Sorted, unique `primitive:<type>` and `option:<key>` names of the caller's items that this
+    skill does not know. A refused item made no call, so its names are noted at the refusal."""
+    items = payload.get("items") if isinstance(payload, dict) else None
+    names = set()
+    for item in items if isinstance(items, list) else ():
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        if isinstance(kind, str) and kind not in VALID_TYPES | {BOX}:
+            names.add(f"primitive:{kind}")
+        names.update(f"option:{key}" for key in item if key not in _KNOWN_ITEM_KEYS)
+    return sorted(names)
+
+
+def _note_unknown_items(payload):
+    """Note a refused payload's unknown names under the latest recorded model id (no network)."""
+    names = _unknown_item_names(payload)
+    if names:
+        for row in TABLE:
+            if "note_unknown" in row:
+                row["note_unknown"](None, names)
+
+
 class _Checked(NamedTuple):
     """The pre-ladder call state: the validated payload and timeouts, or the result to return.
 
@@ -2034,6 +2208,9 @@ def _preflight() -> _Checked:
     choice = _backend_choice()
     row = row_named(choice) if choice != "auto" else None
     stopped, dropped = _feature_refusal(payload, row)
+    if stopped is not None or dropped:
+        # The feature pass refused or dropped items before validation: a note, never a request.
+        _note_unknown_items(payload)
     if stopped is not None:
         return _Checked(stopped, {}, 0.0)
     if dropped:
@@ -2043,6 +2220,7 @@ def _preflight() -> _Checked:
     try:
         request_body(payload, _VALIDATION_MODEL)
     except ValueError as error:
+        _note_unknown_items(payload)
         return _Checked(_invalid_input(error), {}, 0.0)
     provenance_head = payload["reviewed_head"]
     try:
@@ -2060,6 +2238,20 @@ def _no_rung_result(choice, run):
         return stopped
     return {"status": "unavailable", "reason": _unusable_reason(choice, run.unavailable),
             "unavailable": run.unavailable, "attempts": run.attempts, **run.provenance}
+
+
+def _note_models(run):
+    """D-09 and review C1-10, after the answer log: every answering model id a row can note is
+    noted as a local pending entry, and the unknown names of each answer are noted under the id
+    that gave them. Only local writes: nothing here fetches, on the answer path or anywhere else."""
+    for answer in [*run.answers.values(), *run.tentative.values()]:
+        row = row_named(answer.get("backend"))
+        if row is not None and "note_model" in row:
+            row["note_model"](answer.get("model"))
+    for (name, model_id), names in run.unknown.items():
+        row = row_named(name)
+        if row is not None and "note_unknown" in row:
+            row["note_unknown"](model_id, sorted(names))
 
 
 def screen(skip_local=False):
@@ -2087,6 +2279,7 @@ def screen(skip_local=False):
     except DispatchError as refused:
         outcome = _refused_result(refused, run)
     _log_run(run)
+    _note_models(run)
     return outcome
 
 
@@ -2103,6 +2296,9 @@ def build_parser():
                         help="print the backend table report and exit")
     parser.add_argument("--skip-local", action="store_true",
                         help="skip every non-remote row: a second opinion, no local run")
+    parser.add_argument("--check-updates", action="store_true",
+                        help="re-fetch the recorded Laya notes and TypeSafe model docs for the "
+                             "current keys, then exit")
     sub = parser.add_subparsers(dest="command")
     consent = sub.add_parser("consent", help="manage the per-user remote-consent record")
     consent.add_argument("action", choices=("grant", "revoke", "show"))
@@ -2142,6 +2338,8 @@ def main(argv=None):
             return 2
     elif args.probe:
         out = probe_report()
+    elif args.check_updates:
+        out = check_updates()
     else:
         out = {"advisory": True, **screen(skip_local=args.skip_local)}
     print(json.dumps(out, sort_keys=True, allow_nan=False))
