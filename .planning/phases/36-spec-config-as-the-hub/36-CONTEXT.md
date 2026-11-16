@@ -82,7 +82,10 @@ adapter's resume and stop paths and session-model fallback (Phase 41); jev choos
   unknown. Unknown support is learned by one probe: `check-reviewer` gets `--effort` (it already takes `--extra-json`),
   the call that answers stores the effort labelled `accepted by a call on <date>`, a rejection stores nothing and shows the
   host's first error line (control characters removed, key shapes redacted by `secret_shapes.py`). A listed level the
-  runner's closed set rejects is not offered and is named (codex lists levels beyond the runner's `xhigh`). For claude and
+  runner's closed set rejects is not offered and is named (codex lists levels beyond the runner's `xhigh`). *(amended 2026-11-16, 37 D-01, D-07: the forms in `runner_dispatch.py` and the
+  Python composers are transitional, and the runner's closed level sets go; Phase 37 moves every runtime's effort form into the
+  runner behind one `--effort` flag, so previews read the runner's `--print-argv`, and deletes the Python composers; Phase 36
+  still builds them first because its probe call needs them)* For claude and
   copilot the wizard does not ask (jev effort_offer choice 0.82), says why in one line and writes none. Per-runtime keys
   versus one key: **Own reasoning** (jev low: typesafe per_runtime_keys 0.65, laya inside_model_id 0.43): `effort` already
   is the generic knob read by `review_spec` and `build-command`, and a second spelling per runtime would multiply the
@@ -128,7 +131,9 @@ adapter's resume and stop paths and session-model fallback (Phase 41); jev choos
   agent here, unverified) is shown by the wizard and the preview, never used by a branch. `config_io.py`'s save error for a
   runtime outside the table says "store a custom `command` lane" instead of printing the table. `unknown_runtime` and
   `no_inventory` mirror the runner's own gate and go with Phase 37. Phase 37 deletes `exec_formula` and its drift test once
-  the runner learns each formula. On a Claude Code host the aliases still run natively.
+  the runner learns each formula. *(amended 2026-11-16, 37 D-10: Python then reads the runner's `--describe` fact, recorded in the
+  runtimes snapshot and keyed by the template hash; `no_formula` stays only as the name of that recorded fact, `unknown_runtime`
+  and `no_inventory` stop refusing at routing)* On a Claude Code host the aliases still run natively.
 - **D-09: The referee rule is a rule inside Phase 35's guard.** Same scanner, baseline and non-vacuity convention (jev
   referee_rule_home choice 0.82). Outside tests, `.planning/`, `.aikit/` and the owner's config files, an unmarked
   `router-env/<x>` literal in a skill, rail template, default or doc fails; a marked example passes; in tests it stays
@@ -217,6 +222,9 @@ adapter's resume and stop paths and session-model fallback (Phase 41); jev choos
   Open for Phase 37: whether the runner's trigger for hosting reads the lane (a free lane the owner selected) or only
   availability, and whether the owner can switch hosting off; if a config key turns out to be needed, it is a 37 requirement
   that this phase's writer and validator then carry (a one-line amendment here).
+  *(amended 2026-11-16, 37 D-23: settled in Phase 37. The trigger is availability, never the lane; the owner switches hosting off with
+  `--host none` or the environment variable `AIKIT_HOST=none`; no config key is needed, so this phase's writer and validator carry nothing
+  new. The wizard's probe calls inherit `--host auto` from `runner_flags` and the written file stays identical.)*
 
 ### Handoffs to later phases
 
