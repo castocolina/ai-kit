@@ -50,11 +50,27 @@ choice/noul/score all `verified-live`; ~12 ms per call on the dGPU; idle unload 
 
 ## Calibration and its limit
 
-A confident Laya answer is not proven accurate: the 2026-10-23 calibration (32 cases) found 50% of its confident answers right (the eval object below; `accuracy_when_not_fallback` 0.5). Treat a confident answer as one input to your own check, never as a verdict. The running Laya version is the owner's; this skill measures it and never upgrades it.
+A confident Laya answer is not proven accurate: the 2026-11-15 calibration (32 cases) found 50% of its confident answers right (`## Calibration record (2026-11-15, ...)`). Treat a confident answer as one input to your own check, never as a verdict. The running Laya version is the owner's; this skill measures it and never upgrades it. How to run it: `reference.md`, `## Calibration how-to`.
 
 ## Laya's MCP server (not on the decision path)
 
 Laya's official MCP server stays outside jev's decision path: it would bypass the one-item-per-call rule, the size guard, the thresholds, the receipts and the answer log (decision of 2026-11-07, kept 2026-11-14). At most it is an operator's diagnostic tool; this skill never registers it.
+
+## Calibration record (2026-11-15, Laya fp:f46ef21b10a1)
+
+- Date: 2026-11-15.
+- Laya host: 127.0.0.1 (the default address; no `[jev] laya_url` set).
+- Version: not exposed by the server and not set in `[jev] laya_version`; fingerprint `f46ef21b10a1`.
+- Checkpoint revision: `english` 55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851.
+- n: 32 labelled cases.
+- Accuracy: 0.56.
+- Confident-answer accuracy (`accuracy_when_not_fallback`): 50%.
+- Fallback rate: 0.69 (22 of 32 answers fell back).
+- The row's `min_confidence`: 0.7.
+- Floor: `--calibrate` proposes a threshold only when it keeps at least 0.95 accuracy on at least max(10, 30% of n) cases; its proposal: null (no qualifying threshold).
+- `min_confidence` changed: no (0.7 kept).
+- No upgrade step: this is the version the owner runs at the configured address.
+- The raw run stayed in a scratch folder and is not kept.
 
 ## Laya eval object (live, 2026-10-23)
 

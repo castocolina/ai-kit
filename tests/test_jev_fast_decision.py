@@ -2450,6 +2450,35 @@ class TestDocs(unittest.TestCase):
         evidence = self.body.split("## Evidence", 1)[1]
         self.assertRegex(evidence, r"Laya calibration: \d{4}-\d{2}-\d{2}")
 
+    def test_doc_calibration_record(self):
+        # D-10 / SPEC R5: the dated record names what it measured, or why it did not run; after a
+        # run, SKILL.md's Evidence date and laya.md's limit sentence cite that record's date.
+        heading = re.search(r"^## Calibration record \((\d{4}-\d{2}-\d{2}).*$", self.laya_text,
+                            re.M)
+        if heading is None:
+            self.fail("backends/laya.md has no dated `## Calibration record (` heading")
+        date = heading.group(1)
+        # the whole heading line plus its newline: the limit sentence quotes the heading's start
+        record = _section(self.laya_text, heading.group(0) + "\n").lower()
+        if "not run" in heading.group(0) + record:
+            for text in (self.body, self.laya_text):
+                self.assertIn("2026-10-23", text)
+            return
+        for needle in ("confident", "version", "revision"):
+            self.assertIn(needle, record)
+        self.assertIn(f"Laya calibration: {date}", self.body.split("## Evidence", 1)[1])
+        limit = next(line for line in self.laya_text.splitlines()
+                     if "A confident Laya answer is not proven accurate" in line)
+        self.assertIn(date, limit)
+
+    def test_doc_spike_record(self):
+        # D-12 / SPEC R8: the shared-state spike is a dated record with its method and outcome.
+        spike = _section(self.reference_text, "## Shared-state spike (dated record)")
+        self.assertRegex(spike, r"\d{4}-\d{2}-\d{2}")
+        for needle in ("Method", "Merged", "Shared"):
+            self.assertIn(needle, spike)
+        self.assertTrue("Result" in spike or "Not run" in spike)
+
     def test_doc_skill_points_at_settings_and_records(self):
         # D-03 / D-07 / D-09: the first-run question and the record rule are pointers in SKILL.md.
         for needle in ("needs_answer", "config set <key> <value>", "## Settings", "record: new",
@@ -2787,6 +2816,22 @@ class TestEval(_ClientCase):
             self.assertEqual(case["backend"], "laya")
         self.assertAlmostEqual(report["fallback_rate"],
                                sum(case["needs_fallback"] for case in laya["cases"]) / 32)
+
+    def test_eval_record_carries_server_fields(self):
+        target = self.tmp / "calibration.json"
+        with JevStub() as stub:
+            self.point_at(stub)
+            self.enable("laya")
+            code, _report = self.run_eval("--record", str(target))
+        self.assertEqual(code, 0)
+        saved = json.loads(target.read_text(encoding="utf-8"))
+        self.assertEqual(set(saved["server"]),
+                         {"host", "url_source", "version", "version_source", "fingerprint",
+                          "revisions"})
+        self.assertEqual(saved["server"]["host"], "127.0.0.1")
+        self.assertEqual(saved["summary"]["n"], 32)
+        self.assertEqual(saved["min_confidence"], 0.7)
+        self.assertRegex(saved["recorded_at"], r"^\d{4}-\d{2}-\d{2}$")
 
     def test_eval_calibrate_none(self):
         self.assertIsNone(_eval().calibrate([{"top": 0.4, "correct": True}] * 30))

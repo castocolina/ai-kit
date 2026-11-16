@@ -9,7 +9,9 @@ with `--record PATH`, never inside the skill directory. `--calibrate PATH` reads
 results file, proposes each backend's threshold, and rewrites that backend's own
 `min_confidence` number in `scripts/jev_review.py` — located with `ast` inside the `TABLE`
 assignment, so another row's threshold can never change; a row that is not a dict literal, or
-that lacks or repeats the key, exits non-zero before anything is written.
+that lacks or repeats the key, exits non-zero before anything is written. `--record` also saves
+the answering row's server identity (version or fingerprint, checkpoint revisions), the metrics,
+the row's `min_confidence` and the date, which a calibration record needs (D-10).
 
 Every saved case carries the client's own `needs_fallback` flag and the answering `backend`
 beside `id`, `top`, `correct` and `ambiguous`, so a recorded `fallback_rate` can be re-derived
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import datetime
 import importlib.util
 import io
 import json
@@ -189,6 +192,17 @@ def _atomic_write(path: pathlib.Path, text: str) -> None:
         raise
 
 
+SERVER_KEYS = ("host", "url_source", "version", "version_source", "fingerprint", "revisions")
+
+
+def _server_fields(review, backend: str) -> dict:
+    """The answering row's server identity from `--probe` (D-10): what a calibration names."""
+    for entry in review.probe_report().get("backends", []):
+        if entry.get("name") == backend:
+            return {key: entry.get(key) for key in SERVER_KEYS}
+    return {}
+
+
 def _flag_value(name: str) -> str | None:
     if name in sys.argv:
         index = sys.argv.index(name)
@@ -252,12 +266,16 @@ def main() -> int:
     print(json.dumps(report, sort_keys=True))
     if record_path and report["backend"]:
         path = pathlib.Path(record_path)
-        existing = (json.loads(path.read_text(encoding="utf-8"))
-                    if path.exists() else {"results": []})
+        existing: dict = (json.loads(path.read_text(encoding="utf-8"))
+                          if path.exists() else {"results": []})
         path.parent.mkdir(parents=True, exist_ok=True)
         for backend in sorted({record["backend"] for record in records}):
             existing = merge_results(existing, backend, [record for record in records
                                                          if record["backend"] == backend])
+        existing["server"] = _server_fields(review, report["backend"])
+        existing["summary"] = report
+        existing["min_confidence"] = review.row_named(report["backend"])["min_confidence"]
+        existing["recorded_at"] = datetime.date.today().isoformat()
         _atomic_write(path, json.dumps(existing, sort_keys=True, indent=2) + "\n")
     return 0
 

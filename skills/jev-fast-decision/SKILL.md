@@ -60,4 +60,4 @@ When you design a new item shape, meet a new TypeSafe feature or model id, or a 
 
 ## Evidence
 
-- Laya calibration: 2026-10-23.
+- Laya calibration: 2026-11-15.
