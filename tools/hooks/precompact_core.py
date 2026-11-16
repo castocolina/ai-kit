@@ -20,6 +20,7 @@ by a parity test; the transcript format is undocumented and read defensively.
 import contextlib
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -112,17 +113,62 @@ def find_client(env):
     return None
 
 
-def client_env(parent, backend, timeout_s, config_home):
+_CONFIG_MODULES = {}
+
+
+def _config_module(client):
+    """The client's own jev_config.py (next to jev_review.py), loaded by path and cached; None
+    when that copy is absent (an old install) or fails to load."""
+    path = os.path.join(os.path.dirname(client), "jev_config.py")
+    if path not in _CONFIG_MODULES:
+        module = None
+        try:
+            spec = importlib.util.spec_from_file_location("_hook_jev_config", path)
+            if spec is not None and spec.loader is not None:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+        except Exception:  # pylint: disable=broad-exception-caught
+            module = None  # any failure at import time: an unusable reader, as for an old install
+        _CONFIG_MODULES[path] = module
+    return _CONFIG_MODULES[path]
+
+
+def knob_off(parent):
+    """True when the [jev] knob, read from the real project and user layers of the parent env,
+    is off (34 CR-201). The scrubbed child cannot see the user config.toml, so the parent resolves
+    it. False when the session switch is set (the child gets it as is) or the reader is missing or
+    cannot load: the child then keeps its own knob, as it does for an old install. True when a
+    loaded reader fails on the files (RecursionError on a deeply nested file included): the child
+    cannot see the user file, so a failure there fails closed like the client's own (WR-601)."""
+    if parent.get("GSD_PATH_JEV", "").strip():
+        return False
+    try:
+        client = find_client(parent)
+        module = _config_module(client) if client else None
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+    if module is None:
+        return False
+    try:
+        return not module.knob(os.getcwd(), parent)["on"]
+    except Exception:  # pylint: disable=broad-exception-caught
+        return True
+
+
+def client_env(parent, backend, timeout_s, config_home, off=None):
     """A scrubbed child env: no inherited JEV_*/GSD_PATH_JEV* (above all the session
     consent variable), except the user's own GSD_PATH_JEV session switch, forwarded only when
     set and non-empty (34 D-01); a two-decimal timeout, the caller label and a config home that
-    is never created, so no recorded consent can apply to these calls. The knob otherwise comes
-    from the project layer only, since XDG_CONFIG_HOME points at a folder that is never created."""
+    is never created, so no recorded consent can apply to these calls. Because that folder hides
+    the user config.toml, the parent resolves the knob (project over user) and forwards only the
+    off switch as GSD_PATH_JEV=0 (34 CR-201); no consent record or laya_url reaches the child."""
     env = {key: value for key, value in parent.items()
            if not (key.startswith("JEV_") or key.startswith("GSD_PATH_JEV"))}
     session = parent.get("GSD_PATH_JEV", "")
     if session.strip():
         env["GSD_PATH_JEV"] = session
+    elif knob_off(parent) if off is None else off:  # `off`: the run's one earlier resolution
+        env["GSD_PATH_JEV"] = "0"
     env["GSD_PATH_JEV_TIMEOUT_SECONDS"] = f"{timeout_s:.2f}"
     env["GSD_PATH_JEV_DEADLINE_SECONDS"] = f"{timeout_s:.2f}"
     env["JEV_CALLER"] = CALLER
@@ -161,12 +207,12 @@ def run_probe(client, env, timeout):
     return report if isinstance(report, dict) else None
 
 
-def probe_backend(client, env, deadline, config_home):
+def probe_backend(client, env, deadline, config_home, off=None):
     """One scrubbed ``--probe`` run inside the remaining budget; parsed report or None."""
     remaining = deadline - _monotonic()
     if remaining <= 0:
         return None
-    child_env = client_env(env, None, min(remaining, PROBE_CAP_SECONDS), config_home)
+    child_env = client_env(env, None, min(remaining, PROBE_CAP_SECONDS), config_home, off)
     return run_probe(client, child_env, min(PROBE_CAP_SECONDS, remaining))
 
 
@@ -232,7 +278,7 @@ def classify_all(chunks, client, backend, ctx):
         if remaining < 0.01:
             break
         env = client_env(ctx["parent"], backend, min(PER_CALL_CAP_SECONDS, remaining),
-                         ctx["config_home"])
+                         ctx["config_home"], ctx.get("off"))
         labels[index] = classify_chunk(client, env, f"c{index:04d}", chunks[index],
                                        ctx["head"])
     return labels
@@ -751,12 +797,13 @@ def presummarize(messages, meta, env):
     if client is None:
         return None
     deadline = meta["started"] + CLASSIFY_SECONDS
-    report = probe_backend(client, env, deadline, meta["config_home"])
+    off = knob_off(env)  # resolved once for the run, passed to every client_env
+    report = probe_backend(client, env, deadline, meta["config_home"], off)
     backend = pick_local_backend(report)
     if backend is None:
         return None
     ctx = {"head": hashlib.sha1(meta["session_id"].encode("utf-8")).hexdigest(),
-           "deadline": deadline, "parent": env, "config_home": meta["config_home"]}
+           "deadline": deadline, "parent": env, "config_home": meta["config_home"], "off": off}
     labels = classify_all(chunks, client, backend, ctx)
     return build_document(meta, chunks, labels)
 

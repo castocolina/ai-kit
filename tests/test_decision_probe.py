@@ -38,7 +38,8 @@ class DecisionProbeTests(unittest.TestCase):
         env["STUB_PROBE"] = mode
         return subprocess.run([sys.executable, "-S", str(script)], input=json.dumps(
             payload or {"hook_event_name": "SessionStart", "source": "startup"}),
-            text=True, capture_output=True, env=env, timeout=8, check=False)
+            # A scratch cwd, never the repo's own .aikit/config.toml (WR-502).
+            text=True, capture_output=True, env=env, timeout=8, check=False, cwd=self.base)
 
     def test_probe_tracer_names_laya(self):
         proc = self.run_probe()
@@ -77,7 +78,7 @@ class DecisionProbeTests(unittest.TestCase):
         env.pop("AI_KIT_PRECOMPACT_CLIENT")
         proc = subprocess.run([sys.executable, "-S", str(install_hooks / SCRIPT.name)],
                               input='{"source":"startup"}', text=True, capture_output=True,
-                              env=env, timeout=5, check=False)
+                              env=env, timeout=5, check=False, cwd=self.base)
         self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "{}", ""))
 
     def copy_probe_away(self):
@@ -90,7 +91,8 @@ class DecisionProbeTests(unittest.TestCase):
 
     def run_copied(self, script, env):
         return subprocess.run([sys.executable, "-S", str(script)], input="", text=True,
-                              capture_output=True, env=env, timeout=8, check=False)
+                              capture_output=True, env=env, timeout=8, check=False,
+                              cwd=self.base)
 
     def test_copied_probe_jev_absent_everywhere_gives_empty(self):
         script = self.copy_probe_away()

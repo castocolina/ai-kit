@@ -74,7 +74,9 @@ class HookCaseMixin(unittest.TestCase):
         return subprocess.run(
             [sys.executable, "-S", str(HOOK_PATH)],
             input=data, capture_output=True, check=False, env=env, timeout=60,
-            text=not isinstance(data, bytes))
+            text=not isinstance(data, bytes),
+            # A scratch cwd: never the repo's own .aikit/config.toml (WR-502).
+            cwd=env["HOME"] if os.path.isdir(env.get("HOME", "")) else None)
 
     def compact_dir(self, env):
         return os.path.join(env["XDG_RUNTIME_DIR"], "ai-kit", "compact")

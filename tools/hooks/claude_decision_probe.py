@@ -53,7 +53,7 @@ def main():
     """Drain the host payload, run the shared bounded probe, then emit or fail open."""
     _drain_stdin()
     core = importlib.import_module("precompact_core")
-    # Parent env: the scrubbed copy points XDG_CONFIG_HOME at a directory that is never created.
+    # Parent env: client_env resolves the jev knob here and forwards only an off switch.
     client = core.find_client(os.environ)
     if client is None:
         emit(None)

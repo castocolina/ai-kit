@@ -1926,6 +1926,11 @@ _BROAD_EXCEPT_BACKSTOPS = frozenset(
         # (queue-checkout) the post-checkout seed hook is arbitrary code; its failure only logs,
         # and the outer detach suppresses everything, so a git worktree add never fails (30-01).
         ("skills/ai-kit-commit-fold/scripts/flow_index.py", "_queue_checkout"),
+        # (hook knob) the project config can come from a cloned repo: any failure of loading or
+        # running the client's own reader (RecursionError included) means an unusable reader,
+        # so the child keeps its own knob instead of the hook parent crashing (34 IN-502).
+        ("tools/hooks/precompact_core.py", "_config_module"),
+        ("tools/hooks/precompact_core.py", "knob_off"),
     }
 )
 

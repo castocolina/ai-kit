@@ -44,7 +44,18 @@ _COUNTS_RE = re.compile(r"chunks: (\d+) total, (\d+) classified, keep (\d+), "
 
 
 class CoreEnvMixin(unittest.TestCase):
-    """A scratch env: every base under a fresh temp dir, the stub as the client."""
+    """A scratch env: every base under a fresh temp dir, the stub as the client.
+
+    The cwd is a scratch dir too, so neither the hook parent nor the client child it spawns
+    reads the repo's own `.aikit/config.toml` (the runner's cwd is the repo root)."""
+
+    def setUp(self):
+        super().setUp()
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        previous = os.getcwd()
+        os.chdir(scratch)
+        self.addCleanup(os.chdir, previous)
 
     def make_env(self, tmp=None, **extra):
         base = tmp or tempfile.mkdtemp()
@@ -650,6 +661,55 @@ class TestRealClientContract(FrozenClockMixin, unittest.TestCase):
             self.assertNotIn("unclassified 1", document.splitlines()[3])
             self.assertIn("summarize 1", document.splitlines()[3])
 
+    def test_process_cwd_project_layer_is_ignored(self):
+        """WR-502: every test runs in a scratch cwd, never the repo root whose own
+        .aikit/config.toml (enabled = false, say) would turn the hook off."""
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.assertNotEqual(os.path.realpath(os.getcwd()), os.path.realpath(repo_root))
+        self.assertTrue(os.path.realpath(os.getcwd()).startswith(
+            os.path.realpath(tempfile.gettempdir())))
+        with JevStub(top=0.9) as stub:
+            base = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+            env = self.real_env(base, AI_KIT_LAYA_URL=stub.url)
+            self.assertIsNotNone(
+                core.presummarize(self.five_chunks(), self.make_meta(env=env), env))
+            self.assertTrue(stub.posts)
+
+    def test_knob_is_resolved_once_per_run(self):
+        """IN-502: one knob read for the probe and every chunk, not one per spawn."""
+        calls = []
+
+        def knob(_cwd, _env):
+            calls.append(1)
+            return {"on": True}
+
+        fake = mock.Mock(knob=knob)
+        with JevStub(top=0.9) as stub, mock.patch.object(core, "_config_module",
+                                                         return_value=fake):
+            base = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+            env = self.real_env(base, AI_KIT_LAYA_URL=stub.url)
+            self.assertIsNotNone(
+                core.presummarize(self.five_chunks(), self.make_meta(env=env), env))
+        self.assertEqual(len(calls), 1)
+
+    def test_reader_failures_never_raise_out_of_the_hook_parent(self):
+        """IN-502 / WR-601: a loaded reader that fails on the files (RecursionError from a deeply
+        nested file) fails closed, since the child cannot see the user file; a reader that raises
+        at import is an unusable reader (fail open, as for an old install). Neither raises."""
+        base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        env = self.real_env(base)
+        boom = mock.Mock(knob=mock.Mock(side_effect=RecursionError("deep")))
+        with mock.patch.object(core, "_config_module", return_value=boom):
+            self.assertTrue(core.knob_off(env))
+        with mock.patch.object(core, "_config_module", return_value=None):
+            self.assertFalse(core.knob_off(env))
+        with open(os.path.join(base, "jev_config.py"), "w", encoding="utf-8") as handle:
+            handle.write('raise RuntimeError("broken copy")\n')
+        self.assertIsNone(core._config_module(os.path.join(base, "jev_review.py")))
+
     def test_session_switch_off_turns_the_hook_off(self):
         with JevStub(top=0.9) as stub:
             base = tempfile.mkdtemp()
@@ -668,6 +728,30 @@ class TestRealClientContract(FrozenClockMixin, unittest.TestCase):
         self.assertNotIn("JEV_BACKEND", env)
         bare = core.client_env({"HOME": "/h"}, None, 1.0, "/never")
         self.assertNotIn("GSD_PATH_JEV", bare)
+
+    def test_user_config_knob_off_reaches_the_hook_child(self):
+        """CR-201: a user [jev] enabled = false (no project file) becomes GSD_PATH_JEV=0 in the
+        hook child; an exported GSD_PATH_JEV=1 still wins; consent and URL stay hidden."""
+        base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        env = self.real_env(base, JEV_ALLOW_REMOTE="1")
+        user_dir = os.path.join(env["XDG_CONFIG_HOME"], "ai-kit")
+        os.makedirs(user_dir)
+        with open(os.path.join(user_dir, "config.toml"), "w", encoding="utf-8") as handle:
+            handle.write('[jev]\nenabled = false\nlaya_url = "http://127.0.0.1:9"\n')
+        project = os.path.join(base, "proj")
+        os.makedirs(project)
+        previous = os.getcwd()
+        os.chdir(project)
+        self.addCleanup(os.chdir, previous)
+        child = core.client_env(env, None, 1.0, "/never")
+        self.assertEqual(child.get("GSD_PATH_JEV"), "0")
+        self.assertNotIn("JEV_ALLOW_REMOTE", child)
+        self.assertNotIn("JEV_LAYA_URL", child)
+        on = core.client_env({**env, "GSD_PATH_JEV": "1"}, None, 1.0, "/never")
+        self.assertEqual(on["GSD_PATH_JEV"], "1")
+        os.remove(os.path.join(user_dir, "config.toml"))
+        self.assertNotIn("GSD_PATH_JEV", core.client_env(env, None, 1.0, "/never"))
 
     def test_loopback_remote_configured_zero_requests(self):
         """Remote configured, consent recorded, allow flag set: a core run through the
