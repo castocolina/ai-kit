@@ -189,7 +189,8 @@ runtime, RUN-15), recorded in the run's request notes; owner-directed, so decide
      codes are a closed list with a locking test: `no_form` (the runtime has no flag or id form for it), `id_carries` (the
      model id already holds it and wins), `unverified_form` (a form is known but unverified and is not fed), `mode_forbids`
      (the role's confinement forbids it, for example a session resume in codex review), `no_slot` (a custom command has no
-     placeholder for it), `recorded_only` (escalation flags), `no_provider_form`. The last stderr line gains `session=<id|->`
+     placeholder for it), `recorded_only` (escalation flags), `no_provider_form` *(amended 2026-11-16, 38.1 D-30: and `bad_value`,
+     a context label outside the form's value kind)*. The last stderr line gains `session=<id|->`
      and the name lists `applied=`, `ignored=`, `unknown=` (comma lists, `-` when empty) beside the existing fields;
      `--print-argv` prints the same report. A setting the call does not name is not reported (except `model` and `role`).
      A runtime that takes no model flag, or no effort, is never fed one.
@@ -200,6 +201,19 @@ runtime, RUN-15), recorded in the run's request notes; owner-directed, so decide
      `parse_status_line` and `_trailer_counts` unchanged.
    - *Amended 2026-11-16 (37 D-28, R12):* a ninth setting name `host` (applied, or ignored with `no_herdr` or `host_failed`) and
      two reasons join the closed list; the status line and its group are unchanged.
+   - *Amended 2026-11-16 (38.1 D-17, D-30, owner directive HOST SETTINGS FORMS):* the per-host context forms are recorded with
+     labels, checked live (claude 2.1.325, codex 0.169.0, copilot 1.0.112, cursor-agent 2026.11.13, opencode 2.3.0, pi 1.5.2,
+     grok 1.0.52, 2026-11-16): copilot `--context <tier>` (`default` or `long_context`, verified from its help; the earlier
+     "unknown" is stale), codex `-c model_context_window=<integer tokens>` (key verified by the config parser, effect on a model's
+     window unverified), cursor's bracket `context=` key (verified help example, per-model meaning unverified), claude none in its
+     help (`--autocompact` is the auto-compact window, not the context size; the `[1m]` suffix stays unverified), opencode, pi and
+     grok none. A context label outside a form's value kind is `ignored` with `bad_value`. Every flag a row's effort, session or
+     context form uses must appear in that host's recorded help (`tests/fixtures/cli_help/<host>.txt` with version and date for
+     claude, codex, cursor-agent, copilot, opencode, pi and grok); Phase 35's opencode-only help-fixture test is extended to
+     every host, a planted stale flag and a host with no recorded help both fail it. This phase's plan executes it (it adds the row
+     fields and `--describe`); the forms record how to pass a setting, never what a model supports.
+     Acceptance: the help-fixture test over every host; a stale flag, a missing record and an out-of-kind label each fail;
+     `--print-argv` shows copilot's and codex's context forms applied and a cursor bracket merge as before.
 
 3. **Effort in each runtime's own form, decided in the runner, no closed level sets (RUN-01; takes Phase 36's handoff)**.
    - Current: codex takes `--codex-effort` against a closed set (`minimal` to `xhigh`, so a listed `max` or `ultra` is
@@ -492,6 +506,8 @@ runtime, RUN-15), recorded in the run's request notes; owner-directed, so decide
 - [ ] A call names role, effort, context, escalation flags and session id with plain flags; the Python layer emits them for every
       runtime and conflicts are usage errors (R1).
 - [ ] Every named setting prints applied, ignored with a closed-list reason, or unknown, and the status line carries the lists (R2).
+- [ ] *(added 2026-11-16, 38.1 D-30)* Every host's effort, session and context forms are checked against its recorded help with a
+      source label, and a stale flag, a missing record or an out-of-kind context label fails a test (R2).
 - [ ] Effort is composed in the runner in each runtime's form, with no closed level set and an id-carried value winning (R3).
 - [ ] An unknown runtime runs from a declared argv file and is refused for a named fact without one; no parse gate cites a table (R4).
 - [ ] The model id floor refuses a dash, whitespace and control characters and nothing else; unusual shapes print an advisory (R5).
@@ -642,6 +658,7 @@ diff.
 | 1 | Boundary Keeper | Does the runner learn claude's execute formula now? | add_formula_unverified_label, typesafe 0.89 (laya low 0.51 agrees) | Yes, labeled unverified until a live probe (R6) |
 | 1 | Simplifier | A provider flag? | laya provider_flag low 0.63; typesafe derive_and_report low 0.57 | **Own reasoning:** no flag; the provider is the id prefix where the id form has one, reported as a setting (R1, R2, ledger) |
 | 1 | Researcher | What gives the Python layer the runner's formulas without a mirror? | none | `--describe` recorded in the runtimes snapshot at detection and read by routing; the mirrors and the drift test go (R9) |
+| 2026-11-16 amendment | Researcher | What do the hosts' own helps say about a context size, and which phase records the forms? | none; live `--help` of seven hosts and a zero-token codex config parse (Phase 38.1) | **Own reasoning:** per-host context forms with labels and the all-host help-fixture test, executed by this phase's plan (R2 amendment, 38.1 D-17, D-30, ledger) |
 | 1 | Researcher | Why does RUN-06 need a new test when `check_dogfood.py` exists? | none | The live check reads `.planning/`; a unit test must not, so it renders into a scratch project and compares (R8) |
 | 2 (re-run 2, 2026-11-16) | Boundary Keeper | Where does optional multiplexer hosting of a lane live? | inside_runner_transport, typesafe 0.89 (laya none_of_these low 0.51) | Inside the runner as one optional transport (R12, D-22) |
 | 2 | Simplifier | What triggers hosting? | availability_with_flag, typesafe 0.89 (laya always_when_available low 0.39) | `--host auto\|none`, runner default none, builders emit auto (R12, D-23) |
