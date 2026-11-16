@@ -114,11 +114,15 @@ def find_client(env):
 
 def client_env(parent, backend, timeout_s, config_home):
     """A scrubbed child env: no inherited JEV_*/GSD_PATH_JEV* (above all the session
-    consent variable), the kill switch, a two-decimal timeout, the caller label and a
-    config home that is never created, so no recorded consent can apply to these calls."""
+    consent variable), except the user's own GSD_PATH_JEV session switch, forwarded only when
+    set and non-empty (34 D-01); a two-decimal timeout, the caller label and a config home that
+    is never created, so no recorded consent can apply to these calls. The knob otherwise comes
+    from the project layer only, since XDG_CONFIG_HOME points at a folder that is never created."""
     env = {key: value for key, value in parent.items()
            if not (key.startswith("JEV_") or key.startswith("GSD_PATH_JEV"))}
-    env["GSD_PATH_JEV"] = "1"
+    session = parent.get("GSD_PATH_JEV", "")
+    if session.strip():
+        env["GSD_PATH_JEV"] = session
     env["GSD_PATH_JEV_TIMEOUT_SECONDS"] = f"{timeout_s:.2f}"
     env["GSD_PATH_JEV_DEADLINE_SECONDS"] = f"{timeout_s:.2f}"
     env["JEV_CALLER"] = CALLER

@@ -172,7 +172,7 @@ class TestTracerPrecompactThenInject(HookCaseMixin, unittest.TestCase):
         for call in calls[1:]:
             self.assertEqual(call["env"].get("JEV_BACKEND"), "laya")
         for call in calls:
-            self.assertEqual(call["env"].get("GSD_PATH_JEV"), "1")
+            self.assertNotIn("GSD_PATH_JEV", call["env"])  # no forced switch: the client decides
             self.assertEqual(call["env"].get("JEV_CALLER"), "ai-kit-precompact")
             self.assertNotIn("JEV_ALLOW_REMOTE", call["env"])
             self.assertTrue(call["env"].get("XDG_CONFIG_HOME", "").endswith(".no-config"))

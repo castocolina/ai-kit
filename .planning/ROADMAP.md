@@ -644,7 +644,7 @@ Plans:
   8. A new TypeSafe model id or unknown feature triggers one fetch of the official skill's doc flow and a record of what changed and which jev features it could serve (JEV-12). *(added 2026-11-14)*
   9. A guard test keeps Zen out of the skill and fails on any step that delegates Laya's or the official skill's install or upgrade to another repository (JEV-13). *(added 2026-11-14)*
 
-**Plans**: 3/10 plans executed in 8 waves *(revised 2026-11-15 per cross-AI review cycle 2: 34-08 waits for 34-07, whose skill text its guard scans and may reword)*
+**Plans**: 5/10 plans executed in 8 waves *(revised 2026-11-15 per cross-AI review cycle 2: 34-08 waits for 34-07, whose skill text its guard scans and may reword)*
 
 Plans:
 **Wave 1**
@@ -655,8 +655,8 @@ Plans:
 - [x] 34-03-PLAN.md — jev_learn.py: Laya version, fingerprint with idle reuse, version-keyed records, fetch-once notes (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 34-04-PLAN.md — the [jev] enabled knob with GSD_PATH_JEV as a session override; callers stop forcing it (wave 3)
-- [ ] 34-05-PLAN.md — jev_learn.py: TypeSafe model-id notes and the once-per-id doc flow (wave 3)
+- [x] 34-04-PLAN.md — the [jev] enabled knob with GSD_PATH_JEV as a session override; callers stop forcing it (wave 3)
+- [x] 34-05-PLAN.md — jev_learn.py: TypeSafe model-id notes and the once-per-id doc flow (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 34-06-PLAN.md — wire learning into --probe, the answer-path model note and --check-updates (wave 4)
@@ -1061,7 +1061,7 @@ Plans:
 | 32.4. Batch 4, planning skills and the closing report | 9/9 | Complete    | 2026-11-13 |
 | 32.5. codebase-memory-mcp replaces codegraph | 10/10 | Complete    | 2026-11-14 |
 | 33. One config design | 12/12 | Complete    | 2026-11-15 |
-| 34. jev backends by host and Laya calibration | 3/10 | In Progress | - |
+| 34. jev backends by host and Laya calibration | 5/10 | In Progress | - |
 | 35. Model discovery and catalog | 0/TBD | Not started | - |
 | 36. spec-config as the hub | 0/TBD | Not started | - |
 | 37. Shared runner options and session ids | 0/TBD | Not started | - |

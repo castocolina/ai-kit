@@ -78,6 +78,26 @@ def _cwd():
     return os.getcwd()
 
 
+def _knob():
+    """Whether jev runs this call: GSD_PATH_JEV, then [jev] enabled, then on (D-01)."""
+    return _CONFIG.knob(_cwd(), os.environ)
+
+
+_ENABLED_NOTICE = ("jev is on by default; ask the user once, then save the answer with: "
+                   "jev_review.py config set enabled true|false")
+
+
+def _settings(knob):
+    """The knob's state as the probe reports it: the switch, where it came from, any problem,
+    and the one-time notice while the user has not answered."""
+    settings = {"enabled": knob["on"], "enabled_source": knob["source"]}
+    if knob["problem"]:
+        settings["problem"] = knob["problem"]
+    if knob["needs_answer"]:
+        settings["notice"] = _ENABLED_NOTICE
+    return settings
+
+
 LAYA_DEFAULT_URL = "http://127.0.0.1:8010"
 SYSTEMONE_PATH = "/v1/systemone"
 USER_AGENT = "jev-fast-decision/2.0"
@@ -91,7 +111,6 @@ _UNAUTHORIZED_CODES = (401, 403)
 _TYPESAFE_CALLER_CODES = (400, 404, 413, 422)  # a 402 here is billing, so it is not a caller bug
 _WORLD_READABLE = 0o077  # the state-file key is unusable when group or other can read it
 _FORCED_FLAG = "forced_fallback"  # internal: popped in _finalize, never in the output
-_KILL_SWITCH = "GSD_PATH_JEV"
 _NOT_SENT = "not_sent"  # a _DeadlineHit raised before any socket: its body never left
 _READ_CHUNK = 65536
 
@@ -1364,6 +1383,9 @@ def probe_report():
 
     One probe per row (one socket at most): the ladder order `JEV_BACKEND` would run in is
     read from those results, never from a second `_selection()` pass."""
+    knob = _knob()
+    if not knob["on"]:
+        return {"status": "disabled", "settings": _settings(knob), "needs_answer": []}
     choice = _backend_choice()
     usable, unavailable, entries = _probe_reasons(TABLE)
     questions = _probe_fields(entries)
@@ -1377,7 +1399,10 @@ def probe_report():
               "candidates": candidates, "unavailable": unavailable,
               "backends": entries}
     report["leftover"] = leftover_entries()
+    if knob["needs_answer"]:
+        questions.append("enabled")
     report["needs_answer"] = sorted(set(questions))
+    report["settings"] = _settings(knob)
     if candidates:
         return report
     consent = _consent_result(choice, unavailable, [], {})
@@ -1511,14 +1536,14 @@ def _capped_nap(seconds, deadline):
 def _send(row, body, timeout, deadline=None):
     """POST one request body to this row's endpoint: (parsed response, encoded body).
 
-    Raises before any socket when the kill switch is off, when this row's URL is refused, or
-    when a remote row has no consent yet (D-17); the consent check and every later gate run
-    before the socket opens (SPEC R6 ordering edge). The exchange runs under the deadline
+    Raises before any socket when jev is switched off (the knob, D-01), when this row's URL is
+    refused, or when a remote row has no consent yet (D-17); the consent check and every later
+    gate run before the socket opens (SPEC R6 ordering edge). The exchange runs under the deadline
     watchdog, and a fired watchdog makes this request's outcome the deadline outcome no
     matter what the exchange then raised or returned — a shutdown mid-headers can parse as
     a short 200 (review cycle 3).
     """
-    if os.environ.get(_KILL_SWITCH) != "1":
+    if not _knob()["on"]:
         raise PermissionError("disabled")
     if not _remote_allowed(row):
         raise PermissionError("consent_required_for_remote")
@@ -2038,11 +2063,11 @@ def _no_rung_result(choice, run):
 
 
 def screen(skip_local=False):
-    """Kill switch, stdin, validation, selection, ladder: the advisory result (never a gate).
+    """Knob, stdin, validation, selection, ladder: the advisory result (never a gate).
 
     Every item that reached dispatch appends its line to the answer log on the way out —
     refused or not — and a log failure never changes the answer or the exit code (D-19)."""
-    if os.environ.get(_KILL_SWITCH) != "1":
+    if not _knob()["on"]:
         return {"status": "disabled"}
     checked = _preflight()
     if checked.stopped is not None:

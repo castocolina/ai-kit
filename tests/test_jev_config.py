@@ -7,6 +7,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -18,9 +19,12 @@ from unittest import mock
 from tests.test_jev_fast_decision import (
     JR,
     REMOTE_HOST,
+    SCRIPT,
     JevStub,
     _ClientCase,
+    choice_item_ladder,
     closed_port_url,
+    jev_ladder,
     noul_item,
     payload,
 )
@@ -273,6 +277,96 @@ class TestClientSettings(_ClientCase):
             _code, report = self.run_probe()
         self.assertTrue(self.backend_entry(report, "laya")["usable"])
 
+    def test_knob_off_in_config_disables_probe_and_screen(self):
+        self.write_user_config("[jev]\nenabled = false\n")
+        os.environ["GSD_PATH_JEV_TIMEOUT_SECONDS"] = "5"  # no GSD_PATH_JEV: the config decides
+        with JevStub() as stub:
+            self.point_at(stub)
+            code, report = self.run_probe()
+            self.assertEqual(code, 0)
+            self.assertEqual(report["status"], "disabled")
+            self.assertEqual(report["settings"], {"enabled": False, "enabled_source": "config"})
+
+            class _NoStdin:
+                def read(self, *_ignored):
+                    raise AssertionError("stdin was read with jev switched off")
+
+            with mock.patch.object(sys, "stdin", _NoStdin()):
+                self.assertEqual(JR.screen(), {"status": "disabled"})
+            self.assert_no_posts(stub)
+
+    def test_session_switch_wins_both_ways(self):
+        # GSD_PATH_JEV beats [jev] enabled: 1 runs jev against a false config, 0 stops it.
+        self.write_user_config("[jev]\nenabled = false\n")
+        with JevStub() as stub:
+            self.point_at(stub)
+            os.environ["GSD_PATH_JEV"] = "1"
+            code, report = self.run_probe()
+            self.assertEqual((code, report["status"]), (0, "ok"))
+            self.assertEqual(report["settings"],
+                             {"enabled": True, "enabled_source": "env:GSD_PATH_JEV"})
+            self.write_user_config("[jev]\nenabled = true\n")
+            os.environ["GSD_PATH_JEV"] = "0"
+            code, report = self.run_probe()
+            self.assertEqual((code, report["status"]), (0, "disabled"))
+            self.assert_no_posts(stub)
+
+    def test_knob_absent_is_on_and_asked_once(self):
+        os.environ.pop("GSD_PATH_JEV", None)
+        with JevStub() as stub:
+            self.point_at(stub)
+            code, report = self.run_probe()
+            self.assertEqual((code, report["status"]), (0, "ok"))
+            self.assertEqual(report["settings"]["enabled_source"], "default")
+            self.assertIn("notice", report["settings"])
+            self.assertIn("enabled", report["needs_answer"])
+            code, saved = self.run_cli(["config", "set", "enabled", "true"])
+            self.assertEqual((code, saved["ok"]), (0, True))
+            _code, report = self.run_probe()
+            self.assertEqual(report["settings"]["enabled_source"], "config")
+            self.assertNotIn("notice", report["settings"])
+            self.assertNotIn("enabled", report["needs_answer"])
+
+    def test_project_knob_wins_over_user(self):
+        project_config = self.tmp / "proj" / ".aikit" / "config.toml"  # the _cwd project layer
+        project_config.parent.mkdir(parents=True)
+        project_config.write_text("[jev]\nenabled = false\n", encoding="utf-8")
+        self.write_user_config("[jev]\nenabled = true\n")
+        code, report = self.run_probe()
+        self.assertEqual((code, report["status"]), (0, "disabled"))
+        self.assertEqual(report["settings"], {"enabled": False, "enabled_source": "config"})
+
+    def test_broken_config_fails_closed_with_a_reason(self):
+        self.write_user_config("[jev\n")
+        _code, report = self.run_probe()
+        self.assertEqual(report["status"], "disabled")
+        self.assertTrue(report["settings"]["problem"].startswith("config_error"))
+        with JevStub() as stub:
+            self.point_at(stub)
+            os.environ["GSD_PATH_JEV"] = "1"  # the session switch still runs jev for this session
+            code, report = self.run_probe()
+        self.assertEqual((code, report["status"]), (0, "ok"))
+
+    def test_ladder_knob_off_is_own_reasoning(self):
+        self.write_user_config("[jev]\nenabled = false\n")
+        os.environ.pop("GSD_PATH_JEV", None)
+        previous = os.getcwd()
+        os.chdir(self.tmp / "proj")  # the client's project layer is read from its cwd
+        self.addCleanup(os.chdir, previous)
+        seams = jev_ladder.Seams(env=dict(os.environ), run=subprocess.run)
+        result = jev_ladder.run_ladder(seams, str(SCRIPT), [choice_item_ladder("low1")])
+        self.assertEqual(result["client_status"], "disabled")
+        row = result["items"]["low1"]
+        self.assertEqual(row["decided_by"], "own_reasoning")
+        # ai-kit-commit-fold's fold_group.ask_jev reads row[row["decided_by"]]["choice"]: with no
+        # own_reasoning column it gets (None, "no answer"), so no choice may sit there.
+        self.assertNotIn("choice", row.get("own_reasoning") or {})
+        # ai-kit-spec-goal-prompt's gp_host._jev_reading reads only detect's backends: {} gives
+        # "no usable backend", so the status and the empty backends are both pinned here.
+        detected = jev_ladder.detect(seams, str(SCRIPT))
+        self.assertEqual(detected["status"], "disabled")
+        self.assertEqual(detected["backends"], {})
+
     def send_refusal(self, name):
         """The message of the PermissionError `_send` raises for this row; no socket may open."""
         self.enable(None)
@@ -328,19 +422,19 @@ class TestClientSettings(_ClientCase):
             self.assertEqual(code, 0)
             _code, report = self.run_probe()
         self.assertEqual(self.backend_entry(report, "laya")["url_source"], "config")
-        self.assertEqual(report["needs_answer"], [])
+        self.assertEqual(report["needs_answer"], ["enabled"])  # the knob is still unanswered
 
     def test_first_run_question_answered_and_declined(self):
         closed = closed_port_url()
         with mock.patch.object(JR, "LAYA_DEFAULT_URL", closed):
             _code, report = self.run_probe()
-            self.assertEqual(report["needs_answer"], ["laya_url"])
+            self.assertEqual(report["needs_answer"], ["enabled", "laya_url"])
             self.assertEqual(self.backend_entry(report, "laya")["url_source"], "default")
             code, _saved = self.run_cli(["config", "set", "laya_url", ""])
             self.assertEqual(code, 0)
             _code, report = self.run_probe()
         self.assertEqual(self.backend_entry(report, "laya")["reason"], "laya_declined")
-        self.assertEqual(report["needs_answer"], [])
+        self.assertEqual(report["needs_answer"], ["enabled"])
         os.environ["TYPESAFE_API_KEY"] = "typesafe-key"
         os.environ["JEV_ALLOW_REMOTE"] = "1"
         with JevStub() as stub:

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Score labelled cases through screen(). Stdlib only.
 
-One `screen()` call per case in `evals/cases.jsonl` (the kill switch applies: with
-`GSD_PATH_JEV` unset the script prints the disabled result and sends nothing). Metrics print
+One `screen()` call per case in `evals/cases.jsonl` (the jev knob applies: with jev switched off,
+by `GSD_PATH_JEV=0` or `[jev] enabled = false` and no session override, the script prints the
+disabled result and sends nothing). Metrics print
 only when all 32 cases came back `ok`; results are written only to the explicit path given
 with `--record PATH`, never inside the skill directory. `--calibrate PATH` reads a recorded
 results file, proposes each backend's threshold, and rewrites that backend's own

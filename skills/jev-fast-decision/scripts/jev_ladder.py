@@ -46,6 +46,7 @@ ZERO_HEAD = "0" * 40
 CLIENT_PROTOCOL_RE = re.compile(r"^CLIENT_PROTOCOL = 2$", re.M)
 # The client's control variables: a parent-shell value must never widen the child's gate (D-09).
 # Key and URL variables pass through untouched, so each key reaches only its own backend's row.
+# GSD_PATH_JEV is the one exception: the user's own session switch is forwarded as set (34 D-01).
 _CONTROL_NAMES = {"JEV_BACKEND", "JEV_ALLOW_REMOTE", "JEV_MIN_CONFIDENCE"}
 _CONTROL_PREFIXES = ("GSD_PATH_JEV",)
 
@@ -87,7 +88,7 @@ _STATUS_CODES = frozenset({"ok", "unavailable", "disabled", "no_consent", "unusa
                            "client_timeout", "client_not_runnable", "client_bad_output"})
 # The client's own label for "this row reads its key from here" (jev_review._first_key).
 _KEY_SOURCES = frozenset({"env", "file", "missing_file", "world_readable", "empty_file",
-                          "missing_api_key", "non_loopback_url", "insecure_url"})
+                          "missing_api_key", "insecure_url"})
 # How a probe row's certainty about its key was obtained (jev_review CELL_STATUSES).
 _KEY_CHECKS = frozenset({"verified-live", "documented", "unsupported", "unverified"})
 # A status, reason or item-error code: lowercase snake tokens, up to four colon-qualified.
@@ -434,14 +435,18 @@ def child_env(seams: Seams, n_items: int) -> dict[str, str]:
     """The child env: control variables scrubbed, this module's own bounds set.
 
     Only the control variables are dropped; every key and URL variable passes through so the
-    client's rows resolve them (D-09). The deadline scales with the item count plus the local
-    rung's retry allowance: one call per item, two retries, one remote batch (D-12).
+    client's rows resolve them (D-09). The user's own GSD_PATH_JEV session switch is forwarded
+    only when it is set and non-empty; the client otherwise reads the knob itself (34 D-01).
+    The deadline scales with the item count plus the local rung's retry allowance: one call per
+    item, two retries, one remote batch (D-12).
     """
     env = {name: value for name, value in seams.env.items()
            if name not in _CONTROL_NAMES
            and not any(name.startswith(prefix) for prefix in _CONTROL_PREFIXES)}
-    env.update({"GSD_PATH_JEV": "1",
-                "GSD_PATH_JEV_TIMEOUT_SECONDS": str(CALL_TIMEOUT_SECONDS),
+    session = seams.env.get("GSD_PATH_JEV", "")
+    if session.strip():
+        env["GSD_PATH_JEV"] = session
+    env.update({"GSD_PATH_JEV_TIMEOUT_SECONDS": str(CALL_TIMEOUT_SECONDS),
                 "GSD_PATH_JEV_DEADLINE_SECONDS": str(CALL_TIMEOUT_SECONDS * (n_items + 3)),
                 "JEV_CALLER": "ai-kit-gsd-spec-discuss"})
     return env

@@ -1742,8 +1742,9 @@ def final_count(det, level, note):
 
 def ask_jev(item, client, run=subprocess.run):
     """Send one score item to the jev client's ladder; JevUnavailable when it cannot answer."""
-    # The ladder sets the per-call timeout and JEV_CALLER for its client itself.
-    env = {**os.environ, "GSD_PATH_JEV": "1"}
+    # GSD_PATH_JEV reaches the client only as the user's own session override (34 D-01); the
+    # ladder sets the per-call timeout and JEV_CALLER for its client itself.
+    env = dict(os.environ)
     try:
         proc = run([sys.executable, "-B", str(client), "ladder"],
                    input=json.dumps({"items": [item]}), capture_output=True, text=True,

@@ -17,6 +17,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+from tests.test_jev_fast_decision import closed_port_url
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _SPEC = importlib.util.spec_from_file_location("judge_loop", REPO_ROOT / "tools" / "judge_loop.py")
@@ -1643,13 +1646,47 @@ class TestCount(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0, stdout='{"items": {}}', stderr="")
 
         item = {"id": "judge-count", "type": "score"}
-        self.assertEqual(judge_loop.ask_jev(item, "/fixture/jev_review.py", run=fake_run),
-                         {"items": {}})
+        with mock.patch.dict(os.environ, {"GSD_PATH_JEV": "0"}):
+            self.assertEqual(judge_loop.ask_jev(item, "/fixture/jev_review.py", run=fake_run),
+                             {"items": {}})
         self.assertEqual(seen["argv"][-2:], ["/fixture/jev_review.py", "ladder"])
         self.assertEqual(json.loads(seen["kwargs"]["input"]), {"items": [item]})
-        self.assertEqual(seen["kwargs"]["env"]["GSD_PATH_JEV"], "1")
+        # The user's own session switch reaches the client; the caller never forces a value.
+        self.assertEqual(seen["kwargs"]["env"]["GSD_PATH_JEV"], "0")
+        with mock.patch.dict(os.environ):
+            os.environ.pop("GSD_PATH_JEV", None)
+            judge_loop.ask_jev(item, "/fixture/jev_review.py", run=fake_run)
+        self.assertNotIn("GSD_PATH_JEV", seen["kwargs"]["env"])
         # jev_ladder waits 30 * (1 + 3) + 10 = 130 s for its client; the outer call outlasts it
         self.assertGreater(seen["kwargs"]["timeout"], 130)
+
+    def test_ask_jev_knob_off_returns_own_reasoning(self):
+        base = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        home = base / "home"
+        project = base / "proj"  # the client reads the [jev] project layer from its cwd
+        project.mkdir()
+        (home / ".config" / "ai-kit").mkdir(parents=True)
+        (home / ".config" / "ai-kit" / "config.toml").write_text("[jev]\nenabled = false\n",
+                                                                  encoding="utf-8")
+        env = {"HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config"),
+               "XDG_STATE_HOME": str(home / ".local" / "state"),
+               "JEV_LAYA_URL": closed_port_url(), "PATH": os.environ.get("PATH", "")}
+        client = REPO_ROOT / "skills" / "jev-fast-decision" / "scripts" / "jev_review.py"
+        # A score item needs a non-empty context: without one the ladder refuses it before any call.
+        item = {"id": "judge-count", "type": "score",
+                "instructions": "How many judges does this skill need?",
+                "context": "The skill is reviewed by one panel of referees.",
+                "criteria": ["one", "two"]}
+        previous = os.getcwd()
+        self.addCleanup(os.chdir, previous)
+        os.chdir(project)
+        with mock.patch.dict(os.environ, env, clear=True):
+            result = judge_loop.ask_jev(item, str(client))
+        self.assertEqual(result["client_status"], "disabled")
+        self.assertEqual(result["items"]["judge-count"]["decided_by"], "own_reasoning")
+        self.assertEqual(judge_loop.jev_level(result, item),
+                         (None, "jev needs_fallback (own reasoning)"))
 
     def test_ask_jev_raises_jev_unavailable_on_a_failed_client(self):
         def failed_run(argv, **kwargs):

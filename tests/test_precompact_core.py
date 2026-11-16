@@ -650,6 +650,25 @@ class TestRealClientContract(FrozenClockMixin, unittest.TestCase):
             self.assertNotIn("unclassified 1", document.splitlines()[3])
             self.assertIn("summarize 1", document.splitlines()[3])
 
+    def test_session_switch_off_turns_the_hook_off(self):
+        with JevStub(top=0.9) as stub:
+            base = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+            env = self.real_env(base, AI_KIT_LAYA_URL=stub.url, GSD_PATH_JEV="0")
+            meta = self.make_meta(env=env)
+            self.assertIsNone(core.presummarize(self.five_chunks(), meta, env))
+            self.assertEqual(stub.requests, [], "the session switch is off: no request at all")
+
+    def test_client_env_forwards_only_the_session_switch(self):
+        parent = {"GSD_PATH_JEV": "0", "GSD_PATH_JEV_DEADLINE_SECONDS": "9",
+                  "JEV_BACKEND": "typesafe", "HOME": "/h"}
+        env = core.client_env(parent, None, 1.0, "/never")
+        self.assertEqual(env["GSD_PATH_JEV"], "0")
+        self.assertEqual(env["GSD_PATH_JEV_DEADLINE_SECONDS"], "1.00")
+        self.assertNotIn("JEV_BACKEND", env)
+        bare = core.client_env({"HOME": "/h"}, None, 1.0, "/never")
+        self.assertNotIn("GSD_PATH_JEV", bare)
+
     def test_loopback_remote_configured_zero_requests(self):
         """Remote configured, consent recorded, allow flag set: a core run through the
         real client still makes zero requests of the remote stub; the same parent env
@@ -733,7 +752,7 @@ class TestRealClientContract(FrozenClockMixin, unittest.TestCase):
         self.addCleanup(shutil.rmtree, base, ignore_errors=True)
         env = self.make_env(tmp=base, STUB_LOG=os.path.join(base, "stub.log"),
                             JEV_ALLOW_REMOTE="1", JEV_BACKEND="typesafe",
-                            GSD_PATH_JEV="0", JEV_MIN_CONFIDENCE="0.1")
+                            JEV_MIN_CONFIDENCE="0.1")
         messages = self.five_chunks()[:3]
         self.assertEqual(len(core.chunk_messages(messages)), 3)
         meta = self.make_meta(env=env)
@@ -747,7 +766,7 @@ class TestRealClientContract(FrozenClockMixin, unittest.TestCase):
         for line in screens:
             child = line["env"]
             self.assertEqual(child.get("JEV_BACKEND"), "laya")
-            self.assertEqual(child.get("GSD_PATH_JEV"), "1")
+            self.assertNotIn("GSD_PATH_JEV", child)  # the knob is read by the client, not forced
             self.assertEqual(child.get("JEV_CALLER"), "ai-kit-precompact")
             self.assertNotIn("JEV_ALLOW_REMOTE", child)
             self.assertNotIn("JEV_MIN_CONFIDENCE", child)

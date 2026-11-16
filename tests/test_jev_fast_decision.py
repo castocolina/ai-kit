@@ -518,7 +518,8 @@ class TestProbe(_ClientCase):
         self.assertEqual([entry["name"] for entry in report["backends"]], ROW_NAMES)
         self.assert_no_posts(stub)
 
-    def test_probe_works_with_the_kill_switch_off(self):
+    def test_probe_works_with_the_switch_unset(self):
+        # Unset means "ask the config"; with no config the knob is on by default (34 D-01).
         with JevStub() as stub:
             self.point_at(stub)
             os.environ.pop("GSD_PATH_JEV", None)
@@ -552,7 +553,7 @@ class TestScreen(_ClientCase):
             def read(self, *_ignored):
                 raise AssertionError("stdin was read with the kill switch off")
 
-        os.environ.pop("GSD_PATH_JEV", None)
+        os.environ["GSD_PATH_JEV"] = "0"
         with JevStub() as stub:
             self.point_at(stub)
             with mock.patch.object(sys, "stdin", _NoStdin()):
@@ -1921,7 +1922,7 @@ class TestAnswerLog(_ClientCase):
                 self.assertNotIn(field, lines[0])
         with self.subTest(case="runs that dispatch nothing"):
             def disabled_run():
-                os.environ.pop("GSD_PATH_JEV", None)  # the kill switch: screen returns early
+                os.environ["GSD_PATH_JEV"] = "0"  # the session switch off: screen returns early
                 return self.run_screen(THREE_ITEMS)
 
             def invalid_run():
@@ -2648,6 +2649,7 @@ class TestEval(_ClientCase):
         self.assertEqual(report["accuracy_when_not_fallback"], 0.5)
 
     def test_eval_kill_switch(self):
+        os.environ["GSD_PATH_JEV"] = "0"
         with JevStub() as stub:
             self.point_at(stub)
             code, report = self.run_eval()
@@ -3299,7 +3301,7 @@ class TestLadderCli(_TmpHome):
         self.assertEqual(result["remote_available"], ["typesafe"])
         self.assertEqual(result["consent_used"], [])
         self.assertEqual(dict(os.environ), environ_before)
-        self.assertNotIn("GSD_PATH_JEV", os.environ, "the kill switch leaked into the parent env")
+        self.assertNotIn("GSD_PATH_JEV", os.environ, "the session switch leaked into os.environ")
 
     def test_ladder_child_env_scrubbed(self):
         items = [choice_item_ladder("a1"), choice_item_ladder("a2"), choice_item_ladder("a3")]
@@ -3323,7 +3325,7 @@ class TestLadderCli(_TmpHome):
             self.assertNotIn(name, child, f"control variable {name} reached the client")
         self.assertNotEqual(child["GSD_PATH_JEV_DEADLINE_SECONDS"], "999",
                             "the parent's GSD_PATH_JEV* value reached the client")
-        self.assertEqual(child["GSD_PATH_JEV"], "1")
+        self.assertNotIn("GSD_PATH_JEV", child, "the client must read the knob, not a forced 1")
         self.assertEqual(child["GSD_PATH_JEV_TIMEOUT_SECONDS"], "30")
         self.assertEqual(child["GSD_PATH_JEV_DEADLINE_SECONDS"], str(30 * (len(items) + 3)))
         self.assertEqual(child["JEV_CALLER"], "ai-kit-gsd-spec-discuss")
@@ -3332,6 +3334,12 @@ class TestLadderCli(_TmpHome):
         self.assertEqual(parent_env, env_before)
         self.assertEqual(dict(os.environ), environ_before)
         self.assertEqual(result["client"], {"found": True})
+
+    def test_ladder_forwards_only_the_session_switch(self):
+        parent_env = {**self.env, "GSD_PATH_JEV": "0", "JEV_BACKEND": "laya"}
+        child = jev_ladder.child_env(jev_ladder.Seams(env=parent_env, run=subprocess.run), 1)
+        self.assertEqual(child["GSD_PATH_JEV"], "0")
+        self.assertNotIn("JEV_BACKEND", child)
 
     def test_ladder_one_subprocess(self):
         with JevStub() as laya:
