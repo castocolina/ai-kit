@@ -65,7 +65,7 @@ installed."
 - **Never save a CLI reviewer entry without testing it via `check-reviewer` first** — catch auth/model/entitlement problems before persisting. The one exception: the user declined the test at Step 2.5's write-risk ask; that entry is saved untested and named so at Step 4.
 - **Never silently pre-filter model families based on your own judgment** — always let the user decide, informed by your research (user agency over paternalism).
 - **Never paste a multi-provider CLI's raw model list ungrouped** — always run `group-models` first (raw lists can be hundreds of ids; grouping makes them readable).
-- **Never write to the global config without asking** — unless `--global` or `--local` was explicitly passed (global changes affect all projects; default is local).
+- **Never write the global config without an explicit `--global` or a Step 2.1 "replace" answer, and never treat `--global` or `--local` as consent to replace an existing roster** (global changes affect all projects; default is local).
 - **Never skip asking about session-default reviewer entries** — the only
   zero-external-dependency reviewer option, worth having available as a fallback (placed last
   in `policy.ladder`) even when the user primarily wants external CLI reviewers.
@@ -148,6 +148,8 @@ at a glance.
 - If it **does** exist, use `AskUserQuestion` to ask explicitly before writing anywhere: "A global roster already exists at `<user config>` (or as an old `review-spec.toml` there that migrates into it). Write a per-project roster at `./.aikit/config.toml` instead (recommended — doesn't touch the global roster), or replace the global roster?" — with the local option first/default. Picking "replace" here is the replacement consent below for the global file.
 
 **Replacement gate (every flag combination).** `Read` the resolved target itself. If it already holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates into the target on the write) and the user has not already approved replacing that exact file above, use `AskUserQuestion`: "`<resolved absolute path>` already holds a roster. Replace it with the roster built in this run (its current reviewers and policy are lost unless you re-enter them; other tables and comments in the file are kept; an old `review-spec.toml` migrates first and stays recoverable as `review-spec.toml.migrated`), or stop and keep it?" — with "stop" first/default. `--local`/`--global` choose the target, never consent to replace it. On "stop", end the run without writing. Only an explicit "replace" lets Step 3 pass `--replace`; without it `render-toml --out` refuses an existing roster and writes nothing.
+
+**A migrate-only request is not this wizard's write.** When the user only asks to migrate an old `review-spec.toml`, report `migration pending` and say that the next command that reads the roster (`probe-quota`, `resolve-reviewers` or a review run) migrates it; run the full setup only if the user also wants the lanes replaced.
 
 **Once the target is resolved, announce it immediately** — print "Writing to: `<resolved absolute path>`" before asking any of the reviewer questions below, so the user knows where this run's answers are headed from the start (not just in Step 4's closing report, which restates the same path after the write actually happens).
 
@@ -328,10 +330,10 @@ are verified per-call selectable today (Phases 20-22 extend this).
 **Also ask, for each such entry, the same `purpose` question Step 2.2 answers for ranked
 candidates**: review, execute, or both? (`"review"` | `"execute"` | `"both"`.) A
 session-default entry never goes through Step 2.2's catalog/ranking flow — there is no model id
-to look up — so without this question it would get no `purpose` at all, and the consumer side
-reads an absent `purpose` as "matches both review and execute": an assumption that must be a
-deliberate, documented legacy-compat default, never an accident of how a brand-new entry
-happened to get written. Carry the answer into this entry's `purpose` field at Step 3's write,
+to look up — so without this question it would get no `purpose` at all, and the writer files an
+entry with no `purpose` under `[[lanes.review]]` only (`split_by_purpose`), silently dropping an
+execute or both answer. That review-only default exists for legacy entries, never for a
+brand-new one. Carry the answer into this entry's `purpose` field at Step 3's write,
 exactly like a Step 2.2-sourced entry — never leave it unset for a newly-registered one. Carry
 the captured host into the entry as described above — never silently omitted.
 
@@ -392,7 +394,7 @@ echo "render-toml exit $?"
 `<target path>` is the write target Step 2 resolved and already
 announced — `./.aikit/config.toml` by default (or explicitly via
 `--local`), `<user config>` only via `--global` or
-because the user picked "replace the existing global config" at Step 2's
+because the user picked "replace the global roster" at Step 2.1's
 ask. Never re-derive the target here independently of what Step 2
 already resolved and told the user. Add `--replace` only when the target holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates) and Step 2.1's replacement gate got an explicit "replace"; with `--replace`, render-toml first migrates that old roster and prints one line. (The runtimes snapshot was already
 persisted in Step 1 via `--save` — no separate write needed here.)

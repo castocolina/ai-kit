@@ -11,19 +11,40 @@ legacy `cli`) with its role, if it exists. (This is a raw on-disk read only, not
 config.toml has no `[lanes]` table and an old `review-spec.toml` sits beside it, report that the old roster migrates on
 the next command that reads it, and list its `[[reviewers]]` entries (read-only).
 If any entries exist, their **quota availability** is the core purpose of `--check-only`, but the
-probe is a live call to each CLI, so check write risk first, exactly as SKILL.md Step 2.5 does.
-For each listed entry with a `runtime`, read `read_only` from `$CLI_PROFILES_DIR/<runtime>.md`
+probe is a live call to each CLI, so check write risk first, exactly as SKILL.md Step 2.5 does,
+over exactly the keys `probe-quota` will spawn for. That set comes from the merged view (project
+over user), not the raw read above, so list it first. This snippet makes the same resolve and
+route calls `probe-quota` makes before it probes, with no model call and no write:
+
+```bash
+python3 -c "
+import json, sys
+sys.path.insert(0, '$(dirname "$TOOLS_PY")')
+from ai_kit_spec import routing
+from ai_kit_spec.cli import CliDeps, _route_reviewers
+from ai_kit_spec.config_io import cfg_resolve
+deps = CliDeps()
+config = cfg_resolve('$(pwd)', deps.env_fn(), migrate=False)
+routes = _route_reviewers(config, deps, persist=False)
+keys = routing.probe_keys(config.get('policy', {}).get('ladder', []), routes)
+by_key = {e.get('key'): e for e in config.get('reviewers', []) if isinstance(e, dict)}
+print(json.dumps([{'key': k, 'runtime': by_key[k].get('runtime'), 'custom': 'command' in by_key[k]}
+                  for k in keys if k in by_key]))
+"
+```
+
+For each printed entry with a `runtime`, read `read_only` from `$CLI_PROFILES_DIR/<runtime>.md`
 (only those profiles). An entry whose profile says `read_only: unconfirmed`, a runtime with no
-profile (pi today) and a custom `command` entry all run with the CLI's normal write permissions
+profile (pi today) and a custom entry (`custom: true`) all run with the CLI's normal write permissions
 against the working tree; the throwaway paths below keep ai-kit's caches clean, not the tree. When
 any such entry exists, use `AskUserQuestion` before any live call: "Note: `<keys>` have no
 confirmed read-only invocation — the quota probe runs them with their normal write permissions
 against your working tree. Run the probe now, or skip it?" — with "skip the probe" first/default.
 `probe-quota` cannot probe a subset, so the answer covers the whole probe. On skip, run no
-`probe-quota` call and report every listed key as
+`probe-quota` call and report every raw-read and printed key as
 `available: unknown (not probed — the write-risk probe was declined)`, then continue with the
-stale-provider report below. On yes, or when every entry is confirmed read-only or native, probe
-using a throwaway path:
+stale-provider report below. On yes, or when every printed entry is confirmed read-only (or none
+was printed), probe using a throwaway path:
 
 ```bash
 python3 "$TOOLS_PY" probe-quota --cwd "$(pwd)" --no-save-runtimes --no-migrate --quota-path "$SCRATCH/quota.json"
@@ -36,9 +57,9 @@ but "no writes" means nothing is persisted to ai-kit's caches or config: the thr
 memory only, and a targeted refresh is never written back). `--no-migrate` reads an old roster read-only: it is used in memory, `migration pending` is printed, and nothing is written.
 
 `probe-quota` has no `--local`/`--global` flag — it always runs the full `cfg_resolve` merge, so
-output may include keys from both local and global configs. Report each `key`'s `available`
-boolean only for keys that also appeared in the raw-read listing above — drop any extra the merge
-surfaced — so both parts describe the same set of reviewers.
+output holds the keys printed above, from both local and global configs. Report each probed
+`key`'s `available` boolean, and mark a probed key missing from the raw-read listing
+`(from the merged view)`, so the user sees which reviewers came from the other layer.
 
 Three edge cases: (1) if `--global` was passed but a local config with `strategy = "local-only"`
 exists, the merge returns only local entries, shadowing the global keys the raw read listed; (2)

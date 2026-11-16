@@ -18,9 +18,12 @@ from unittest import mock
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import cli, config_io
+from ai_kit_spec import cli, config_io, config_migrate
 
 SKILL_MD = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-config", "SKILL.md")
+CLI_MODEL_SELECTION_MD = os.path.join(
+    _REPO_ROOT, "skills", "ai-kit-spec-config", "references", "cli-model-selection.md"
+)
 CHECK_ONLY_MD = os.path.join(
     _REPO_ROOT, "skills", "ai-kit-spec-config", "references", "check-only.md"
 )
@@ -382,6 +385,75 @@ class TestSpecConfigStep(unittest.TestCase):
         self.assertLess(text.index("read_only: unconfirmed"), probe)
         self.assertLess(text.index("AskUserQuestion"), probe)
         self.assertIn("write-risk probe was declined", text)
+
+    def test_cli_model_selection_keeps_no_shell_state_across_blocks(self):
+        # Judge loop 33 r3 finding D8-2: every Bash call is a fresh shell, so no block assigns a
+        # variable a later block reads; the two paths are literal values.
+        with open(CLI_MODEL_SELECTION_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertNotIn('CATALOG_JSON="', text)
+        self.assertNotIn('FILTERED_RUNTIMES_JSON="', text)
+        self.assertIn("Record the printed line as the literal absolute path `$CATALOG_JSON`", text)
+        self.assertIn("`$FILTERED_RUNTIMES_JSON` is the literal path", text)
+
+    def test_global_write_eval_and_near_miss_negatives(self):
+        # Judge loop 33 r3 findings D7-1 and D7-2.
+        with open(EVALS_JSON, encoding="utf-8") as handle:
+            case = {c["id"]: c for c in json.load(handle)["evals"]}["precise-global-write"]
+        self.assertIn("already has a [lanes] table", case["prompt"])
+        self.assertIn("replacement consent", case["assertions"][0])
+        queries = os.path.join(os.path.dirname(EVALS_JSON), "trigger-queries.json")
+        with open(queries, encoding="utf-8") as handle:
+            negatives = [q["query"] for q in json.load(handle) if not q["should_trigger"]]
+        for word in ("cross-AI review", "[runner]", "secrets.env", "opencode.jsonc"):
+            self.assertTrue(any(word in q for q in negatives), word)
+
+    def test_session_default_purpose_matches_the_writer(self):
+        # Judge loop 33 r3 finding D8-3: an absent purpose is filed under review only.
+        with open(SKILL_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertNotIn("matches both review and execute", text)
+        self.assertIn("under `[[lanes.review]]` only (`split_by_purpose`)", text)
+        review, execute = config_migrate.split_by_purpose([{"key": "s"}])
+        self.assertEqual((len(review), len(execute)), (1, 0))
+
+
+class TestCheckOnlyProbeSet(_Scratch):
+    """Judge loop 33 r3 finding D8-1: the write-risk ask covers exactly the probed keys."""
+
+    def _snippet(self):
+        with open(CHECK_ONLY_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        opener = 'python3 -c "\n'
+        start = text.rindex(opener, 0, text.index("probe_keys")) + len(opener)
+        body = text[start : text.index('\n"\n', start)]
+        review_dir = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review")
+        return body.replace('$(dirname "$TOOLS_PY")', review_dir).replace("$(pwd)", self.proj)
+
+    def test_snippet_lists_the_merged_probe_set(self):
+        # a user-layer key reached only through the merge is listed; an uninstalled one is not
+        _write(self.global_path, self._opencode_reviewer("g-one", "anthropic/claude-x"))
+        _write(
+            self.local,
+            self._opencode_reviewer("l-one", "opencode/free-y")
+            + '[[lanes.review]]\nkey = "cx"\nruntime = "codex"\nmodel = "gpt-x"\n'
+            + '[lanes.policy]\nladder = ["g-one", "l-one", "cx"]\n',
+        )
+        deps = self._deps()
+        out = io.StringIO()
+        with mock.patch.object(cli, "CliDeps", lambda: deps), redirect_stdout(out):
+            exec(compile(self._snippet(), "check-only-snippet", "exec"), {})
+        listed = json.loads(out.getvalue())
+        self.assertEqual([row["key"] for row in listed], ["g-one", "l-one"])
+        self.assertEqual({row["runtime"] for row in listed}, {"opencode"})
+        self.assertFalse(any(row["custom"] for row in listed))
+
+    def test_ask_reads_the_probe_set_not_the_raw_read(self):
+        with open(CHECK_ONLY_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertNotIn("For each listed entry with a `runtime`", text)
+        self.assertLess(text.index("probe_keys"), text.index("read_only: unconfirmed"))
+        self.assertIn("(from the merged view)", text)
 
 
 if __name__ == "__main__":

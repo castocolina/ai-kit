@@ -10,10 +10,10 @@
   {"query": "Migrate my old review-spec.toml roster to the new config.toml.", "should_trigger": true},
   {"query": "Write a unit test for the parser in the markdown-to-pdf skill.", "should_trigger": false},
   {"query": "Create a new SKILL.md for a changelog generator from scratch.", "should_trigger": false},
-  {"query": "Explain how git rebase differs from git merge in simple terms.", "should_trigger": false},
-  {"query": "Update the README for the status line with the new quota gauge bands.", "should_trigger": false},
-  {"query": "Run the full make test suite and summarise the failing modules.", "should_trigger": false},
+  {"query": "Run a cross-AI review of this plan with the reviewers I already configured.", "should_trigger": false},
+  {"query": "Change the [runner] retry settings in .aikit/config.toml, leave the lanes alone.", "should_trigger": false},
+  {"query": "Add my Artificial Analysis API key to secrets.env for me.", "should_trigger": false},
   {"query": "Plan the next GSD phase for the usage metrics dashboard feature.", "should_trigger": false},
-  {"query": "Refactor the Cursor status line module to reduce duplicated code.", "should_trigger": false},
+  {"query": "Add a new provider block to my opencode.jsonc so opencode can use it.", "should_trigger": false},
   {"query": "Draft a commit message for the removal of the providers skill folder.", "should_trigger": false}
 ]

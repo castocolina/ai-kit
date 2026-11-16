@@ -5,7 +5,10 @@ session-default-only run skips this file. Each candidate registered from here is
 (runtime, model) pair: Step 2.4 stores `runtime` and `model` (plus that runtime's knobs),
 and the runner builds the argv. Only a runtime outside the runner table, grok today,
 stores a `command` instead. `$TOOLS_PY`, `$RUNTIMES_JSON` and `$SCRATCH` are the literal
-paths SKILL.md's Step 0 printed; every temporary file here goes under `$SCRATCH`.
+paths SKILL.md's Step 0 printed; every temporary file here goes under `$SCRATCH`. Every `Bash`
+call starts a fresh shell, so no value set in one block survives into the next: `$CATALOG_JSON`
+(item 1) and `$FILTERED_RUNTIMES_JSON` are literal paths too, substituted directly into every
+later block, never shell variables.
 
 For every CLI the user wants to consider (from Step 1's detection), build the ranked
 candidate list via the model-discovery catalog rather than guessing or searching per model.
@@ -17,8 +20,9 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
    path-string surgery — a dedicated `--kind` exists precisely so this skill never has to
    derive one cache filename from another):
     ```bash
-    CATALOG_JSON="$(python3 "$TOOLS_PY" cache-path --kind catalog)"
+    python3 "$TOOLS_PY" cache-path --kind catalog
     ```
+    Record the printed line as the literal absolute path `$CATALOG_JSON` stands for below.
     **The CLIs to consider were already chosen in SKILL.md's Step 2.2 stub** — do not re-ask.
     Group each kept multi-provider CLI's raw model list BEFORE any of it is
     discovered/matched/ranked. Two separate properties matter here: whether a CLI is
@@ -51,9 +55,8 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
    multi-provider CLI's `models` narrowed to the ids chosen above (every other kept CLI passes
    through unchanged, its `models` array included when it has one) — and use that filtered
    file, not the raw `$RUNTIMES_JSON`, as `--runtimes-json` in item 3's `fetch-model-catalog`
-   call below:
+   call below. `$FILTERED_RUNTIMES_JSON` is the literal path `<$SCRATCH>/filtered-runtimes.json`:
    ```bash
-   FILTERED_RUNTIMES_JSON="$SCRATCH/filtered-runtimes.json"
    python3 -c "
 import json
 snap = json.load(open('$RUNTIMES_JSON'))

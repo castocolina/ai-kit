@@ -24,11 +24,11 @@
     },
     {
       "id": "precise-global-write",
-      "prompt": "Write my reviewer config to the global config.toml in the ai-kit config directory, not the project.",
-      "expected_output": "Asks before writing the global file, and runs check-providers after detection in the normal setup branch.",
+      "prompt": "Write my reviewer config to the global config.toml in the ai-kit config directory, not the project. That file already has a [lanes] table.",
+      "expected_output": "Asks before replacing the existing global roster, and runs check-providers after detection in the normal setup branch.",
       "files": [],
       "assertions": [
-        "Asks for explicit confirmation before writing the global config.toml in the ai-kit config directory",
+        "Asks for explicit replacement consent before writing over the existing [lanes] table in the global config.toml",
         "Runs check-providers --cwd after detect-runtimes --save in the normal branch"
       ]
     },
