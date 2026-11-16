@@ -34,8 +34,8 @@ Write `instructions`/`context` or `criterion`/`evidence` as self-contained Engli
 
 ```bash
 GSD_PATH_JEV_TIMEOUT_SECONDS=20 \
-python3 -B scripts/jev_review.py <<'JSON'
-{"reviewed_head": "<git rev-parse HEAD>", "items": [
+python3 -B <skill-dir>/scripts/jev_review.py <<'JSON'
+{"reviewed_head": "<40-hex commit sha of the reviewed HEAD>", "items": [
  {"id": "F1", "criterion": "This finding is a real bug.", "evidence": "summary of the hits"},
  {"id": "sev", "type": "score", "instructions": "How severe?", "context": "crash on launch",
   "criteria": ["cosmetic","minor","major","critical"]}]}

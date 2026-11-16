@@ -22,12 +22,12 @@ From the project root, run `python3 -B <skill-dir>/scripts/jev_review.py --probe
 Callers find `scripts/jev_review.py` through `## Installed-skill lookup` in `reference.md`: `ladder [--second-opinion]` (stdin `{"items": [...]}`), `detect`, and `consent grant|revoke|show <backend>`.
 
 ```bash
-python3 -B scripts/jev_review.py ladder <<'JSON'
-{"items": [{"id": "c1", "type": "choice", "instructions": "Which fix is smaller?", "criteria": {"a": "one file", "b": "three files"}}]}
+python3 -B <skill-dir>/scripts/jev_review.py ladder <<'JSON'
+{"items": [{"id": "c1", "type": "choice", "instructions": "Smaller fix?", "context": "a=1 file, b=3 files", "criteria": {"a": "one file", "b": "three files"}}]}
 JSON
 ```
 
-A copy without `ladder` exits 2 (`invalid choice`): treat it as no backend; re-run the ai-kit installer.
+A copy without `ladder` exits 2 (`invalid choice`): no backend; re-run the ai-kit installer.
 
 ## Call it
 

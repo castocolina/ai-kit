@@ -2721,7 +2721,7 @@ class TestEntryPointDocs(unittest.TestCase):
     def test_ladder_example_runs_through_the_client(self):
         blocks = re.findall(r"```[^\n]*\n(.*?)```", self.skill_text, re.S)
         block = next(text for text in blocks if "ladder" in text)
-        self.assertIn("python3 -B scripts/jev_review.py ladder", block)
+        self.assertIn("python3 -B <skill-dir>/scripts/jev_review.py ladder", block)
         payload = block.split("<<'JSON'\n", 1)[1].split("\nJSON", 1)[0]
         home = Path(tempfile.mkdtemp(prefix="ai-kit-p29-"))
         self.addCleanup(shutil.rmtree, home, ignore_errors=True)
@@ -2736,6 +2736,10 @@ class TestEntryPointDocs(unittest.TestCase):
         result = json.loads(out.stdout)
         self.assertIn("items", result)
         self.assertEqual(result["items"]["c1"]["decided_by"], "own_reasoning")
+        # The example must be valid input, not just reach own reasoning (an item with no context
+        # is rejected as invalid_input/empty_context before any backend is asked).
+        self.assertNotIn("invalid_input", out.stdout)
+        self.assertNotIn("empty_context", out.stdout)
 
     def test_unknown_subcommand_exits_two_with_invalid_choice(self):
         # The older-copy case SKILL.md names: an entry point without `ladder` rejects it with
