@@ -1091,8 +1091,9 @@ def _skills_agent_why(
 
 _PI_AGENT_SKILLS_EFFECT = "no effect on pi (no GSD agent files installed)"
 _JEV_SESSION_NOTE = (
-    "jev-fast-decision is inert unless the agent session sets GSD_PATH_JEV=1 and "
-    "GSD_PATH_JEV_TIMEOUT_SECONDS"
+    "jev-fast-decision answers only when the agent session sets GSD_PATH_JEV_TIMEOUT_SECONDS; "
+    "it runs unless ai-kit's [jev] enabled is false, and GSD_PATH_JEV=1 or 0 overrides that for "
+    "one session"
 )
 
 

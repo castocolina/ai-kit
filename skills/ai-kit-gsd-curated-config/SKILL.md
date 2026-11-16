@@ -321,7 +321,8 @@ than `ok` comes up.
 - **Jev session gate:** inventory detects the jev (System One) backend, `system_one_backend`, by a TCP
   reachability check of `JEV_API_URL` or by `JEV_API_KEY` being present (never a health
   check). A wiring that rests on reachability alone carries an `effect` flag. The agent
-  session also needs `GSD_PATH_JEV=1` and `GSD_PATH_JEV_TIMEOUT_SECONDS`.
+  session also needs `GSD_PATH_JEV_TIMEOUT_SECONDS`; jev runs unless ai-kit's `[jev] enabled`
+  is false, and `GSD_PATH_JEV=1` or `0` overrides that for one session.
 - **`ponytail_visibility`** lists the ponytail skills in each host's global skills root
   only; on claude they usually arrive as plugin rows in `skills`. Report what inventory says.
 - **Limit:** skills kept only in a project's `.claude/skills` are **not** scanned.

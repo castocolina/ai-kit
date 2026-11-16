@@ -636,7 +636,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   source and the terminal-multiplexer hint (a long-lived multiplexer server keeps the environment it started with)
   without printing any value; the skill gives credential guidance for non-interactive shells; and the home-file
   fallback is removed once a test shows agent shells inherit the key from the environment, or kept with a recorded
-  reason.
+  reason. *(amended 2026-11-15, Phase 34 plans: the Laya URL comes from `[jev] laya_url` at any address, project over user, with `JEV_LAYA_URL`/`AI_KIT_LAYA_URL` as session overrides; a Laya host off loopback needs the same host-bound consent as a remote backend; the probe asks `needs_answer: laya_url` once; the home-file key fallback is kept with a recorded reason)*
 - [x] **JEV-02**: OpenCode Zen is gone from the jev-fast-decision skill.
 - [ ] **JEV-03**: Laya is calibrated against its accuracy floor, the opencode judge lane is re-judged, and the
   calibration script is documented. *(amended 2026-11-07, owner decision from the jev and typesafe-ai research:
@@ -645,7 +645,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   text states that a confident Laya answer is not proven accurate, since the 32-case live run measured about half
   right when confident)* *(amended 2026-11-14, owner decision: no upgrade step — the owner upgraded Laya in
   `llm-env`; the calibration runs on the version at the configured address and records its version or
-  fingerprint)*
+  fingerprint)* *(amended 2026-11-15, Phase 34 plans: the limit sentence cites the latest calibration's date, case count and confident-answer accuracy, and the 32-case run of 2026-10-23 only until a new run exists)*
 - [ ] **JEV-04**: A short jev marker block reaches the four global instruction files through ai-kit's atomic writers,
   with the owner's consent. *(amended 2026-11-03, 30 spec: it reuses the marked-block editor FLOW-12 builds in Phase 30; the four files are the global ones codegraph's (replaced by codebase-memory-mcp in Phase 32.5) installer also writes: `~/.claude/CLAUDE.md`, `$CODEX_HOME/AGENTS.md`, `~/.gemini/GEMINI.md`, `${XDG_CONFIG_HOME:-~/.config}/opencode/AGENTS.md`)*
 - [ ] **JEV-05**: jev answers image and bounding-box questions after a TypeSafe spike, with a key and consent; a
@@ -658,7 +658,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   consent or probe detail, and treats `needs_fallback` or no answer as the rule-based default deciding.
 - [ ] **JEV-07**: A knob in ai-kit's config turns jev classification on or off for every skill; it is asked once
   when absent, and with it off every skill behaves exactly as if jev were not installed, shown by tests in a scratch
-  home.
+  home. *(amended 2026-11-15, Phase 34 plans: the knob is `[jev] enabled`, project over user; `GSD_PATH_JEV` is a session override both ways (`1` on, any other value off) and callers no longer force it; absent, jev stays on and the probe asks `needs_answer: enabled` once; hooks see only the project layer)*
 - [x] **JEV-08**: jev-fast-decision's SKILL.md replaces "Required reading" with "read X when Y" pointers: when
   designing a new item shape, meeting a new TypeSafe feature or a capability fact that looks stale, read the
   official `typesafe:typesafe-ai` skill's doc flow when it is installed (otherwise start at the docs index, then the
@@ -680,7 +680,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   the probe determines the version at the configured address — server field, then `[jev] laya_version`, then
   "not exposed" with a server fingerprint — and when that version's capabilities are unknown it fetches Laya's
   published notes (PyPI, README) once and records them; a record stays valid until the version or fingerprint
-  changes, replacing the fixed 24-hour and 7-day caches; `--check-updates` stays as the on-demand refresh)*
+  changes, replacing the fixed 24-hour and 7-day caches; `--check-updates` stays as the on-demand refresh)* *(amended 2026-11-15, Phase 34 plans: when Laya has unloaded its checkpoints the probe reuses the last recorded fingerprint with the same OpenAPI part; a probe under a deadline (hooks, detect) never fetches)*
 - [ ] **JEV-11**: Two decision-path records: Laya's official MCP server stays outside jev's decision path, because it
   would bypass the one-item-per-call rule, the size guard, the thresholds, the receipts and the answer log; and a
   spike records whether several questions over one shared state answer better on TypeSafe than the merged contexts

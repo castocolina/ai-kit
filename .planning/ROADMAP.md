@@ -634,17 +634,17 @@ Plans:
 *(JEV-10 and JEV-11 were added and JEV-03 amended 2026-11-07 from the owner's decisions on `.planning/research/2026-11-07-jev-vs-typesafe-ai.md`.)*
 **Code anchors**: `skills/jev-fast-decision/scripts/jev_review.py` (`LAYA_DEFAULT_URL`, `_laya_url`, `_backend_choice`, `_typesafe_key_sources`, `_keyed_remotes`, `probe_report`, `_laya_probe`, `_get_probe`, the capability `TABLE`); new: Laya version and fingerprint, version-keyed capability records with a fetch-once step, TypeSafe model records, `--check-updates` as on-demand refresh; the Laya server version (llm-env, outside ai-kit); `backends/laya.md`; `scripts/eval_cases.py` (`calibrate`, `_run_calibration`); the Phase 33 config reader; jev on/off knob read by `skills/ai-kit-gsd-spec-discuss/scripts/decide.py` (`find_client`, `client_ok`) and the Phase 29 shared client; docs: `skills/jev-fast-decision/SKILL.md`, `reference.md`, new: calibration how-to *(amended 2026-11-07, 32 spec: `decide.py` was deleted in Phase 29 (29 D-14); `find_client` and `client_ok` now live in `skills/jev-fast-decision/scripts/jev_ladder.py`, the shared client)* *(amended 2026-11-13, 33 D-03, D-20: the Laya URL and the jev on/off knob live in the `[jev]` section of `config.toml` (project `.aikit/config.toml` over user `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml`, per key), read through Phase 33's layered TOML reader, which jev-fast-decision copies with a parity test to stay self-contained; Phase 33 names the section and creates no file)*
 **Success Criteria** (what must be TRUE):
-  1. jev's probe shows the backend it picked on each host: Laya first at the URL from ai-kit's config (asked once on the first run when no Laya answers), TypeSafe from the environment, the home-file key fallback last; tests run in a scratch home; the probe names a missing key source and the multiplexer hint without printing a value, and the home-file fallback is removed once agent shells inherit the key (or kept with a recorded reason).
+  1. jev's probe shows the backend it picked on each host: Laya first at the URL from ai-kit's config (asked once on the first run when no Laya answers), TypeSafe from the environment, the home-file key fallback last; tests run in a scratch home; the probe names a missing key source and the multiplexer hint without printing a value, and the home-file fallback is removed once agent shells inherit the key (or kept with a recorded reason). *(amended 2026-11-15: at any address, with the environment variables as session overrides and host-bound consent for a Laya off loopback)*
   2. A calibration run records Laya's accuracy against its floor and the re-judged opencode judge lane, and the calibration script has a documented how-to. *(amended 2026-11-07, owner decision, JEV-03: Laya is upgraded from 0.4.2 to 0.4.27, or the reason to stay is recorded, before the run; the run records confident-answer accuracy with the Laya version and checkpoint revision)* *(amended 2026-11-14, owner decision: no upgrade step — the owner upgraded Laya in `llm-env`; the run uses the version at the configured address)*
   3. `jev-fast-decision` keeps its judge result with no regression beyond judge variation. *(amended 2026-11-07, 32 spec: criterion 6 changes jev's SKILL.md, so the full judge bar applies: every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation)*
-  4. With the jev knob off every skill behaves as if jev were not installed, and the knob is asked once when absent (scratch-home tests).
+  4. With the jev knob off every skill behaves as if jev were not installed, and the knob is asked once when absent (scratch-home tests). *(amended 2026-11-15: the knob is `[jev] enabled`; `GSD_PATH_JEV` overrides it for a session in both directions)*
   5. *(rewritten 2026-11-14, owner decision, JEV-10)* jev's probe determines the Laya version at the configured address (server field, then `[jev] laya_version`, then "not exposed" with a fingerprint of `/openapi.json` routes and `/health` revisions); when that version's capabilities are unknown it fetches Laya's published notes (PyPI, README) once with public requests and records them until the version or fingerprint changes, never turning a capability cell to verified; `--check-updates` refreshes on demand (fake-server tests).
-  6. The skill text (SKILL.md's result recipe and `backends/laya.md`) states that a confident Laya answer is not proven accurate, citing the 32-case run that measured about half right when confident (JEV-03). *(added 2026-11-07)*
+  6. The skill text (SKILL.md's result recipe and `backends/laya.md`) states that a confident Laya answer is not proven accurate, citing the 32-case run that measured about half right when confident (JEV-03). *(added 2026-11-07)* *(amended 2026-11-15: citing the latest calibration's numbers and date; the 2026-10-23 32-case run until a new run exists)*
   7. A recorded decision keeps Laya's official MCP server outside the decision path, with the reason (it would bypass the one-item-per-call rule, size guard, thresholds, receipts and answer log), and a spike records whether several questions over one shared state answer better on TypeSafe than merged contexts (JEV-11). *(added 2026-11-07)*
   8. A new TypeSafe model id or unknown feature triggers one fetch of the official skill's doc flow and a record of what changed and which jev features it could serve (JEV-12). *(added 2026-11-14)*
   9. A guard test keeps Zen out of the skill and fails on any step that delegates Laya's or the official skill's install or upgrade to another repository (JEV-13). *(added 2026-11-14)*
 
-**Plans**: 7/10 plans executed in 8 waves *(revised 2026-11-15 per cross-AI review cycle 2: 34-08 waits for 34-07, whose skill text its guard scans and may reword)*
+**Plans**: 8/10 plans executed in 8 waves *(revised 2026-11-15 per cross-AI review cycle 2: 34-08 waits for 34-07, whose skill text its guard scans and may reword)*
 
 Plans:
 **Wave 1**
@@ -665,7 +665,7 @@ Plans:
 - [x] 34-07-PLAN.md — SKILL.md, reference.md, backends and evals for settings, records, limit sentence and MCP record (wave 5)
 
 **Wave 6** *(blocked on Wave 5 completion)*
-- [ ] 34-08-PLAN.md — no-Zen no-delegation guard, design record and READMEs, REQUIREMENTS and ROADMAP amendments (wave 6)
+- [x] 34-08-PLAN.md — no-Zen no-delegation guard, design record and READMEs, REQUIREMENTS and ROADMAP amendments (wave 6)
 
 **Wave 7** *(blocked on Wave 6 completion)*
 - [ ] 34-09-PLAN.md — live Laya calibration and TypeSafe shared-state spike records (orchestrator step) (wave 7)
@@ -1061,7 +1061,7 @@ Plans:
 | 32.4. Batch 4, planning skills and the closing report | 9/9 | Complete    | 2026-11-13 |
 | 32.5. codebase-memory-mcp replaces codegraph | 10/10 | Complete    | 2026-11-14 |
 | 33. One config design | 12/12 | Complete    | 2026-11-15 |
-| 34. jev backends by host and Laya calibration | 7/10 | In Progress | - |
+| 34. jev backends by host and Laya calibration | 8/10 | In Progress | - |
 | 35. Model discovery and catalog | 0/TBD | Not started | - |
 | 36. spec-config as the hub | 0/TBD | Not started | - |
 | 37. Shared runner options and session ids | 0/TBD | Not started | - |
