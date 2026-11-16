@@ -1,0 +1,43 @@
+{
+  "status": "ok",
+  "selected": "laya",
+  "candidates": ["laya"],
+  "unavailable": {
+    "typesafe": "missing_api_key"
+  },
+  "backends": [
+    {
+      "name": "laya",
+      "remote": false,
+      "batch": false,
+      "host": "127.0.0.1",
+      "usable": true,
+      "key_source": null,
+      "url_source": "config",
+      "version": null,
+      "version_source": "not_exposed",
+      "fingerprint": "3f9a1c2b7d4e",
+      "idle": false,
+      "record_key": "fp:3f9a1c2b7d4e0123456789abcdef0123456789abcdef0123456789abcdef0123",
+      "record": "new",
+      "documented_upstream": ["long_context"],
+      "notice": "new Laya features documented upstream: long_context; not verified here"
+    },
+    {
+      "name": "typesafe",
+      "remote": true,
+      "batch": true,
+      "host": "api.typesafe.ai",
+      "usable": false,
+      "key_source": "missing_file",
+      "reason": "missing_api_key",
+      "consent": null
+    }
+  ],
+  "leftover": [],
+  "needs_answer": [],
+  "settings": {
+    "enabled": true,
+    "enabled_source": "config"
+  }
+}

@@ -1,18 +1,15 @@
 # Backend: laya (local)
 
-`laya` is the local System One server from the llm-env stack: a Jev checkpoint served on the
-loopback interface. It is the ladder's first rung because it is local — no consent needed, no
-data leaves the machine.
+`laya` is the System One server from the llm-env stack: a Jev checkpoint, local by default. It is
+the ladder's first rung; on loopback no consent is needed and no data leaves the machine.
 
 ## Endpoint and activation
 
-- Default `http://127.0.0.1:8010/v1/systemone`; probe is `GET /health` on the same origin.
-- `JEV_LAYA_URL` / `AI_KIT_LAYA_URL` override the endpoint — **loopback only**; a non-loopback
-  value is refused with `non_loopback_url` and nothing is sent. The legacy `JEV_API_URL` is
-  honoured only when it is itself loopback.
+- Default `http://127.0.0.1:8010/v1/systemone`; the probe is `GET /health` on the same origin, then `GET /openapi.json` for the version and fingerprint (`reference.md`, `## Records and learning`).
+- The address comes from `[jev] laya_url` in ai-kit's `config.toml` (project over user; `reference.md`, `## Settings`), with `JEV_LAYA_URL` / `AI_KIT_LAYA_URL` as session overrides; any host and port. A host off loopback counts as remote: `consent grant laya` records that host before anything is sent. The legacy `JEV_API_URL` counts only when it is itself loopback.
 - Activation line:
-  `GSD_PATH_JEV=1 JEV_BACKEND=laya JEV_LAYA_URL=http://127.0.0.1:<port> GSD_PATH_JEV_TIMEOUT_SECONDS=20`
-- `LAYA_API_KEY` is an optional bearer; Laya needs no auth today.
+  `JEV_BACKEND=laya JEV_LAYA_URL=http://127.0.0.1:<port> GSD_PATH_JEV_TIMEOUT_SECONDS=20`
+- `LAYA_API_KEY` is an optional bearer; Laya needs no auth today. It never crosses plain http to a host off loopback: such a row reports `insecure_url` until the address uses https.
 - `JEV_LAYA_MODEL` pins the request model (default `jev-1`; responses fullmatch `laya-*`).
 
 ## One item per request
@@ -50,6 +47,14 @@ Never retry blindly: fix the cause (input, timeout, server down) or reason the i
 ## Measured figures (2026-10-12, llm-env check-server)
 
 choice/noul/score all `verified-live`; ~12 ms per call on the dGPU; idle unload after 600 s.
+
+## Calibration and its limit
+
+A confident Laya answer is not proven accurate: the 2026-10-23 calibration (32 cases) found 50% of its confident answers right (the eval object below; `accuracy_when_not_fallback` 0.5). Treat a confident answer as one input to your own check, never as a verdict. The running Laya version is the owner's; this skill measures it and never upgrades it.
+
+## Laya's MCP server (not on the decision path)
+
+Laya's official MCP server stays outside jev's decision path: it would bypass the one-item-per-call rule, the size guard, the thresholds, the receipts and the answer log (decision of 2026-11-07, kept 2026-11-14). At most it is an operator's diagnostic tool; this skill never registers it.
 
 ## Laya eval object (live, 2026-10-23)
 

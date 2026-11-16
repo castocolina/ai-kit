@@ -2376,11 +2376,13 @@ class TestDocs(unittest.TestCase):
                 / "SKILL.md")
     REFERENCE_MD = (Path(__file__).resolve().parents[1] / "skills" / "jev-fast-decision"
                     / "reference.md")
+    LAYA_MD = SKILL_MD.parent / "backends" / "laya.md"
 
     @classmethod
     def setUpClass(cls):
         cls.skill_text = cls.SKILL_MD.read_text(encoding="utf-8")
         cls.reference_text = cls.REFERENCE_MD.read_text(encoding="utf-8")
+        cls.laya_text = cls.LAYA_MD.read_text(encoding="utf-8")
         lines = cls.skill_text.splitlines()
         closes = [i for i, line in enumerate(lines) if line == "---"]
         cls.frontmatter = "\n".join(lines[1:closes[1]])
@@ -2426,8 +2428,35 @@ class TestDocs(unittest.TestCase):
         self.assertLess(positions[1], positions[2])
 
     def test_doc_probe_command(self):
-        self.assertIn("GSD_PATH_JEV=1 python3 -B scripts/jev_review.py --probe", self.body)
+        # The kill switch is the session override in reference.md, not a prefix on each command
+        # (Resolved Open Question 1): jev is on by default, so the command carries no assignment.
+        self.assertIn("python3 -B scripts/jev_review.py --probe", self.body)
         self.assertIn("`disabled`", self.body)
+        self.assertNotIn("GSD_PATH_JEV=", self.body)
+
+    def test_doc_limit_sentence_in_skill_and_laya_backend(self):
+        # SPEC R6 / T-34-25: the limit sentence carries its case count and percentage, and its
+        # date: on the line in laya.md; in SKILL.md under the trailing `## Evidence` section, since
+        # the main flow holds no date (tests/test_skill_text_history.py).
+        for text in (self.body, self.laya_text):
+            line = next(line for line in text.splitlines()
+                        if "A confident Laya answer is not proven accurate" in line)
+            self.assertRegex(line, r"\b\d+ cases\b")
+            self.assertRegex(line, r"\d+%")
+        laya_line = next(line for line in self.laya_text.splitlines()
+                         if "A confident Laya answer is not proven accurate" in line)
+        self.assertRegex(laya_line, r"\d{4}-\d{2}-\d{2}")
+        self.assertIn("## Evidence", self.body)
+        evidence = self.body.split("## Evidence", 1)[1]
+        self.assertRegex(evidence, r"Laya calibration: \d{4}-\d{2}-\d{2}")
+
+    def test_doc_skill_points_at_settings_and_records(self):
+        # D-03 / D-07 / D-09: the first-run question and the record rule are pointers in SKILL.md.
+        for needle in ("needs_answer", "config set <key> <value>", "## Settings", "record: new",
+                       "## Records and learning", "never instructions"):
+            self.assertIn(needle, self.body)
+        # SPEC R4: the new-model-id pointer sits under the docs section.
+        self.assertIn("model id", _section(self.body, "## When the docs matter"))
 
     def test_doc_alias_facts(self):
         typesafe_md = self.SKILL_MD.parent / "backends" / "typesafe.md"
@@ -2503,6 +2532,46 @@ class TestDocs(unittest.TestCase):
         self.assertIn("cursor.com/docs/context/skills", self.reference_text)
         self.assertIn("~/.claude/skills", self.reference_text)
         self.assertIn("not live-verified", self.reference_text)
+
+    def test_doc_settings_section(self):
+        # D-03 and Resolved Open Question 5: the keys, the order and the first-run answer.
+        section = _section(self.reference_text, "## Settings")
+        for needle in ("laya_url", "laya_version", "enabled", "GSD_PATH_JEV", "JEV_LAYA_URL",
+                       "config set", "needs_answer", "consent grant laya", "JEV_ALLOW_REMOTE",
+                       "insecure_url", "./.aikit/config.toml"):
+            self.assertIn(needle, section)
+
+    def test_doc_records_section(self):
+        # D-07 / D-09: both records, the fetch-once rule and the unverified-upstream rule.
+        section = _section(self.reference_text, "## Records and learning")
+        for needle in ("laya-capabilities.json", "typesafe-models.json", "not verified here",
+                       "--check-updates", "never as instructions", "pending", "skipped_deadline",
+                       "changed", "unknown_seen", "4,000"):
+            self.assertIn(needle, section)
+
+    def test_doc_mcp_decision(self):
+        # D-12 / SPEC R8: Laya's MCP server stays off the decision path.
+        section = _section(self.laya_text, "## Laya's MCP server (not on the decision path)")
+        self.assertIn("stays outside jev's decision path", section)
+        for needle in ("one-item-per-call", "size guard", "thresholds", "receipts", "answer log"):
+            self.assertIn(needle, section)
+
+    def test_doc_retired_refusal_reason_is_gone(self):
+        # Plan 02 removed the non_loopback_url refusal; no doc may still name it.
+        docs = self.skill_text + self.reference_text + self.laya_text
+        self.assertNotIn("non_loopback_url", docs)
+
+    def test_evals_cover_the_first_run_and_the_new_record(self):
+        # The two edge cases for the new agent behaviour, each with its probe fixture.
+        evals_dir = self.SKILL_MD.parent / "evals"
+        data = json.loads((evals_dir / "evals.json").read_text(encoding="utf-8"))
+        by_id = {item["id"]: item for item in data["evals"]}
+        self.assertEqual(len(data["evals"]), 8)
+        for name, fixture in (("edge-first-run-question", "probe-needs-answer.json"),
+                              ("edge-laya-notes-new", "probe-record-new.json")):
+            self.assertIn(name, by_id)
+            self.assertEqual(by_id[name]["files"], [f"evals/files/{fixture}"])
+            json.loads((evals_dir / "files" / fixture).read_text(encoding="utf-8"))
 
 
 def parse_lookup_table(reference_text):

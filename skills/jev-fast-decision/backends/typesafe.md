@@ -47,3 +47,7 @@ leaves the machine.
 Questions go to `api.typesafe.ai`; **retention terms unverified** — the grant announcement says
 exactly that and promises nothing about deletion or storage. Revoke any time with
 `consent revoke typesafe`.
+
+## New model ids
+
+A versioned model id this skill has not recorded is noted locally after the answer log and documented from the official docs at the next probe (`reference.md`, `## Records and learning`); the note never sends anything.
