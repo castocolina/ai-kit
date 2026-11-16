@@ -12,7 +12,8 @@ then one batch per consented remote row, and returns a per-item rung trail so th
 map rungs to its own columns. The persisted remote-consent record lives here too (D-06):
 `consent grant|revoke|show <backend>` owns `${XDG_CONFIG_HOME:-~/.config}/ai-kit/jev-consent.json`.
 
-Commands: `jev_review.py [--probe | --skip-local]` screens stdin; `consent grant|revoke|show
+Commands: `jev_review.py [--probe | --skip-local]` screens stdin; `config set <key> <value>` saves
+one `[jev]` setting in the user config.toml (the first-run answer); `consent grant|revoke|show
 <backend>` manages the record; `ladder [--second-opinion]` and `detect` answer through the
 ladder caller in `jev_ladder.py`. `consent` takes `--client PATH` only to delegate through that
 caller too; `ladder` and `detect` take `--client PATH` as well.
@@ -29,6 +30,7 @@ import contextlib
 import datetime
 import hashlib
 import http.client
+import importlib.util
 import ipaddress
 import json
 import logging
@@ -52,6 +54,29 @@ CLIENT_PROTOCOL = 2
 # SPEC R5's check is an `assertLogs` on this logger: the consent ask has to be visible to the
 # host as well as in the JSON, and it is the only thing this client ever logs.
 _LOG = logging.getLogger("jev_review")
+
+
+def _load_sibling(filename, module_name):
+    """A sibling script loaded by path: this file is itself loaded by path and runs from copied
+    skill folders, where a plain import would not find its sibling."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), filename)
+    spec = None
+    if os.path.isfile(path):
+        spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"jev-fast-decision: cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_CONFIG = _load_sibling("jev_config.py", "jev_config_sibling")
+
+
+def _cwd():
+    """The folder whose .aikit/config.toml is the [jev] project layer (one seam for tests)."""
+    return os.getcwd()
+
 
 LAYA_DEFAULT_URL = "http://127.0.0.1:8010"
 SYSTEMONE_PATH = "/v1/systemone"
@@ -562,24 +587,62 @@ def _systemone_url(base):
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
-def _laya_url():
-    """(endpoint, None) or (None, reason): loopback only.
+def _url_host(raw):
+    """The hostname of a URL, or None when it does not parse."""
+    try:
+        return urllib.parse.urlsplit(raw).hostname
+    except ValueError:
+        return None
 
-    A non-loopback `JEV_API_URL` is skipped, never refused — it is a remote endpoint an older
-    shell may still export. A shell still exporting it must keep the Laya rung, as the pre-move
-    spec-discuss ladder's `laya_url` did. A non-loopback `JEV_LAYA_URL`/`AI_KIT_LAYA_URL` is
-    refused (D-08).
+
+def _laya_url_source():
+    """(raw, source) of the Laya address (D-01), first match wins: the session environment
+    (`JEV_LAYA_URL`, then `AI_KIT_LAYA_URL`), the project `[jev] laya_url`, the user's, then the
+    legacy loopback `JEV_API_URL`, then `LAYA_DEFAULT_URL`. `raw` is None when the config
+    cannot be read or holds a value that is not a string; "" is the declined first-run answer.
     """
-    for name in ("JEV_LAYA_URL", "AI_KIT_LAYA_URL"):
-        raw = os.environ.get(name, "").strip()
-        if raw:
-            if not _is_loopback(urllib.parse.urlsplit(raw).hostname):
-                return None, "non_loopback_url"  # D-08 / T-21.1-09
-            return _systemone_url(raw), None
+    raw, source = _CONFIG.laya_url_setting(_cwd(), os.environ)
+    if source != "default":
+        return raw, source
     shared = os.environ.get("JEV_API_URL", "").strip()
-    if shared and _is_loopback(urllib.parse.urlsplit(shared).hostname):
-        return _systemone_url(shared), None
-    return _systemone_url(LAYA_DEFAULT_URL), None
+    if shared and _is_loopback(_url_host(shared)):
+        return shared, "env:JEV_API_URL"
+    return LAYA_DEFAULT_URL, "default"
+
+
+def _laya_url():
+    """(endpoint, None) or (None, reason) for the Laya row (D-01, SPEC R1).
+
+    `laya_declined` is the saved first-run answer. A malformed address is `invalid_url:<key>`,
+    named by the key that set it: `laya_url` in a config file, `jev_laya_url` in the environment.
+    A config file that cannot be read is `config_error`. An address off loopback is not refused
+    by its address: it needs the host-bound consent (`_needs_consent`). A key only travels over
+    https or loopback http, so a keyed address off loopback over plain http is `insecure_url`.
+    """
+    raw, source = _laya_url_source()
+    if raw is None:
+        return None, "config_error" if source == "config_error" else "invalid_url:laya_url"
+    if raw == "":
+        return None, "laya_declined"
+    if not _CONFIG.valid_url(raw):
+        key = "laya_url" if source == "config" else source.removeprefix("env:").lower()
+        return None, f"invalid_url:{key}"
+    if not _is_loopback(_url_host(raw)) and _laya_key()[0]:
+        refused = _remote_url(raw)[1]  # T-34-40: the bearer never crosses plain http
+        if refused:
+            return None, refused
+    return _systemone_url(raw), None
+
+
+def _laya_learn(_row, entry):
+    """Probe-only fields of the Laya row: where its address came from (`url_source`), and the
+    first-run question (`needs_answer`) when nothing names a Laya and nothing answers at the
+    default (D-03). An address the user configured never asks, even one equal to the default."""
+    _raw, source = _laya_url_source()
+    fields = {"url_source": source}
+    if source == "default" and not entry["usable"]:
+        fields["needs_answer"] = ["laya_url"]
+    return fields
 
 
 def _laya_key():
@@ -752,11 +815,12 @@ def _mycreds_value(path, names):
 
 
 def _typesafe_key_sources():
-    """The ordered source labels `--probe` reports as `key_expected` (D-07 order, env first)."""
+    """The ordered source labels `--probe` reports as `key_expected`. The order equals
+    `_typesafe_key`'s resolution order, with the home file `~/.mycreds` strictly last (JEV-01)."""
     expected = ["env:TYPESAFE_API_KEY", "env:JEV_API_KEY"]
     if os.environ.get("JEV_API_KEY_FILE", "").strip():
         expected.append("file:JEV_API_KEY_FILE")
-    expected += ["file:secrets.env", "file:~/.mycreds", "state"]
+    expected += ["file:secrets.env", "state", "file:~/.mycreds"]
     return expected
 
 
@@ -850,6 +914,7 @@ TABLE: tuple[Row, ...] = (
         "url": _laya_url,
         "key": _laya_key,
         "probe": _laya_probe,
+        "learn": _laya_learn,  # probe-only fields: url_source, and the first-run question
         "classify": _laya_classify,
         # (status, source, date) per capability cell — the matrix the docs will show (D-24).
         "cells": {CHOICE: ("verified-live", "llm-env check-server", "2026-10-12"),
@@ -876,6 +941,11 @@ TABLE: tuple[Row, ...] = (
         "url": _typesafe_url,
         "key": _typesafe_key,
         "key_sources": _typesafe_key_sources,
+        # Shown only when the key does not come from this process's environment (JEV-01).
+        "key_hint": ("the key is not in this process's environment: a terminal multiplexer server "
+                     "keeps the environment it started with, so export TYPESAFE_API_KEY in a "
+                     "fresh shell and restart the multiplexer server, or keep the key in a 0600 "
+                     "key file"),
         "probe": _typesafe_probe,
         "key_check": "documented",  # its GET /v1/models needs the key (docs.typesafe.ai)
         "classify": _typesafe_classify,
@@ -1047,6 +1117,16 @@ def _row_host(row):
     return urllib.parse.urlsplit(endpoint).hostname
 
 
+def _needs_consent(row):
+    """True when this row's own consent gates it: every remote row, and a local row whose address
+    is off loopback (Resolved Open Question 2). A row whose address does not parse has no host
+    to bind a record to, so its URL reason answers first, not consent."""
+    if row["remote"]:
+        return True
+    host = _row_host(row)
+    return host is not None and not _is_loopback(host)
+
+
 def record_consent(row):
     """The grant date for this row's current host, or None. Keyed by backend and host: an
     endpoint moved to another host needs a new grant (SPEC R6 adjacency edge)."""
@@ -1061,22 +1141,27 @@ def record_consent(row):
 
 
 def allowed_remotes():
-    """The gate (D-07): the session value's names union the rows whose own record's host
-    equals their current host. A record for one remote never enables another (T-21.1-13)."""
+    """The gate (D-07): the names of the rows whose consent is in force. The session value opens
+    remote rows only; a local row moved off loopback opens only through its own host-bound
+    record, because its address can come from a cloned project's file (Resolved Open Question
+    2). A record for one row never enables another (T-21.1-13)."""
     return [row["name"] for row in TABLE
-            if row["remote"] and (_gate_open(row["name"]) or record_consent(row))]
+            if _needs_consent(row)
+            and ((row["remote"] and _gate_open(row["name"])) or record_consent(row))]
 
 
 def _remote_allowed(row):
-    """Whether this row may touch the network at all: a local row always may. `_send` checks
-    this before any socket opens (SPEC R6 ordering edge, T-21.1-02)."""
-    return not row["remote"] or row["name"] in allowed_remotes()
+    """Whether this row may touch the network at all: a row that needs no consent always may.
+    `_send` checks this before any socket opens (SPEC R6 ordering edge, T-21.1-02)."""
+    return not _needs_consent(row) or row["name"] in allowed_remotes()
 
 
 def _keyed_remotes():
-    """Remote rows that have a key and no consent yet: the rows a consent decision is about."""
+    """Rows that need consent they lack: the rows a consent decision is about. A remote row
+    counts with a key; a local row moved off loopback counts without one."""
     return [row["name"] for row in TABLE
-            if row["remote"] and not _remote_allowed(row) and row["key"]()[0]]
+            if _needs_consent(row) and not _remote_allowed(row)
+            and (row["key"]()[0] or not row["remote"])]
 
 
 def _consent_used(run):
@@ -1087,7 +1172,7 @@ def _consent_used(run):
                 if "error" not in entry}
     used = []
     for row in TABLE:
-        if row["remote"] and row["name"] in answered:
+        if _needs_consent(row) and row["name"] in answered:
             granted = record_consent(row)
             if granted:
                 used.append({"backend": row["name"], "granted": granted})
@@ -1106,8 +1191,8 @@ def consent_command(action, backend):
         if action in ("show", "revoke") and backend in {e["name"] for e in leftover_entries()}:
             return _leftover_consent(action, backend)
         return {"ok": False, "reason": "unknown_backend"}
-    if not row["remote"]:
-        return {"ok": False, "reason": "not_remote"}  # laya stays local: no record to give
+    if not _needs_consent(row):
+        return {"ok": False, "reason": "not_remote"}  # on loopback: no record to give
     host = _row_host(row)
     if host is None:
         return {"ok": False, "reason": "no_endpoint_configured"}
@@ -1249,15 +1334,29 @@ def _backend_entry(row, reason):
     entry = {"name": row["name"], "remote": row["remote"], "batch": row["batch"],
              "host": urllib.parse.urlsplit(endpoint).hostname if endpoint else None,
              "usable": reason is None, "key_source": row["key"]()[1]}
-    if row["remote"]:
+    if _needs_consent(row):
         entry["consent"] = record_consent(row)
     if row.get("key_check"):
         entry["key_check"] = row["key_check"]
     if row.get("key_sources"):
         entry["key_expected"] = row["key_sources"]()
+    if row.get("key_hint") and not str(entry["key_source"] or "").startswith("env"):
+        entry["key_hint"] = row["key_hint"]
     if reason:
         entry["reason"] = reason
     return entry
+
+
+def _probe_fields(entries):
+    """Merge each row's probe-only fields into its entry (a row with a `learn` adapter, in table
+    order) and return the questions they ask: the agent asks the user, then saves the answer."""
+    questions = []
+    for row, entry in zip(TABLE, entries, strict=True):
+        if "learn" in row:
+            fields = row["learn"](row, entry)
+            questions += fields.pop("needs_answer", [])
+            entry.update(fields)
+    return questions
 
 
 def probe_report():
@@ -1267,6 +1366,7 @@ def probe_report():
     read from those results, never from a second `_selection()` pass."""
     choice = _backend_choice()
     usable, unavailable, entries = _probe_reasons(TABLE)
+    questions = _probe_fields(entries)
     names = {row["name"] for row in usable}
     candidates = [row["name"] for row in rows_in_order()
                   if row["name"] in names and choice in ("auto", row["name"])]
@@ -1277,6 +1377,7 @@ def probe_report():
               "candidates": candidates, "unavailable": unavailable,
               "backends": entries}
     report["leftover"] = leftover_entries()
+    report["needs_answer"] = sorted(set(questions))
     if candidates:
         return report
     consent = _consent_result(choice, unavailable, [], {})
@@ -1988,18 +2089,27 @@ def build_parser():
     ladder.add_argument("--client", default=None, help=CLIENT_HELP)
     detect = sub.add_parser("detect", help="report the backend table by label; never a key")
     detect.add_argument("--client", default=None, help=CLIENT_HELP)
+    cfg = sub.add_parser("config", help="save one [jev] setting in the user config.toml")
+    cfg.add_argument("action", choices=("set",))
+    cfg.add_argument("key", choices=_CONFIG.JEV_KEYS)
+    cfg.add_argument("value", help="the value; an empty string records the declined answer")
     return parser
 
 
 def main(argv=None):
-    """`--probe` prints the table report, `consent` edits the record, `ladder` and `detect`
-    answer through jev_ladder.py, anything else screens stdin. Always exit 0, except the
-    ladder's exit 2 for unusable stdin."""
+    """`--probe` prints the table report, `consent` edits the record, `config set` saves one
+    `[jev]` setting, `ladder` and `detect` answer through jev_ladder.py, anything else screens
+    stdin. Exit 0, except: the ladder's exit 2 for unusable stdin, and exit 2 for a refused
+    `config set` or a consent call with no user config dir."""
     args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
     if args.command in ("ladder", "detect") or (args.command == "consent" and args.client):
         # Loaded only for these commands: the screen and --probe paths never import it.
         import jev_ladder  # pylint: disable=import-outside-toplevel
         return jev_ladder.main(args)
+    if args.command == "config":
+        out = _CONFIG.config_set(args.key, args.value, os.environ)
+        print(json.dumps(out, sort_keys=True))
+        return 0 if out["ok"] else 2
     if args.command == "consent":
         out = consent_command(args.action, args.backend)
         if out.get("reason") == "no_user_config_dir":

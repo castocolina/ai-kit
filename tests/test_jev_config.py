@@ -3,13 +3,27 @@
 it back. Every test uses a temp HOME and a plain env dict, never the real HOME or os.environ."""
 
 import importlib.util
+import io
+import json
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
+
+from tests.test_jev_fast_decision import (
+    JR,
+    REMOTE_HOST,
+    JevStub,
+    _ClientCase,
+    closed_port_url,
+    noul_item,
+    payload,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 MODULE = REPO / "skills" / "jev-fast-decision" / "scripts" / "jev_config.py"
@@ -218,6 +232,194 @@ class TestKnobAndUrl(unittest.TestCase):
         )
         self._write(self.user_file, "[jev\n")
         self.assertEqual(jev_config.laya_url_setting(self.cwd, self.env), (None, "config_error"))
+
+
+class TestClientSettings(_ClientCase):
+    """The client reads the [jev] settings (plan 34-02): the config, the session environment, the
+    first-run answer and host-bound consent. Every test runs in the _ClientCase temp home."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ.pop("JEV_LAYA_URL", None)  # each test sets the address it needs
+
+    def write_user_config(self, text):
+        path = Path(os.environ["XDG_CONFIG_HOME"]) / "ai-kit" / "config.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def run_cli(self, argv):
+        """main(argv) with its stdout parsed: (exit code, the JSON it printed)."""
+        out = io.StringIO()
+        with mock.patch.object(sys, "stdout", out):
+            code = JR.main(argv)
+        return code, json.loads(out.getvalue())
+
+    def test_config_set_then_probe_finds_laya_there(self):
+        with JevStub() as stub:
+            code, saved = self.run_cli(["config", "set", "laya_url",
+                                        f"http://127.0.0.1:{stub.port}"])
+            self.assertEqual((code, saved["ok"]), (0, True))
+            code, report = self.run_probe()
+            self.assertEqual(code, 0)
+            self.assertEqual(report["selected"], "laya")
+            laya = self.backend_entry(report, "laya")
+            self.assertEqual((laya["host"], laya["usable"]), ("127.0.0.1", True))
+            self.assert_no_posts(stub)
+
+    def test_env_override_beats_config(self):
+        self.write_user_config('[jev]\nlaya_url = "http://127.0.0.1:1"\n')
+        with JevStub() as stub:
+            self.point_at(stub)
+            _code, report = self.run_probe()
+        self.assertTrue(self.backend_entry(report, "laya")["usable"])
+
+    def send_refusal(self, name):
+        """The message of the PermissionError `_send` raises for this row; no socket may open."""
+        self.enable(None)
+        body = {"model": "x", "state": {}, "questions": {}}
+        socket_guard = mock.patch.object(JR, "_exchange", side_effect=AssertionError("socket"))
+        with (socket_guard, self.assertRaises(PermissionError) as refused):
+            JR._send(JR.row_named(name), body, 1.0)
+        return str(refused.exception)
+
+    def test_off_loopback_laya_needs_consent_and_sends_nothing(self):
+        code, _saved = self.run_cli(["config", "set", "laya_url", f"http://{REMOTE_HOST}:8010"])
+        self.assertEqual(code, 0)
+        _code, report = self.run_probe()
+        laya = self.backend_entry(report, "laya")
+        self.assertEqual(report["status"], "consent_required_for_remote")
+        self.assertIn("laya", report["remote_available"])
+        self.assertEqual((laya["reason"], laya["host"], laya["url_source"]),
+                         ("consent_required_for_remote", REMOTE_HOST, "config"))
+        self.assertEqual(self.send_refusal("laya"), "consent_required_for_remote")
+
+    def test_consented_off_loopback_laya_answers(self):
+        # Every address here is off loopback in the client's eyes; the stub is the only host.
+        with JevStub() as stub, mock.patch.object(JR, "_is_loopback", return_value=False):
+            self.point_at(stub)
+            code, granted = self.run_cli(["consent", "grant", "laya"])
+            self.assertEqual((code, granted["ok"], granted["host"]), (0, True, "127.0.0.1"))
+            self.enable("laya")
+            code, out = self.run_main(payload(noul_item("a")))
+            self.assertEqual((code, out["status"]), (0, "ok"))
+            self.assertEqual(len(stub.posts), 1)
+            self.run_cli(["consent", "revoke", "laya"])
+            code, out = self.run_main(payload(noul_item("a")))
+            self.assertNotEqual(out["status"], "ok")
+            self.assertEqual(len(stub.posts), 1, "a revoked Laya host is refused before a socket")
+
+    def test_every_off_loopback_row_is_refused_before_a_socket(self):
+        self.enable(None)
+        for row in JR.TABLE:
+            name = row["name"]
+            if name == "laya":
+                os.environ["JEV_LAYA_URL"] = f"http://{REMOTE_HOST}:8010"
+            elif name == "typesafe":
+                os.environ["JEV_TYPESAFE_URL"] = f"https://{REMOTE_HOST}/v1/systemone"
+                os.environ["TYPESAFE_API_KEY"] = "typesafe-key"
+            else:
+                self.fail(f"no off-loopback address is set up for the new row {name}")
+            self.assertEqual(self.send_refusal(name), "consent_required_for_remote", name)
+
+    def test_configured_default_counts_as_configured(self):
+        closed = closed_port_url()
+        with mock.patch.object(JR, "LAYA_DEFAULT_URL", closed):
+            code, _saved = self.run_cli(["config", "set", "laya_url", closed])
+            self.assertEqual(code, 0)
+            _code, report = self.run_probe()
+        self.assertEqual(self.backend_entry(report, "laya")["url_source"], "config")
+        self.assertEqual(report["needs_answer"], [])
+
+    def test_first_run_question_answered_and_declined(self):
+        closed = closed_port_url()
+        with mock.patch.object(JR, "LAYA_DEFAULT_URL", closed):
+            _code, report = self.run_probe()
+            self.assertEqual(report["needs_answer"], ["laya_url"])
+            self.assertEqual(self.backend_entry(report, "laya")["url_source"], "default")
+            code, _saved = self.run_cli(["config", "set", "laya_url", ""])
+            self.assertEqual(code, 0)
+            _code, report = self.run_probe()
+        self.assertEqual(self.backend_entry(report, "laya")["reason"], "laya_declined")
+        self.assertEqual(report["needs_answer"], [])
+        os.environ["TYPESAFE_API_KEY"] = "typesafe-key"
+        os.environ["JEV_ALLOW_REMOTE"] = "1"
+        with JevStub() as stub:
+            self.point_remote("typesafe", stub)
+            _code, report = self.run_probe()
+        self.assertEqual(report["candidates"], ["typesafe"])
+
+    def test_malformed_url_is_a_probe_error(self):
+        self.write_user_config('[jev]\nlaya_url = "http://[bad"\n')
+        code, report = self.run_probe()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.backend_entry(report, "laya")["reason"], "invalid_url:laya_url")
+        os.environ["JEV_LAYA_URL"] = "http://user:pw@127.0.0.1:1"
+        code, report = self.run_probe()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.backend_entry(report, "laya")["reason"], "invalid_url:jev_laya_url")
+
+    def test_session_gate_never_opens_an_off_loopback_laya(self):
+        self.run_cli(["config", "set", "laya_url", f"http://{REMOTE_HOST}:8010"])
+        for gate in ("1", "laya"):
+            os.environ["JEV_ALLOW_REMOTE"] = gate
+            _code, report = self.run_probe()
+            self.assertEqual(self.backend_entry(report, "laya")["reason"],
+                             "consent_required_for_remote", gate)
+            self.assertEqual(self.send_refusal("laya"), "consent_required_for_remote", gate)
+        # Only a record bound to the host can open it: grant on the stub's host, then move the
+        # address to REMOTE_HOST and the same row asks again.
+        del os.environ["JEV_ALLOW_REMOTE"]
+        with JevStub() as stub, mock.patch.object(JR, "_is_loopback", return_value=False):
+            self.point_at(stub)
+            self.run_cli(["consent", "grant", "laya"])
+            _code, report = self.run_probe()
+            self.assertTrue(self.backend_entry(report, "laya")["usable"])
+            del os.environ["JEV_LAYA_URL"]
+            self.run_cli(["config", "set", "laya_url", f"http://{REMOTE_HOST}:8010"])
+            _code, report = self.run_probe()
+        self.assertEqual(self.backend_entry(report, "laya")["reason"],
+                         "consent_required_for_remote")
+        self.assertEqual(self.send_refusal("laya"), "consent_required_for_remote")
+
+    def test_off_loopback_http_laya_never_gets_a_key(self):
+        key = "NEVER-PRINT-LAYA-KEY"
+        cases = (("http", key, "insecure_url"),
+                 ("https", key, "consent_required_for_remote"),
+                 ("http", None, "consent_required_for_remote"))
+        for scheme, laya_key, reason in cases:
+            if laya_key:
+                os.environ["LAYA_API_KEY"] = laya_key
+            else:
+                os.environ.pop("LAYA_API_KEY", None)
+            self.run_cli(["config", "set", "laya_url", f"{scheme}://{REMOTE_HOST}:8010"])
+            code, text = self.run_probe_text()
+            self.assertEqual(code, 0)
+            self.assertNotIn(key, text)
+            self.assertEqual(self.backend_entry(json.loads(text), "laya")["reason"], reason,
+                             scheme)
+            self.assertEqual(self.send_refusal("laya"), reason, scheme)
+
+    def test_probe_key_hint_without_env_key(self):
+        key = "NEVER-PRINT-TYPESAFE-KEY"
+        os.environ.pop("TYPESAFE_API_KEY", None)
+        code, text = self.run_probe_text()
+        self.assertEqual(code, 0)
+        typesafe = self.backend_entry(json.loads(text), "typesafe")
+        self.assertEqual(typesafe["reason"], "missing_api_key")
+        self.assertIn("multiplexer", typesafe["key_hint"])
+        self.assertNotIn("key_hint", self.backend_entry(json.loads(text), "laya"))
+        creds = Path(os.environ["HOME"]) / ".mycreds"  # a synthetic file in the scratch HOME
+        creds.write_text(f"TYPESAFE_API_KEY={key}\n", encoding="utf-8")
+        creds.chmod(0o600)
+        code, text = self.run_probe_text()
+        self.assertNotIn(key, text)
+        typesafe = self.backend_entry(json.loads(text), "typesafe")
+        self.assertEqual(typesafe["key_source"], "file:~/.mycreds")
+        self.assertIn("multiplexer", typesafe["key_hint"])
+        os.environ["TYPESAFE_API_KEY"] = key
+        code, text = self.run_probe_text()
+        self.assertNotIn(key, text)
+        self.assertNotIn("key_hint", self.backend_entry(json.loads(text), "typesafe"))
 
 
 if __name__ == "__main__":

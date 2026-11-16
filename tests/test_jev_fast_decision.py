@@ -327,6 +327,11 @@ class _ClientCase(unittest.TestCase):
         }, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
+        project = self.tmp / "proj"  # the [jev] project layer is read from here (_cwd)
+        project.mkdir()
+        cwd_patcher = mock.patch.object(JR, "_cwd", return_value=str(project))
+        cwd_patcher.start()
+        self.addCleanup(cwd_patcher.stop)
 
     def point_at(self, stub):
         os.environ["JEV_LAYA_URL"] = stub.url
@@ -422,7 +427,8 @@ class TestProbe(_ClientCase):
         self.assertEqual([entry["name"] for entry in report["backends"]], ROW_NAMES)
         self.assertEqual(self.backend_entry(report, "laya"),
                          {"name": "laya", "remote": False, "batch": False,
-                          "host": "127.0.0.1", "usable": True, "key_source": None})
+                          "host": "127.0.0.1", "usable": True, "key_source": None,
+                          "url_source": "env:JEV_LAYA_URL"})
         self.assert_no_posts(stub)
 
     def test_probe_laya_url_sources(self):
@@ -443,7 +449,8 @@ class TestProbe(_ClientCase):
         del os.environ["JEV_API_URL"], os.environ["JEV_LAYA_URL"]
         for name in ("JEV_LAYA_URL", "AI_KIT_LAYA_URL"):
             os.environ[name] = f"http://{REMOTE_HOST}:8010"
-            self.assertEqual(JR._laya_url(), (None, "non_loopback_url"), name)
+            self.assertEqual(JR._laya_url(), (f"http://{REMOTE_HOST}:8010/v1/systemone", None),
+                             name)
             del os.environ[name]
         os.environ["JEV_LAYA_URL"] = "http://localhost:8010"
         self.assertEqual(JR._laya_url(), ("http://localhost:8010/v1/systemone", None))
@@ -463,18 +470,19 @@ class TestProbe(_ClientCase):
         self.assertLess(elapsed, 3.0)
         self.assert_no_posts(stub)
 
-    def test_probe_non_loopback_laya(self):
+    def test_probe_off_loopback_laya_needs_consent(self):
         os.environ["JEV_LAYA_URL"] = f"http://{REMOTE_HOST}:8010"
         _code, report = self.run_probe()
-        self.assertEqual(self.backend_entry(report, "laya")["reason"], "non_loopback_url")
-        self.assertEqual(report["unavailable"]["laya"], "non_loopback_url")
+        self.assertEqual(self.backend_entry(report, "laya")["reason"],
+                         "consent_required_for_remote")
+        self.assertEqual(report["unavailable"]["laya"], "consent_required_for_remote")
         self.enable()
         with JevStub() as stub:  # the endpoint exists; the refusal has to happen before it
             with self.assertRaises(PermissionError) as refused:
                 JR._send(JR.row_named("laya"),
                          {"model": "jev-1", "state": payload(noul_item("a")),
                           "questions": {"a": {"type": "noul", "instructions": "x"}}}, 1.0)
-            self.assertEqual(str(refused.exception), "non_loopback_url")
+            self.assertEqual(str(refused.exception), "consent_required_for_remote")
             self.assertEqual(stub.posts, [])
 
     def test_probe_uses_get_health_and_never_posts(self):
@@ -1246,7 +1254,7 @@ class TestKeys(_ClientCase):
         self.assertEqual(entry["key_source"], "file:~/.mycreds")
         self.assertEqual(entry["key_expected"],
                          ["env:TYPESAFE_API_KEY", "env:JEV_API_KEY", "file:secrets.env",
-                          "file:~/.mycreds", "state"])
+                          "state", "file:~/.mycreds"])
 
     def test_screen_never_prints_a_key_value(self):
         os.environ["LAYA_API_KEY"] = self.SENTINEL
@@ -2953,6 +2961,7 @@ def _isolated_ladder(tmp):
     shutil.copy2(SCRIPT, scripts / "jev_review.py")
     shutil.copy2(JEV_LADDER, scripts / "jev_ladder.py")
     shutil.copy2(JEV_LADDER.with_name("secret_shapes.py"), scripts / "secret_shapes.py")
+    shutil.copy2(SCRIPT.with_name("jev_config.py"), scripts / "jev_config.py")
     return scripts
 
 
@@ -3673,6 +3682,7 @@ class TestLadderBackstops(_TmpHome):
         client = spaced / ".agents" / "skills" / "jev-fast-decision" / "scripts" / "jev_review.py"
         client.parent.mkdir(parents=True)
         shutil.copy2(SCRIPT, client)
+        shutil.copy2(SCRIPT.with_name("jev_config.py"), client.parent / "jev_config.py")
         scripts = _isolated_ladder(self.tmp)
         proc = subprocess.run([sys.executable, "-B", str(scripts / "jev_review.py"), "detect"],
                               capture_output=True, text=True, check=False, cwd=self.tmp,
