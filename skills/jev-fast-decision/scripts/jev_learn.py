@@ -1,4 +1,5 @@
-"""Laya version, fingerprint and the version-keyed Laya records (Phase 34 D-04..D-07).
+"""Laya version, fingerprint and the version-keyed Laya records (Phase 34 D-04..D-07), and the
+TypeSafe model records (SPEC R4): a pending note per new model id and one doc-flow read per id.
 
 Pure functions: the caller injects the fetcher (a callable from a URL to bytes that raises OSError
 or ValueError on failure), so nothing here touches the network. Stdlib only. The stored notes are
@@ -8,6 +9,7 @@ text for an agent to read, never instructions (T-34-09). Nothing here writes a c
 import contextlib
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -34,6 +36,18 @@ FEATURE_PATTERNS = {
     "noul": re.compile(r"\bnoul\b|\byes/no\b", re.IGNORECASE),
 }
 DEFAULT_OPTIONS = {"force": False, "fetch_allowed": True, "verified": (), "now": None}
+MODEL_RECORDS = "typesafe-models.json"
+DOCS_PREFIX = "https://docs.typesafe.ai/"
+DOCS_INDEX_URL = "https://docs.typesafe.ai/llms.txt"
+DOCS_CHANGELOG_URL = "https://docs.typesafe.ai/changelog.md"
+DOCS_MODELS_URL = "https://docs.typesafe.ai/models.md"
+SERVES = ("box", "image", "long_context", "batch")
+KNOWN_PRIMITIVES = ("choice", "noul", "score", "box")
+_VERSIONED_ID = re.compile(r"jev-\d+(?:\.\d+)+(?:-[A-Za-z0-9.]+)?")
+_LINK = re.compile(r"\[[^\]]*\]\((https://[^)\s]+)\)")
+_HEADING = ("**", "#")
+_UNKNOWN_NAME = re.compile(r"(?:primitive|option):[A-Za-z][A-Za-z0-9_.-]{0,63}")
+_UNKNOWN_LIMIT = 16
 
 
 def now_iso():
@@ -405,3 +419,293 @@ def _learn_fetch(path, identity, old, fetch, opts):
     if notice:
         result["notice"] = notice
     return result
+
+
+def note_model(state_dir, model_id, now=None):
+    """Note a versioned model id an answer reported, as a local pending entry (D-09, SPEC R4).
+
+    Writes only status and first_seen, with no network call. False for an alias, a missing id, an id
+    already recorded or a failed write: the answer path never fails on a state write.
+    """
+    if not isinstance(model_id, str) or not _VERSIONED_ID.fullmatch(model_id):
+        return False
+    path = records_path(state_dir, MODEL_RECORDS)
+    records = read_records(path)
+    if model_id in records:
+        return False
+    records[model_id] = {"status": "pending", "first_seen": now or now_iso()}
+    try:
+        write_records(path, records)
+    except OSError:
+        return False
+    return True
+
+
+def latest_model(records):
+    """The model id with the greatest first_seen, any status; None when there is none."""
+    seen = [
+        (entry["first_seen"], key)
+        for key, entry in records.items()
+        if isinstance(entry, dict) and isinstance(entry.get("first_seen"), str)
+    ]
+    return max(seen)[1] if seen else None
+
+
+def doc_links(index_text):
+    """basename -> url for every link under DOCS_PREFIX in the llms.txt index, first one wins.
+
+    Links off the docs site are ignored, so an index cannot redirect a fetch (T-34-16).
+    """
+    links = {}
+    for url in _LINK.findall(index_text):
+        if url.startswith(DOCS_PREFIX):
+            links.setdefault(url.rsplit("/", 1)[-1], url)
+    return links
+
+
+def _get_page(url, fetch, sources, errors):
+    """The decoded text of one doc page, or None. The URL joins sources or errors."""
+    try:
+        raw = fetch(url)
+    except (OSError, ValueError) as error:
+        errors.append(f"{url}: {type(error).__name__}")
+        return None
+    sources.append(url)
+    return raw.decode("utf-8", errors="replace")
+
+
+def fetch_model_docs(fetch):
+    """(texts, sources, errors) of the official doc flow: llms.txt, then changelog.md and models.md.
+
+    The two content pages take their URL from the index when it links them under DOCS_PREFIX, else
+    the fixed defaults. texts holds only the pages that arrived, under index, changelog and models.
+    """
+    texts, sources, errors = {}, [], []
+    index = _get_page(DOCS_INDEX_URL, fetch, sources, errors)
+    links = {}
+    if index is not None:
+        texts["index"] = index
+        links = doc_links(index)
+    pages = (
+        ("changelog", "changelog.md", DOCS_CHANGELOG_URL),
+        ("models", "models.md", DOCS_MODELS_URL),
+    )
+    for key, name, default in pages:
+        page = _get_page(links.get(name, default), fetch, sources, errors)
+        if page is not None:
+            texts[key] = page
+    return texts, sources, errors
+
+
+def model_notes(changelog, model_id):
+    """The changelog block that names model_id: from the nearest heading at or before its line up to
+    the next heading, stripped and cut to NOTES_MAX_CHARS. "" when the id is absent."""
+    lines = changelog.splitlines()
+    at = next((i for i, line in enumerate(lines) if f"`{model_id}`" in line), None)
+    if at is None:
+        return ""
+    start = max((i for i in range(at + 1) if lines[i].startswith(_HEADING)), default=at)
+    end = next(
+        (i for i in range(at + 1, len(lines)) if lines[i].startswith(_HEADING)), len(lines)
+    )
+    return "\n".join(lines[start:end]).strip()[:NOTES_MAX_CHARS]
+
+
+def _row_cells(line):
+    """The stripped cells of a Markdown table row, without the empty ends."""
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def model_primitives(models_text, model_id):
+    """The sorted, lowercased question types the models table documents for model_id.
+
+    [] when the id's row or the question-types row is missing.
+    """
+    rows = [_row_cells(line) for line in models_text.splitlines() if line.startswith("|")]
+    token = f"`{model_id}`"
+    id_row = next((cells for cells in rows if token in cells), None)
+    types_row = next(
+        (cells for cells in rows if cells and cells[0].lower() == "question types"), None
+    )
+    if id_row is None or types_row is None:
+        return []
+    column = id_row.index(token)
+    if column >= len(types_row):
+        return []
+    return sorted({p.strip().lower() for p in types_row[column].split(",") if p.strip()})
+
+
+def model_entry(model_id, texts, sources):
+    """The recorded fields of one model id, taken from the doc pages that arrived."""
+    notes = model_notes(texts.get("changelog", ""), model_id)
+    primitives = model_primitives(texts.get("models", ""), model_id)
+    return {
+        "status": "recorded",
+        "sources": sources,
+        "notes": notes,
+        "primitives_documented": primitives,
+        "new_primitives": [p for p in primitives if p not in KNOWN_PRIMITIVES],
+        "serves": [f for f in features_in(notes) if f in SERVES],
+    }
+
+
+def _model_targets(records, latest, force):
+    """The pending model ids, plus the latest recorded id when a forced refresh asks for it."""
+    targets = [
+        key
+        for key, entry in records.items()
+        if isinstance(entry, dict) and entry.get("status") == "pending"
+    ]
+    if force and latest is not None and latest not in targets:
+        targets.append(latest)
+    return sorted(targets)
+
+
+def _unknown_seen(entry):
+    """The unknown names a record entry holds, as strings."""
+    seen = entry.get("unknown_seen")
+    return [name for name in seen if isinstance(name, str)] if isinstance(seen, list) else []
+
+
+def _documented_unknowns(names, texts):
+    """The names whose part after the colon appears as a whole word in the changelog or models."""
+    pages = (texts.get("changelog", ""), texts.get("models", ""))
+    documented = []
+    for name in names:
+        word = re.compile(rf"\b{re.escape(name.split(':', 1)[1])}\b", re.IGNORECASE)
+        if any(word.search(page) for page in pages):
+            documented.append(name)
+    return documented
+
+
+def _model_result(targets, entries, records, docs, force):
+    """The outcome of a recorded doc read: the ids, what they could serve and the notice."""
+    texts, _sources, errors = docs
+    serves = sorted({f for entry in entries.values() for f in entry["serves"]})
+    new = sorted({p for entry in entries.values() for p in entry["new_primitives"]})
+    notice = [
+        f"TypeSafe model {', '.join(targets)} documented upstream, not verified here: "
+        f"could serve {', '.join(serves) or 'no listed feature'}; "
+        f"new primitives: {', '.join(new) or 'none'}"
+    ]
+    result = {
+        "model_record": "refreshed" if force else "new",
+        "model_ids": targets,
+        "serves": serves,
+        "new_primitives": new,
+    }
+    unknown = sorted({name for target in targets for name in _unknown_seen(records[target])})
+    if unknown:
+        documented = _documented_unknowns(unknown, texts)
+        result.update(unknown_seen=unknown, unknown_documented=documented)
+        notice.append(
+            f"met here but unknown to the skill: {', '.join(unknown)} "
+            f"(documented upstream: {', '.join(documented) or 'none'})"
+        )
+    if any(error.startswith(DOCS_INDEX_URL) for error in errors):
+        notice.append("llms.txt not read, default doc URLs used")
+    result["notice"] = "; ".join(notice)
+    return result
+
+
+def _record_models(path, targets, docs, opts):
+    """Write each target's recorded entry over its old one, keeping first_seen, then report it."""
+    texts, sources, _errors = docs
+    entries = {target: model_entry(target, texts, sources) for target in targets}
+    records = read_records(path)
+    now = opts["now"] or now_iso()
+    for target, entry in entries.items():
+        old = records.get(target)
+        records[target] = {**(old if isinstance(old, dict) else {}), **entry, "checked_at": now}
+    try:
+        write_records(path, records)
+    except OSError:
+        return {"model_record": "write_failed"}
+    return _model_result(targets, entries, records, docs, opts["force"])
+
+
+def learn_models(state_dir, fetch, options):
+    """Read the official doc flow once per pending model id (or on a forced refresh), record it.
+
+    Each record holds its changelog notes, the question types the models table documents and the
+    features it could serve (D-09, SPEC R4). Records only when both changelog.md and models.md
+    arrived (review C1-11); an incomplete flow keeps every target pending and writes nothing.
+    """
+    opts = {**DEFAULT_OPTIONS, **options}
+    path = records_path(state_dir, MODEL_RECORDS)
+    records = read_records(path)
+    latest = latest_model(records)
+    targets = _model_targets(records, latest, opts["force"])
+    if not targets:
+        return {"model_record": "known" if records else "none", "model_id": latest}
+    if not opts["fetch_allowed"]:
+        return {"model_record": "skipped_deadline", "model_ids": targets}
+    docs = fetch_model_docs(fetch)
+    texts, _sources, errors = docs
+    if "changelog" not in texts or "models" not in texts:
+        return {
+            "model_record": "fetch_failed",
+            "model_ids": targets,
+            "notice": f"TypeSafe docs fetch failed ({'; '.join(errors)}); "
+            "the model ids stay pending",
+        }
+    return _record_models(path, targets, docs, opts)
+
+
+def _load_secret_shapes():
+    """The sibling secret_shapes.py, loaded by path: this module is itself loaded by path, and from
+    copied skill folders, so its own folder is not always on the import path."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "secret_shapes.py")
+    spec = importlib.util.spec_from_file_location("jev_learn_secret_shapes", path)
+    if spec is None or spec.loader is None or not os.path.isfile(path):
+        raise ImportError(f"jev-fast-decision: cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_SECRET_SHAPES = _load_secret_shapes()
+
+
+def _screened_names(names):
+    """The sorted, unique primitive or option names that hold no key shape, at most 16.
+
+    Any other name is dropped silently and never logged (T-34-42, review C2-4): the names come from
+    a server response or a caller's item, and a key must never reach the record.
+    """
+    kept = {
+        name
+        for name in names or ()
+        if isinstance(name, str)
+        and _UNKNOWN_NAME.fullmatch(name)
+        and not _SECRET_SHAPES.detect(name)
+    }
+    return sorted(kept)[:_UNKNOWN_LIMIT]
+
+
+def note_unknown(state_dir, model_id, names, now=None):
+    """Note primitive or option names the skill does not know, with no network call (review C1-10).
+
+    The names go under model_id, or under the latest recorded id when model_id is None. The id turns
+    pending once per new name; a name already seen never triggers again. False when no fresh name is
+    left, no id is known or the write fails.
+    """
+    path = records_path(state_dir, MODEL_RECORDS)
+    records = read_records(path)
+    fresh_names = _screened_names(names)
+    target = latest_model(records) if model_id is None else model_id
+    if not fresh_names or not isinstance(target, str) or not _VERSIONED_ID.fullmatch(target):
+        return False
+    entry = records.get(target)
+    if not isinstance(entry, dict):
+        entry = {"status": "pending", "first_seen": now or now_iso()}
+    seen = _unknown_seen(entry)
+    fresh = [name for name in fresh_names if name not in seen]
+    if not fresh:
+        return False
+    records[target] = {**entry, "status": "pending", "unknown_seen": sorted([*seen, *fresh])}
+    try:
+        write_records(path, records)
+    except OSError:
+        return False
+    return True
