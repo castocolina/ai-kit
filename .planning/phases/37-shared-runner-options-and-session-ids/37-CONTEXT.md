@@ -148,7 +148,9 @@ choosing effort by task (42).
   bytes outside the config block, then equal `--print-argv` output for a matrix (each runtime and role, plus effort, session and
   argv-file cases) from the template and the copy, plus a one-byte mutation that must fail. `tools/check_dogfood.py` stays the
   live-copy check; it is the only reader of `.planning/`. The live `.planning/scripts/cross-ai.mjs` is re-rendered by the
-  installer after the template changes (a plan task, then `make check-dogfood`).
+  installer after the template changes (a plan task, then `make check-dogfood`). *(amended 2026-11-16, 38 D-19: Phase 38 moves the
+  harness to a sibling file the render does not carry, so the render stays a plain config splice and this test's byte comparison
+  is never relaxed)*
 - **D-19: Runner-file hardcoding cleanup is limited to the code this phase rewrites.** The `RUNTIMES` rows, `parseArgs`, `main`,
   the classifier region outside the self-test: example names carry the `model-example:` marker or become placeholders, decision
   lists go (D-06, D-07). The self-test harness and its entries stay in Phase 38's baseline. `llama`/`qwen3` in the id-grammar
@@ -210,13 +212,19 @@ choosing effort by task (42).
   `HOME` rule keeps a scratch HOME away from the real one). **Own reasoning, jev overridden** (laya none_of_these low 0.56; typesafe
   tab_env_arguments low 0.65). Ledger. **Needs owner awareness**: a key now touches disk for the length of a hosted lane (headless
   keeps it in memory), in a private file that is removed; the alternative is no hosting for lanes that need keys.
+  - *(amended 2026-11-16, 38 D-31: the launcher sources the env file, opens the prompt on a file descriptor and deletes both as its
+    first steps, so a key touches disk for about the launcher's start, not the lane's duration; the runner removes any remainder on
+    every exit path it controls and Phase 38's sweep removes it after a hard kill; what is not guaranteed is stated in 38 R12)*
 - **D-26: Ownership, closing and failure.** One tab per lane call (never reused; `--no-focus`, `--cwd` the lane's cwd, label
   `aikit:<role>:<runtime>:<run token>`), its id read from the `tab create` JSON, and only that id is ever closed or typed into. The tab
   closes on finish, deadline, signal and spawn error; `tab close` was live-verified to end an `sh` launcher and its `sleep` child (a
   grandchild that detaches is unverified, so the lane's own kill path also signals the launcher pid). The run directory is removed after
   the close. The tab id is also written to the run directory before the launcher is typed so a runner killed hard leaves a record that
   Phase 38's sweep (and Phase 42's) can read: 37 writes the record and closes by id, 38 owns the lock between two runs, the sweep of
-  stale records and any naming change (its D-16 amendment). A `tab create` or `pane run` that fails before the launcher is typed gives
+  stale records and any naming change (its D-16 amendment). *(refined 2026-11-16, 38 D-25 to D-27, D-33: the record is the file
+  `run.json` in the run directory (fields in 38 R12), written before the env file and the tab; the sweep adds the read-only
+  `herdr tab list` to the three verbs of D-22 and closes a tab only when a dead run's record and a listed tab agree on id and
+  complete label; the label grammar is unchanged)* A `tab create` or `pane run` that fails before the launcher is typed gives
   `host` `ignored` with `host_failed` and one headless run; a failure after typing never reruns the lane (an execute lane would run twice).
 - **D-27: An interactive agent TUI, a TUI app, an e2e run and pane reuse are not runner transports.** Live: opencode's TUI has no
   `--model` flag, the reply is only on screen, `blocked` means a recognized dialog or an unexplained state, and the structured error
@@ -249,7 +257,9 @@ choosing effort by task (42).
   test as transitional code; if the executed shapes differ, this phase's plan adapts and records it.
 - **Phase 38**: the self-test move must carry `STATUS_HEAD_RE`, the new self-test cases and the sample lines; the id-grammar gate and
   the closed effort sets are already gone, so its baseline cleaning covers the self-test entries only; the watchdog and lock
-  reuse the planner for their report lines.
+  reuse the planner for their report lines. *(amended 2026-11-16, 38 D-15, D-19: the move is a sibling file, the planner's
+  report lines stay the settings report and the watchdog and lock print their own notices; this phase adds the status line keys
+  `coverage=` and `findings=` after the 37 group)*
 - **Phase 38.1**: its error classes use their own closed list; a `rejected` effort line adopts it; the status line grows after
   this group.
 - **Phase 39**: the capability block reads the final argv from `--print-argv`; the window check is unrelated to `--context`.
@@ -281,6 +291,11 @@ choosing effort by task (42).
   of a short `sh <path>` line is safe in every interactive shell an owner may use (zsh was tested; fish and nushell are unverified)
   and what a pane whose shell is not at a prompt does with the typed line; whether herdr on macOS differs (its skill text names a
   line-length limit there); what the hosted lane's `pid` file should hold so a dead launcher is told from a slow one.
+  *(Answered or narrowed 2026-11-16, 38 re-run 2, live on herdr 0.9.5: `tab close` ended the launcher and its plain and `nohup`
+  children but a `setsid` grandchild survived, the same limit as a headless group kill; polling the files costs 0.18 % of a core at
+  100 ms and 0.08 % at 250 ms, so 250 ms is the starting interval; the `pid` file holds the launcher's pid, which is also its
+  process group id, with its start time read by the runner from `/proc`; fish, nushell, a pane not at a prompt and macOS stay open
+  for the plan.)*
 
 </decisions>
 
