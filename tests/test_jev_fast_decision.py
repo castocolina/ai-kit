@@ -2448,9 +2448,19 @@ class TestDocs(unittest.TestCase):
     def test_doc_probe_command(self):
         # The kill switch is the session override in reference.md, not a prefix on each command
         # (Resolved Open Question 1): jev is on by default, so the command carries no assignment.
-        self.assertIn("python3 -B scripts/jev_review.py --probe", self.body)
         self.assertIn("`disabled`", self.body)
         self.assertNotIn("GSD_PATH_JEV=", self.body)
+
+    def test_doc_probe_runs_from_the_project_root(self):
+        # loop 34 round 2 finding D8-1: the client reads the project's ./.aikit/config.toml from
+        # its cwd, so the probe runs by the script's path from the project root, never from the
+        # skill's own folder (TestLadderEntryPoint pins the client side).
+        line = next(line for line in self.body.splitlines() if "--probe" in line)
+        self.assertIn("From the project root", line)
+        self.assertIn("python3 -B <skill-dir>/scripts/jev_review.py --probe", line)
+        self.assertIn("never `cd` there", line)
+        self.assertNotIn("From this skill's directory", self.body)
+        self.assertIn("`<skill-dir>/scripts/jev_review.py config set <key> <value>`", self.body)
 
     def test_doc_limit_sentence_in_skill_and_laya_backend(self):
         # SPEC R6 / T-34-25: the limit sentence carries its case count and percentage, and its
@@ -3016,6 +3026,25 @@ class TestLadderEntryPoint(unittest.TestCase):
         screen = self.run_entry(stdin=json.dumps({"items": []}))
         self.assertEqual(screen.returncode, 0, screen.stderr)
         self.assertIs(json.loads(screen.stdout)["advisory"], True)
+
+    def test_probe_by_path_reads_the_cwd_projects_jev_layer(self):
+        # SKILL.md runs the probe by its path from the project root: the cwd's [jev] layer applies.
+        project = self.tmp / "project"
+        (project / ".aikit").mkdir(parents=True)
+        (project / ".aikit" / "config.toml").write_text("[jev]\nenabled = false\n",
+                                                         encoding="utf-8")
+        env = {"PATH": os.environ.get("PATH", ""), "HOME": str(self.home),
+               "XDG_CONFIG_HOME": str(self.home / ".config"), "JEV_LAYA_URL": self.laya,
+               "AI_KIT_REFUSE_REAL_HOME": "1"}
+        proc = subprocess.run([sys.executable, "-B", str(SCRIPT), "--probe"], capture_output=True,
+                              text=True, env=env, check=False, timeout=60, cwd=project)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["status"], "disabled")
+        # the user config dir is empty, so "config" here can only be the project layer
+        self.assertEqual(out["settings"], {"enabled": False, "enabled_source": "config"})
+        elsewhere = self.run_entry("--probe")  # same script, cwd without that project layer
+        self.assertNotEqual(json.loads(elsewhere.stdout)["status"], "disabled")
 
     def test_skills_roots_order_with_every_variable_set(self):
         env = {"HOME": "/h", "CLAUDE_CONFIG_DIR": "/c", "XDG_CONFIG_HOME": "/x",
