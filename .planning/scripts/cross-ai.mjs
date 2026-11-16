@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=8fc01c19e9a4c56584fa7ab7237f5c460d70d4475ec3fa18fff15e45fe957a20
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=392fc07de975d065c46fc22f8e7a4864d09d863a8f5ee7eeaf8998b19dc9a792
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
@@ -1510,18 +1510,31 @@ function* jsonLines(s) { for (const l of s.split('\n')) { const j = l.trim().sta
 function lastJson(s, pred) { let hit = null; for (const j of jsonLines(s)) if (pred(j)) hit = j; return hit; }
 
 function parseOpencode(out) {
-  let sessionId = null, error = null;
+  let sessionId = null, error = null, lateError = null, turnDone = false, endMsg = null, endReason = null;
   const msgs = new Map();
   for (const ev of jsonLines(out)) {
     sessionId = sessionId || ev.sessionID || null;
-    if (ev.type === 'text' && ev.part && typeof ev.part.text === 'string') {
+    if (!turnDone && ev.type === 'text' && ev.part && typeof ev.part.text === 'string') {
       if (!msgs.has(ev.part.messageID)) msgs.set(ev.part.messageID, new Map());
       msgs.get(ev.part.messageID).set(ev.part.id, ev.part.text);
     }
-    if (ev.type === 'error') error = JSON.stringify(ev.error || ev).slice(0, 400);
+    // Our turn ends at the first step finishing for a reason other than tool-calls/unknown; later steps answer injected turns (2.3.0 plan-mode reminder). opencode's run rule is "idle with no pending background job", so a background_wait after a stop means the agent continues: reopen the turn.
+    if (ev.type === 'background_wait') { turnDone = false; endMsg = null; endReason = null; }
+    if (!turnDone && ev.type === 'step_finish' && typeof ev.part?.reason === 'string' && !['tool-calls', 'unknown'].includes(ev.part.reason)) {
+      turnDone = true;
+      endMsg = ev.part.messageID ?? null;
+      endReason = ev.part.reason;
+    }
+    if (ev.type === 'error') {
+      const msg = JSON.stringify(ev.error || ev).slice(0, 400);
+      if (turnDone) lateError = msg; else error = msg;
+    }
   }
-  const last = [...msgs.values()].pop();
-  return { text: last ? [...last.values()].join('') : '', sessionId, error };
+  // A turn cut short (length, content-filter, error) is not a complete answer.
+  if (!error && ['length', 'content-filter', 'error'].includes(endReason)) error = `opencode step finished: ${endReason}`;
+  // The message that ended the turn is the answer; the last message only when no step_finish was seen (older opencode).
+  const parts = endMsg != null ? msgs.get(endMsg) : [...msgs.values()].pop();
+  return { text: parts ? [...parts.values()].join('') : '', sessionId, error, lateError };
 }
 
 function normalize(text) {
@@ -5014,7 +5027,9 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const p = rt.parse(r.stdout, ctx);
       // A live hit wins only when it ended the child: one that finished on its own with exit 0
       // and an answer succeeded, whatever it printed on stderr on the way.
-      const finished = !r.timedOut && r.code === 0 && !p.error && Boolean(p.text.trim());
+      // A late error (after our turn ended) does not discard a complete answer.
+      const lateOk = !r.timedOut && !p.error && Boolean(p.lateError) && Boolean(p.text.trim());
+      const finished = !r.timedOut && (r.code === 0 || lateOk) && !p.error && Boolean(p.text.trim());
       if (r.liveHit && !r.limited && finished) r.liveHit = null;
       // A live terminal signal is the attempt's class; no second pass (D-09).
       let hit = null;
@@ -5052,8 +5067,9 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
           hit = cls.status;
           evidence = evidenceOf(cls);
         }
-        const failed = r.code !== 0 || Boolean(p.error);
+        const failed = (r.code !== 0 && !lateOk) || Boolean(p.error);
         if (!failed && p.text.trim()) {
+          if (p.lateError) log(`cross-ai: ${name} failed after the answer (${p.lateError})`);
           attempts += 1;
           dropStateFile();
           return {
@@ -5952,6 +5968,44 @@ process.stdin.on('data', () => {}).on('end', () => {
     process.exit(1);
   }
   fs.appendFileSync('a.txt', 'oc\n');
+  if (process.env.FAKE_OPENCODE_MODE === 'plan-reminder') {
+    // opencode 2.3.0 plan agent: a tool step, the answer, then a reply to its injected
+    // plan-mode reminder (a synthetic user turn the json stream does not show).
+    const ev = (type, msg, part) => JSON.stringify({ type, sessionID: 'ses_2', part: { messageID: msg, ...part } });
+    const lines = [
+      ev('step_start', 'm1', { id: 's1', type: 'step-start' }),
+      ev('text', 'm1', { id: 'p1', type: 'text', text: 'Reading the plan.' }),
+      ev('step_finish', 'm1', { id: 'f1', type: 'step-finish', reason: 'tool-calls' }),
+      ev('step_start', 'm2', { id: 's2', type: 'step-start' }),
+      ev('text', 'm2', { id: 'p2', type: 'text', text: '## Summary\nverdict' }),
+      ev('step_finish', 'm2', { id: 'f2', type: 'step-finish', reason: 'stop' }),
+      ev('step_start', 'm3', { id: 's3', type: 'step-start' }),
+      ev('text', 'm3', { id: 'p3', type: 'text', text: 'Plan mode is active.' }),
+      ev('step_finish', 'm3', { id: 'f3', type: 'step-finish', reason: 'stop' }),
+    ];
+    for (const l of lines) console.log(l);
+    process.exit(0);
+  }
+  const turnModes = {
+    // A stop step, background_wait, then the agent continues and answers.
+    'background-wait': [['step_start', 'm1'], ['text', 'm1', 'Waiting for the job.'], ['step_finish', 'm1', 'stop'], ['background_wait'], ['step_start', 'm2'], ['text', 'm2', '## Summary\nfinal'], ['step_finish', 'm2', 'stop']],
+    // A complete answer, then an error on the injected reminder turn and exit 1.
+    'late-error': [['text', 'm1', '## Summary\nverdict'], ['step_finish', 'm1', 'stop'], ['error'] ],
+    // The ending step ran out of tokens.
+    'length': [['text', 'm1', '## Summary\ncut off'], ['step_finish', 'm1', 'length']],
+    // The ending step has no text of its own; the earlier message must not be returned.
+    'no-text': [['text', 'm1', 'Reading the plan.'], ['step_finish', 'm1', 'tool-calls'], ['step_start', 'm2'], ['step_finish', 'm2', 'stop']],
+  };
+  const turnMode = turnModes[process.env.FAKE_OPENCODE_MODE];
+  if (turnMode) {
+    for (const [type, msg, extra] of turnMode) {
+      if (type === 'error') console.log(JSON.stringify({ type, sessionID: 'ses_3', error: { type: 'provider.quota', status: 429, message: 'rate limited' } }));
+      else if (type === 'background_wait') console.log(JSON.stringify({ type, sessionID: 'ses_3' }));
+      else if (type === 'text') console.log(JSON.stringify({ type, sessionID: 'ses_3', part: { id: 'p' + msg, messageID: msg, type, text: extra } }));
+      else console.log(JSON.stringify({ type, sessionID: 'ses_3', part: { id: type + msg, messageID: msg, type: type.replace('_', '-'), reason: extra } }));
+    }
+    process.exit(process.env.FAKE_OPENCODE_MODE === 'late-error' ? 1 : 0);
+  }
   const lines = [
     JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { id: 'p1', messageID: 'm1', type: 'text', text: 'Plan first.' } }),
     JSON.stringify({ type: 'tool_use', sessionID: 'ses_1', part: { type: 'tool', tool: 'bash' } }),
@@ -6985,6 +7039,55 @@ async function blackBoxSelfTest(listOnly = false) {
           if (mi < 0 || ri < 0 || mi > ri) return `calls=${ctx.calls.join('|')}`;
           return null;
         },
+      },
+      {
+        name: 'parser-opencode-plan-reminder',
+        kind: 'logic',
+        fakeOpencodeMode: 'plan-reminder',
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=dirty action=stop$/,
+        check: (r) => (r.stdout === '## Summary\nverdict\n' ? null : `stdout=${JSON.stringify(r.stdout)}`),
+      },
+      {
+        name: 'parser-opencode-background-wait',
+        kind: 'logic',
+        fakeOpencodeMode: 'background-wait',
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=dirty action=stop$/,
+        check: (r) => (r.stdout === '## Summary\nfinal\n' ? null : `stdout=${JSON.stringify(r.stdout)}`),
+      },
+      {
+        name: 'parser-opencode-late-error',
+        kind: 'logic',
+        fakeOpencodeMode: 'late-error',
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=dirty action=stop$/,
+        check: (r) => {
+          if (r.stdout !== '## Summary\nverdict\n') return `stdout=${JSON.stringify(r.stdout)}`;
+          const n = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: opencode failed after the answer (')).length;
+          return n === 1 ? null : `late-error stderr lines=${n}`;
+        },
+      },
+      {
+        name: 'parser-opencode-step-length',
+        kind: 'logic',
+        fakeOpencodeMode: 'length',
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok'],
+        exit: 1,
+        status: /^AIKIT-XAI status=crash /,
+        check: (r) => (r.stdout === '' ? null : `stdout=${JSON.stringify(r.stdout)}`),
+      },
+      {
+        name: 'parser-opencode-no-turn-text',
+        kind: 'logic',
+        fakeOpencodeMode: 'no-text',
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok'],
+        exit: 1,
+        status: /^AIKIT-XAI status=empty_answer /,
+        check: (r) => (r.stdout === '' ? null : `stdout=${JSON.stringify(r.stdout)}`),
       },
       {
         name: 'parser-codex',
