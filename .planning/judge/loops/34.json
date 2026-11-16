@@ -1,0 +1,57 @@
+{
+ "counts": {
+  "jev-fast-decision": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": {
+    "critical": 0,
+    "high": 0,
+    "judged_at": "950e4855e72afdec208baebbf3946579480a40a3",
+    "percent": 86.4,
+    "source": "verdicts/32.1/jev-fast-decision/r1/opencode_router-env_my-referee-two.json"
+   },
+   "reasons": [
+    "last percent 86.4 is within 7.0 points of 80"
+   ]
+  }
+ },
+ "loop": "34",
+ "pool": {
+  "judges": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two",
+   "opencode:router-env/my-referee-three"
+  ],
+  "members": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "native": null,
+  "probes": [
+   {
+    "judge": "opencode:router-env/my-referee-one",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=9s out=2214 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "usable": true
+   },
+   {
+    "judge": "opencode:router-env/my-referee-two",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=16s out=2224 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "usable": true
+   },
+   {
+    "judge": "opencode:router-env/my-referee-three",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=8s out=2206 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "usable": true
+   }
+  ],
+  "substitutes": []
+ }
+}

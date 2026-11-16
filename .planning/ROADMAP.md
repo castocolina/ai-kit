@@ -644,7 +644,7 @@ Plans:
   8. A new TypeSafe model id or unknown feature triggers one fetch of the official skill's doc flow and a record of what changed and which jev features it could serve (JEV-12). *(added 2026-11-14)*
   9. A guard test keeps Zen out of the skill and fails on any step that delegates Laya's or the official skill's install or upgrade to another repository (JEV-13). *(added 2026-11-14)*
 
-**Plans**: 9/10 plans executed in 8 waves *(revised 2026-11-15 per cross-AI review cycle 2: 34-08 waits for 34-07, whose skill text its guard scans and may reword)*
+**Plans**: 10/10 plans executed in 8 waves *(revised 2026-11-15 per cross-AI review cycle 2: 34-08 waits for 34-07, whose skill text its guard scans and may reword)*
 
 Plans:
 **Wave 1**
@@ -671,7 +671,7 @@ Plans:
 - [x] 34-09-PLAN.md — live Laya calibration and TypeSafe shared-state spike records (orchestrator step) (wave 7)
 
 **Wave 8** *(blocked on Wave 7 completion)*
-- [ ] 34-10-PLAN.md — judge loop 34 for jev-fast-decision (wave 8)
+- [x] 34-10-PLAN.md — judge loop 34 for jev-fast-decision (wave 8)
 
 **Cross-cutting constraints:** <!-- gsd:generated -->
 - SPEC R8 adjacency, empty and ordering: records only
@@ -1061,7 +1061,7 @@ Plans:
 | 32.4. Batch 4, planning skills and the closing report | 9/9 | Complete    | 2026-11-13 |
 | 32.5. codebase-memory-mcp replaces codegraph | 10/10 | Complete    | 2026-11-14 |
 | 33. One config design | 12/12 | Complete    | 2026-11-15 |
-| 34. jev backends by host and Laya calibration | 9/10 | In Progress | - |
+| 34. jev backends by host and Laya calibration | 10/10 | In Progress | - |
 | 35. Model discovery and catalog | 0/TBD | Not started | - |
 | 36. spec-config as the hub | 0/TBD | Not started | - |
 | 37. Shared runner options and session ids | 0/TBD | Not started | - |

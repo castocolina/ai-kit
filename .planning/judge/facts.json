@@ -168,6 +168,7 @@
     "tests/test_flow_stack_2.py",
     "tests/test_flow_stack_3.py",
     "tests/test_gsd_curated_eval.py",
+    "tests/test_jev_config.py",
     "tests/test_quota_policy_text.py",
     "tests/test_run_unittest_parallel.py",
     "tests/test_runtime_list_drift.py",
@@ -247,6 +248,7 @@
     "tests/test_flow_stack_3.py",
     "tests/test_gate_scope.py",
     "tests/test_gsd_curated_eval.py",
+    "tests/test_jev_config_parity.py",
     "tests/test_pi_live_tools.py",
     "tests/test_quota_policy_text.py",
     "tests/test_run_unittest_parallel.py",
@@ -301,7 +303,7 @@
    "queries": 20
   },
   "jev-fast-decision": {
-   "evals": 6,
+   "evals": 8,
    "modules": [
     "tests/test_ai_kit_caller_text.py",
     "tests/test_ai_kit_commit_fold.py",
@@ -319,8 +321,13 @@
     "tests/test_config_dir_parity.py",
     "tests/test_curated_config_skills.py",
     "tests/test_decision_probe.py",
+    "tests/test_jev_config.py",
+    "tests/test_jev_config_parity.py",
     "tests/test_jev_fast_decision.py",
+    "tests/test_jev_fast_decision_guard.py",
+    "tests/test_jev_learn.py",
     "tests/test_jev_skill_install_e2e.py",
+    "tests/test_jev_typesafe_models.py",
     "tests/test_judge_loop.py",
     "tests/test_precompact_core.py",
     "tests/test_secret_shapes_copy_install.py",
