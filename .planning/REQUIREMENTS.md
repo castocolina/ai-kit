@@ -96,6 +96,16 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   gh-stack extension) through a guarded step: an installed tool is left alone, a tool that cannot install is
   reported by name with its manual command, the target still succeeds and the flow degrades without that tool;
   `dev` and `setup-env` keep working until RULE-05 settles the aliases. *(added 2026-11-03, 30 D-04)*
+- [ ] **FLOW-14**: `ai-kit-spec-goal-prompt` learns from the current and the previous session and from the rails applied
+  in them, and proposes good rails for the next prompt, keeping only what the project's AGENTS.md rules and its generated
+  block do not already say. Its sources are the installed `lesson-learned` skill, chained as an optional black box over
+  the session's commit range and the previous one (it grounds a lesson in git commits, a branch diff or staged changes,
+  never in a session transcript), the rails files the runs used, and optionally the redacted transcript and log search step
+  of Phase 47.1 for owner corrections, stops and quota cuts that never reach a commit (whether that source is on by default
+  needs owner confirmation). Each candidate appears inside the generated prompt's rails section labeled "learned" with
+  its source, within the prompt's existing length caps, and is never written into AGENTS.md by this skill; without
+  `lesson-learned`, or without Phase 47.1's step, the skill behaves as it does today for that source, and a test covers each
+  absent path. *(added 2026-11-16, owner decision; Phase 47.2)*
 
 ### Removals
 
@@ -207,51 +217,109 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   or more, effort-aware), class, relative cost, modalities and strengths, each value labeled measured or judged,
   with cache times; it shows each source's required attribution, never commits or ships Artificial Analysis data
   (its free tier forbids redistribution), and takes Arena data from the official dataset under its CC-BY-4.0 terms.
+  Each model also carries its context window size when a source states it, labeled measured or judged; an unknown
+  size stays visibly unknown. *(amended 2026-11-16, GSD lane-handling study: Phase 39's prompt-size check reads it)*
   *(amended 2026-11-14, owner decision: models.dev and Artificial Analysis are the primary sources and the LM Arena
   leaderboard the alternative when Artificial Analysis is unavailable; the merged classification feeds HUB-07)*
+  *(amended 2026-11-16, 35 D-03 and D-09, owner decisions: Arena is merged whenever enabled in `[models]`, because
+  Artificial Analysis needs a key and some of its properties can be incomplete, so the sources complement each other;
+  the context window is kept per (runtime, model) with its source label, since one model has different windows on
+  different runtimes, and Phase 39's prompt-size check reads the runtime's value)*
 - [x] **HUB-04**: The cheap-execution ranking still yields candidates although Artificial Analysis returns its coding
   and agentic indexes as null.
 - [ ] **HUB-05**: The config separates reviewers from executors, each with priorities, effort per model and opt-in
   runtime and model escalation flags (off by default); an effort is passed only when the model supports it (detected
   per model), in the runtime's own form, and is never dropped silently (today only codex receives it).
   *(amended 2026-11-14, 33 D-03: reviewers are `[[lanes.review]]` and executors `[[lanes.execute]]` in
-  `config.toml`; a lane is never reused across roles)*
+  `config.toml`; a lane is never reused across roles)* *(amended 2026-11-16, 36 D-04 to D-06: each role's priority is
+  `[lanes.policy.review]` or `[lanes.policy.execute]` `ladder`; the effort forms for codex, pi, cursor and opencode land in
+  Phase 36, and claude's and copilot's land with the runner in Phase 37; escalation flags are two flat booleans on a lane,
+  informational until Phases 37, 40 and 41 read them)* *(amended 2026-11-16, 36 D-15, D-16: a lane may also carry
+  `usage_limited` (the owner's yes for a free model with a daily or other cap, written only when true) with a display-only
+  note; the fallback is the first unflagged lane in the role's order, read through one function; informational until Phase 40
+  reads it)* *(amended 2026-11-16, free-lane pool study, 36 D-20 to D-22, PROVISIONAL, needs owner confirmation: a flagged lane
+  also records its pool (provider plus tier, for example the one pool that the free models of a provider appear to share), the
+  fallback is the first lane of the role that is neither flagged nor in the same pool, and the wizard warns that other free
+  models of the same provider share the pool; source `.planning/research/2026-11-16-opencode-free-models.md`)*
 - [ ] **HUB-06**: spec-config flags stale entries (removed models, providers no longer configured).
 - [ ] **HUB-07**: jev ranks candidates and the user picks; by default the ranking proposes flagship-class models for
   review and coding-class models for execution; no skill, rail or default hardcodes a referee name.
   *(amended 2026-11-14, owner decision: from the classified catalog, spec-config proposes a coding set and a
   review set separately and the user confirms each before anything is written; nothing is labelled review by
-  default)*
+  default)* *(amended 2026-11-16, 36 D-18: the proposal also shows a separate group of zero-price models, ordered by the same
+  scores and labelled with the price source, so the owner can select a free model; a zero price never marks a lane
+  usage-limited, only the owner does)*
 - [ ] **HUB-08**: The opencode CLI profile and the runner's comments match the installed opencode as its own
   `--help` reports it (current providers, the effort levels the model API lists, the `opencode models` flags), and a
   test fails when the profile names a flag the recorded help text lacks.
+- [ ] **HUB-09**: Only `router-env/<x>` model names may be hardcoded in code, defaults, rails, skills, docs and tests as
+  expected values, and in tests only for pi and opencode; every other provider or model name comes from live
+  discovery, the catalog or the user's config. A test fails on a new violation, with a committed baseline of today's
+  violating files that can only shrink (a baseline file that no longer violates also fails); a runtime table is seed
+  data and examples only, each marked, and never decides. *(added 2026-11-16, owner rule; 35 D-16 to D-18: the guard
+  is position-based, tests for the bare-id hosts use invented structure-only placeholders (needs owner confirmation),
+  and Phase 36's hardcoded-referee test is the same guard family)*
+- [ ] **HUB-10**: When the owner selects a free (zero-price) model that is not known to be local, spec-config shows the model's
+  data-use note before anything else about the lane: `zero_retention`, `may_be_kept_or_trained` or `unknown`, with a display
+  line, its source, the date it was read and a label (`verified` only for the vendor's own documentation page read in that run,
+  else `reported`); an unreadable or silent source shows `unknown` and never defaults to a safe value, and no shipped list decides.
+  It states that a review or execute lane sends project content to that vendor and asks the owner to confirm; a yes records the
+  note and the confirmation beside the lane, a no or a skip writes no lane. *(added 2026-11-16, owner directive, free-lane pool
+  study, 36 D-23, PROVISIONAL, needs owner confirmation: the decline path and the closed value list; only four of the free models
+  on the vendor's page are listed as zero-retention, so project code may reach a third party; source
+  `.planning/research/2026-11-16-opencode-free-models.md`)*
 
 ### Review
 
 - [ ] **REV-01**: When a review lane fails mid-review, spec-review switches to the next lane in the user's preference
-  order instead of ending the review.
+  order instead of ending the review. *(amended 2026-11-16, 36 D-16: a lane the owner flagged `usage_limited` switches at
+  once to the first unflagged lane of its role, read through one function; an unflagged lane never switches on its own)* *(amended 2026-11-16, free-lane pool study, 38.1 D-23 to D-27 and 36 D-20 to D-22,
+  PROVISIONAL, needs owner confirmation: selection skips a lane whose pool's blocked-until time has not passed, the fallback is
+  a lane of a different pool, and the first selection after the time tries the lane once)*
 - [ ] **REV-02**: jev classifies reviewer-fixer disagreements and gray areas before the user is asked.
 - [ ] **REV-03**: Lens skills present in the environment (the ponytail family, reducing-entropy, naming-analyzer,
   simplify, impeccable for UI) reach reviewers by path in the prompt guidance; file-editing lenses run as a pass
   after approval; a lens is inlined in the prompt when the lane's host cannot load it by path (Claude built-ins, pi
-  through an allow-listed `--skill`).
+  through an allow-listed `--skill`). *(amended 2026-11-16, 39 D-10, D-11, D-14: pi is the one host whose own docs verify a
+  by-path skill (`--skill` still loads under `--no-skills`); an unverified path form inlines; a built-in with no file is run only
+  by a native lane of its host, other lanes get a named note; the file-editing pass after approval is opt-in
+  (`[review] edit_lens_pass`, off by default), runs on a write-capable lane and the owner accepts its diff, needs owner
+  confirmation)*
 - [ ] **REV-04**: Each lane gets a capability block built from its final argv (read-only or write, shell or not, the
   tools found on the child's PATH, codebase-memory-mcp only when its binary is on that PATH (it replaced codegraph in Phase 32.5)), so no lane is told about a tool it cannot use.
+  A prompt larger than a lane's known context window (the lane's own runtime's value in the catalog, or a user override
+  per (runtime, model); *amended 2026-11-16, 35 D-09*) is refused for that lane with a named reason and never
+  trimmed (an unknown window is not capped and shows as unknown), and a value embedded in a prompt (file list, lens
+  path) that holds a control character or points outside the repository or skill roots is rejected. *(amended
+  2026-11-16, GSD lane-handling study: GSD refuses over-cap prompts and validates embedded paths)* *(amended 2026-11-16, 39 D-02,
+  D-05, D-12: the capability facts are computed by the runner from the final argv and printed on its `--print-argv` capabilities
+  line, with `unknown` where the argv does not show a fact; "the tools found on the child's PATH" means each tool is resolved
+  against the PATH of the exact child environment at dispatch time, not the parent's; a lane whose argv applies a context form
+  with an unverified effect has an `unknown` window unless the user stated one; the pre-spawn refusal is Python-side only, a GSD
+  hook route is Phase 44's)*
 - [ ] **REV-05**: One role-keyed table of the skills (and MCP servers where a host allows it) present on each host,
   rescanned every run, is shared by review, execute and curated-config; an optional config-time jev step sorts an
-  unknown skill into a role, and the user confirms every such sort.
+  unknown skill into a role, and the user confirms every such sort. *(amended 2026-11-16, 39 D-07 to D-09: the roles are a
+  closed list with a locking test, seed rows are examples with source labels and never decide presence, a confirmed sort is a
+  `[skills.roles]` config entry labeled user-stated, and MCP servers are listed by name only from each host's own config)*
 - [ ] **REV-06**: jev picks the reviewer for a plan and how many lanes it gets (one or two) from files touched,
   complexity, task count and category, on top of deterministic signals (security, data, irreversible operations).
 - [ ] **REV-07**: Before a review or judge round, spec-review pings each chosen lane with a short probe, replaces
   only the blocked ones from the user's preference order, continues with at least one, and records which lanes
-  judged; a fake-lane test covers one blocked lane.
+  judged; a fake-lane test covers one blocked lane. Pings run at once, each with its own timeout; every ping or lane
+  failure records a reason from one closed list that a test locks; a review in which a lane was replaced, failed or
+  never resolved is reported partial with the lanes that judged, never as a clean run, and one lane's failure never
+  cancels another lane's result. *(amended 2026-11-16, GSD lane-handling study: GSD's lane dispatch is fail-closed in
+  this way)*
 - [ ] **REV-08**: spec-review reports a superpowers plan that has no explicit fold step at its end as a finding.
   *(added 2026-11-03, 29 D-03: owner decision; the fold step itself is Phase 29)*
 
 ### Execute
 
 - [ ] **EXE-01**: The superpowers execute adapter keeps one pinned-resume path and one owner-stop path, and hands off
-  to spec-config when no config exists (one phase changes this code once).
+  to spec-config when no config exists (one phase changes this code once). *(amended 2026-11-16, 36 D-03: the
+  adapter's no-config entry check and ask are added with HUB-01 in Phase 36; this phase keeps them and owns the resume
+  and stop paths)*
 - [ ] **EXE-02**: After implementation, superpowers' `requesting-code-review` runs and ai-kit's capped loop iterates
   with the same review lanes until the review passes; at `receiving-code-review`'s stop-and-discuss point jev
   classifies the gray areas before the user is asked, and lens skills from the role-keyed table help where the model
@@ -268,7 +336,9 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **EXE-06**: Lane transport is chosen per lane (subprocess, resumed session, herdr pane) for execute,
   spec-review and code-review lanes, reused within a plan and renewed after a set number of rounds, after a spike on
   session ids and headless resume; a herdr lane returns its result through a report file, its pane closes at plan
-  close, and a start-of-run sweep closes leftover panes ai-kit created.
+  close, and a start-of-run sweep closes leftover panes ai-kit created. *(amended 2026-11-16, re-run 2, 38 D-25 and D-27: the
+  sweep is the runner's (RUN-13, `--sweep` and the start of every real run), and a pane this requirement opens carries the
+  same run record and label so that sweep closes it)*
 - [ ] **EXE-07**: Review and execute flows classify each lane result through jev before the loop continues or stops:
   an execute result as done, partial or needing another round; a review finding by whether its severity fits the
   kind of problem, the test tier, reproducibility, end-user reach and MVP versus production. Without jev a
@@ -276,42 +346,128 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **EXE-08**: In an ai-kit checkout every executor lane (the runner's execute role and the superpowers adapter)
   runs with the real-home guard on (`AI_KIT_REFUSE_REAL_HOME=1`), and the execute flow compares the real host-config
   modification times before and after the lane and reports any change; a fake-lane test proves both.
+- [ ] **EXE-09**: When an execute lane stops on a quota error, the superpowers adapter reads the lane's `lane_usage_limit`,
+  `lane_fallback` and the pool's blocked-until record (RUN-14): a flagged lane moves at once to a fallback lane of a different
+  pool, a lane whose blocked-until time has not passed is skipped at selection, the first selection after that time tries it
+  once, and an unflagged lane keeps stopping and reporting; a fake-lane fixture covers each case. *(added 2026-11-16,
+  free-lane pool study, PROVISIONAL, needs owner confirmation; 36 D-16 handed the executor reading to Phase 41 without a
+  criterion)*
 
 ### Shared runner
 
 - [ ] **RUN-01**: One runner serves open-gsd cross-AI and ai-kit review and execute, taking runtime, provider and
   model, effort, escalation flags and the role (review or execute) per call, from the config or from the calling
-  skill's decision.
+  skill's decision. Every setting a call names is reported as applied or ignored with the reason (a runtime that
+  takes no model flag or no effort is never fed one and says so). A runtime table (the `RUNTIMES` tables in
+  `detection.py` and `cross-ai.mjs`) is seed data and examples only, each row labeled with its source (verified with
+  date, or unverified); it never decides. What a runtime accepts is learned live (its own `--help` or listing, a
+  probe, the catalog) and live evidence beats a row; a runtime missing from the table, and a custom command lane, can
+  still serve review or execute with each setting shown as unknown until learned, and a table row never blocks a
+  lane. *(amended 2026-11-16, GSD lane-handling study: GSD's fixed lane table decides which hosts may review and
+  which accept model, effort or context settings; ai-kit keeps its own tables as seed and examples only, owner
+  correction 2026-11-16)* *(amended 2026-11-16, 37 D-01 to D-12: the call vocabulary is `--role`, `--effort`, `--context`,
+  `--escalate-runtime`, `--escalate-model`, `--session-id`; the runner composes each runtime's effort form and checks a
+  level's shape only; every named setting prints applied, ignored or unknown with a reason from a closed list; a runtime
+  with no formula runs from a declared argv file and otherwise gets a named refusal; a model id passes a universal safety
+  floor with an advisory for unusual shapes; the Python mirrors give way to the runner's `--describe`)*
 - [ ] **RUN-02**: The runner accepts a session id and prints the one it used, so a lane can resume across rounds.
+  *(amended 2026-11-16, 37 D-03: one `--session-id` flag, `session=` in the status line, chosen or minted per runtime row,
+  a rejected id fails visibly)*
 - [ ] **RUN-03**: An opt-in idle watchdog ends a lane's process group after a set time without output, using the
   existing exit vocabulary; its default is one a slow, quiet model does not trip, and the runner self-test has a
-  case for it.
+  case for it. For an execute lane the idle clock also resets when the checkout's tree state or commits change, so
+  a quiet lane that is committing is never ended and one that prints but changes nothing is reported. *(amended
+  2026-11-16, GSD lane-handling study: GSD's stall check for native executors keys on commits since dispatch, not
+  on output; `pi -p` prints no stdout while working)* *(amended 2026-11-16, 38 D-01 to D-05: the opt-in is
+  `--idle-timeout <seconds|default>` or the baked `CONFIG.idleTimeoutS`, `default` is 900 s labeled judged, an idle kill is
+  a timed-out attempt in the existing retry ladder, and review lanes reset on output only)* *(amended 2026-11-16, re-run 2, 38
+  D-28, RUN-13: for a lane the runner hosts in a herdr tab, "output" is growth of the lane's `out` or `err` file)*
 - [ ] **RUN-04**: The Phase 25 review cleanup lands: one confirmed-router rule, a quota-cycle class, the long
   self-test moved out of rendered copies, the user's lower timeout restored on cleanup, curated-config's
   `plan_io.py` calling gsd-core's `buildAgentSkillsBlock` instead of re-implementing it, and the dead `runCli`
-  state, the live-detection plumbing and the clamp helpers removed.
+  state, the live-detection plumbing and the clamp helpers removed. *(amended 2026-11-16, 38 D-17 to D-22, live-verified:
+  the lower-timeout restore has no code left (its skill was removed in Phase 31), so it becomes a visible, tested
+  before and after in the plan entry; only the unused `watchChunk` parameters, a redundant term and one redundant
+  assignment are dead, and `clampCapS` and `clampAttemptTimeout` are live and stay; the router rule counts an owner
+  statement or an alias assumed by the naming rule; the quota class is `quota_cycle`)*
 - [ ] **RUN-05**: The error catalogue classifies the real-run bodies it misses today (provider not configured,
   policy budget 429, data inspection 400, context length 400, a plan-not-open code, 502/503 capacity, copilot's
   "model not available") and promotes the rows that now have evidence; the model-cooldown row's class is set from
-  its observed durations (2 minutes to over 2 hours) rather than assumed transient.
-- [ ] **RUN-06**: A test keeps the runner template and the rendered project copy in sync.
+  its observed durations (2 minutes to over 2 hours) rather than assumed transient. *(amended 2026-11-16, 38.1 D-01 to D-06: the
+  failure classes become one closed list with a locking test (`quota`, `billing`, `auth`, `permission_blocked`, `bad_model`,
+  new `bad_request` for a request the provider itself refused, `transient`, `crash`), apart from Phase 37's setting reasons and
+  Phase 38's outcomes `partial` and `locked`; four hosts' own "model does not exist" wording was captured live on 2026-11-16 and is
+  added per host, labeled verified; the listed real-run bodies are added labeled unverified where no body was captured; the five
+  rows with recorded real evidence are promoted)*
+- [ ] **RUN-06**: A test keeps the runner template and the rendered project copy in sync. *(amended 2026-11-16, 37 D-18:
+  the test renders into a scratch project and reads no `.planning/` path; `tools/check_dogfood.py` stays the live check)*
 - [ ] **RUN-07**: An execute run through the runner records a start-of-run tree baseline and takes a run lock,
   because the lock exists to stop two runs from sharing one checkout: two runs started at once on the same checkout
   leave one running and the other refused, a stale lock left by a dead process is reported and cleared, and later
-  checks compare against the baseline. A test starts two runs at once.
+  checks compare against the baseline. A test starts two runs at once. *(amended 2026-11-16, 38 D-06 to D-10: the
+  refused run ends with the new status `locked` and a bare exit 75, and the baseline is reused by a later round for the
+  same task until it ends ok)* *(amended 2026-11-16, re-run 2, 38 D-26, RUN-13: for a hosted lane the recorded child group is
+  the launcher's group; a surviving tab is not a live lane and holds no lock)*
 - [ ] **RUN-08**: Before an execute result counts as done, the runner checks the planned tasks against the commits
   actually made: a planned task with no matching commit, an early exit, a summary that admits skipped work, or a
-  diff touching forbidden files turns the result into partial or failed; fake-lane tests cover each case.
+  diff touching forbidden files turns the result into partial or failed; fake-lane tests cover each case. *(amended
+  2026-11-16, 38 D-11 to D-15: `partial` (new, exit 1) for an uncovered task, no commit or an admission phrase,
+  `contract_violation` for a forbidden path, each with a finding from a closed list; the check reads the prompt's task
+  blocks and says `coverage=n/a` when there are none)*
 - [ ] **RUN-09**: The runner's Claude matcher reads a usage-limit message from stdout as well as stderr, so a limit
-  printed on stdout gets its quota class instead of an unclassified crash; a test covers both channels.
-- [ ] **RUN-10**: The error catalogue matches the router's logged cooldown wording ('all N active accounts cooling
+  printed on stdout gets its quota class instead of an unclassified crash; a test covers both channels. *(amended 2026-11-16,
+  38.1 D-07, D-08, live-verified: a limit in claude's JSON result on stdout (the runner's own `--output-format json`) is already
+  classed quota; only the same sentence as plain text on stdout is a crash. The fix is a catalogue row that opts in with
+  `input: stdout`, read only after a failed attempt and never as a live kill, plus claude's `api_error_status` and
+  `api_error_type` fields read beside the text)*
+- [ ] **RUN-10** *(amended 2026-11-16: the logged wording is server-side only; the client sees JSON codes `model_cooldown`, `ALL_TARGETS_SKIPPED` and `all_targets_cooling_down` with `Retry-After`, so the catalogue matches those too: see 38.1 SPEC R4 and CONTEXT D-22)*: The error catalogue matches the router's logged cooldown wording ('all N active accounts cooling
   down for model X (reset after ...)') as a quota-cycle class with its reset time, tested on a captured log line,
-  unless an owner decision recorded in Phase 38.1 says why it does not.
+  unless an owner decision recorded in Phase 38.1 says why it does not. *(amended 2026-11-16, 38.1 D-09: the wording was captured
+  from the router's own log (level warning), not from a client body, so the rows are scoped to confirmed router lanes with class
+  `quota`, keep the reset as a display field `reset_after_s`, and are labeled unverified until a client body is captured; the
+  wildcard rows stay transient)*
 - [ ] **RUN-11**: The owner decides the runner's retry policy: soft retries for transient faults, periodic retries
   for 5xx and quota errors with checks for an early reset, and the 10-minute and 4-hour ladder against the shipped
   single wait. The evidence is the retry outcomes in the runner logs since Phase 25.1, the error catalogue's classes
   and the observed recovery times by route (router combos versus direct providers). The decision is recorded in
-  Phase 38.1, and the runner's defaults in ai-kit's config (CFG-03) follow it, with a test per policy branch.
+  Phase 38.1, and the runner's defaults in ai-kit's config (CFG-03) follow it, with a test per policy branch. *(amended
+  2026-11-16, 38.1 D-10 to D-12, owner decision: "the shipped single wait" was stale, the shipped ladder is five soft retries in
+  about 13 s, one session reset, then hard waits of 600, 900 and 1800 s and a stop after 55 minutes. The decision: a short first
+  check (60 s), then 300 s, then every 600 s until the 4-hour cap (`hard_every_s`, default 600; `hard_waits_s` default
+  `[60, 300]`), plus one extra check just after a reset time the body states, only inside the cap. "Periodic retries for 5xx and
+  quota errors" means 5xx on every lane and quota on confirmed router lanes only; a direct lane keeps the 2026-11-02 rule (a quota
+  error stops at once). Evidence: 34 router cooldowns, 24 under 2 minutes and 8 over 4 hours; recorded in
+  `38.1-RETRY-POLICY.md`)*
+- [ ] **RUN-12**: Where herdr is available at runtime (`HERDR_ENV=1` and the `herdr` CLI), the runner may run a lane in a tab it
+  opens and closes what it opened when the lane ends; the lane's command line, settings, session id, classification and exit codes
+  are identical to the headless run, and the headless path stays the unchanged default, tested without herdr, with `--host none`
+  and with `AIKIT_HOST=none`. A pane has no exit code, so a hosted lane reports through its own files (output, error, exit code),
+  never through herdr's screen text or agent status; the runner touches only the tab it opened. *(added 2026-11-16, 37 D-22 to D-29,
+  owner directive "herdr hosting"; interactive agent TUIs, TUI apps, e2e runs and pane reuse are Phase 42's and the calling skills')*
+- [ ] **RUN-13**: A lane the runner hosts in a herdr tab (RUN-12) is as safe as a headless one: the run lock names the lane's
+  launcher group as its child group, the opt-in idle watchdog reads the lane's own output files, the execute checks use the same
+  inputs, a hosted lane's output files stay bounded, and the secret files of a hosted lane are deleted by the launcher as its first
+  steps. A run killed hard leaves a secret-free record in its run directory, and a sweep (at the start of every real run, and on
+  demand with `--sweep`) removes what such a run left and closes a tab only when a dead run's record and a listed tab agree on id
+  and complete label; it never closes another pane, never reads herdr's screen text, status or the existence of a tab as a
+  liveness or verdict signal, and an automatic sweep never calls herdr when hosting is switched off. What cannot be guaranteed (a
+  kill before the launcher ran, a detached `setsid` grandchild, unlinked disk blocks) is stated in the skill. *(added 2026-11-16,
+  re-run 2, 38 D-25 to D-33, owner directive "herdr hosting")*
+- [ ] **RUN-14**: A quota stop of a usage-limited lane writes a secret-free "blocked until" record in the runner's state
+  directory (never in config), keyed by the lane's pool (provider plus tier, so lanes that share a pool block together), so a
+  later run does not spend a call on a lane that is still limited. The time is now plus the stated reset (the typed
+  `retryAfterMs` of an opencode free-pool error, taken from the HTTP `Retry-After` header) plus the 120 s margin of the stated
+  reset check when stated, else now plus 24 hours; the first selection after that time tries the lane once, and after a second
+  consecutive failure the floor becomes 24 hours. A client-rule error (`FreeTierError`, a missing session header, a version gate)
+  is not a usage limit and is never retried, and a removed model is a terminal `bad_model` that writes no record. A read-only query
+  prints a record; the caller (Phases 40 and 41) decides, the runner never switches lane. *(added 2026-11-16, free-lane pool
+  study, 38.1 D-23 to D-27, PROVISIONAL, needs owner confirmation: whether the 24-hour floor or the stated reset wins, the
+  second-failure rule and the margin; source `.planning/research/2026-11-16-opencode-free-models.md`)*
+- [ ] **RUN-15**: The grok CLI runtime is removed from detection, command building, the runner's runtime table, the CLI
+  profiles, the docs and the tests, and a test fails when a runtime list, command builder or profile names it again. Grok
+  models stay reachable as models of opencode, pi and cursor-agent. A config that still names the grok runtime gets one clear
+  message naming the replacement runtimes and the re-save command. *(added 2026-11-19, owner decision, Phase 39.1: a rare
+  runtime that adds no value is not worth maintaining; no SPEC yet)*
 
 ### Project rules skill
 
@@ -330,6 +486,9 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   database, real data, security, infra, observability, accessibility), the lens skills from the role-keyed table,
   and defines 'visible at the end of phase 1' (a UI mockup deployed on minimal infra; for an API, a service contract
   with a JSON sample tied to a schema or an OpenAPI document).
+  *(amended 2026-11-16, owner decision, RULE-33: "talk in the user's language" is superseded; the conversation language
+  defaults to English and changes only when the user asks for another one, then stays until the user says otherwise; written
+  artifacts stay in one language, English by default)*
 - [ ] **RULE-04**: Runbooks live at `docs/run-book/<topic>.md` with a hash header, so a developer's edits are never
   overwritten.
 - [ ] **RULE-05**: Makefile rules: `setup-dev` and `setup-docker` (with `setup-env` as an alias for one milestone),
@@ -439,7 +598,9 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   services and other multi-user systems, to prove users do not compete for or overwrite shared resources; only nice
   to have, never required, for desktop apps, CLIs and similar single-user tools. The rules skill records the
   project's kind (detected, or asked once) and that kind decides which text applies; a fixture test pins both texts
-  on one project of each kind.
+  on one project of each kind. *(amended 2026-11-16, owner decision, RULE-34: for a project with a slow suite the rules also
+  point to smart test selection, so the hooks run the tests that cover the diff instead of the whole suite; RULE-34 owns that
+  mechanism and its audit finding)*
 - [ ] **RULE-25**: The testing runbook writes these rules into the project: a parallel test runner configured by
   default for unit tests, and for integration and e2e where the stack allows, with an explicit, commented exception
   set for tests that cannot run in parallel and a worker count computed as a share of the available CPUs that a
@@ -499,6 +660,30 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   `claude_md_path` setting names the real AGENTS.md or AGENTS.local.md file, never a symlink. A non-GSD fixture
   project gets none of these lines. *(added 2026-11-04, owner rules audit: general rule for GSD projects, from
   the owner's memory)*
+- [ ] **RULE-33**: The generated AGENTS.md block carries a language section. Written artifacts (documentation, planning
+  files, commit messages, code comments and memory files) are in one language, English by default; a project may choose one
+  other language and then never mixes two in a file; quoted owner words are translated faithfully. Memory files are written in
+  the same language as the artifacts. The project's AGENTS.md outranks the agent's memory files: a memory entry never overrides,
+  relaxes or reinterprets a rule there, and the memory is corrected instead. The conversation language defaults to English and
+  changes only when the user asks for another one, then stays until the user says otherwise; a memory entry or a mirrored habit
+  never changes it. The audit flags a project AGENTS.md that has no such section and a memory entry that contradicts it (labeled
+  inferred, because the match is a phrase check on the entry's description and body, never a reading of the owner's intent),
+  and a fixture test pins each finding on synthetic files; the real memory folder is never a fixture. *(added 2026-11-16,
+  owner decision; the model text is the `English only, always` and `This file outranks memory files` bullets of ai-kit's own
+  AGENTS.md; Phase 45.1)*
+- [ ] **RULE-34**: The pre-commit and pre-push test hooks the rules skill requires are a smart test selection, not a full suite.
+  From the diff (the staged files for a commit, the pushed range for a push) the mechanism finds which source components
+  changed (documents are not components), reads a dependency map to decide which tests must run (the tests of a changed
+  component and of its dependents) and runs only those. It is conservative: it runs the full suite when the diff touches
+  shared machinery or a file with no mapping, when the mapper fails or when its data is stale; a docs-only diff runs no tests
+  beyond the doc checks; it reports its selectivity and the time saved. The project-rules audit flags a full-suite hook in a
+  project whose suite is slow, and when no such mechanism exists the skill requires one and asks a subagent to build it from a
+  delegation brief that carries this contract and a fixture acceptance (a diff touching component A runs only A's tests and
+  its dependents, a shared-machinery change runs everything, an unmapped file runs everything, a docs-only diff runs none); the
+  brief includes the stack's graph building (a Python import graph, a JS or TS module graph, others as detected). The in-repo
+  reference to generalize is `tools/staged_mapper.py` with `tools/run_unittest_parallel.py --staged` (GATE-01), which today is a
+  name index over tests and their helpers and prints selectivity with `--stats`; a time-saved report is new. *(added
+  2026-11-16, owner decision; Phase 46)*
 
 ### Host hooks
 
@@ -882,6 +1067,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | FLOW-11 | Phase 29.1 | Complete |
 | FLOW-12 | Phase 30 | Complete |
 | FLOW-13 | Phase 30 | Complete |
+| FLOW-14 | Phase 47.2 | Pending |
 | RMV-01 | Phase 31 | Complete |
 | RMV-02 | Phase 31 | Complete |
 | RMV-03 | Phase 31 | Complete |
@@ -908,6 +1094,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | HUB-06 | Phase 35 | Pending |
 | HUB-07 | Phase 36 | Pending |
 | HUB-08 | Phase 35 | Pending |
+| HUB-09 | Phase 35 | Pending |
+| HUB-10 | Phase 36 | Pending |
 | REV-01 | Phase 40 | Pending |
 | REV-02 | Phase 40 | Pending |
 | REV-03 | Phase 39 | Pending |
@@ -924,6 +1112,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | EXE-06 | Phase 42 | Pending |
 | EXE-07 | Phase 42 | Pending |
 | EXE-08 | Phase 41 | Pending |
+| EXE-09 | Phase 41 | Pending |
 | RUN-01 | Phase 37 | Pending |
 | RUN-02 | Phase 37 | Pending |
 | RUN-03 | Phase 38 | Pending |
@@ -935,6 +1124,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-09 | Phase 38.1 | Pending |
 | RUN-10 | Phase 38.1 | Pending |
 | RUN-11 | Phase 38.1 | Pending |
+| RUN-12 | Phase 37 | Pending |
+| RUN-13 | Phase 38 | Pending |
+| RUN-14 | Phase 38.1 | Pending |
+| RUN-15 | Phase 39.1 | Pending |
 | RULE-01 | Phase 45 | Pending |
 | RULE-02 | Phase 45 | Pending |
 | RULE-03 | Phase 45.1 | Pending |
@@ -967,6 +1160,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RULE-30 | Phase 47 | Pending |
 | RULE-31 | Phase 47 | Pending |
 | RULE-32 | Phase 45.1 | Pending |
+| RULE-33 | Phase 45.1 | Pending |
+| RULE-34 | Phase 46 | Pending |
 | HOOK-01 | Phase 48 | Pending |
 | HOOK-02 | Phase 49 | Pending |
 | HOOK-03 | Phase 49 | Pending |
@@ -1049,8 +1244,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | IDX-07 | Phase 32.5 | Complete |
 
 **Coverage:**
-- v2.0 requirements: 183 total
-- Mapped to phases: 183
+- v2.0 requirements: 193 total *(193 after RUN-15, added 2026-11-19, owner decision, Phase 39.1: remove the grok runtime; 185 after RUN-12, added 2026-11-16, 37 D-22; 186 after RUN-13, added 2026-11-16, 38 D-25; 191 after FLOW-14, EXE-09, RUN-14, RULE-33 and RULE-34, added 2026-11-16, owner decisions: language rules, smart test selection, goal-prompt learned rails, free-lane pools; 192 after HUB-10, added 2026-11-16, 36 D-23: free-model data use)*
+- Mapped to phases: 193
 - Unmapped: 0
 
 ---
@@ -1071,3 +1266,4 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *Amended 2026-11-13 by Phase 32.3's spec and discuss: DEF-02 amended (five shipped scanner copies plus the eval test helper, one shared token-shape scanner, a drift and new-copy guard); ROADMAP 32.3's code anchors and criterion 3 and Phase 47.1's code anchors amended.*
 *Amended 2026-11-13 by Phase 32.4's spec and discuss: CUR-06 amended (only the v1 `apply-review` fixed effort write goes) and DEF-10 amended (no clone in the custom-tmpdir row; both curated-config write flows fixed); ROADMAP 32.4 criteria 3 and 9 amended.*
 *Amended 2026-11-14 by Phase 32.5's plan: IDX-02 amended (the CLI form takes flags); every live row naming codegraph names codebase-memory-mcp on the same line (record rows keep their record with a replacement note; REV-04 names the new tool).*
+*Amended 2026-11-16 by the owner's planning-docs pass: FLOW-14 (Phase 47.2, new inserted phase), EXE-09 (Phase 41), RUN-14 (Phase 38.1), RULE-33 (Phase 45.1), RULE-34 (Phase 46) and HUB-10 (Phase 36) added; HUB-05, REV-01, RULE-03 and RULE-24 amended (free-lane pools, language default, smart test selection). The free-lane pool decisions are PROVISIONAL and need owner confirmation.*

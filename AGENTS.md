@@ -34,8 +34,18 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   English, regardless of what language the conversation with uz happens to
   be in. Never mix languages within a single document or file (no
   "Spanglish"). Translate quoted non-English input faithfully into English
-  rather than leaving it verbatim. Conversing with uz in another language is
-  fine — everything written to a file must be English.
+  rather than leaving it verbatim. The conversation with uz is in English too:
+  switch to another language only when uz asks for it at some point, and keep
+  that language until uz says otherwise. A memory entry or a mirrored habit
+  never changes it. Everything written to a file stays English whatever the
+  conversation language.
+- **This file outranks memory files**: when an entry of the agent's persistent
+  memory (its index line, description or body) disagrees with this file, this
+  file wins. A memory never overrides, relaxes or reinterprets a rule here (a
+  description that says to talk in a given language does not change the
+  language of written artifacts); correct the memory instead. Memory files are
+  written in English like every other written artifact: description, body and
+  quoted owner words, translated faithfully.
 - Runtime code (`tools/claude-status-line.py`, `tools/cursor-status-line.py`,
   `tools/common_*`, `tools/claude_*`, `tools/cursor_*`, `tools/statusline-doctor.py`,
   and `tools/setup.py`'s non-wizard paths) stays **stdlib-only** — no third-party imports, ever. `uv`/`textual`-class dependencies are dev- or

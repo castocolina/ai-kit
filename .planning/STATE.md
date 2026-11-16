@@ -4,18 +4,18 @@ milestone: v2.0
 milestone_name: Skill Refactor
 current_phase: 35
 current_phase_name: Model discovery and catalog
-status: planning
-stopped_at: Phase 34 complete (verification passed)
-last_updated: "2026-11-16T03:09:26.194Z"
+status: executing
+stopped_at: Phases 35, 36, 37, 38, 38.1 and 39 specced and discussed (interactive path); ready to plan
+last_updated: "2026-11-20T04:11:15.256Z"
 last_activity: 2026-11-16
 last_activity_desc: Phase 34 complete, transitioned to Phase 35
-state_head: 479ca2cbbe3dc104a150263915073bf891685df0
+state_head: d7317c94cedb490a6d0d783df7cd91f7f7aaa0ac
 progress:
-  total_phases: 38
+  total_phases: 39
   completed_phases: 15
-  total_plans: 124
+  total_plans: 152
   completed_plans: 124
-  percent: 39
+  percent: 38
 ---
 
 # Project State
@@ -29,12 +29,12 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 35 — Model discovery and catalog
+Phase: 35 (Model discovery and catalog) — READY TO EXECUTE
 Plan: Not started
-Status: Ready to plan
+Status: Ready to execute
 Last activity: 2026-11-16 — Phase 34 complete, transitioned to Phase 35
 
-Progress: [████░░░░░░] 39%
+Progress: [████░░░░░░] 38%
 
 ## Performance Metrics
 
@@ -481,17 +481,22 @@ Decisions are logged in PROJECT.md Key Decisions table.
 ### Pending Todos
 
 - [2026-10-11] [skills] Execute the System One decision-skill plan (jev-fast-decision, 3 backends) — [todo file](.planning/todos/pending/2026-10-11-execute-system-one-decision-skill-plan.md)
-- [2026-10-12] [statusline] Promote Cursor statusline POC spike into former backlog 999.4 discuss/plan (now Phase 23) — [todo file](.planning/todos/pending/2026-10-12-promote-cursor-statusline-poc-into-999-4.md)
 - [2026-10-13] [agents] Add Cursor subagents pinned to non-fast composer-2.5 and grok — [todo file](.planning/todos/pending/2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md)
 - [2026-10-14] [tooling] AGENTS.md quota-schedule rules and one-shot goal-prompt skill — [todo file](.planning/todos/pending/2026-10-14-agents-md-quota-schedule-rules-and-goal-prompt-skill.md)
 - [2026-10-14] [skills] Wire jev-fast-decision cross-host discovery scaffolding — [todo file](.planning/todos/pending/2026-10-14-wire-jev-fast-decision-cross-host-discovery-scaffolding.md)
-- [2026-10-18] [skills] Atomic, reusable decision-system skills on Jev — [todo file](.planning/todos/pending/2026-10-18-atomic-reusable-decision-system-skills.md)
 - [2026-10-18] [tooling] PreCompact hook pre-summarizes transcript chunks via the decision system — [todo file](.planning/todos/pending/2026-10-18-precompact-hook-pre-summarizes-chunks-via-decision-system.md)
 - [2026-10-18] [tooling] Visible tool-advisory hooks (SessionStart, PreToolUse, PostToolUse) as setup knobs — [todo file](.planning/todos/pending/2026-10-18-visible-tool-advisory-hooks-pre-and-post-tool-use.md)
 - [2026-10-24] [tooling] Make the ai-kit session hooks dynamic (worktree indexing advice, install-relative docs, compact metr… — [todo file](.planning/todos/pending/2026-10-24-make-the-ai-kit-session-hooks-dynamic-worktree-indexing-advi.md)
 - [2026-10-30] [tooling] Unify the review/execute lane TOML, add effort and escalation, classify with jev — [todo file](.planning/todos/pending/2026-10-29-unify-review-execute-lane-toml-effort-escalation-and-jev-classification.md)
 - [2026-10-31] [skills] Refactor execute-gsd and rules-agents (SJ-1, SJ-3) — [todo file](.planning/todos/pending/2026-10-31-refactor-execute-gsd-and-rules-agents-sj-1-sj-3.md)
+- [2026-11-02] [verification] Pending live checks and owner decisions from v1.3 — [todo file](.planning/todos/pending/2026-11-02-pending-live-checks-and-owner-decisions-from-v1.3.md) — Needs ### Group 1: live checks still to do.
 - [2026-11-02] [tooling] Tooling defects and skill-writing principle found at the v1.3 close-out — [todo file](.planning/todos/pending/2026-11-02-tooling-defects-and-skill-writing-principle-found-at-the-v1.md)
+- [2026-11-06] [tooling] Low-risk review and judge notes left open by phases 28-31 — [todo file](.planning/todos/pending/2026-11-06-low-risk-review-and-judge-notes-from-phases-28-31.md)
+- [2026-11-08] [tooling] Review notes left open by phase 32.1 — [todo file](.planning/todos/pending/2026-11-08-review-notes-left-open-by-phase-32-1.md)
+- [2026-11-16] [runner] opencode free models, classification of the research findings and the checks still open — [todo file](.planning/todos/pending/2026-11-16-opencode-free-models-open-checks.md)
+- [2026-11-16] [skills] spec-config wizard owner observations (catalog first, short choice, only chosen lanes written) — [todo file](.planning/todos/pending/2026-11-16-spec-config-wizard-owner-observations.md)
+- [2026-11-17] [tooling] Wizard step for a component registry, cross-host install, self-update and scheduled updates — [todo file](.planning/todos/pending/2026-11-17-wizard-step-for-a-component-registry-cross-host-install-self.md)
+- [2026-11-19] [tooling] Scan git projects and auto-update their project-local open-GSD install on a schedule — [todo file](.planning/todos/pending/2026-11-19-scan-git-projects-and-auto-update-project-local-open-gsd.md)
 
 ### Blockers/Concerns
 
@@ -622,6 +627,7 @@ any order, or deferred, without blocking anything else in this milestone.
   the re-judge baseline) from 96 v2.0 requirements; order follows the owner's constraints in the
   milestone inputs (gates and flow first, removals before the baseline, rules before dist, hooks after
   playbooks, wake after the shared quota decision).
+- Phase 47.2 inserted after Phase 47.1: Goal-prompt learns rails from sessions: proposes learned rails from the current and previous session, deduplicated against AGENTS.md and the generated block (owner request 2026-11-16)
 
 ## Deferred Verification
 
@@ -690,9 +696,9 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-16T03:09:25.109Z
-Stopped at: Phase 34 complete (verification passed)
-Resume file: None
+Last session: 2026-11-16T15:14:28.341Z
+Stopped at: Phases 35, 36, 37, 38, 38.1 and 39 specced and discussed (interactive path); ready to plan
+Resume file: .planning/phases/39-lane-capability-blocks-and-lens-skills/39-CONTEXT.md
 
 ## Operator Next Steps
 
