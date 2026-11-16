@@ -644,7 +644,37 @@ Plans:
   8. A new TypeSafe model id or unknown feature triggers one fetch of the official skill's doc flow and a record of what changed and which jev features it could serve (JEV-12). *(added 2026-11-14)*
   9. A guard test keeps Zen out of the skill and fails on any step that delegates Laya's or the official skill's install or upgrade to another repository (JEV-13). *(added 2026-11-14)*
 
-**Plans**: TBD
+**Plans**: 10 plans in 8 waves *(revised 2026-11-15 per cross-AI review cycle 2: 34-08 waits for 34-07, whose skill text its guard scans and may reword)*
+
+Plans:
+**Wave 1**
+- [ ] 34-01-PLAN.md — jev_config.py: parity-tested copy of the layered reader and splicer, config_set, knob, Laya URL order (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 34-02-PLAN.md — client: Laya at any configured address with host-bound consent, config set, first-run question, key order and hint (wave 2)
+- [ ] 34-03-PLAN.md — jev_learn.py: Laya version, fingerprint with idle reuse, version-keyed records, fetch-once notes (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 34-04-PLAN.md — the [jev] enabled knob with GSD_PATH_JEV as a session override; callers stop forcing it (wave 3)
+- [ ] 34-05-PLAN.md — jev_learn.py: TypeSafe model-id notes and the once-per-id doc flow (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 34-06-PLAN.md — wire learning into --probe, the answer-path model note and --check-updates (wave 4)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 34-07-PLAN.md — SKILL.md, reference.md, backends and evals for settings, records, limit sentence and MCP record (wave 5)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 34-08-PLAN.md — no-Zen no-delegation guard, design record and READMEs, REQUIREMENTS and ROADMAP amendments (wave 6)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 34-09-PLAN.md — live Laya calibration and TypeSafe shared-state spike records (orchestrator step) (wave 7)
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 34-10-PLAN.md — judge loop 34 for jev-fast-decision (wave 8)
+
+**Cross-cutting constraints:** <!-- gsd:generated -->
+- SPEC R8 adjacency, empty and ordering: records only
 
 ### Phase 35: Model discovery and catalog
 
