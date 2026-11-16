@@ -185,6 +185,13 @@ _JUDGE_MARKER = "- Any new or materially updated `SKILL.md` passes the `skill-ju
 _JUDGE_CLAUSES = (
     "A judge loop stops after three rounds per skill: its result is recorded as it stands, "
     "and an unmet bar goes to the owner.",
+    "When a round leaves 3 or fewer findings of severity critical, important or high, counted "
+    "together across the skill's judges, fix them in the skill's own files and continue: that "
+    "fix needs no further judge round.",
+    "Record the fix commit beside the round's record (a `fixes.md` in the round folder, "
+    "committed with the fix), and note that the skill's digest is stale by design until its "
+    "next loop.",
+    "With more than 3 such findings, the three-round rule applies.",
     "A disputed finding counts as refuted only through a recorded run (the finding id, "
     "`path:line`, the command and its observed output), never through another judge round.",
     "SKILL.md describes behaviour; provenance and version history live in a trailing section "

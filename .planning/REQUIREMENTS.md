@@ -167,6 +167,9 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [x] **JDG-08**: AGENTS.md's skill-judge rule caps a judge loop at a stated number of rounds and requires a
   disputed finding to be refuted by running the code, not by judging again; the verdict checker flags a loop that
   runs past the cap.
+  *(amended 2026-11-16, owner: a round that leaves 3 or fewer critical, important or high findings across the
+  skill's judges is fixed in the skill's own files without another judge round; the fix commit is recorded beside
+  the round's record and the digest stays stale until the next loop; more than 3 keeps the round cap)*
 
 ### One config design
 
