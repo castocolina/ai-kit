@@ -2,7 +2,7 @@
 
 ## Context
 
-Users want to preview the generated commit message before staging the commit, so they can edit it. The existing `commit-message` skill at `~/.claude/skills/commit-message/SKILL.md` always emits the final message and stages immediately. We add a `--draft` flag that prints the message to stdout without staging.
+Users want to preview the generated commit message before staging the commit, so they can edit it. The existing `commit-message` skill at `evals/files/commit-message-skill.md` always emits the final message and stages immediately. We add a `--draft` flag that prints the message to stdout without staging.
 
 ## Goal
 
@@ -12,7 +12,7 @@ A user running the skill with `--draft` gets the proposed message in their termi
 
 Extend the existing skill rather than duplicate logic:
 
-1. Reuse the diff-reading and message-generation paths already in `commit-message/SKILL.md`.
+1. Reuse the diff-reading and message-generation paths already in `evals/files/commit-message-skill.md`.
 2. Add a single new branch: when `--draft` is present, print the generated message and exit before any `git add` / `git commit` step.
 3. Stay aligned with the existing Conventional Commits formatting that `commit-message` already produces — no new format.
 

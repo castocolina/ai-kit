@@ -18,6 +18,7 @@ field passes a fixed allowlist before it reaches stdout. Every answer is advisor
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import os
@@ -25,6 +26,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any, NamedTuple
 
 # The client's entry point, relative to a skills root (the lookup's last step, per root).
@@ -44,16 +46,37 @@ ZERO_HEAD = "0" * 40
 CLIENT_PROTOCOL_RE = re.compile(r"^CLIENT_PROTOCOL = 2$", re.M)
 # The client's control variables: a parent-shell value must never widen the child's gate (D-09).
 # Key and URL variables pass through untouched, so each key reaches only its own backend's row.
+# GSD_PATH_JEV is the one exception: the user's own session switch is forwarded as set (34 D-01).
 _CONTROL_NAMES = {"JEV_BACKEND", "JEV_ALLOW_REMOTE", "JEV_MIN_CONFIDENCE"}
 _CONTROL_PREFIXES = ("GSD_PATH_JEV",)
 
 ITEM_KEYS = {"id", "type", "instructions", "context", "criteria"}
 ITEM_TYPES = {"choice", "noul", "score"}
 MAX_FIELD_CHARS = 1500
-# Defense in depth, not a guarantee: obvious key shapes and long opaque base64 runs (48+ so a
-# 40-char commit SHA in a summary still passes). A false positive only means own reasoning.
-_SECRET_RE = re.compile(r"-----BEGIN|\b(?:sk|pk|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{12,}|"
-                        r"[A-Za-z0-9+/]{48,}")
+# Defense in depth, not a guarantee: the shared key shapes (the sibling secret_shapes.py, a
+# byte-identical copy of the shared scanner) and long opaque base64 runs (48+ so a 40-char
+# commit SHA in a summary still passes). A false positive only means own reasoning.
+_BASE64_RUN_RE = re.compile(r"[A-Za-z0-9+/]{48,}")
+
+
+def _load_secret_shapes() -> Any:
+    """The sibling secret_shapes.py, loaded by path: this module is itself loaded by path, and
+    from copied skill folders, so its own folder is not always on the import path."""
+    path = Path(__file__).resolve().parent / "secret_shapes.py"
+    spec = importlib.util.spec_from_file_location("jev_secret_shapes", path)
+    if spec is None or spec.loader is None or not path.is_file():
+        raise ImportError(f"jev-fast-decision: cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_SECRET_SHAPES = _load_secret_shapes()
+
+
+def _has_secret(value: str) -> bool:
+    """Whether `value` holds a shared key shape or a long opaque base64 run."""
+    return bool(_SECRET_SHAPES.detect(value)) or _BASE64_RUN_RE.search(value) is not None
 # Fixed output allowlists (24 D-13): a leaky client's extra fields never reach stdout. The
 # boundary is enforced on *values*, not only on field names (WR-02): every string printed here
 # has to be one of the documented codes or match the documented shape of its field, or it is
@@ -65,7 +88,9 @@ _STATUS_CODES = frozenset({"ok", "unavailable", "disabled", "no_consent", "unusa
                            "client_timeout", "client_not_runnable", "client_bad_output"})
 # The client's own label for "this row reads its key from here" (jev_review._first_key).
 _KEY_SOURCES = frozenset({"env", "file", "missing_file", "world_readable", "empty_file",
-                          "missing_api_key", "non_loopback_url", "insecure_url"})
+                          "missing_api_key", "insecure_url", "state"})
+# The labels the client really reports: env:<NAME>, file:<name or ~/path>, or state (IN-105).
+_KEY_LABEL_RE = re.compile(r"^(env:[A-Z][A-Z0-9_]{0,63}|file:[A-Za-z0-9_.~/-]{1,64})$")
 # How a probe row's certainty about its key was obtained (jev_review CELL_STATUSES).
 _KEY_CHECKS = frozenset({"verified-live", "documented", "unsupported", "unverified"})
 # A status, reason or item-error code: lowercase snake tokens, up to four colon-qualified.
@@ -165,7 +190,7 @@ def _bad_text(value: Any) -> str | None:
         return "too_long"
     if "```" in value:
         return "code_fence"
-    if _SECRET_RE.search(value):
+    if _has_secret(value):
         return "secret_pattern"
     return None
 
@@ -290,7 +315,7 @@ def _code(value: Any, fallback: str = "unavailable") -> str | None:
     """
     if value is None:
         return None
-    if (isinstance(value, str) and _CODE_RE.match(value) and not _SECRET_RE.search(value)):
+    if (isinstance(value, str) and _CODE_RE.match(value) and not _has_secret(value)):
         return value
     return fallback
 
@@ -303,7 +328,7 @@ def _closed(value: Any, allowed: frozenset[str]) -> str | None:
 def _shape(value: Any, pattern: re.Pattern[str]) -> str | None:
     """A value with a documented shape (name, host, model id, date), else None."""
     if (isinstance(value, str) and pattern.fullmatch(value)
-            and not _SECRET_RE.search(value)):
+            and not _has_secret(value)):
         return value
     return None
 
@@ -316,7 +341,7 @@ def _note(value: Any) -> str | None:
     """
     if (isinstance(value, str) and value.startswith(_NOTE_PREFIX)
             and len(value) <= MAX_NOTE_CHARS and "```" not in value
-            and not _SECRET_RE.search(value)):
+            and not _has_secret(value)):
         return value
     return None
 
@@ -324,7 +349,7 @@ def _note(value: Any) -> str | None:
 def _consent_file(value: Any) -> str | None:
     """The consent record's own path (D-10): the documented file under `ai-kit/`, else None."""
     if (isinstance(value, str) and _CONSENT_FILE_RE.fullmatch(value)
-            and not _SECRET_RE.search(value)
+            and not _has_secret(value)
             and os.path.basename(value) == os.path.basename(_CONSENT_FILE_TAIL)):
         return value
     return None
@@ -350,7 +375,8 @@ def public_backends(probe_list: Any) -> dict[str, dict[str, Any]]:
                 row[key] = bool(entry[key])
         for key, guard in (("host", lambda v: _shape(v, _HOST_RE)),
                            ("reason", _code),
-                           ("key_source", lambda v: _closed(v, _KEY_SOURCES)),
+                           ("key_source", lambda v: _closed(v, _KEY_SOURCES)
+                            or _shape(v, _KEY_LABEL_RE)),
                            ("key_check", lambda v: _closed(v, _KEY_CHECKS)),
                            ("consent", lambda v: _shape(v, _DATE_RE))):
             if key in entry:
@@ -412,14 +438,18 @@ def child_env(seams: Seams, n_items: int) -> dict[str, str]:
     """The child env: control variables scrubbed, this module's own bounds set.
 
     Only the control variables are dropped; every key and URL variable passes through so the
-    client's rows resolve them (D-09). The deadline scales with the item count plus the local
-    rung's retry allowance: one call per item, two retries, one remote batch (D-12).
+    client's rows resolve them (D-09). The user's own GSD_PATH_JEV session switch is forwarded
+    only when it is set and non-empty; the client otherwise reads the knob itself (34 D-01).
+    The deadline scales with the item count plus the local rung's retry allowance: one call per
+    item, two retries, one remote batch (D-12).
     """
     env = {name: value for name, value in seams.env.items()
            if name not in _CONTROL_NAMES
            and not any(name.startswith(prefix) for prefix in _CONTROL_PREFIXES)}
-    env.update({"GSD_PATH_JEV": "1",
-                "GSD_PATH_JEV_TIMEOUT_SECONDS": str(CALL_TIMEOUT_SECONDS),
+    session = seams.env.get("GSD_PATH_JEV", "")
+    if session.strip():
+        env["GSD_PATH_JEV"] = session
+    env.update({"GSD_PATH_JEV_TIMEOUT_SECONDS": str(CALL_TIMEOUT_SECONDS),
                 "GSD_PATH_JEV_DEADLINE_SECONDS": str(CALL_TIMEOUT_SECONDS * (n_items + 3)),
                 "JEV_CALLER": "ai-kit-gsd-spec-discuss"})
     return env

@@ -1,0 +1,196 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": "native, xhigh (frontmatter, documented; not observed)",
+   "status_line": null,
+   "verdict_line": "{\"skill\":\"markdown-to-pdf\",\"judge\":\"native:opus-xhigh\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":15,\"D2\":13,\"D3\":13,\"D4\":12,\"D5\":13,\"D6\":14,\"D7\":13,\"D8\":12},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":105,\"max_total\":125,\"percent\":84.0,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":92,\"evidence\":\"The fact that SVG on pandoc-latex needs rsvg-convert appears four times (lines 26-28, 44, 57-58, 92-94), and the intro paragraph (lines 16-19) repeats the description ('every ```mermaid block is rendered to an image with mmdc ... The source .md is never touched').\",\"fix\":\"Delete the intro paragraph on lines 16-19 because the description already says it. State the rsvg-convert/SVG fact only in the NEVER item, and replace the other mentions with a one-line pointer to that item.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":24,\"evidence\":\"'Draft or final? Iterating -> any installed backend is fine. Final -> let the quality-ranked auto-selection pick' - both branches end in the same default run, so this question never changes what the agent does.\",\"fix\":\"Replace it with a question that does change the command, for example: 'Does the file start with marp: true front matter? Then the user probably wants the deck path even if they asked for a PDF; confirm before running the doc flow.'\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/references/backends.md\",\"line\":61,\"evidence\":\"'Convert only documents you trust, since raw HTML in a document can still reference files.' This is the only trust warning, and it sits in a file that SKILL.md line 112 says NOT to load for an ordinary convert or deck run, so the agent never reads it when it matters.\",\"fix\":\"Add a NEVER item to SKILL.md: 'NEVER convert an untrusted document without telling the user: image links and raw HTML are rendered with local-file access (pandoc --resource-path, marp --allow-local-files), so a crafted file can pull local files into the PDF.'\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":3,\"evidence\":\"The description lists capabilities and triggers but never says what the skill is not for, although trigger-queries.json tests near-misses such as editing, merging or compressing PDFs, DOCX/HTML to PDF and restyling an existing marp deck (marp-slide). It also has no 'even without the word markdown' clause, though a positive query ('Turn the design doc into a PDF') never says markdown.\",\"fix\":\"Convert a Markdown document into a PDF, or a marp slide deck (pdf, pptx, html), in one non-destructive command: every ```mermaid block is rendered with mmdc and embedded, and the best installed backend is picked by quality (Pandoc+LaTeX > Typst > WeasyPrint > Chromium) with no auto-install. Use when the user wants a .md file, design doc or report as a printable PDF or as slides, says 'md to pdf', 'export markdown to pdf' or 'build a deck from this markdown', or asks which Markdown-to-PDF backend is installed, even without the word 'markdown'. Keywords: markdown to pdf, md to pdf, mermaid, marp deck, slide deck, pptx, pandoc, typst. Not for editing, merging or compressing an existing PDF, DOCX or HTML to PDF, a lone mermaid diagram to an image, or restyling an existing marp deck (marp-slide).\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/examples/sample-with-mermaid.md\",\"line\":null,\"evidence\":\"The skill ships examples/sample-with-mermaid.md, but SKILL.md and references/backends.md never mention it, so no step ever loads it.\",\"fix\":\"Add a condition for it in the primary flow ('to smoke-test the toolchain before converting a real document, run the script on examples/sample-with-mermaid.md'), or move it to evals/files/ as an eval input.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":56,\"evidence\":\"Exit code 4: 'Show it; fix what it names, or pick another backend with --backend.' This offers a menu with no default backend to fall back to, for a recovery step the agent has to act on right away.\",\"fix\":\"Give a default: 're-run with --backend set to the next installed backend in quality order (typst, then weasyprint, then chromium), report which one ran, and ask the user only when none is left.'\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/evals/evals.json\",\"line\":28,\"evidence\":\"In precise-svg-on-latex, the input quarterly-report.md links img/revenue.svg, so keeping the PNG default does not make pandoc-latex work without rsvg-convert. Assertion 2 ('keeps the PNG default when rsvg-convert is not found') rewards an answer that still fails. No eval covers the branch where marp-slide is available (--render-only hand-off).\",\"fix\":\"For this case, use an input with no linked SVG images, or add an assertion that the agent flags img/revenue.svg and suggests an installed typst or chromium backend. Add an eval where marp-slide is available that asserts --render-only and the hand-off of <source>.rendered.md together with its -assets folder.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/evals/trigger-queries.json\",\"line\":6,\"evidence\":\"All 20 queries are short and generic, with no file paths, typos or personal context. The positive 'Which PDF backend is installed for markdown conversion on this machine?' expects the skill to trigger, but the skill has no command that answers it.\",\"fix\":\"Rewrite about half the queries with realistic context (paths like ~/docs/arch.md, casual phrasing, typos, one multi-step request where the conversion is buried). Keep the installed-backend positive only after the skill has a command that answers it.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":58,\"evidence\":\"'SVG render fails under pandoc-latex | That backend needs rsvg-convert on PATH. Re-run with --format png (the default) or install librsvg.' This remedy is wrong when the source itself links an .svg image, as the eval file quarterly-report.md does with img/revenue.svg. A default-flag run then exits 4, and re-running with --format png (already the default) fails the same way. Line 97 ('Trust the script's selection') steers the agent back to pandoc-latex.\",\"fix\":\"Split the row. If you passed --format svg, re-run without it. If the source links .svg images, re-run with --backend set to an installed typst or chromium, which embed SVG natively, or install librsvg. Add the source-SVG case to the NEVER item on line 92.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":27,\"evidence\":\"'see the SVG landmine' (lines 27 and 44) and 'see the portability landmine' (line 64) point to sections that do not exist. The targets are unnamed bullets under Never.\",\"fix\":\"Name the real targets: 'see the --format svg item under Never' and 'see the marp-slide item under Never'.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":109,\"evidence\":\"The skill sends 'which backend is best?' to references/backends.md but gives no way to answer 'which backend is installed here?'. scripts/detect_backends.py has no CLI entry point, so the agent has to probe with which on its own, the single-tool reading that lines 95-97 forbid.\",\"fix\":\"Add a --list-backends flag to scripts/markdown_to_pdf.py that prints each backend with available true/false and the selected one as JSON, and add a decision-table row: 'User asks what is installed -> run --list-backends and report it'.\"}]}"
+  }
+ ],
+ "digest": "7eff8867401fc0751366b681c0079c003c7e35801680eeda6a8b99d756556d6c",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "native:opus-xhigh",
+ "loop": "32.1",
+ "modules": [
+  "tests/test_markdown_to_pdf.py",
+  "tests/test_markdown_to_pdf_e2e.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "e452c877cf0834a8963235df214cc098adc01fe3ed1a0d0d39258a358b9c5a67",
+ "round": 3,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "markdown-to-pdf",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": {
+  "reason": "failed: attempt n=13 rung=first cycle=1 session=ses_e46abaaafffee4jovG1Lvyonoj status=transient rule=omniroute-model-unavailable pattern=verified at=2026-11-08T04:04:34.037Z took=84s; then attempt 14 ran 630 s with stdout +0 bytes; orchestrator stopped the worker (same router failure as round 2, jev native_substitute 0.97)",
+  "replaces": "opencode:router-env/my-referee-two"
+ },
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "The fact that SVG on pandoc-latex needs rsvg-convert appears four times (lines 26-28, 44, 57-58, 92-94), and the intro paragraph (lines 16-19) repeats the description ('every ```mermaid block is rendered to an image with mmdc ... The source .md is never touched').",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Delete the intro paragraph on lines 16-19 because the description already says it. State the rsvg-convert/SVG fact only in the NEVER item, and replace the other mentions with a one-line pointer to that item.",
+    "id": "D1-1",
+    "line": 92,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "'Draft or final? Iterating -> any installed backend is fine. Final -> let the quality-ranked auto-selection pick' - both branches end in the same default run, so this question never changes what the agent does.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Replace it with a question that does change the command, for example: 'Does the file start with marp: true front matter? Then the user probably wants the deck path even if they asked for a PDF; confirm before running the doc flow.'",
+    "id": "D2-1",
+    "line": 24,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "'Convert only documents you trust, since raw HTML in a document can still reference files.' This is the only trust warning, and it sits in a file that SKILL.md line 112 says NOT to load for an ordinary convert or deck run, so the agent never reads it when it matters.",
+    "file": "skills/markdown-to-pdf/references/backends.md",
+    "fix": "Add a NEVER item to SKILL.md: 'NEVER convert an untrusted document without telling the user: image links and raw HTML are rendered with local-file access (pandoc --resource-path, marp --allow-local-files), so a crafted file can pull local files into the PDF.'",
+    "id": "D3-1",
+    "line": 61,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description lists capabilities and triggers but never says what the skill is not for, although trigger-queries.json tests near-misses such as editing, merging or compressing PDFs, DOCX/HTML to PDF and restyling an existing marp deck (marp-slide). It also has no 'even without the word markdown' clause, though a positive query ('Turn the design doc into a PDF') never says markdown.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Convert a Markdown document into a PDF, or a marp slide deck (pdf, pptx, html), in one non-destructive command: every ```mermaid block is rendered with mmdc and embedded, and the best installed backend is picked by quality (Pandoc+LaTeX > Typst > WeasyPrint > Chromium) with no auto-install. Use when the user wants a .md file, design doc or report as a printable PDF or as slides, says 'md to pdf', 'export markdown to pdf' or 'build a deck from this markdown', or asks which Markdown-to-PDF backend is installed, even without the word 'markdown'. Keywords: markdown to pdf, md to pdf, mermaid, marp deck, slide deck, pptx, pandoc, typst. Not for editing, merging or compressing an existing PDF, DOCX or HTML to PDF, a lone mermaid diagram to an image, or restyling an existing marp deck (marp-slide).",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "The skill ships examples/sample-with-mermaid.md, but SKILL.md and references/backends.md never mention it, so no step ever loads it.",
+    "file": "skills/markdown-to-pdf/examples/sample-with-mermaid.md",
+    "fix": "Add a condition for it in the primary flow ('to smoke-test the toolchain before converting a real document, run the script on examples/sample-with-mermaid.md'), or move it to evals/files/ as an eval input.",
+    "id": "D5-1",
+    "line": null,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "Exit code 4: 'Show it; fix what it names, or pick another backend with --backend.' This offers a menu with no default backend to fall back to, for a recovery step the agent has to act on right away.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Give a default: 're-run with --backend set to the next installed backend in quality order (typst, then weasyprint, then chromium), report which one ran, and ask the user only when none is left.'",
+    "id": "D6-1",
+    "line": 56,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "In precise-svg-on-latex, the input quarterly-report.md links img/revenue.svg, so keeping the PNG default does not make pandoc-latex work without rsvg-convert. Assertion 2 ('keeps the PNG default when rsvg-convert is not found') rewards an answer that still fails. No eval covers the branch where marp-slide is available (--render-only hand-off).",
+    "file": "skills/markdown-to-pdf/evals/evals.json",
+    "fix": "For this case, use an input with no linked SVG images, or add an assertion that the agent flags img/revenue.svg and suggests an installed typst or chromium backend. Add an eval where marp-slide is available that asserts --render-only and the hand-off of <source>.rendered.md together with its -assets folder.",
+    "id": "D7-1",
+    "line": 28,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "All 20 queries are short and generic, with no file paths, typos or personal context. The positive 'Which PDF backend is installed for markdown conversion on this machine?' expects the skill to trigger, but the skill has no command that answers it.",
+    "file": "skills/markdown-to-pdf/evals/trigger-queries.json",
+    "fix": "Rewrite about half the queries with realistic context (paths like ~/docs/arch.md, casual phrasing, typos, one multi-step request where the conversion is buried). Keep the installed-backend positive only after the skill has a command that answers it.",
+    "id": "D7-2",
+    "line": 6,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'SVG render fails under pandoc-latex | That backend needs rsvg-convert on PATH. Re-run with --format png (the default) or install librsvg.' This remedy is wrong when the source itself links an .svg image, as the eval file quarterly-report.md does with img/revenue.svg. A default-flag run then exits 4, and re-running with --format png (already the default) fails the same way. Line 97 ('Trust the script's selection') steers the agent back to pandoc-latex.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Split the row. If you passed --format svg, re-run without it. If the source links .svg images, re-run with --backend set to an installed typst or chromium, which embed SVG natively, or install librsvg. Add the source-SVG case to the NEVER item on line 92.",
+    "id": "D8-1",
+    "line": 58,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'see the SVG landmine' (lines 27 and 44) and 'see the portability landmine' (line 64) point to sections that do not exist. The targets are unnamed bullets under Never.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Name the real targets: 'see the --format svg item under Never' and 'see the marp-slide item under Never'.",
+    "id": "D8-2",
+    "line": 27,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The skill sends 'which backend is best?' to references/backends.md but gives no way to answer 'which backend is installed here?'. scripts/detect_backends.py has no CLI entry point, so the agent has to probe with which on its own, the single-tool reading that lines 95-97 forbid.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add a --list-backends flag to scripts/markdown_to_pdf.py that prints each backend with available true/false and the selected one as JSON, and add a decision-table row: 'User asks what is installed -> run --list-backends and report it'.",
+    "id": "D8-3",
+    "line": 109,
+    "severity": "low"
+   }
+  ],
+  "grade": "B",
+  "judge": "native:opus-xhigh",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 84.0,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 15,
+   "D2": 13,
+   "D3": 13,
+   "D4": 12,
+   "D5": 13,
+   "D6": 14,
+   "D7": 13,
+   "D8": 12
+  },
+  "skill": "markdown-to-pdf",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 105
+ }
+}

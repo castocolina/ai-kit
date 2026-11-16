@@ -1,0 +1,8 @@
+def new_fn(x):
+    # old_fn stays in this comment
+    return "old_fn" + str(x)
+
+
+class Box:
+    def run(self):
+        return new_fn(1)

@@ -1,0 +1,189 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=52s out=189670 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":17,\"D2\":13,\"D3\":13,\"D4\":14,\"D5\":13,\"D6\":13,\"D7\":0,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":96,\"max_total\":125,\"percent\":76.8,\"grade\":\"C\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":24,\"evidence\":\"## When to use restates the frontmatter: \\\"When a run, a review or an execution step calls an external AI CLI and acts on the result.\\\"\",\"fix\":\"Delete the When to use section; trigger text belongs only in the description.\"},{\"id\":\"D1-2\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/references/subprocess-quota-policy.md\",\"line\":163,\"evidence\":\"## What a skill does on a stop repeats SKILL.md sections 6-8: \\\"print the cross-ai: report ... one one-shot wait ... Never switch harness, provider or model.\\\"\",\"fix\":\"Replace that section with a one-line pointer to SKILL.md sections 6-8 and drop the restated caller rules.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":122,\"evidence\":\"## 5. Chain review or execution is three sentences: \\\"Chain the next step only after section 4 has been read. A lane that is still running is not chained.\\\"\",\"fix\":\"Name the two outcomes (review report to merge vs execution change to verify) and the single gate (lane.rc plus last AIKIT-XAI line already read) so the chain step is a procedure, not a reminder.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":174,\"evidence\":\"## Pitfalls lists facts (\\\"No idle watchdog. stdout +0 bytes heartbeats are normal for pi -p\\\") but has no Gotchas heading and no WHY on the process-name stop or the atomic-rewrite mode drop.\",\"fix\":\"Rename Pitfalls to Gotchas and add the non-obvious reason on each item: a process-name kill can hit a sibling lane, and a hand rewrite of a 0600 state file drops the mode the runner set.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":3,\"evidence\":\"Description covers WHAT, WHEN and keywords (cross-ai.mjs, AIKIT-XAI, exit 75/69, retry_after_s=) but omits Claude Code as a host and exit 124, and \\\"answer a stop\\\" is vague.\",\"fix\":\"Use when you run, wait for, read, retry or chain an external AI CLI (pi, opencode, codex, cursor, copilot) from Claude Code or any other host through ai-kit's cross-AI runner (cross-ai.mjs): pick one runtime and model, launch the runner, read its exit code (0, 1, 2, 69, 75, 124, 127) and last AIKIT-XAI stderr line, and answer GSD retry or abort. Also use when a lane hits quota, a rate limit or a 429, or prints retry_after_s=. Covers the hard-tier one-shot wait, the user notice and the rule to never switch harness, provider or model. Not for reviewer setup or GSD config (those are ai-kit-spec-config and ai-kit-gsd-curated-config).\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/references/launch-and-wait.md\",\"line\":49,\"evidence\":\"The mandatory first-launch read of launch-and-wait.md loads six near-duplicate host sections (pi, opencode, cursor, codex, copilot, and the fallback), each saying only \\\"unverified\\\" and \\\"foreground wait\\\".\",\"fix\":\"Keep the Claude Code section and one fallback section; replace the five host headings with one line: \\\"pi, opencode, cursor, codex and copilot are unverified and use the fallback. Do NOT Load a per-host section for them.\\\"\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":151,\"evidence\":\"The hard-tier scheduler is a menu of equal uncertainty: \\\"Where Claude Code's CronCreate is callable, schedule one one-shot job ... A retry_after_s under 60 s, a session where that tool is unavailable ... and every other host (none is known to have a one-shot scheduler; unverified) schedule nothing.\\\"\",\"fix\":\"Default every host, including Claude Code, to print retry_after_s, the state path and the re-invoke command and stop. Mention CronCreate only as an escape hatch when the tool is already callable and retry_after_s is at least 60 s, rounding up to the next whole minute.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":null,\"evidence\":\"No evals/ directory: no evals/evals.json and no evals/trigger-queries.json. The skill ships no runnable script, so the 8/7 split applies; tests/test_cross_ai_skill_text.py and tests/test_quota_policy_text.py are text pins and are not scored.\",\"fix\":\"Add evals/evals.json with at least three realistic prompts (a clean exit 0, an exit 75 with retry_after_s=, a bare 75 or stopped=hard-waits) plus verifiable assertions, and evals/trigger-queries.json with about 20 queries, 8-10 should-trigger and 8-10 should-not-trigger, including near-misses for reviewer setup and GSD config.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":113,\"evidence\":\"The exit table ends at 127; the next sentence says \\\"128+n | signal | the child died on signal n\\\" with no caller action, and section 7's abort list (\\\"a bare 75, any 69 ... 1, 2, 124, 127\\\") omits 128+n.\",\"fix\":\"Add a table row: 128+n, signal, report the signal and abort. Add 128+n to the section 7 abort list so a signaled child is not left unclassified.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":42,\"evidence\":\"\\\"Before the first launch ... check the active copy's line-2 header (sed -n 2p ...) ... A lower template, or a cross-ai.mjs.new waiting beside it, is not this contract: stop and route the owner to ai-kit-gsd-curated-config ensure-runner.\\\" A missing file or a header without template= has no branch.\",\"fix\":\"If the project copy is missing, use the template path and still require template=8. If line 2 has no template= token, treat it as below template 8 and stop the same way.\"}]}"
+  }
+ ],
+ "digest": "7fee6ff03ba17d6984795632590c68a2e9489aa37edc2a2d4acce7fbd56748e3",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "32",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py"
+ ],
+ "prompt_sha256": "4da0caf150461e0513b97e3d3ff2364a56ed3ca81a83b57ad4070e984cfbdc4d",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "## When to use restates the frontmatter: \"When a run, a review or an execution step calls an external AI CLI and acts on the result.\"",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Delete the When to use section; trigger text belongs only in the description.",
+    "id": "D1-1",
+    "line": 24,
+    "severity": "low"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "## What a skill does on a stop repeats SKILL.md sections 6-8: \"print the cross-ai: report ... one one-shot wait ... Never switch harness, provider or model.\"",
+    "file": "skills/ai-kit-cross-ai/references/subprocess-quota-policy.md",
+    "fix": "Replace that section with a one-line pointer to SKILL.md sections 6-8 and drop the restated caller rules.",
+    "id": "D1-2",
+    "line": 163,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "## 5. Chain review or execution is three sentences: \"Chain the next step only after section 4 has been read. A lane that is still running is not chained.\"",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Name the two outcomes (review report to merge vs execution change to verify) and the single gate (lane.rc plus last AIKIT-XAI line already read) so the chain step is a procedure, not a reminder.",
+    "id": "D2-1",
+    "line": 122,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "## Pitfalls lists facts (\"No idle watchdog. stdout +0 bytes heartbeats are normal for pi -p\") but has no Gotchas heading and no WHY on the process-name stop or the atomic-rewrite mode drop.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Rename Pitfalls to Gotchas and add the non-obvious reason on each item: a process-name kill can hit a sibling lane, and a hand rewrite of a 0600 state file drops the mode the runner set.",
+    "id": "D3-1",
+    "line": 174,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "Description covers WHAT, WHEN and keywords (cross-ai.mjs, AIKIT-XAI, exit 75/69, retry_after_s=) but omits Claude Code as a host and exit 124, and \"answer a stop\" is vague.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use when you run, wait for, read, retry or chain an external AI CLI (pi, opencode, codex, cursor, copilot) from Claude Code or any other host through ai-kit's cross-AI runner (cross-ai.mjs): pick one runtime and model, launch the runner, read its exit code (0, 1, 2, 69, 75, 124, 127) and last AIKIT-XAI stderr line, and answer GSD retry or abort. Also use when a lane hits quota, a rate limit or a 429, or prints retry_after_s=. Covers the hard-tier one-shot wait, the user notice and the rule to never switch harness, provider or model. Not for reviewer setup or GSD config (those are ai-kit-spec-config and ai-kit-gsd-curated-config).",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "The mandatory first-launch read of launch-and-wait.md loads six near-duplicate host sections (pi, opencode, cursor, codex, copilot, and the fallback), each saying only \"unverified\" and \"foreground wait\".",
+    "file": "skills/ai-kit-cross-ai/references/launch-and-wait.md",
+    "fix": "Keep the Claude Code section and one fallback section; replace the five host headings with one line: \"pi, opencode, cursor, codex and copilot are unverified and use the fallback. Do NOT Load a per-host section for them.\"",
+    "id": "D5-1",
+    "line": 49,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "The hard-tier scheduler is a menu of equal uncertainty: \"Where Claude Code's CronCreate is callable, schedule one one-shot job ... A retry_after_s under 60 s, a session where that tool is unavailable ... and every other host (none is known to have a one-shot scheduler; unverified) schedule nothing.\"",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Default every host, including Claude Code, to print retry_after_s, the state path and the re-invoke command and stop. Mention CronCreate only as an escape hatch when the tool is already callable and retry_after_s is at least 60 s, rounding up to the next whole minute.",
+    "id": "D6-1",
+    "line": 151,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "No evals/ directory: no evals/evals.json and no evals/trigger-queries.json. The skill ships no runnable script, so the 8/7 split applies; tests/test_cross_ai_skill_text.py and tests/test_quota_policy_text.py are text pins and are not scored.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Add evals/evals.json with at least three realistic prompts (a clean exit 0, an exit 75 with retry_after_s=, a bare 75 or stopped=hard-waits) plus verifiable assertions, and evals/trigger-queries.json with about 20 queries, 8-10 should-trigger and 8-10 should-not-trigger, including near-misses for reviewer setup and GSD config.",
+    "id": "D7-1",
+    "line": null,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The exit table ends at 127; the next sentence says \"128+n | signal | the child died on signal n\" with no caller action, and section 7's abort list (\"a bare 75, any 69 ... 1, 2, 124, 127\") omits 128+n.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Add a table row: 128+n, signal, report the signal and abort. Add 128+n to the section 7 abort list so a signaled child is not left unclassified.",
+    "id": "D8-1",
+    "line": 113,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "\"Before the first launch ... check the active copy's line-2 header (sed -n 2p ...) ... A lower template, or a cross-ai.mjs.new waiting beside it, is not this contract: stop and route the owner to ai-kit-gsd-curated-config ensure-runner.\" A missing file or a header without template= has no branch.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "If the project copy is missing, use the template path and still require template=8. If line 2 has no template= token, treat it as below template 8 and stop the same way.",
+    "id": "D8-2",
+    "line": 42,
+    "severity": "low"
+   }
+  ],
+  "grade": "C",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 76.8,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 17,
+   "D2": 13,
+   "D3": 13,
+   "D4": 14,
+   "D5": 13,
+   "D6": 13,
+   "D7": 0,
+   "D8": 13
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 96
+ }
+}

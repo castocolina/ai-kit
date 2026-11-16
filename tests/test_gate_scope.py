@@ -1,4 +1,5 @@
 """Every test module is gated exactly once, through the parallel runner."""
+import fnmatch
 import importlib.util
 import os
 import pathlib
@@ -105,6 +106,28 @@ def recipe_lines(makefile: str, target: str) -> list[str]:
             break
         body.append(line)
     return body
+
+
+def prerequisites(makefile: str, target: str) -> list[str]:
+    """Names after the colon on a target's rule line; none for a missing target."""
+    return (make_target_line(makefile, target) or "").split(":", 1)[-1].split()
+
+
+def tier_recipe(makefile: str, target: str) -> str:
+    """A tier's recipe lines plus those of its prerequisite targets, joined by newlines."""
+    names = [target, *prerequisites(makefile, target)]
+    return "\n".join(line for name in names for line in recipe_lines(makefile, name))
+
+
+def multi_line_recipes(makefile: str, targets: tuple[str, ...]) -> list[str]:
+    """Targets (and their prerequisites) whose recipe holds more than one command: under `make -k`
+    a failing command skips the rest of its recipe."""
+    found = []
+    for target in targets:
+        for name in (target, *prerequisites(makefile, target)):
+            if len([line for line in recipe_lines(makefile, name) if line.strip()]) > 1:
+                found.append(name)
+    return sorted(set(found))
 
 
 def hook_entries(text: str) -> dict[str, str]:
@@ -411,6 +434,21 @@ def path_under_roots(rel_path: str, roots: list[str]) -> bool:
     )
 
 
+def stray_test_modules(tests_dir: pathlib.Path) -> list[str]:
+    """Every test_*.py below a subfolder of tests/, which the runner's flat glob never discovers
+    (32 SPEC R1). One walk; __pycache__ is skipped; paths are repo-relative and sorted."""
+    found: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(tests_dir):
+        dirnames[:] = [name for name in dirnames if name != "__pycache__"]
+        if pathlib.Path(dirpath) == tests_dir:
+            continue
+        for name in filenames:
+            if fnmatch.fnmatchcase(name, "test_*.py"):
+                path = pathlib.Path(dirpath) / name
+                found.append(path.relative_to(tests_dir.parent).as_posix())
+    return sorted(found)
+
+
 def lint_config_drift(tool: dict) -> list[str]:
     """Drift in pinned ruff, vulture, pylint basic and pyright settings."""
     errors: list[str] = []
@@ -462,15 +500,18 @@ class TestGateScope(unittest.TestCase):
         assigned = [name for names in self.groups.values() for name in names]
         self.assertCountEqual(assigned, self.runner.discover_modules())
 
+    def test_no_test_module_in_a_tests_subfolder(self) -> None:
+        self.assertEqual(stray_test_modules(REPO_ROOT / "tests"), [])
+
     def test_tiers_run_through_the_runner(self) -> None:
         for target in TIER_TARGETS:
-            recipe = "\n".join(recipe_lines(self.makefile, target))
+            recipe = tier_recipe(self.makefile, target)
             self.assertIn("tools/run_unittest_parallel.py --group", recipe, target)
         self.assertEqual(direct_unittest_lines(self.makefile), [])
 
     def test_uv_tiers_run_under_uv(self) -> None:
         for target in (*UV_TARGETS, "test-unit"):
-            recipe = "\n".join(recipe_lines(self.makefile, target))
+            recipe = tier_recipe(self.makefile, target)
             self.assertIn("uv run", recipe, target)
 
     def test_hooks_name_runner_groups(self) -> None:
@@ -493,8 +534,12 @@ class TestGateScope(unittest.TestCase):
     def test_hooks_cover_every_group_except_e2e(self) -> None:
         named = " ".join(hook_entries(self.hooks).values())
         self.assertEqual(hook_group_names(named), set(self.groups) - {"e2e"})
-        e2e = "\n".join(recipe_lines(self.makefile, "e2e-test"))
+        e2e = tier_recipe(self.makefile, "e2e-test")
         self.assertIn("--group e2e", e2e)
+
+    def test_tier_recipes_run_one_command_each(self) -> None:
+        self.assertEqual(multi_line_recipes(self.makefile, TIER_TARGETS), [])
+        self.assertIn("bash tests/test_install.sh", tier_recipe(self.makefile, "e2e-test"))
 
     def test_core_hook_precedes_wizard_hook(self) -> None:
         self.assertEqual(hook_order_errors(hook_ids(self.hooks)), [])
@@ -639,6 +684,15 @@ class TestGateScopeNonVacuity(unittest.TestCase):
         text = "test-unit:\n\tpython3 -m unittest tests.test_x\n"
         self.assertEqual(direct_unittest_lines(text), ["\tpython3 -m unittest tests.test_x"])
 
+    def test_flags_a_two_command_tier_recipe(self) -> None:
+        self.assertEqual(
+            multi_line_recipes("test-unit:\n\tpython3 a\n\tuv run b\n", ("test-unit",)),
+            ["test-unit"],
+        )
+        split = ("test-unit: test-unit-core test-unit-uv\n\ntest-unit-core:\n\tpython3 a\n\n"
+                 "test-unit-uv:\n\tuv run b\n")
+        self.assertEqual(multi_line_recipes(split, ("test-unit",)), [])
+
     def test_flags_a_hardcoded_worker_count(self) -> None:
         self.assertEqual(hardcoded_worker_counts("entry: uv run python t.py --workers 8"),
                          ["entry: uv run python t.py --workers 8"])
@@ -653,6 +707,33 @@ class TestGateScopeNonVacuity(unittest.TestCase):
     def test_path_under_roots_rejects_a_sibling_prefix(self) -> None:
         self.assertFalse(path_under_roots("toolsx/a.py", ["tools"]))
         self.assertTrue(path_under_roots("tools/a.py", ["tools"]))
+
+    def test_a_nested_test_module_is_named(self) -> None:
+        files = {
+            "tests/test_top.py": "",
+            "tests/skills/demo/test_x.py": "",
+            "tests/a/test_b.py": "",
+            "tests/fixtures/archived/26/skill-judge/check_verdicts.py.txt": "",
+            "tests/fixtures/y/helper.py": "",
+            "tests/c/Test_upper.py": "",
+            "tests/d/__pycache__/test_cached.py": "",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            for rel, text in files.items():
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(text, encoding="utf-8")
+            self.assertEqual(stray_test_modules(root / "tests"),
+                             ["tests/a/test_b.py", "tests/skills/demo/test_x.py"])
+
+    def test_an_empty_tests_tree_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tests_dir = pathlib.Path(tmp) / "tests"
+            tests_dir.mkdir()
+            self.assertEqual(stray_test_modules(tests_dir), [])
+            (tests_dir / "sub").mkdir()
+            (tests_dir / "sub" / "helper.py").write_text("", encoding="utf-8")
+            self.assertEqual(stray_test_modules(tests_dir), [])
 
     def test_stale_generated_listing_is_detected(self) -> None:
         generator = load_tool(GENERATOR)

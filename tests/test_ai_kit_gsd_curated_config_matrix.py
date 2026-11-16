@@ -27,18 +27,20 @@ class TestResolveModelMatrix(_RealGsdTestCase):
     @classmethod
     def setUpClass(cls) -> None:
         node_bin = _gsd16_or_skip(unittest.TestCase())
-        cls.core_root = os.path.dirname(os.path.dirname(_TOOLS))
-        cls.tables = ev.live_tables(node_bin, cls.core_root)
-        # The snapshot root is an empty folder: this module no longer reads the live project
-        # (`make check-dogfood` does). The gsd-core install it runs against is hashed by content
-        # instead; `_tree_sha` never walks a symlinked root, so it gets the resolved folder.
-        cls.snap_root = tempfile.mkdtemp()
-        cls.addClassCleanup(shutil.rmtree, cls.snap_root, ignore_errors=True)
-        cls.home_dir = str(pathlib.Path.home())
-        cls.snap_before = ev.snapshot(cls.snap_root, cls.home_dir)
-        cls.core_sha_before = ev._tree_sha(pathlib.Path(cls.core_root).resolve())
-        unittest.TestCase().assertIsNotNone(cls.core_sha_before, "gsd-core folder missing")
-        cls.result = ev.run_matrix(node_bin, _TOOLS, cls.home_dir, host=cls.HOST)
+        with ev.refusal_fails_the_class():
+            cls.core_root = os.path.dirname(os.path.dirname(_TOOLS))
+            cls.tables = ev.live_tables(node_bin, cls.core_root)
+            # The snapshot root is an empty folder: this module no longer reads the live project
+            # (`make check-dogfood` does). The gsd-core install it runs against is hashed by
+            # content instead; `_tree_sha` never walks a symlinked root, so it gets the resolved
+            # folder.
+            cls.snap_root = tempfile.mkdtemp()
+            cls.addClassCleanup(shutil.rmtree, cls.snap_root, ignore_errors=True)
+            cls.home_dir = str(pathlib.Path.home())
+            cls.snap_before = ev.snapshot(cls.snap_root, cls.home_dir)
+            cls.core_sha_before = ev._tree_sha(pathlib.Path(cls.core_root).resolve())
+            unittest.TestCase().assertIsNotNone(cls.core_sha_before, "gsd-core folder missing")
+            cls.result = ev.run_matrix(node_bin, _TOOLS, cls.home_dir, host=cls.HOST)
 
     def rows(self) -> list[dict]:
         return self.result["rows"]

@@ -1,18 +1,15 @@
 # Backend: laya (local)
 
-`laya` is the local System One server from the llm-env stack: a Jev checkpoint served on the
-loopback interface. It is the ladder's first rung because it is local — no consent needed, no
-data leaves the machine.
+`laya` is the System One server from the llm-env stack: a Jev checkpoint, local by default. It is
+the ladder's first rung; on loopback no consent is needed and no data leaves the machine.
 
 ## Endpoint and activation
 
-- Default `http://127.0.0.1:8010/v1/systemone`; probe is `GET /health` on the same origin.
-- `JEV_LAYA_URL` / `AI_KIT_LAYA_URL` override the endpoint — **loopback only**; a non-loopback
-  value is refused with `non_loopback_url` and nothing is sent. The legacy `JEV_API_URL` is
-  honoured only when it is itself loopback.
+- Default `http://127.0.0.1:8010/v1/systemone`; the probe is `GET /health` on the same origin, then `GET /openapi.json` for the version and fingerprint (`reference.md`, `## Records and learning`).
+- The address comes from `[jev] laya_url` in ai-kit's `config.toml` (project over user; `reference.md`, `## Settings`), with `JEV_LAYA_URL` / `AI_KIT_LAYA_URL` as session overrides; any host and port. A host off loopback counts as remote: `consent grant laya` records that host before anything is sent. The legacy `JEV_API_URL` counts only when it is itself loopback.
 - Activation line:
-  `GSD_PATH_JEV=1 JEV_BACKEND=laya JEV_LAYA_URL=http://127.0.0.1:<port> GSD_PATH_JEV_TIMEOUT_SECONDS=20`
-- `LAYA_API_KEY` is an optional bearer; Laya needs no auth today.
+  `JEV_BACKEND=laya JEV_LAYA_URL=http://127.0.0.1:<port> GSD_PATH_JEV_TIMEOUT_SECONDS=20`
+- `LAYA_API_KEY` is an optional bearer; Laya needs no auth today. It never crosses plain http to a host off loopback: such a row reports `insecure_url` until the address uses https.
 - `JEV_LAYA_MODEL` pins the request model (default `jev-1`; responses fullmatch `laya-*`).
 
 ## One item per request
@@ -34,8 +31,8 @@ client already sends one request per item on this row and puts only that item in
   multilingual 1024 tokens) truncates silently unless the server reports `usage.truncated`;
   `LAYA_JEV_STRICT=1` hides those fields, which is why the client keeps its own size guard.
   Laya refuses a state over 50,000 characters with `413`.
-- Threshold: the row's `min_confidence` is a conservative retained default; the live 32-case eval in this repo
-  (see the eval object below); `JEV_MIN_CONFIDENCE` overrides it for one call.
+- Threshold: the row's `min_confidence` is a conservative retained default, kept by the 32-case
+  calibration (`## Calibration record (2026-11-15, ...)`); `JEV_MIN_CONFIDENCE` overrides it for one call.
 
 ## Errors
 
@@ -51,11 +48,34 @@ Never retry blindly: fix the cause (input, timeout, server down) or reason the i
 
 choice/noul/score all `verified-live`; ~12 ms per call on the dGPU; idle unload after 600 s.
 
+## Calibration and its limit
+
+A confident Laya answer is not proven accurate: the 2026-11-15 calibration (32 cases) found 50% of its confident answers right (`## Calibration record (2026-11-15, ...)`). Treat a confident answer as one input to your own check, never as a verdict. The running Laya version is the owner's; this skill measures it and never upgrades it. How to run it: `reference.md`, `## Calibration how-to`.
+
+## Laya's MCP server (not on the decision path)
+
+Laya's official MCP server stays outside jev's decision path: it would bypass the one-item-per-call rule, the size guard, the thresholds, the receipts and the answer log (decision of 2026-11-07, kept 2026-11-14). At most it is an operator's diagnostic tool; this skill never registers it.
+
+## Calibration record (2026-11-15, Laya fp:f46ef21b10a1)
+
+- Date: 2026-11-15.
+- Laya host: 127.0.0.1 (the default address; no `[jev] laya_url` set).
+- Version: not exposed by the server and not set in `[jev] laya_version`; fingerprint `f46ef21b10a1`.
+- Checkpoint revision: `english` 55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851.
+- n: 32 labelled cases.
+- Accuracy: 0.56.
+- Confident-answer accuracy (`accuracy_when_not_fallback`): 50%.
+- Fallback rate: 0.69 (22 of 32 answers fell back).
+- The row's `min_confidence`: 0.7.
+- Floor: `--calibrate` proposes a threshold only when it keeps at least 0.95 accuracy on at least max(10, 30% of n) cases; its proposal: null (no qualifying threshold).
+- `min_confidence` changed: no (0.7 kept).
+- No upgrade step: this is the version the owner runs at the configured address.
+- The raw run stayed in a scratch folder and is not kept.
+
 ## Laya eval object (live, 2026-10-23)
 
-32 labelled cases through `screen()` on this machine (results in
-`.planning/phases/21.1-atomic-reusable-decision-system-skills/eval/eval-results.json`, each
-saved case carrying its own `needs_fallback` and `backend`): metrics line
+32 labelled cases through `screen()` on this machine (each saved case carrying its own
+`needs_fallback` and `backend`): metrics line
 `{"accuracy": 0.5555555555555556, "accuracy_when_not_fallback": 0.5, "backend": "laya",
 "fallback_rate": 0.6875, "n": 32}`; `repeat_max_prob_diff` 0.0, `vague_alone_top` 0.4624.
 `--calibrate` proposed **null**: no threshold in 0.50–0.95 keeps >= 0.95 accuracy on

@@ -93,7 +93,7 @@ def _render_fences(fences, work_dir, fmt, scale, run):
 def _substitute_images(md_text, rendered):
     out = md_text
     for fence, img in reversed(rendered):
-        out = out[:fence["start"]] + f"![diagram]({img})\n" + out[fence["end"]:]
+        out = out[:fence["start"]] + f"![diagram](<{img}>)\n" + out[fence["end"]:]
     return out
 
 

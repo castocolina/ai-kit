@@ -74,7 +74,9 @@ class HookCaseMixin(unittest.TestCase):
         return subprocess.run(
             [sys.executable, "-S", str(HOOK_PATH)],
             input=data, capture_output=True, check=False, env=env, timeout=60,
-            text=not isinstance(data, bytes))
+            text=not isinstance(data, bytes),
+            # A scratch cwd: never the repo's own .aikit/config.toml (WR-502).
+            cwd=env["HOME"] if os.path.isdir(env.get("HOME", "")) else None)
 
     def compact_dir(self, env):
         return os.path.join(env["XDG_RUNTIME_DIR"], "ai-kit", "compact")
@@ -172,7 +174,7 @@ class TestTracerPrecompactThenInject(HookCaseMixin, unittest.TestCase):
         for call in calls[1:]:
             self.assertEqual(call["env"].get("JEV_BACKEND"), "laya")
         for call in calls:
-            self.assertEqual(call["env"].get("GSD_PATH_JEV"), "1")
+            self.assertNotIn("GSD_PATH_JEV", call["env"])  # no forced switch: the client decides
             self.assertEqual(call["env"].get("JEV_CALLER"), "ai-kit-precompact")
             self.assertNotIn("JEV_ALLOW_REMOTE", call["env"])
             self.assertTrue(call["env"].get("XDG_CONFIG_HOME", "").endswith(".no-config"))

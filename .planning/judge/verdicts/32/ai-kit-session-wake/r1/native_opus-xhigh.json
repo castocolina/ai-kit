@@ -1,0 +1,186 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": "native, xhigh (frontmatter, documented; not observed)",
+   "status_line": null,
+   "verdict_line": "{\"skill\":\"ai-kit-session-wake\",\"judge\":\"native:opus-xhigh\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":18,\"D2\":13,\"D3\":12,\"D4\":13,\"D5\":14,\"D6\":14,\"D7\":5,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":102,\"max_total\":125,\"percent\":81.6,\"grade\":\"B\",\"findings\":[{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-session-wake/SKILL.md\",\"line\":null,\"evidence\":\"There is no evals/ directory under skills/ai-kit-session-wake/, so there is no evals/evals.json. The script-test share gets full credit: the tests/test_ai_kit_session_wake*.py modules run the shim's --help, the resolve block as written, rollback, the exit-2 taxonomy and matrix --json.\",\"fix\":\"Add evals/evals.json with 3 or more realistic prompts and verifiable assertions. Cover a casual ask (\\\"if you hit the limit, pick this up when it resets\\\") with a pasted claude limit line: the assertion is that arm runs with --reset-text and the companion is created once. Cover a pi session with no session id given: the assertion is that the exit 2 is relayed and the run continues with no guessed id. Cover a refresh that prints the companion line again: the assertion is that no second one-shot job is created.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-session-wake/SKILL.md\",\"line\":null,\"evidence\":\"There is no evals/trigger-queries.json in skills/ai-kit-session-wake/\",\"fix\":\"Add evals/trigger-queries.json with about 20 queries: 8-10 should-trigger (usage-limit and quota resume asks, an AGENTS.md 'arm the session wake' rule, 'is my wake still armed?', removing a wake) and 8-10 near-miss should-not-trigger (a cross-AI runner hitting a 429, a recurring cron reminder, a systemd timer for a backup job, scheduling a one-off reminder in the session).\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-session-wake/SKILL.md\",\"line\":3,\"evidence\":\"\\\"Use when a long unattended run should resume after a usage limit or rate limit ... Not for cross-AI subprocess limits (ai-kit-cross-ai's hard tier).\\\" The description lacks the keywords quota, 429 and overnight, and it draws no boundary against the host's own in-session schedulers or general systemd timers.\",\"fix\":\"Arm, check and remove a per-session systemd user-timer wake (Linux) that resumes this exact session id after its host process exits, for example when it died at a usage limit, rate limit or quota cut. Use when a long unattended or overnight run must pick up again after a usage limit, rate limit, 429 or quota reset, when an AGENTS.md rule says to arm the session wake, when the host reports a usage-limit reset time, or to inspect, finish or remove a wake, even if the user only says \\\"resume when the limit resets\\\". The ai-kit-spec-execute-* executors already arm one for multi-plan or multi-task runs. Not for cross-AI subprocess limits (ai-kit-cross-ai's hard tier), and not for ordinary in-session reminders, recurring cron jobs or unrelated systemd timers.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-session-wake/SKILL.md\",\"line\":27,\"evidence\":\"\\\"Never resume \\\\\\\"most recent\\\\\\\". Every wake names one session id.\\\" / \\\"Never guess a host pid. Pass `--pid` only with the pid the host itself reports.\\\" These items state no consequence. The environment facts that defy assumptions (log-only fires still count, linger off stops the wake at logout, the companion line repeats on every refresh, disarm blocks up to 4 h) are scattered through the body, with no Gotchas section.\",\"fix\":\"Add the why to each NEVER item. Most recent can resume another concurrent session. A wrong pid makes the liveness check treat a live host as gone (a second process resumes the same session) or a dead host as alive (log-only fires spend the 24-fire cap). Collect the scattered environment facts into a short '## Gotchas' list under NEVER.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-session-wake/SKILL.md\",\"line\":59,\"evidence\":\"\\\"Arm by hand only when no executor does. A manual arm makes you own its `done` ... On pi, opencode and codex (the resume env scrubs `CODEX_THREAD_ID`) the resumed session has no session variable ...\\\" The Arm section opens with ownership and resume edge cases before the procedure. The lifecycle (resolve, id, arm, relay, companion, done) appears only across separate sections and never as one ordered sequence.\",\"fix\":\"Put a 6-step lifecycle checklist right after NEVER: 1 resolve the shim; 2 find the session id; 3 arm with --ref and --reset-* when available; 4 relay the output and branch on the exit code; 5 create the companion only when printed; 6 run done for a wake you own. Move the ownership and resumed-session paragraph below the arm command.\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-session-wake/SKILL.md\",\"line\":8,\"evidence\":\"\\\"Arms one wake per session. A wake is a systemd user timer (Linux) that runs the host's resume command with the recorded session id, so a session whose host process has exited continues where it stopped.\\\" This restates the description that is already in context. Lines 25-26 (\\\"This is a stated residual risk ... It never causes a wrong resume.\\\") are reviewer commentary rather than agent instruction.\",\"fix\":\"Cut the intro to the facts the description lacks: the shim location, the sibling ai-kit-spec-review dependency and the rule that a log-only fire counts toward the cap. Shorten the residual-risk note to 'a subagent running done disarms the wake early'.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/ai-kit-session-wake/references/wake-cap.md\",\"line\":8,\"evidence\":\"wake-cap.md lines 8-17 repeat SKILL.md lines 110-114 almost word for word (hourly, 24 counted fires, log-only fires count, refresh keeps the count, gave up). arm-exit-codes.md lines 23-24 repeat SKILL.md lines 105-106. arm-options.md line 7 repeats --ref, which its own header says SKILL.md covers.\",\"fix\":\"Keep the operational one-liners in SKILL.md and leave in each reference only what SKILL.md lacks: in wake-cap.md, pre-reset fires not counted, early give-up when the session is gone, and the session lock; in arm-exit-codes.md, the table. Delete the repeated --ref bullet from arm-options.md.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-session-wake/SKILL.md\",\"line\":136,\"evidence\":\"\\\"pass `--reset-text \\\\\\\"<the host's limit line>\\\\\\\"` or `--reset-at <epoch or ISO 8601>`\\\": the two flags appear as equal options, with no default.\",\"fix\":\"Make --reset-text with the host's verbatim limit line the default. Use --reset-at only when the host gave a machine-readable timestamp, so the agent does not hand-convert a wall-clock string into ISO 8601.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-session-wake/references/companion.md\",\"line\":13,\"evidence\":\"\\\"one one-shot, on a host that has a scheduler (on Claude Code, a one-shot CronCreate)\\\". Following the pi, opencode and codex branch: arm prints the companion line, but those hosts have no in-session scheduler, and no step says what happens next. The live stall is then not covered, and SKILL.md line 124 ('do not report such a run as covered') applies only when no reset time was given.\",\"fix\":\"Add a step to companion.md: 'If the host has no in-session scheduler (pi, opencode, codex), create nothing. Report that a live stall at the usage limit will not be resumed and the owner must resume it, and do not report the run as covered.' Mirror one sentence in SKILL.md 'What resumes a stall'.\"}]}"
+  }
+ ],
+ "digest": "7168e10acb802e65e7ea01a19c9c3de933bc7ffeb7b7e824c36b8534b66fbf5b",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "native:opus-xhigh",
+ "loop": "32",
+ "modules": [
+  "tests/test_ai_kit_session_wake.py",
+  "tests/test_ai_kit_session_wake_fire.py",
+  "tests/test_ai_kit_session_wake_reset.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_golden.py",
+  "tests/test_ai_kit_spec_goal_prompt_host.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_claude_session_wake_hook.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "64222982e7dd2e704eac8105d58e24534920103c25d4db2b0a97c843a6d5193a",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "ai-kit-session-wake",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": {
+  "reason": "failed: ingest refused: judge-loop: verdict judge 'o\\u200dpencode:router-env/my-referee-three' is not the lane's judge 'opencode:router-env/my-referee-three'",
+  "replaces": "opencode:router-env/my-referee-three"
+ },
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D7",
+    "evidence": "There is no evals/ directory under skills/ai-kit-session-wake/, so there is no evals/evals.json. The script-test share gets full credit: the tests/test_ai_kit_session_wake*.py modules run the shim's --help, the resolve block as written, rollback, the exit-2 taxonomy and matrix --json.",
+    "file": "skills/ai-kit-session-wake/SKILL.md",
+    "fix": "Add evals/evals.json with 3 or more realistic prompts and verifiable assertions. Cover a casual ask (\"if you hit the limit, pick this up when it resets\") with a pasted claude limit line: the assertion is that arm runs with --reset-text and the companion is created once. Cover a pi session with no session id given: the assertion is that the exit 2 is relayed and the run continues with no guessed id. Cover a refresh that prints the companion line again: the assertion is that no second one-shot job is created.",
+    "id": "D7-1",
+    "line": null,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "There is no evals/trigger-queries.json in skills/ai-kit-session-wake/",
+    "file": "skills/ai-kit-session-wake/SKILL.md",
+    "fix": "Add evals/trigger-queries.json with about 20 queries: 8-10 should-trigger (usage-limit and quota resume asks, an AGENTS.md 'arm the session wake' rule, 'is my wake still armed?', removing a wake) and 8-10 near-miss should-not-trigger (a cross-AI runner hitting a 429, a recurring cron reminder, a systemd timer for a backup job, scheduling a one-off reminder in the session).",
+    "id": "D7-2",
+    "line": null,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "\"Use when a long unattended run should resume after a usage limit or rate limit ... Not for cross-AI subprocess limits (ai-kit-cross-ai's hard tier).\" The description lacks the keywords quota, 429 and overnight, and it draws no boundary against the host's own in-session schedulers or general systemd timers.",
+    "file": "skills/ai-kit-session-wake/SKILL.md",
+    "fix": "Arm, check and remove a per-session systemd user-timer wake (Linux) that resumes this exact session id after its host process exits, for example when it died at a usage limit, rate limit or quota cut. Use when a long unattended or overnight run must pick up again after a usage limit, rate limit, 429 or quota reset, when an AGENTS.md rule says to arm the session wake, when the host reports a usage-limit reset time, or to inspect, finish or remove a wake, even if the user only says \"resume when the limit resets\". The ai-kit-spec-execute-* executors already arm one for multi-plan or multi-task runs. Not for cross-AI subprocess limits (ai-kit-cross-ai's hard tier), and not for ordinary in-session reminders, recurring cron jobs or unrelated systemd timers.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "\"Never resume \\\"most recent\\\". Every wake names one session id.\" / \"Never guess a host pid. Pass `--pid` only with the pid the host itself reports.\" These items state no consequence. The environment facts that defy assumptions (log-only fires still count, linger off stops the wake at logout, the companion line repeats on every refresh, disarm blocks up to 4 h) are scattered through the body, with no Gotchas section.",
+    "file": "skills/ai-kit-session-wake/SKILL.md",
+    "fix": "Add the why to each NEVER item. Most recent can resume another concurrent session. A wrong pid makes the liveness check treat a live host as gone (a second process resumes the same session) or a dead host as alive (log-only fires spend the 24-fire cap). Collect the scattered environment facts into a short '## Gotchas' list under NEVER.",
+    "id": "D3-1",
+    "line": 27,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "\"Arm by hand only when no executor does. A manual arm makes you own its `done` ... On pi, opencode and codex (the resume env scrubs `CODEX_THREAD_ID`) the resumed session has no session variable ...\" The Arm section opens with ownership and resume edge cases before the procedure. The lifecycle (resolve, id, arm, relay, companion, done) appears only across separate sections and never as one ordered sequence.",
+    "file": "skills/ai-kit-session-wake/SKILL.md",
+    "fix": "Put a 6-step lifecycle checklist right after NEVER: 1 resolve the shim; 2 find the session id; 3 arm with --ref and --reset-* when available; 4 relay the output and branch on the exit code; 5 create the companion only when printed; 6 run done for a wake you own. Move the ownership and resumed-session paragraph below the arm command.",
+    "id": "D2-1",
+    "line": 59,
+    "severity": "low"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "\"Arms one wake per session. A wake is a systemd user timer (Linux) that runs the host's resume command with the recorded session id, so a session whose host process has exited continues where it stopped.\" This restates the description that is already in context. Lines 25-26 (\"This is a stated residual risk ... It never causes a wrong resume.\") are reviewer commentary rather than agent instruction.",
+    "file": "skills/ai-kit-session-wake/SKILL.md",
+    "fix": "Cut the intro to the facts the description lacks: the shim location, the sibling ai-kit-spec-review dependency and the rule that a log-only fire counts toward the cap. Shorten the residual-risk note to 'a subagent running done disarms the wake early'.",
+    "id": "D1-1",
+    "line": 8,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "wake-cap.md lines 8-17 repeat SKILL.md lines 110-114 almost word for word (hourly, 24 counted fires, log-only fires count, refresh keeps the count, gave up). arm-exit-codes.md lines 23-24 repeat SKILL.md lines 105-106. arm-options.md line 7 repeats --ref, which its own header says SKILL.md covers.",
+    "file": "skills/ai-kit-session-wake/references/wake-cap.md",
+    "fix": "Keep the operational one-liners in SKILL.md and leave in each reference only what SKILL.md lacks: in wake-cap.md, pre-reset fires not counted, early give-up when the session is gone, and the session lock; in arm-exit-codes.md, the table. Delete the repeated --ref bullet from arm-options.md.",
+    "id": "D5-1",
+    "line": 8,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "\"pass `--reset-text \\\"<the host's limit line>\\\"` or `--reset-at <epoch or ISO 8601>`\": the two flags appear as equal options, with no default.",
+    "file": "skills/ai-kit-session-wake/SKILL.md",
+    "fix": "Make --reset-text with the host's verbatim limit line the default. Use --reset-at only when the host gave a machine-readable timestamp, so the agent does not hand-convert a wall-clock string into ISO 8601.",
+    "id": "D6-1",
+    "line": 136,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "\"one one-shot, on a host that has a scheduler (on Claude Code, a one-shot CronCreate)\". Following the pi, opencode and codex branch: arm prints the companion line, but those hosts have no in-session scheduler, and no step says what happens next. The live stall is then not covered, and SKILL.md line 124 ('do not report such a run as covered') applies only when no reset time was given.",
+    "file": "skills/ai-kit-session-wake/references/companion.md",
+    "fix": "Add a step to companion.md: 'If the host has no in-session scheduler (pi, opencode, codex), create nothing. Report that a live stall at the usage limit will not be resumed and the owner must resume it, and do not report the run as covered.' Mirror one sentence in SKILL.md 'What resumes a stall'.",
+    "id": "D8-1",
+    "line": 13,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "native:opus-xhigh",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 81.6,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 18,
+   "D2": 13,
+   "D3": 12,
+   "D4": 13,
+   "D5": 14,
+   "D6": 14,
+   "D7": 5,
+   "D8": 13
+  },
+  "skill": "ai-kit-session-wake",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 102
+ }
+}

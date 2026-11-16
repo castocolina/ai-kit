@@ -25,8 +25,8 @@ under `## Code Exploration`; this file holds the steps.
   `.planning/graphs/` and keeps `graphify-out/` only.
 - A rebuild can be rerun safely and gives the same graph at the same HEAD.
 - Timings, measured on 2026-11-03 on this machine, not guarantees: about 15 s
-  with the `.graphifyignore` exclusion and 21 s without it; `codegraph sync`
-  0.23 s; `codegraph init -y` 12.5 s.
+  with the `.graphifyignore` exclusion and 21 s without it; a full codebase-memory-mcp
+  `index_repository` of this repository took 4.2 s on 2026-11-14.
 
 ## Refresh
 

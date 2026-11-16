@@ -469,15 +469,15 @@ class TestGlobalRulesReview(unittest.IsolatedAsyncioTestCase):
     """Phase 30 D-11: the global-rules item shows its bullet and preview on Review only while on."""
 
     PREVIEW = [
-        "claude /x/CLAUDE.md: replace codegraph's sentence",
-        "  - old sentence",
-        "  + new sentence",
+        "claude /x/CLAUDE.md: replace the codegraph block with the codebase-memory-mcp block",
+        "  - legacy installer text",
+        "  + ## codebase-memory-mcp (code and doc exploration)",
     ]
 
     def _ctx(self, on):
         ctx = make_ctx(host_ids=())
         # Selection rows are mutable lists at runtime; SelectionLike types them as tuples.
-        ctx.selection.items.append(["global rules", "codegraph sentence", on])  # pyright: ignore[reportArgumentType]
+        ctx.selection.items.append(["global rules", "codebase-memory-mcp block", on])  # pyright: ignore[reportArgumentType]
         rules = {"changes": ["a", "b", "c", "d"], "preview": self.PREVIEW}
         return ctx._replace(state={**ctx.state, "_global_rules": rules})
 
@@ -495,15 +495,19 @@ class TestGlobalRulesReview(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             self.assertEqual(await self._to_review(app, pilot), wa.STEP_REVIEW)
             what = str(query_static(app, "#rev-what").content)
-            self.assertIn("Rewrite codegraph's sentence in 4 global instruction files", what)
-            self.assertIn("replace codegraph's sentence", what)
+            self.assertIn(
+                "Replace the codegraph block with the codebase-memory-mcp block in 4 global "
+                "instruction files", what)
+            self.assertIn("replace the codegraph block with the codebase-memory-mcp block", what)
+            self.assertIn("  - legacy installer text", what)
+            self.assertIn("  + ## codebase-memory-mcp (code and doc exploration)", what)
 
     async def test_review_hides_bullet_when_off(self):
         app = wa.WizardApp(self._ctx(False))
         async with app.run_test() as pilot:
             self.assertEqual(await self._to_review(app, pilot), wa.STEP_REVIEW)
             what = str(query_static(app, "#rev-what").content)
-            self.assertNotIn("Rewrite codegraph's sentence", what)
+            self.assertNotIn("Replace the codegraph block with the codebase-memory-mcp block", what)
 
     async def test_g_toggles_the_item_on_review(self):
         app = wa.WizardApp(self._ctx(True))
@@ -512,7 +516,7 @@ class TestGlobalRulesReview(unittest.IsolatedAsyncioTestCase):
             await pilot.press("g")
             await pilot.pause()
             self.assertFalse(app._global_rules_on())
-            self.assertNotIn("Rewrite codegraph's sentence",
+            self.assertNotIn("Replace the codegraph block with the codebase-memory-mcp block",
                              str(query_static(app, "#rev-what").content))
             self.assertIn("Global rules", str(query_static(app, "#footer-left").content))
             await pilot.press("g")
@@ -557,10 +561,10 @@ class TestGlobalRulesReview(unittest.IsolatedAsyncioTestCase):
 
 
 def _rules_body():
-    # The installer sentence sits inside the block (rewritten) and once outside it (kept).
+    # The legacy block sits inside the markers (replaced) and its text once outside them (kept).
     return (
-        b"prefix\r\n" + global_rules.START + b"\r\n" + global_rules.INSTALLER_SENTENCE
-        + b"\r\n" + global_rules.END + b"\r\n" + global_rules.INSTALLER_SENTENCE
+        b"prefix\r\n" + global_rules.LEGACY_START + b"\r\n" + b"legacy installer text"
+        + b"\r\n" + global_rules.LEGACY_END + b"\r\n" + b"legacy installer text"
         + b" tail \xc3\xa9"
     )
 
@@ -682,7 +686,7 @@ class TestWizardBuilders(unittest.TestCase):
         self.assertTrue(outcome["ok"])  # a reviewed-set skip is a note, not a failure
         self.assertIn("changed since it was reviewed", outcome["log"])
         self.assertTrue(self.read("claude").endswith(b"edited"))
-        self.assertIn(global_rules.AIKIT_SENTENCE, self.read("gemini"))
+        self.assertIn(global_rules.AIKIT_BLOCK, self.read("gemini"))
 
 
 if __name__ == "__main__":  # pragma: no cover

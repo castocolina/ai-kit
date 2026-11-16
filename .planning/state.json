@@ -41,37 +41,42 @@
     {
       "number": "32",
       "name": "Re-judge baseline",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "32.1",
       "name": "Batch 1, general small skills",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "32.2",
       "name": "Batch 2, spec review family",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "32.3",
       "name": "Batch 3, execution and session skills",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "32.4",
       "name": "Batch 4, planning skills and the closing report",
-      "status": "pending"
+      "status": "complete"
+    },
+    {
+      "number": "32.5",
+      "name": "codebase-memory-mcp replaces codegraph",
+      "status": "complete"
     },
     {
       "number": "33",
       "name": "One config design",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "34",
       "name": "jev backends by host and Laya calibration",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "35",
@@ -191,8 +196,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (plan phase 32)",
-    "reason": "Phase 8 of 37 — needs a plan"
+    "label": "Advance to the next step (plan phase 35)",
+    "reason": "Phase 16 of 38 — needs a plan"
   },
-  "updated_at": "2026-11-06T18:19:56.692Z"
+  "updated_at": "2026-11-16T03:09:24.998Z"
 }

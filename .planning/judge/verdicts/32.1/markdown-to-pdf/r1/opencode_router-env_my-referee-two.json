@@ -1,0 +1,166 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=43s out=151167 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"markdown-to-pdf\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":18,\"D2\":14,\"D3\":14,\"D4\":15,\"D5\":14,\"D6\":14,\"D7\":12,\"D8\":14},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":115,\"max_total\":125,\"percent\":92.0,\"grade\":\"A\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":16,\"evidence\":\"Turn a Markdown document with embedded mermaid diagrams into a PDF (or a marp deck) in one non-destructive command\",\"fix\":\"Delete the opening restatement of the description; start at Before you run, decide.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":21,\"evidence\":\"Before you run, decide covers doc-or-deck, draft-or-final, and vector-or-PNG, then the body is a tool procedure\",\"fix\":\"Keep the three questions; do not add another thinking framework.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":85,\"evidence\":\"NEVER auto-install, NEVER edit the source, NEVER use --format svg with pandoc-latex unless rsvg-convert is on PATH, NEVER choose a backend by single-tool presence, NEVER nag for an install, NEVER detect marp-slide with a filesystem probe\",\"fix\":\"Add one gotcha: mmdc always scales at -s 3, including SVG, so --format svg is not a scale override.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/examples/sample-with-mermaid.md\",\"line\":1,\"evidence\":\"This sample document exercises the markdown-to-pdf skill end to end\",\"fix\":\"Point the primary-flow example at examples/sample-with-mermaid.md, or drop the file from the skill directory.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":56,\"evidence\":\"pick another backend with --backend\",\"fix\":\"Name the fallback order (typst, then weasyprint, then chromium) instead of leaving the replacement unnamed.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/scripts/markdown_to_pdf.py\",\"line\":227,\"evidence\":\"argparse.ArgumentParser supplies --help, but stdout is a free-form Wrote line, not JSON or another structured format\",\"fix\":\"Add a --json flag that prints backend, diagrams, and out as one JSON object on stdout, and assert that line in tests/test_markdown_to_pdf.py.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/evals/trigger-queries.json\",\"line\":2,\"evidence\":\"10 should-trigger and 10 should-not-trigger queries, near-misses included, with no train/validation split\",\"fix\":\"Split the 20 queries into a fixed train set and validation set, keeping positives and negatives in both.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":55,\"evidence\":\"Exit code 2 (mermaid failed at a line) shows mmdc's error and names the source line\",\"fix\":\"State that a missing mmdc binary is not exit 2: it raises before the exit-code table, and the install line is pnpm add -g @mermaid-js/mermaid-cli.\"}]}"
+  }
+ ],
+ "digest": "1bab1e2471ce282ffb1c8a1de5a952bf382a3502589a3c2916c9f0543016454e",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "32.1",
+ "modules": [
+  "tests/test_markdown_to_pdf.py",
+  "tests/test_markdown_to_pdf_e2e.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "2ac58b3c4ac38ad7c40b83ada1a5187c9a63a5331fbd103dd63c3e5db6d5ce3a",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "markdown-to-pdf",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "Turn a Markdown document with embedded mermaid diagrams into a PDF (or a marp deck) in one non-destructive command",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Delete the opening restatement of the description; start at Before you run, decide.",
+    "id": "D1-1",
+    "line": 16,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "Before you run, decide covers doc-or-deck, draft-or-final, and vector-or-PNG, then the body is a tool procedure",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Keep the three questions; do not add another thinking framework.",
+    "id": "D2-1",
+    "line": 21,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "NEVER auto-install, NEVER edit the source, NEVER use --format svg with pandoc-latex unless rsvg-convert is on PATH, NEVER choose a backend by single-tool presence, NEVER nag for an install, NEVER detect marp-slide with a filesystem probe",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add one gotcha: mmdc always scales at -s 3, including SVG, so --format svg is not a scale override.",
+    "id": "D3-1",
+    "line": 85,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "This sample document exercises the markdown-to-pdf skill end to end",
+    "file": "skills/markdown-to-pdf/examples/sample-with-mermaid.md",
+    "fix": "Point the primary-flow example at examples/sample-with-mermaid.md, or drop the file from the skill directory.",
+    "id": "D5-1",
+    "line": 1,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "pick another backend with --backend",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Name the fallback order (typst, then weasyprint, then chromium) instead of leaving the replacement unnamed.",
+    "id": "D6-1",
+    "line": 56,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "argparse.ArgumentParser supplies --help, but stdout is a free-form Wrote line, not JSON or another structured format",
+    "file": "skills/markdown-to-pdf/scripts/markdown_to_pdf.py",
+    "fix": "Add a --json flag that prints backend, diagrams, and out as one JSON object on stdout, and assert that line in tests/test_markdown_to_pdf.py.",
+    "id": "D7-1",
+    "line": 227,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "10 should-trigger and 10 should-not-trigger queries, near-misses included, with no train/validation split",
+    "file": "skills/markdown-to-pdf/evals/trigger-queries.json",
+    "fix": "Split the 20 queries into a fixed train set and validation set, keeping positives and negatives in both.",
+    "id": "D7-2",
+    "line": 2,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "Exit code 2 (mermaid failed at a line) shows mmdc's error and names the source line",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "State that a missing mmdc binary is not exit 2: it raises before the exit-code table, and the install line is pnpm add -g @mermaid-js/mermaid-cli.",
+    "id": "D8-1",
+    "line": 55,
+    "severity": "low"
+   }
+  ],
+  "grade": "A",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 92.0,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 18,
+   "D2": 14,
+   "D3": 14,
+   "D4": 15,
+   "D5": 14,
+   "D6": 14,
+   "D7": 12,
+   "D8": 14
+  },
+  "skill": "markdown-to-pdf",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 115
+ }
+}

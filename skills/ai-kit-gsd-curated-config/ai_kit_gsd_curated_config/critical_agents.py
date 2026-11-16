@@ -1,5 +1,5 @@
 """Pure decision logic for D-03 (amended)'s critical-agent model/effort overrides
-(07-CONTEXT.md). `compute_overrides` is a pure function (no I/O, no subprocess, no imports)
+(Phase 7). `compute_overrides` is a pure function (no I/O, no subprocess, no imports)
 consuming `gsd_catalog.query_agent_catalog()`'s output -- the boundary between "read live
 gsd-core state" and "decide what to write" is a function call, so this decision logic is
 unit-testable against a fake catalog without ever invoking `node`.
@@ -7,7 +7,7 @@ unit-testable against a fake catalog without ever invoking `node`.
 The heavy-tier agent NAMES are never hardcoded here -- they are read from the live `tiers`
 dict at run time. Only the two named top-up/floor AGENT IDs (`gsd-code-reviewer`,
 `gsd-executor`) and the two phase-type floor KEYS (`models.research`/`models.execution`) are
-literal, and both of those are explicit, individually-reasoned decisions from 07-CONTEXT.md
+literal, and both of those are explicit, individually-reasoned decisions from Phase 7
 D-03, not a phase-type-bucket guess.
 """
 

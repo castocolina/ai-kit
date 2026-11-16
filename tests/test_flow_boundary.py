@@ -1,6 +1,7 @@
 """The boundary step (plan 30-04): refresh, branch binding, lock, brief, wave-1 rule, start report.
 
-Every index tool is a recorder: `which` finds nothing, so no codegraph or graphify process runs.
+Every index tool is a recorder: `which` finds nothing, so no codebase-memory-mcp or graphify
+process runs.
 """
 
 import argparse
@@ -147,7 +148,7 @@ class TestBoundaryBrief(_StackedFixture):
         recorder = _Recorder()
         lines, _ = flow_boundary.boundary(self.repo, _unit("B", "feat/b"), "plan",
                                           seams=_seams(recorder))
-        self.assertTrue(any(line.startswith("codegraph:") for line in lines))
+        self.assertTrue(any(line.startswith("codebase-memory-mcp:") for line in lines))
         self.assertTrue(any(line.startswith("graphify:") for line in lines))
         self.assertEqual(recorder.calls, [])  # no tool found, so nothing ran
 
@@ -279,7 +280,8 @@ class TestBriefNamesFunctionThroughFakes(_StackedFixture):
         self.bin = tmp / "bin"
         state = tmp / "state.json"
         state.write_text("{}", encoding="utf-8")
-        index_fakes.write_index_fakes(self.bin, state, tmp / "calls.log")
+        self.log = tmp / "calls.log"
+        index_fakes.write_index_fakes(self.bin, state, self.log)
         patch = mock.patch.dict(os.environ, {"PATH": index_fakes.tool_path(self.bin)})
         patch.start()
         self.addCleanup(patch.stop)
@@ -291,7 +293,8 @@ class TestBriefNamesFunctionThroughFakes(_StackedFixture):
         lines, outcome = flow_boundary.boundary(self.repo, _unit("B", "feat/b"), "plan",
                                                 seams=self.seams)
         self.assertEqual(outcome, "done")
-        self.assertTrue(any(line.startswith("codegraph: ran codegraph") for line in lines))
+        self.assertTrue(any(line.startswith("codebase-memory-mcp: ran index_repository")
+                            for line in lines))
         text = self.brief_path().read_text(encoding="utf-8")
         names_line = next(line for line in text.splitlines() if line.startswith("Names searched"))
         self.assertIn("alpha_one", names_line)
@@ -302,13 +305,17 @@ class TestBriefNamesFunctionThroughFakes(_StackedFixture):
         self.addCleanup(shutil.rmtree, worktree.parent, True)
         _git(self.repo, "worktree", "add", "-q", "--detach", str(worktree), "main")
         flow_boundary.boundary(str(worktree), None, "plan", seams=self.seams)
-        self.assertTrue((worktree / ".codegraph").is_dir())
+        indexed = [call for call in index_fakes.index_calls(self.log)
+                   if call["name"] == "codebase-memory-mcp"
+                   and call["argv"][:2] == ["cli", "index_repository"]
+                   and os.path.realpath(call["cwd"]) == os.path.realpath(worktree)]
+        self.assertTrue(indexed)
         self.assertTrue((worktree / flow_brief.BRIEF_REL).is_file())
 
 
 class TestGsdBoundaryThroughFakes(_StackedFixture):
     """R1 in a GSD checkout: the plan and wave points brief the previous unit's function, and the
-    GSD status file records the unit branch's HEAD (the codegraph and graphify fakes run)."""
+    GSD status file records the unit branch's HEAD (the index and graphify fakes run)."""
 
     def setUp(self):
         super().setUp()
@@ -349,23 +356,23 @@ class TestGsdBoundaryThroughFakes(_StackedFixture):
 
 
 class TestExcludeOfIndexDirectory(unittest.TestCase):
-    """A codegraph directory with its own `*` .gitignore: excluded once, status stays clean."""
+    """An index directory with its own `*` .gitignore: excluded once, status stays clean."""
 
     def test_entry_is_added_once_and_status_stays_clean(self):
         with tempfile.TemporaryDirectory(prefix="ai-kit-p30-") as tmp:
             repo = os.path.join(tmp, "repo")
             os.makedirs(repo)
             _git(repo, "init", "-q", "-b", "main")
-            index = pathlib.Path(repo) / ".codegraph"
+            index = pathlib.Path(repo) / "graphify-out"
             index.mkdir()
             (index / ".gitignore").write_text("*\n!.gitignore\n", encoding="utf-8")
-            first = flow_index.ensure_excluded(repo, [".codegraph"])
-            second = flow_index.ensure_excluded(repo, [".codegraph"])
+            first = flow_index.ensure_excluded(repo, ["graphify-out"])
+            second = flow_index.ensure_excluded(repo, ["graphify-out"])
             exclude = flow_record.common_dir(repo) / "info" / "exclude"
             lines = exclude.read_text(encoding="utf-8").splitlines()
-            self.assertEqual(first, ["note: ignored .codegraph/ in .git/info/exclude"])
+            self.assertEqual(first, ["note: ignored graphify-out/ in .git/info/exclude"])
             self.assertEqual(second, [])
-            self.assertEqual(lines.count(".codegraph/"), 1)
+            self.assertEqual(lines.count("graphify-out/"), 1)
             self.assertEqual(_git(repo, "status", "--porcelain"), "")
 
 
@@ -379,10 +386,12 @@ class TestStartBoundary(unittest.TestCase):
         with mock.patch.object(flow_unit, "_start",
                                return_value=(["started unit B on main"], "done")), \
                 mock.patch.object(flow_boundary, "boundary",
-                                  return_value=(["codegraph: ran", "brief: x"], "done")) as run:
+                                  return_value=(["codebase-memory-mcp: ran", "brief: x"],
+                                                "done")) as run:
             lines, outcome = flow_unit._start_and_boundary(self.args, _unit("B", "feat/b"))
         self.assertEqual(outcome, "done")
-        self.assertEqual(lines, ["started unit B on main", "boundary: codegraph: ran | brief: x"])
+        self.assertEqual(lines, ["started unit B on main",
+                                 "boundary: codebase-memory-mcp: ran | brief: x"])
         self.assertEqual(run.call_args.args[1].id, "B")
         self.assertEqual(run.call_args.args[2], "start")
 
@@ -430,7 +439,7 @@ def _names_line(text):
 class TestCliFlows(unittest.TestCase):
     """The unit flow through the CLI (plan 30-04 Task 3): the superpowers fixture's three points,
     a commit on the previous unit after this one started, argparse exit codes, and a real `start`
-    on a checked-out hotfix unit. Every codegraph and graphify call is the fake's."""
+    on a checked-out hotfix unit. Every codebase-memory-mcp and graphify call is the fake's."""
 
     @classmethod
     def setUpClass(cls):
@@ -508,8 +517,8 @@ class TestCliFlows(unittest.TestCase):
         code, text = self.fold("boundary", "--unit-id", "B", "--point", "plan")
         self.assertEqual(code, 0, text)
         self.assertIn("- added `pkg/late.py`", self.brief())
-        # the file is not in this checkout (it sits on unit A's branch only), so codegraph
-        # explores nothing for it and the names line carries its file name alone
+        # the file is not in this checkout (it sits on unit A's branch only), so codebase-memory-mcp
+        # lists nothing for it and the names line carries its file name alone
         self.assertIn("late.py", _names_line(self.brief()))
         self.assertNotIn("late_one", _names_line(self.brief()))
 

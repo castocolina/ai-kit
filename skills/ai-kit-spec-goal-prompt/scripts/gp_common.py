@@ -11,7 +11,8 @@ Each copy is parity-tested against its original in tests/test_ai_kit_spec_goal_p
                           (line 58) and resolve_package_manager_runner (line 46)
 
 Guards (is_machine_path, scan_text) and the file helpers (slugify, unique_path, strip_ansi) are
-new here. scan_text never flags a leading slash, so slash commands such as /goal pass.
+new here. scan_text takes its key shapes from the sibling secret_shapes.py, a byte-identical copy
+of the shared scanner, and never flags a leading slash, so slash commands such as /goal pass.
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ import json
 import os
 import re
 from collections.abc import Sequence
+
+import secret_shapes
 
 _TARGET_HEADER_RE = re.compile(r"^(?!\.)([A-Za-z0-9_.-]+)\s*:(?!=)(.*)$", re.MULTILINE)
 _LOCKFILE_RUNNERS: tuple[tuple[str, str], ...] = (
@@ -30,10 +33,11 @@ _LOCKFILE_RUNNERS: tuple[tuple[str, str], ...] = (
 )
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:\\")
-_KEY_SHAPES = (
-    ("API-key-shaped token present", re.compile(r"sk-[A-Za-z0-9]{20,}")),
-    ("GitHub-token-shaped token present", re.compile(r"ghp_[A-Za-z0-9]{20,}")),
-)
+# One problem message per shared shape name; the two older names keep their wording.
+_SHAPE_MESSAGES = {
+    "sk_rk_key": "API-key-shaped token present",
+    "github_token": "GitHub-token-shaped token present",
+}
 _SLUG_MAX = 40
 
 
@@ -97,9 +101,8 @@ def scan_text(text: str, *, home: str, secrets: Sequence[str]) -> list[str]:
     for secret in secrets:
         if secret and secret in text:
             problems.append("secret value present")
-    for message, pattern in _KEY_SHAPES:
-        if pattern.search(text):
-            problems.append(message)
+    for name in secret_shapes.detect(text):
+        problems.append(_SHAPE_MESSAGES.get(name, f"{name}-shaped token present"))
     return problems
 
 

@@ -23,9 +23,10 @@ the agent at reference docs or scripts by their real, install-relative location,
 string. Three asks:
 
 1. **New worktree / new codebase indexing advice.** When a session starts in a freshly created
-   worktree (or any checkout with no index), check whether `codegraph` and `graphify` are on PATH
-   and tell the agent how to index it (`codegraph init`/`codegraph sync` when no `.codegraph/`;
-   graphify's `graphify-out/` when the owner uses it). Only name the tools that are installed.
+   worktree (or any checkout with no index), check whether `codebase-memory-mcp` and `graphify` are
+   on PATH and tell the agent how to index it (`codebase-memory-mcp cli index_repository --repo-path .`
+   when `list_projects` shows no project for the checkout; graphify's `graphify-out/` when the owner
+   uses it). Only name the tools that are installed.
 2. **Dynamic SessionStart line.** The current user line reads
    `ai-kit: prefer these modern tools: bat over cat, ... Usage: ~/git/personal/ai-kit/tools/hooks/README.md`.
    Make sure it stays dynamic, including the path: a `curl ... | bash` install lives at
@@ -45,7 +46,7 @@ string. Three asks:
   path, only the user line does. The 200-char cap silently drops the `Usage:` suffix on a long path.
 - Item 3: the PreCompact core already records its own `elapsed_ms` (classification time, e.g. 8003)
   in the injected block. That is not the compaction's duration and not the window size.
-- `codegraph` and `graphify` are installed under `~/.local/bin` on this machine.
+- `codegraph` (replaced by codebase-memory-mcp in Phase 32.5) and `graphify` are installed under `~/.local/bin` on this machine.
 
 ## Solution
 
@@ -54,7 +55,7 @@ Approach hints, all to be confirmed in research:
 - **Worktree hook.** In Claude Code, a `WorktreeCreate` hook *replaces* the default git worktree
   creation (the hook must create the worktree and print its path). Using it just for advice would
   take over worktree creation. Prefer a SessionStart check that detects a linked worktree
-  (`git rev-parse --git-dir` differs from `--git-common-dir`) or a missing `.codegraph/`, and emit
+  (`git rev-parse --git-dir` differs from `--git-common-dir`) or no codebase-memory-mcp project covering the checkout (`list_projects`), and emit
   the advice there. That also works on hosts with no worktree event (Cursor, opencode, pi; to
   verify per host).
 - **Install-relative paths.** Resolve every referenced `.md`/script from the hook's own location
@@ -71,7 +72,7 @@ Approach hints, all to be confirmed in research:
 
 ## Note 2026-11-03 (Phase 30 discuss)
 
-Phase 30 now indexes automatically: a new worktree gets `codegraph init -y` or `codegraph sync` and
+Phase 30 now indexes automatically: a new worktree gets `codegraph init -y` (replaced by codebase-memory-mcp in Phase 32.5) or `codegraph sync` and
 `graphify update .` through ai-kit's `post-checkout` hook, and every unit boundary refreshes both. Item 1
 here shrinks to advice: the session-start line reports what was indexed (or which CLI is missing), and no
 longer tells the agent how to index. Not folded into Phase 30.

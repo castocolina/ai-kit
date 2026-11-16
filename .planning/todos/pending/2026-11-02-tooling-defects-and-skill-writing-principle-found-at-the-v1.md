@@ -112,3 +112,8 @@ Checklist:
   exists only as a conditional."
 - [ ] Note to keep: the project rule that reverse-engineered or unverified facts must be visibly flagged
   stays; the flag is a short tag, not a history.
+
+*Status 2026-11-07 (Phase 32 spec and discuss): the main-flow, provenance, audit, AGENTS.md-line and
+unverified-tag items are folded into Phase 32 (32-SPEC R9: a test over the 16 kept skills, their text fixes and
+the AGENTS.md line); the tool-specific-facts and rare-cases items stay with the judge rounds of the batch phases
+32.1-32.4; the rules family is exempt until Phases 45-47 replace it.*

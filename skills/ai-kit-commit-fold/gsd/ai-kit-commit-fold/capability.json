@@ -43,7 +43,7 @@
       "point": "plan:pre",
       "into": "planner",
       "fragment": {
-        "inline": "ai-kit unit flow (boundary before planning): before anything else, run node .claude/gsd-core/bin/gsd-tools.cjs ai-kit-fold boundary-plan --phase <this phase's number> from the project root. It refreshes the codegraph index and the graphify graph on this branch and rewrites .aikit/brief/SKILL.md. Read that brief after the SPEC and CONTEXT; locked decisions win. If the command is missing or fails, continue and say so in your return. In every PLAN.md you write, put this line inside <objective>, because a cross-AI executor gets only the plan's objective and tasks: Unit brief: read .aikit/brief/SKILL.md after the SPEC and CONTEXT; if it is missing, says no brief, or names another unit, say so and continue."
+        "inline": "ai-kit unit flow (boundary before planning): before anything else, run node .claude/gsd-core/bin/gsd-tools.cjs ai-kit-fold boundary-plan --phase <this phase's number> from the project root. It refreshes the codebase-memory-mcp index and the graphify graph on this branch and rewrites .aikit/brief/SKILL.md. Read that brief after the SPEC and CONTEXT; locked decisions win. If the command is missing or fails, continue and say so in your return. In every PLAN.md you write, put this line inside <objective>, because a cross-AI executor gets only the plan's objective and tasks: Unit brief: read .aikit/brief/SKILL.md after the SPEC and CONTEXT; if it is missing, says no brief, or names another unit, say so and continue."
       },
       "produces": [],
       "consumes": [],

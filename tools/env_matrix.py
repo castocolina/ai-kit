@@ -322,12 +322,18 @@ def make_long_checkout(source: Path, target: Path) -> Path:
 
 
 def custom_tmpdir(folder: Path) -> Path:
-    """A TMPDIR whose path has a space and lies inside a freshly initialised git repository."""
+    """A TMPDIR whose path has a space and lies inside a freshly initialised git repository.
+    The repository also holds a synthetic `.planning/config.json`, so a project the tests
+    create under TMPDIR sits inside another GSD project."""
     repo = folder / "repo with space"
     tmp_dir = repo / "tmp dir"
     tmp_dir.mkdir(parents=True)
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, capture_output=True,
                    env=_git_env())
+    (repo / ".planning").mkdir()
+    (repo / ".planning" / "config.json").write_text(
+        '{"model_profile": "balanced"}\n', encoding="utf-8"
+    )
     return tmp_dir
 
 

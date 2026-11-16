@@ -140,7 +140,7 @@ Runs once per invocation, after Step 0.6.
    line — "No cross-AI config saved yet — run `ai-kit-spec-config` so
    this doesn't repeat every invocation." — then continue to step 4
    regardless; do NOT skip reviewer resolution (there's usually no
-   `review-spec.toml` yet either, so `resolve-reviewers` in step 5
+   `config.toml` roster yet either, so `resolve-reviewers` in step 5
    degrades to `NO_CONFIG_FALLBACK` on its own — no special-casing needed
    here beyond the detection call and the hint).
 4. Refresh quota for anything the config's ladder might need. `--cwd`
@@ -189,7 +189,7 @@ Runs once per invocation, after Step 0.6.
    `CODEBASE_ROOT` is a labeled set, that means the root of `<DOC_PATHS>`'s
    first entry, same rule as point 4 above).
    **If either command's stderr prints `ignoring untrusted project-local config`**, the
-   project-local `.aikit/review-spec.toml` under `<CODEBASE_ROOT>` is ignored until the user
+   project-local `.aikit/config.toml` lanes under `<CODEBASE_ROOT>` are ignored until the user
    trusts it. Show them `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT> --show` (each
    reviewer's exact argv), ask whether to trust it, and run
    `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT>` only after an explicit yes — never
@@ -219,8 +219,8 @@ inline the prompt via `{prompt}` rather than reading stdin, so guidance composed
 would never reach them, and pre-rendering the argv yourself bypasses the single split point
 (templates become argv the way a shell splits words; `{prompt}` is one argument with no extra
 quoting; shell operators, `$`, and backticks in a template are rejected with an error naming the
-reviewer). There is likewise **no** `--codegraph-registered` flag to compute: `dispatch-reviewer`
-runs the same live `check_codegraph_mcp_usable` check itself whenever the entry has a `runtime`
+reviewer). There is likewise **no** `--code-index-registered` flag to compute: `dispatch-reviewer`
+runs the same `check_cbm_registered` check (a read of the host's config files) itself whenever the entry has a `runtime`
 (the same internal-resolution pattern the execute family's `prepare-tooling` already uses), so the
 orchestrator never has to evaluate it. `$SHARED_TOOLING_PATH` and `$TOOL_AVAILABILITY_JSON` are
 surfaced to the reviewer as named `SHARED_TOOLING_PATH = …` / `TOOL_AVAILABILITY = …` lines at

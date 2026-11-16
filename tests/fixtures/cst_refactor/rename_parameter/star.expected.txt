@@ -1,0 +1,2 @@
+def f(*rest, **kwargs):
+    return rest, kwargs

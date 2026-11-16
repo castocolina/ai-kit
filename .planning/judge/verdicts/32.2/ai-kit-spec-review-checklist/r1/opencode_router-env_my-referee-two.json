@@ -1,0 +1,156 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=172s out=174807 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"ai-kit-spec-review-checklist\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":18,\"D2\":14,\"D3\":14,\"D4\":14,\"D5\":15,\"D6\":14,\"D7\":15,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":117,\"max_total\":125,\"percent\":93.6,\"grade\":\"A\",\"findings\":[{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":13,\"evidence\":\"The only \\\"write\\\" allowed is persisting an in-context document to disk verbatim so you can `Read` it.\",\"fix\":\"Delete this persist allowance: Phase 1 step 1 (lines 28-31) already mandates a hard STOP with 'input not on disk' when the caller passed inline content, so the two branches give opposite answers for the same input; keep the caller-must-persist rule as the only path.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":3,\"evidence\":\"Description names WHAT/WHEN/keywords but never states the audit-only boundary, so near-miss fixer queries ('review and fix my design spec in a loop') cannot be excluded from the description alone.\",\"fix\":\"Replace the description with: 'Framework-aware checklist reviewer for spec-driven-development documents — classifies each document into one of four archetypes (intent, requirements, design, plan) and reviews it with the matching checklist plus the source framework's own conventions (EARS, RFC-2119 SHALL, Given/When/Then, OpenSpec delta sections, Spec Kit [NEEDS CLARIFICATION]/[P], constitutional gates). Audit only: reports severity-rated findings, never edits the document or applies fixes — fixing is ai-kit-spec-review-fixer's job. Use when a design, spec, requirements, or plan document has been produced and needs review before the next step; not for code/PR review, linting, or drafting specs and plans. Works on superpowers, OpenSpec, GitHub Spec Kit, Kiro, BMAD, GSD, or generic (docs/rfcs, docs/designs). Accepts a pre-resolved FRAMEWORK_PROFILE_PATH + ARCHETYPE from the orchestrator; falls back to its own framework detection + archetype heuristics when none provided.'\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":227,\"evidence\":\"Prefer targeted reads (line ranges, codegraph_explore queries, rg matches) over reading whole files when only one section is needed.\",\"fix\":\"Scope the targeted-reads advice to exploration only and exempt factual-claim verification: the codebase-grounding rule (lines 201-204) requires reading the referenced file's content to confirm a claim, and a one-section targeted read can false-confirm a claim contradicted elsewhere in the file — say 'for claim verification, read the whole referenced file'.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":40,\"evidence\":\"For a `fused` doc the orchestrator may pass several archetypes — apply each one's checklist.\",\"fix\":\"Require each finding on a fused document to name the archetype whose checklist produced it (e.g. prefix the title with '[design]'), so the orchestrator can route findings per archetype via the profile's revise_protocol routes without inferring from Location.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":305,\"evidence\":\"### Cross-Document Consistency appears only when two or more files were reviewed — but no rule says what to check or write under it.\",\"fix\":\"Add one line defining the check: contradictions between reviewed files (spec vs plan, design vs requirements) in the same finding shape, and that a single-file review never emits the heading.\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":22,\"evidence\":\"Three phases: (1) resolve framework + archetype (below), (2) apply the matching archetype checklist(s)…\",\"fix\":\"Delete the Workflow section (lines 20-24); the Phase 1/2/3 headings immediately below already carry the same sequence verbatim.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":333,\"evidence\":\"| Reviewing in the same context that wrote the doc | Stop. Clean-context reviewer only; dispatch via /ai-kit-spec-review. |\",\"fix\":\"Fold this row's content into the intro rule at lines 16-18 (keep one canonical statement with the why — self-review defeats the audit) and drop the duplicate row, or vice versa; the warning currently appears twice.\"}]}"
+  }
+ ],
+ "digest": "71bcef0cf1c2921c1f31281d596b77857ca1df9e7b9a1d79a88eb13e3a24df7f",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "32.2",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_review_checklist.py",
+  "tests/test_framework_profiles.py"
+ ],
+ "prompt_sha256": "28b0cf79148b4d9627118d9a01e63c8930aa1605cdd48da80970296352d35ea8",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-spec-review-checklist",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D8",
+    "evidence": "The only \"write\" allowed is persisting an in-context document to disk verbatim so you can `Read` it.",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Delete this persist allowance: Phase 1 step 1 (lines 28-31) already mandates a hard STOP with 'input not on disk' when the caller passed inline content, so the two branches give opposite answers for the same input; keep the caller-must-persist rule as the only path.",
+    "id": "D8-1",
+    "line": 13,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "Description names WHAT/WHEN/keywords but never states the audit-only boundary, so near-miss fixer queries ('review and fix my design spec in a loop') cannot be excluded from the description alone.",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Replace the description with: 'Framework-aware checklist reviewer for spec-driven-development documents — classifies each document into one of four archetypes (intent, requirements, design, plan) and reviews it with the matching checklist plus the source framework's own conventions (EARS, RFC-2119 SHALL, Given/When/Then, OpenSpec delta sections, Spec Kit [NEEDS CLARIFICATION]/[P], constitutional gates). Audit only: reports severity-rated findings, never edits the document or applies fixes — fixing is ai-kit-spec-review-fixer's job. Use when a design, spec, requirements, or plan document has been produced and needs review before the next step; not for code/PR review, linting, or drafting specs and plans. Works on superpowers, OpenSpec, GitHub Spec Kit, Kiro, BMAD, GSD, or generic (docs/rfcs, docs/designs). Accepts a pre-resolved FRAMEWORK_PROFILE_PATH + ARCHETYPE from the orchestrator; falls back to its own framework detection + archetype heuristics when none provided.'",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "Prefer targeted reads (line ranges, codegraph_explore queries, rg matches) over reading whole files when only one section is needed.",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Scope the targeted-reads advice to exploration only and exempt factual-claim verification: the codebase-grounding rule (lines 201-204) requires reading the referenced file's content to confirm a claim, and a one-section targeted read can false-confirm a claim contradicted elsewhere in the file — say 'for claim verification, read the whole referenced file'.",
+    "id": "D6-1",
+    "line": 227,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "For a `fused` doc the orchestrator may pass several archetypes — apply each one's checklist.",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Require each finding on a fused document to name the archetype whose checklist produced it (e.g. prefix the title with '[design]'), so the orchestrator can route findings per archetype via the profile's revise_protocol routes without inferring from Location.",
+    "id": "D2-1",
+    "line": 40,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "### Cross-Document Consistency appears only when two or more files were reviewed — but no rule says what to check or write under it.",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Add one line defining the check: contradictions between reviewed files (spec vs plan, design vs requirements) in the same finding shape, and that a single-file review never emits the heading.",
+    "id": "D8-2",
+    "line": 305,
+    "severity": "low"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "Three phases: (1) resolve framework + archetype (below), (2) apply the matching archetype checklist(s)…",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Delete the Workflow section (lines 20-24); the Phase 1/2/3 headings immediately below already carry the same sequence verbatim.",
+    "id": "D1-1",
+    "line": 22,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "| Reviewing in the same context that wrote the doc | Stop. Clean-context reviewer only; dispatch via /ai-kit-spec-review. |",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Fold this row's content into the intro rule at lines 16-18 (keep one canonical statement with the why — self-review defeats the audit) and drop the duplicate row, or vice versa; the warning currently appears twice.",
+    "id": "D3-1",
+    "line": 333,
+    "severity": "low"
+   }
+  ],
+  "grade": "A",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 93.6,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 18,
+   "D2": 14,
+   "D3": 14,
+   "D4": 14,
+   "D5": 15,
+   "D6": 14,
+   "D7": 15,
+   "D8": 13
+  },
+  "skill": "ai-kit-spec-review-checklist",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 117
+ }
+}

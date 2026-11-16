@@ -27,6 +27,8 @@ already run GSD in. Resolution order: on a pi, opencode or cursor host `<root>/.
 `JEV_API_URL` is set, `inventory` also opens one TCP connection to its host (reachability
 only, never a request).
 
+**A new project inside another one.** Any folder inside another GSD project, passed as `--project-dir` without a `.planning/` of its own, becomes its own project, empty or not (so pass the outer project's root to configure the outer project): `ensure-project` and `apply` create its `.planning/` first, and `inventory` treats a config gsd-core resolves outside that folder as absent, so nothing outside it is written.
+
 **Exit codes:**
 
 | Exit | v1 subcommands | v2 subcommands |
@@ -267,7 +269,7 @@ Check the active runner's line-2 `template=` header, never the `.new` file, to s
 template a project runs. Never treat `.new` as live. **Read
 [`references/runner.md`](references/runner.md) when** a runner upgrade, a `.new` merge,
 `ensure-runner`, the template flags, the live timeout, hand-edited CONFIG `extraArgs`, retry
-tuning (`workflow.cross_ai_retry`), or a dispatch whose `AIKIT-XAI` line shows a `status=` other
+tuning ([runner.retry] in ai-kit's config.toml), or a dispatch whose `AIKIT-XAI` line shows a `status=` other
 than `ok` comes up.
 
 ## Skills
@@ -319,23 +321,24 @@ than `ok` comes up.
 - **Jev session gate:** inventory detects the jev (System One) backend, `system_one_backend`, by a TCP
   reachability check of `JEV_API_URL` or by `JEV_API_KEY` being present (never a health
   check). A wiring that rests on reachability alone carries an `effect` flag. The agent
-  session also needs `GSD_PATH_JEV=1` and `GSD_PATH_JEV_TIMEOUT_SECONDS`.
+  session also needs `GSD_PATH_JEV_TIMEOUT_SECONDS`; jev runs unless ai-kit's `[jev] enabled`
+  is false, and `GSD_PATH_JEV=1` or `0` overrides that for one session.
 - **`ponytail_visibility`** lists the ponytail skills in each host's global skills root
   only; on claude they usually arrive as plugin rows in `skills`. Report what inventory says.
 - **Limit:** skills kept only in a project's `.claude/skills` are **not** scanned.
 - **Plugin skills** need install plus layered `enabledPlugins` (user, project, local).
   Per-key layering is **unverified**: entries that rely on it carry an `effect` flag.
 
-## Limits (as of 2026-10-23)
+## Limits
 
 | Topic | Limit |
 |---|---|
-| pi hosts | **not live-validated** (the interactive run is pending: `22-INTERACTIVE-PI.md`). Verdict **session-steer (static + mock evidence)**: GSD spawns no named agents on pi; only `model_profile_overrides.pi.sonnet`, a bare id the session provider serves, changes the model, for every request of the project's pi session; `pi.opus`, `pi.haiku`, `model_overrides` and `agent_skills` have no effect there |
-| cursor host | validated headless from a cursor-agent 2026.10.14-941492e session (`21-SMOKE-CURSOR.md`: local install, apply, resolve-model-only chain, 420-check matrix); the user's interactive confirmation (`21-INTERACTIVE-CURSOR.md`) is **pending** |
+| pi hosts | **not live-validated** (the interactive run is pending). Verdict **session-steer (static + mock evidence)**: GSD spawns no named agents on pi; only `model_profile_overrides.pi.sonnet`, a bare id the session provider serves, changes the model, for every request of the project's pi session; `pi.opus`, `pi.haiku`, `model_overrides` and `agent_skills` have no effect there |
+| cursor host | validated headless from a cursor-agent session (local install, apply, resolve-model-only chain, 420-check matrix); the user's interactive confirmation is **pending** |
 | opencode providers | Providers defined only in a project's `opencode.json` are not candidates |
 | effort sync | Skipped for workstream configs; `--config-dir <project>/<host dir>` value **unverified** |
 | agent_skills runtime | gsd-core picks the skills dir and the namespaced-skill rule from the config `runtime` (default `claude`); this skill checks against the inventory `host`. On a host the plan writes no `runtime` for (cursor, pi), whether gsd-core resolves the same dir is **unverified** |
-| host as review lane | v2 never proposes it; v1 `detect-review-candidate` can pick it. A deliberate host-CLI lane with another provider is a manual `review.reviewer_instances` edit you own (20 D-11) |
+| host as review lane | v2 never proposes it; v1 `detect-review-candidate` can pick it. A deliberate host-CLI lane with another provider is a manual `review.reviewer_instances` edit you own |
 
 ## Subcommand reference
 
@@ -359,9 +362,9 @@ than `ok` comes up.
   those two steps are where the user sees what changes and what is removed. The v1 path has
   neither; its approval rule is in `references/v1-path.md`.
 - **Never hand-write `.planning/config.json` or `plan.json`.** Hand edits bypass gsd-core's
-  schema check and the plan's own validation; use the subcommands. The one owner-edited
-  exception is the `workflow.cross_ai_retry` block, which `config-set` refuses (runner.md): the
-  owner edits it, this skill never writes it.
+  schema check and the plan's own validation; use the subcommands. Retry tuning is not a GSD key: it lives in ai-kit's `config.toml` table `[runner.retry]`
+  (runner.md). The runner migrates an old `workflow.cross_ai_retry` block out of the GSD config
+  once; this skill writes neither.
 - **Never run `inventory` on an untrusted checkout** — it executes that project's JavaScript.
 - **Never pass `--force` to `plan-set` by habit.** It bypasses the candidate check, the
   trusted-root drop refusal and the full-permissions guard on every key gsd-core runs as a
@@ -402,3 +405,8 @@ follow-up argv/cwd list and its fingerprint). Show the full JSON when the user a
 files in `$WORK` so it stays available. For cross-AI dispatches, include the verbatim
 `AIKIT-XAI` line, and the verbatim `cross-ai: report` and `cross-ai: upstream` lines only when
 the status was not `ok`.
+
+## Evidence
+
+- The Limits table records what was verified as of 2026-10-23.
+- The cursor-host validation ran from a cursor-agent 2026.10.14-941492e session.

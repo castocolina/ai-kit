@@ -47,6 +47,8 @@ Ask all four in one message, with the host's question tool or plain text:
 Never ask a fifth question. "Must outlive" and "provable" are derived (`derived` in detect) and
 shown, never asked.
 
+When a calling skill supplies the answers (for example `ai-kit-gsd-spec-discuss` at the end of its range), its answers replace the four questions: ask none of them, and relay where each answer came from.
+
 ## 2. Detect
 
 Run from the repository root. Create the scratch folder first and do not commit its files:
@@ -107,6 +109,17 @@ Write `tmp/goal-answers.json`. Use repository-relative paths only:
   keeps the condition on the `/goal` line up to 1,000 characters; a longer one becomes a pointer
   line and the condition moves to a `## Full goal` section at the bottom of the file. Set
   `inline` or `pointer` only when the user asks for that form.
+- Optional owner run rules: six more fields, absent by default; an absent field (or `null`, except `turn_cap`) leaves the default wording.
+  - `push_after_fold`: `true` makes the rails fold the commits, then push the working branch; no "never push" text remains.
+  - `turn_cap`: a whole number from 1, used exactly in STOP IF and in every `/goal` condition; `null` means no turn cap anywhere; absent means 40 turns per work item, never below 60.
+  - `models`: `{"planner": {"model": "...", "effort": "..."}, "executor": {"model": "...", "effort": "..."}}`, one RULES line naming both.
+  - `review_lens`: `{"name": "...", "skill": "...", "questions": "..."}` (`questions` optional; `skill` may be `plugin:skill`), one RULES line that gives the lens to the planner and each reviewer and names the review skill.
+  - `phase_end`: a list of short steps; ORDER gets "Each phase ends with, in order:" (each plan for superpowers plans, the work for free text) and one numbered line per step.
+  - `report_language`: for example `"Spanish"`; REPORT says to write the report in it, while files stay in the project's language.
+- A wrong type or an empty value exits 2 naming the field, never its value.
+- Fill an owner field only when a source states it: the user's request, the project's agent-rules file (`AGENTS.md`) or a rails file the user names; never ask a fifth question for one. Condense each phase-end step to one short line, and say in the relay which source set each field.
+- Long lists (phases, plans, skills, gates, mockups, dependents) and long commands wrap onto three-space continuation lines; render refuses only past 60 rule lines or 7,000 block characters, or for one item longer than a line, and its message names the cap or the section.
+- When a cross-AI (not native) GSD render has every owner field set, it can pass 60 rule lines; render then refuses with `more than 60 rule lines`: drop a field or shorten its text.
 
 Then run:
 ```bash
@@ -144,7 +157,7 @@ For the shape of one whole run, from answers to hand-off, see [references/worked
 ## NEVER
 
 - Never run the generated prompt — this skill ends at the file; the run belongs to a session the user starts.
-- Never ask a fifth question — the four-question batch is the agreed interface, and more questions stall the run.
+- Never ask a fifth question — the four-question batch is the agreed interface, and more questions stall the run; a calling skill's answers replace the batch, and owner fields come only from a stated source.
 - Never put an absolute path or a secret into `answers.json` — render refuses machine paths in `output_dir` and `work_set.files`, and the file may be committed.
 - Never edit the rendered file by hand — render never overwrites: the next render writes a new `-2` file beside it, so a hand edit is orphaned and skips the render checks (line caps, secrets).
 - Never present a primitive as available when its label is `unverified` or `not seen` — a false "available" sends the user into a run that depends on a primitive the host may not have.

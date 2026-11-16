@@ -1,4 +1,4 @@
-"""Instruction-file path detection (07-CONTEXT.md D-06). `detect_claude_md_path` is a pure,
+"""Instruction-file path detection (Phase 7 D-06). `detect_claude_md_path` is a pure,
 dependency-injected function -- it never fabricates a default when none of the four candidate
 filenames exist in the target repo, matching `gsd_catalog.py`'s own `isfile_fn=os.path.isfile`
 DI convention so this module's priority-order logic is testable against a fake filesystem with

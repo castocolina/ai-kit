@@ -2,9 +2,8 @@ import os
 import shlex
 import sys
 
-from ai_kit_spec.cache import cache_write_text
+from ai_kit_spec import config_migrate, toml_splice, trust
 from ai_kit_spec.detection import RUNTIMES, runtime_id
-from ai_kit_spec.trust import is_trusted
 
 try:
     import tomllib as _tomllib_impl
@@ -261,39 +260,43 @@ def _emit_legacy_note(label, notes, warn_fn) -> None:
 
 
 def cfg_local_path(cwd: str) -> str:
-    """./.aikit/review-spec.toml under cwd."""
-    return os.path.join(cwd, ".aikit", "review-spec.toml")
+    """The project layer of ai-kit's config: ./.aikit/config.toml under cwd."""
+    return os.path.join(cwd, ".aikit", "config.toml")
 
 
 def cfg_config_base(env: dict) -> str:
     """${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit -- the base for ai-kit's own config files
-    (the global review-spec.toml and the trust store). Never relative: an unset HOME would
-    otherwise resolve under the cwd -- the project -- letting a repo ship its own "global"
-    config and trust store (A-WR-01). A relative XDG_CONFIG_HOME is ignored (XDG spec); no
-    absolute home at all raises ConfigError (exit 2 in the CLI mains)."""
-    xdg = env.get("XDG_CONFIG_HOME", "")
+    (the user config.toml and the trust store). HOME comes from env only, never from
+    an ambient lookup, so an unset or empty HOME is an error rather than a guess: a repo could
+    otherwise ship its own "global" config and trust store under the cwd (A-WR-01, C1-3). A
+    whitespace-only XDG_CONFIG_HOME counts as unset (D-27); a relative one is ignored (XDG
+    spec); no absolute home at all raises ConfigError (exit 2 in the CLI mains). The same rule
+    as local_secrets, jev_review, tools/common_config and the runner
+    (tests/test_config_dir_parity.py)."""
+    xdg = env.get("XDG_CONFIG_HOME", "").strip()
     if os.path.isabs(xdg):
         return os.path.join(xdg, "ai-kit")
-    home = env.get("HOME") or os.path.expanduser("~")
+    home = env.get("HOME", "")
     if not os.path.isabs(home):
         raise ConfigError("$HOME", "no absolute home directory to hold ai-kit's config")
     return os.path.join(home, ".config", "ai-kit")
 
 
 def cfg_trust_store_dir(env: dict) -> str:
-    """Directory holding per-content trust records for project-local review-spec.toml
-    files (trust.py). Under ai-kit's own config base, never in the project."""
-    return os.path.join(cfg_config_base(env), "review-spec-trust")
+    """Directory holding the trust records for project config.toml files whose command-bearing
+    lanes were trusted (D-11, trust.py). Under ai-kit's own config base, never in the project."""
+    return os.path.join(cfg_config_base(env), "config-trust")
 
 
 def cfg_global_path(env: dict) -> str:
-    """${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/review-spec.toml."""
-    return os.path.join(cfg_config_base(env), "review-spec.toml")
+    """The user layer of ai-kit's config: ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/config.toml."""
+    return os.path.join(cfg_config_base(env), "config.toml")
 
 
 class ConfigError(ValueError):
-    """A review-spec.toml exists but cannot be parsed (malformed TOML, non-UTF-8 bytes, or
-    no tomllib on this interpreter). Carries the path and the parser message; the CLI mains
+    """A config.toml exists but cannot be parsed (malformed TOML, non-UTF-8 bytes, a non-table
+    [lanes], a failed roster migration, or no tomllib on this interpreter). Carries the path and the
+    parser message; the CLI mains
     catch it, print it to stderr, and exit 2 (D-11/R13) -- a broken config must stop the
     CLIs loudly, never silently disable cross-AI review."""
 
@@ -308,10 +311,10 @@ class ConfigError(ValueError):
 
 def cfg_load_toml(path: str) -> dict:
     """Parse the TOML at path. A missing file is a valid empty config -> {} (a missing
-    review-spec.toml is the normal no-config state, never an error). Any OTHER problem
+    config.toml is the normal no-config state, never an error). Any OTHER problem
     raises ConfigError (D-11/R13): an existing malformed or non-UTF-8 file, an unreadable
     file, or tomllib missing on Python < 3.11. Unlike the renderer's never-raise
-    loader, this module FAILS LOUDLY -- a silently-ignored broken review-spec.toml would
+    loader, this module FAILS LOUDLY -- a silently-ignored broken config.toml would
     switch cross-AI review off without the user ever knowing."""
     if tomllib is None:
         if os.path.exists(path):
@@ -361,7 +364,7 @@ def cfg_merge_reviewers(global_list: list, local_list: list) -> list:
     preserved unchanged. Order: global order first, then new local keys.
     A malformed entry with no `key` at all is silently skipped (never
     raises) — matches cfg_load_toml's "never raises on bad input"
-    contract: one hand-written mistake in review-spec.toml must not crash
+    contract: one hand-written mistake in the roster must not crash
     the whole orchestrator."""
     global_list = [r for r in global_list if "key" in r]
     local_list = [r for r in local_list if "key" in r]
@@ -386,33 +389,242 @@ def _cfg_default_warn(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
-def cfg_resolve(cwd: str, env: dict, warn_fn=None) -> dict:
-    """Resolve the effective config: local (with its own `strategy`) vs
-    global, per the design's local/global precedence rules.
+def cfg_lanes_table(doc: dict, path: str) -> dict:
+    """The `[lanes]` table of a parsed config.toml; a missing one is {} (an empty roster)."""
+    lanes = doc.get("lanes", {})
+    if not isinstance(lanes, dict):
+        raise ConfigError(path, "[lanes] must be a table")
+    return lanes
 
-    Trust gate (D-08, Plan 16.1-08): the local file's bytes are read ONCE, parsed, and the
-    parsed dict is kept only when that exact content is trusted (trust.py). An untrusted
-    local file is ignored entirely -- this resolves to global config only -- and warn_fn
-    (default: stderr) explains how to review and trust it. Parsing executes nothing, so a
-    malformed local file still parses the same whether trusted or not."""
-    emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
+
+def cfg_lanes_view(lanes: dict) -> dict:
+    """The role lists of a [lanes] table plus the flat view callers still read (D-24): `reviewers`
+    is the review lanes, then each execute lane whose key no review lane has. A lane is never
+    merged across roles, so a key in both roles stays two entries in `review` and `execute`."""
+    review = lanes["review"] if isinstance(lanes.get("review"), list) else []
+    execute = lanes["execute"] if isinstance(lanes.get("execute"), list) else []
+    review_keys = {entry["key"] for entry in review
+                   if isinstance(entry, dict) and isinstance(entry.get("key"), str)}
+    flat = review + [
+        entry for entry in execute
+        if not (isinstance(entry, dict) and isinstance(entry.get("key"), str)
+                and entry["key"] in review_keys)
+    ]
+    view = {
+        "policy": lanes["policy"] if isinstance(lanes.get("policy"), dict) else {},
+        "reviewers": flat,
+        "review": review,
+        "execute": execute,
+    }
+    if "strategy" in lanes:
+        view["strategy"] = lanes["strategy"]
+    return view
+
+
+def cfg_user_command_keys(lanes: dict) -> frozenset:
+    """The `key` of every command-bearing lane entry in the user's roster (D-11). A project
+    entry with the same key would override a command the user runs, so it joins the digest."""
+    keys = set()
+    for items in lanes.values():
+        if not isinstance(items, list):
+            continue
+        for entry in items:
+            if isinstance(entry, dict) and "command" in entry and isinstance(entry.get("key"), str):
+                keys.add(entry["key"])
+    return frozenset(keys)
+
+
+def _read_legacy_lanes(new_path: str):
+    """(lanes, raw bytes) of the pending old roster beside new_path; None when there is none."""
+    try:
+        return config_migrate.read_legacy(new_path)
+    except config_migrate.LegacyRosterError as exc:
+        raise ConfigError(exc.path, exc.message) from exc
+
+
+def _user_lanes_readonly(env: dict) -> dict:
+    """The user layer's lanes with nothing migrated or written: its config.toml [lanes], else a
+    pending old roster's lanes."""
+    path = cfg_global_path(env)
+    lanes = cfg_lanes_table(cfg_load_toml(path), path)
+    if lanes:
+        return lanes
+    found = _read_legacy_lanes(path)
+    return found[0] if found is not None else {}
+
+
+def cfg_project_trust_bytes(lanes: dict, env: dict) -> bytes | None:
+    """The canonical bytes a project trust record pins (D-11): its command-bearing lane
+    entries, plus the user's command keys unless the project is local-only (no user read)."""
+    if lanes.get("strategy") == "local-only":
+        keys = frozenset()
+    else:
+        keys = cfg_user_command_keys(_user_lanes_readonly(env))
+    return trust.command_lanes_bytes(lanes, keys)
+
+
+def cfg_confine_project_file(path: str, env: dict) -> None:
+    """Refuse to read-modify-write a project layer file that leaves its `.aikit/` folder (CR-01).
+
+    A cloned repo can ship `.aikit/config.toml` as a link to the user config.toml (or link its
+    old roster file); a publish through it would plant lanes in the trust-free user layer. The
+    user layer itself may be a link (dotfiles), so only project-layer callers use this guard."""
+    folder = os.path.realpath(os.path.dirname(path))
+    for name in (path, config_migrate.legacy_path(path)):
+        if os.path.islink(name):
+            raise ConfigError(name, "is a link; the project config is not migrated or written "
+                                    "through a link (replace the link with a regular file)")
+    real = os.path.realpath(path)
+    if os.path.dirname(real) != folder or real == os.path.realpath(cfg_global_path(env)):
+        raise ConfigError(path, "resolves outside the project's .aikit/ folder or onto the user "
+                                "config; it is not migrated or written")
+
+
+def _migrate(path: str, env: dict, warn_fn, project: bool) -> str:
+    """Run config_migrate.migrate_layer on one layer; a failed migration is a ConfigError."""
+    if project:
+        cfg_confine_project_file(path, env)
+    trust_dir = cfg_trust_store_dir(env) if project else None
+    trust_bytes_fn = (lambda lanes: cfg_project_trust_bytes(lanes, env)) if project else None
+    try:
+        return config_migrate.migrate_layer(path, warn_fn=warn_fn, trust_dir=trust_dir,
+                                            trust_bytes_fn=trust_bytes_fn)
+    except config_migrate.LegacyRosterError as exc:
+        raise ConfigError(exc.path, exc.message) from exc
+
+
+def cfg_migrate_project(cwd: str, env: dict, warn_fn=None) -> str:
+    """Move the project's old roster into config.toml (D-10); "none" when nothing is pending."""
+    path = cfg_local_path(cwd)
+    if config_migrate.pending(path) is None:
+        return "none"
+    return _migrate(path, env, warn_fn or _cfg_default_warn, project=True)
+
+
+def cfg_migrate_user(env: dict, warn_fn=None) -> str:
+    """Move the user layer's old roster into config.toml (D-10); user rosters carry no trust."""
+    path = cfg_global_path(env)
+    if config_migrate.pending(path) is None:
+        return "none"
+    return _migrate(path, env, warn_fn or _cfg_default_warn, project=False)
+
+
+def cfg_migrate_target(path: str, env: dict, warn_fn=None) -> str:
+    """Migrate the old roster beside the config.toml a write targets (D-10): as the user layer when
+    that file sits in the user config folder, else as the project layer, with its trust carried."""
+    emit = warn_fn or _cfg_default_warn
+    in_user_dir = os.path.realpath(os.path.dirname(path)) == os.path.realpath(cfg_config_base(env))
+    # A `.aikit/config.toml` path is a project layer even when `.aikit` links to the user config
+    # folder (WR-102): the project guard then refuses it instead of writing the user file.
+    named_project = os.path.basename(os.path.dirname(os.path.abspath(path))) == ".aikit"
+    return _migrate(path, env, emit, project=named_project or not in_user_dir)
+
+
+def cfg_trust_project(cwd: str, env: dict, warn_fn=None) -> tuple[str, str | None]:
+    """Record trust for the project config.toml's command-bearing lanes (D-11), migrating it first.
+
+    Returns (realpath, sha256 of the trusted bytes), or (realpath, None) with no trust needed."""
+    cfg_migrate_project(cwd, env, warn_fn=warn_fn)
+    path = cfg_local_path(cwd)
+    if not os.path.exists(path):
+        raise ConfigError(path, "no project config.toml")
+    real = os.path.realpath(path)
+    lanes = cfg_lanes_table(cfg_parse_toml_bytes(cfg_read_bytes(path), path), path)
+    canonical = cfg_project_trust_bytes(lanes, env)
+    if canonical is None:
+        return real, None
+    trust.record_trust(cfg_trust_store_dir(env), real, canonical)
+    return real, trust.content_sha256(canonical)
+
+
+def cfg_load_layers(cwd: str, env: dict) -> tuple[dict, dict]:
+    """(project config.toml, user config.toml) parsed; no migration and no trust."""
+    return cfg_load_toml(cfg_local_path(cwd)), cfg_load_toml(cfg_global_path(env))
+
+
+def _table_at(doc: dict, table_path: tuple) -> dict:
+    node = doc
+    for part in table_path:
+        node = node.get(part) if isinstance(node, dict) else None
+        if not isinstance(node, dict):
+            return {}
+    return node
+
+
+def cfg_layered_table(cwd: str, env: dict, *table_path: str) -> dict:
+    """One ordinary table merged per key, project over user (for `[models]`, `[jev]`, `[hooks]`,
+    `[runner]`). The trust-gated lanes go through cfg_resolve instead."""
+    project, user = cfg_load_layers(cwd, env)
+    return {**_table_at(user, table_path), **_table_at(project, table_path)}
+
+
+def _untrusted_warning(local_path: str, cwd: str) -> str:
+    return (
+        f"ai-kit-spec: ignoring untrusted project-local config {local_path}; review its commands "
+        f"with `ai-kit-spec.py trust-local --cwd {cwd} --show`, then trust it with "
+        f"`ai-kit-spec.py trust-local --cwd {cwd}` (an edit to a command-bearing lane needs "
+        "a new trust)"
+    )
+
+
+def _trusted_lanes(lanes: dict, local_path: str, cwd: str, env: dict, emit_warn) -> dict:
+    """The project lanes when they need no trust or their canonical bytes are trusted, else {}."""
+    canonical = cfg_project_trust_bytes(lanes, env)
+    if canonical is None or trust.is_trusted(cfg_trust_store_dir(env),
+                                             os.path.realpath(local_path), canonical):
+        return lanes
+    emit_warn(_untrusted_warning(local_path, cwd))
+    return {}
+
+
+def _pending_project_lanes(cwd: str, local_path: str, env: dict, emit_warn) -> dict:
+    """migrate=False: a pending old roster is read in memory and reported, never written. It is used
+    when it needs no trust (D-11) or the old file is trusted under the old raw-byte rule."""
+    found = _read_legacy_lanes(local_path)
+    if found is None:
+        return {}
+    lanes, raw = found
+    legacy = config_migrate.legacy_path(local_path)
+    emit_warn(f"ai-kit-spec: migration pending: {legacy} moves to {local_path} on the next "
+              "command that reads the roster")
+    canonical = cfg_project_trust_bytes(lanes, env)
+    if canonical is None or trust.is_trusted(
+            config_migrate.legacy_trust_dir(cfg_trust_store_dir(env)),
+            os.path.realpath(legacy), raw):
+        return lanes
+    emit_warn(_untrusted_warning(local_path, cwd))
+    return {}
+
+
+def _project_lanes(cwd: str, env: dict, emit_warn, migrate: bool) -> dict:
+    """The project layer's lanes as cfg_resolve may use them (empty when none, or untrusted)."""
     local_path = cfg_local_path(cwd)
-    local = {}
     if os.path.exists(local_path):
-        raw = cfg_read_bytes(local_path)
-        # Parsing happens BEFORE the trust check (D-08 interpretation): a malformed file is
-        # reported (R13) whether or not it is trusted -- parsing executes nothing.
-        parsed = cfg_parse_toml_bytes(raw, local_path)
-        if is_trusted(cfg_trust_store_dir(env), os.path.realpath(local_path), raw):
-            local = parsed
-        else:
-            emit_warn(
-                f"ai-kit-spec: ignoring untrusted project-local config {local_path}; "
-                f"review its commands with `ai-kit-spec.py trust-local --cwd {cwd} --show`, "
-                f"then trust it with `ai-kit-spec.py trust-local --cwd {cwd}` "
-                f"(any edit needs a new trust)"
-            )
-    return cfg_combine(local, env, warn_fn=emit_warn, local_path=local_path)
+        # Parsing happens BEFORE the trust check: a malformed file is reported (R13) whether or
+        # not it is trusted -- parsing executes nothing.
+        lanes = cfg_lanes_table(cfg_parse_toml_bytes(cfg_read_bytes(local_path), local_path),
+                                local_path)
+        if lanes:
+            return _trusted_lanes(lanes, local_path, cwd, env, emit_warn)
+    if migrate:
+        return {}
+    return _pending_project_lanes(cwd, local_path, env, emit_warn)
+
+
+def cfg_resolve(cwd: str, env: dict, warn_fn=None, migrate: bool = True) -> dict:
+    """Resolve the effective roster (D-10, D-11, D-24): the project config.toml's [lanes], migrated
+    from an old roster file first unless migrate=False, merged over the user layer per role.
+
+    The project [lanes] is used only when it has no command-bearing lane entry or its canonical
+    bytes are trusted (trust.py); an untrusted one is ignored with a warning to warn_fn (default
+    stderr). Parsing executes nothing, so a malformed file fails the same whether trusted or not.
+    migrate=False reads a pending old roster in memory and writes nothing (--no-migrate)."""
+    emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
+    if migrate:
+        cfg_migrate_project(cwd, env, warn_fn=emit_warn)
+    local = _project_lanes(cwd, env, emit_warn, migrate)
+    return cfg_combine(local, env, warn_fn=emit_warn, local_path=cfg_local_path(cwd),
+                       migrate=migrate)
 
 
 def _combine_layers(local, global_cfg):
@@ -432,33 +644,65 @@ def _combine_layers(local, global_cfg):
     return merged, policy, local_notes, global_notes, inferred_notes + route_notes
 
 
-def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None) -> dict:
-    """Combine an already-parsed (and already-trusted, or empty) local config with the
-    global one, honoring the local `strategy`. Shared by cfg_resolve and `trust-local
-    --show`, so the consent display renders the same merged entries dispatch would run."""
-    emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
+def _pending_user_lanes(global_path: str, emit_warn) -> dict:
+    """migrate=False: the user layer's pending old roster, read in memory and reported."""
+    found = _read_legacy_lanes(global_path)
+    if found is None:
+        return {}
+    emit_warn(f"ai-kit-spec: migration pending: {config_migrate.legacy_path(global_path)} moves to "
+              f"{global_path} on the next command that reads the roster")
+    return found[0]
+
+
+def _user_lanes(env: dict, emit_warn, migrate: bool) -> dict:
+    """The user layer's [lanes] table; migrated first when migrate is true, else read as it is."""
     global_path = cfg_global_path(env)
-    # A local-only project never consults the global file, so it is never read (B-WR-01).
+    if migrate:
+        cfg_migrate_user(env, warn_fn=emit_warn)
+    lanes = cfg_lanes_table(cfg_load_toml(global_path), global_path)
+    if lanes or migrate:
+        return lanes
+    return _pending_user_lanes(global_path, emit_warn)
+
+
+def _combine_role(local_view: dict, global_view: dict, role: str, local_only: bool) -> list:
+    """One role's merged lanes (D-24): the same layering as the flat view, per role, so a lane under
+    `review` never merges with a lane under `execute`."""
+    global_list, _ = normalize_legacy_reviewers(global_view.get(role, []))
+    if not local_view:
+        merged = global_list
+    else:
+        local_list, _ = normalize_legacy_reviewers(local_view.get(role, []))
+        merged = local_list if local_only else cfg_merge_reviewers(global_list, local_list)
+    merged, _ = infer_legacy_native(merged)
+    merged, _ = _drop_stored_routes(merged)
+    return merged
+
+
+def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None,
+                migrate: bool = True) -> dict:
+    """Combine an already-trusted (or empty) project [lanes] table with the user layer, honoring
+    the local `strategy`. Shared by cfg_resolve and `trust-local --show`, so the consent display
+    renders the same merged entries dispatch would run. Returns the flat `reviewers` view plus the
+    `review` and `execute` lists (D-24)."""
+    emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
+    # A local-only project never consults the user file, so it is never read (B-WR-01).
     local_only = bool(local) and local.get("strategy") == "local-only"
-    merged, policy, local_notes, global_notes, notes = _combine_layers(
-        local, {} if local_only else cfg_load_toml(global_path))
+    global_lanes = {} if local_only else _user_lanes(env, emit_warn, migrate)
+    local_view = cfg_lanes_view(local) if local else {}
+    global_view = cfg_lanes_view(global_lanes)
+    merged, policy, local_notes, global_notes, notes = _combine_layers(local_view, global_view)
     if local:
-        _emit_legacy_note(local_path or "project-local review-spec.toml", local_notes, emit_warn)
-    _emit_legacy_note(global_path, global_notes, emit_warn)
-    _emit_legacy_note(f"merged review-spec.toml ({local_path or 'local'}, {global_path})",
+        _emit_legacy_note(local_path or "project config.toml", local_notes, emit_warn)
+    _emit_legacy_note(cfg_global_path(env), global_notes, emit_warn)
+    _emit_legacy_note(f"merged lanes ({local_path or 'local'}, {cfg_global_path(env)})",
                       notes, emit_warn)
-    return {"policy": policy, "reviewers": merged}
-
-
-def _toml_value(v) -> str:
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return str(v)
-    if isinstance(v, list):
-        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
-    escaped = str(v).replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    return {
+        "policy": policy,
+        "reviewers": merged,
+        "review": _combine_role(local_view, global_view, "review", local_only),
+        "execute": _combine_role(local_view, global_view, "execute", local_only),
+    }
 
 
 _VALID_PURPOSE = {"review", "execute", "both"}
@@ -503,17 +747,14 @@ def _validate_pair_fields(entry: dict, key) -> str | None:
 
 
 def validate_reviewer_fields(entry: dict) -> str | None:
-    """The review-spec.toml-side sibling of model_catalog.validate_catalog_entry (design spec
+    """The roster-side sibling of model_catalog.validate_catalog_entry (design spec
     2026-09-02 Section 5: "enforced in both render-toml and the new fetch-model-catalog
     subcommand"). Checks purpose/is_router/fallback_quota when present, then the pair rules:
     a table runtime needs a model, a command is custom-only, a pinned model needs a runtime."""
     key = entry.get("key", "<unknown>")
-    # WR-03 fix: `_toml_value` (below) has no `dict` branch -- any dict-valued field falls
-    # through to its final `str(v)` branch and silently corrupts into a quoted TOML STRING
-    # (e.g. a hand-edited/generated `extra = { timeout_tiers = [...] }`, the exact failure
-    # mode SKILL.md documents as a known constraint of this schema) rather than being
-    # rejected. Reject it here, up front, for EVERY field (not just the four this design
-    # specifically added below) so it surfaces through the existing rejections/WARNING
+    # WR-03 fix: a dict-valued field must not reach the writer as a quoted TOML string (e.g. a
+    # hand-edited `extra = { timeout_tiers = [...] }`, a known constraint of this schema), so
+    # reject it here, up front, for EVERY field. It then surfaces through the rejections/WARNING
     # pathway instead of writing corrupted TOML.
     for field, value in entry.items():
         if field == "route":
@@ -553,95 +794,163 @@ def _cfg_partition_reviewers(reviewers: list) -> tuple[list, list, set]:
     return valid_reviewers, rejections, dropped_keys
 
 
-def _cfg_render_policy_lines(policy: dict, dropped_keys: set, rejections: list) -> list[str]:
+def _cfg_render_reviewers(entries: list) -> tuple[list, list[str]]:
+    """The two load steps, in the same order, so a write holds only the new form.
+
+    A stored route is NOT dropped here: save rejects it, so the entry stays intact for
+    validate_reviewer_fields to refuse. Load drops it instead."""
+    reviewers, notes = normalize_legacy_reviewers(entries)
+    reviewers, inferred = infer_legacy_native(reviewers)
+    return reviewers, notes + inferred
+
+
+_RENAMED_REVIEWERS = (
+    "render-toml: the JSON key 'reviewers' is now 'lanes' "
+    "(each entry's purpose picks its role: review, execute or both)"
+)
+_LADDER_COMMENT_HEAD = "# Priority fallback order"
+
+
+def _ladder_comment_lines(policy: dict) -> list[str]:
+    """The generated comment above [lanes.policy] that names the fallback order; none for an empty
+    ladder."""
+    ladder = policy.get("ladder") or []
+    if not ladder:
+        return []
+    lines = ["# Priority fallback order (first available reviewer wins the"]
+    if policy.get("mode") == "double":
+        lines.append("# primary slot; double mode also seats an independent secondary):")
+    else:
+        lines.append("# primary slot):")
+    lines.extend(f"#   {number}. {key}" for number, key in enumerate(ladder, 1))
+    return lines
+
+
+def _refresh_ladder_comment(text: str, policy: dict) -> str:
+    """Keep the generated fallback-order comment above [lanes.policy] in step with its ladder.
+
+    The contiguous comment lines directly above the header are the generated block when the first
+    one starts with _LADDER_COMMENT_HEAD: the block is replaced by the lines for the ladder now
+    written (none when the ladder is empty). With no comment above, the block is inserted. A user's
+    own comment there is left alone. Comments never change a parsed value."""
+    blocks = toml_splice.split_blocks(text)
+    index = next((number for number, block in enumerate(blocks)
+                  if not block.array and block.path == ("lanes", "policy")), None)
+    if index is None:
+        return text
+    block = blocks[index]
+    lead = block.lines[: block.lead]
+    if lead and not lead[0].startswith(_LADDER_COMMENT_HEAD):
+        return text
+    newline = "\r\n" if "\r\n" in text else "\n"
+    generated = [line + newline for line in _ladder_comment_lines(policy)]
+    if generated == lead:
+        return text
+    rewritten = [*generated, *block.lines[block.lead:]]
     lines: list[str] = []
+    for number, item in enumerate(blocks):
+        lines.extend(rewritten if number == index else item.lines)
+    return "".join(lines)
+
+
+def _cfg_lanes_policy(policy, dropped_keys: set, rejections: list) -> dict | None:
+    """The policy as written: its ladder without the rejected entries; None when there is none."""
+    if not policy:
+        return None
     raw_ladder = policy.get("ladder") or []
-    ladder = [key for key in raw_ladder if key not in dropped_keys]
     dangling = dropped_keys & set(raw_ladder)
     if dangling:
         rejections.append(
             f"policy.ladder: dropped dangling reference(s) to rejected reviewer key(s) "
             f"{sorted(dangling)}"
         )
-    if ladder:
-        lines.append("# Priority fallback order (first available reviewer wins the")
-        if policy.get("mode") == "double":
-            lines.append("# primary slot; double mode also seats an independent secondary):")
+    written = dict(policy)
+    if "ladder" in written:
+        written["ladder"] = [key for key in raw_ladder if key not in dropped_keys]
+    return written
+
+
+def _current_lanes(text: str) -> dict:
+    """The [lanes] table the text holds ({} for no text); broken TOML is a ConfigError."""
+    if not text:
+        return {}
+    return cfg_lanes_table(cfg_parse_toml_bytes(text.encode("utf-8"), "render-toml target"),
+                           "render-toml target")
+
+
+def _splice_roster(text: str, current: dict, parts: dict) -> str:
+    """The roster parts spliced into the text one table or array at a time (D-08)."""
+    strategy, policy = parts["strategy"], parts["policy"]
+    if strategy is not None:
+        text = toml_splice.set_table(text, ("lanes",), {"strategy": strategy})
+    elif "strategy" in current:
+        text = toml_splice.set_table(text, ("lanes",), {}, remove=("strategy",))
+    if policy is not None:
+        gone = tuple(name for name in current.get("policy", {}) if name not in policy)
+        text = toml_splice.set_table(text, ("lanes", "policy"), policy, remove=gone)
+    elif "policy" in current:
+        text = toml_splice.remove_table(text, ("lanes", "policy"))
+    text = toml_splice.set_array(text, ("lanes", "review"), parts["review"] or [])
+    text = toml_splice.set_array(text, ("lanes", "execute"), parts["execute"] or [])
+    return _refresh_ladder_comment(text, policy or {})
+
+
+def _expected_lanes(current: dict, parts: dict) -> dict:
+    """The [lanes] table a write must hold: current, with each part set (dropped when None)."""
+    lanes = dict(current)
+    for name, value in parts.items():
+        if value is None:
+            lanes.pop(name, None)
         else:
-            lines.append("# primary slot):")
-        for i, key in enumerate(ladder, 1):
-            lines.append(f"#   {i}. {key}")
-    lines.append("[policy]")
-    for k, v in policy.items():
-        v = ladder if k == "ladder" else v
-        lines.append(f"{k} = {_toml_value(v)}")
-    lines.append("")
-    return lines
+            lanes[name] = value
+    return lanes
 
 
-def _cfg_render_reviewer_lines(valid_reviewers: list) -> list[str]:
-    lines: list[str] = []
-    for r in valid_reviewers:
-        lines.append("[[reviewers]]")
-        for k, v in r.items():
-            lines.append(f"{k} = {_toml_value(v)}")
-        lines.append("")
-    return lines
+def cfg_render_lanes(config: dict, existing_text: str = "") -> str:
+    """Set the [lanes] roster to `config` in config.toml text; every other byte is kept (D-08).
 
-
-def _cfg_render_reviewers(config: dict) -> tuple[list, list[str]]:
-    """The two load steps, in the same order, so a write holds only the new form.
-
-    A stored route is NOT dropped here: save rejects it, so the entry stays intact for
-    validate_reviewer_fields to refuse. Load drops it instead."""
-    reviewers, notes = normalize_legacy_reviewers(config.get("reviewers", []))
-    reviewers, inferred = infer_legacy_native(reviewers)
-    return reviewers, notes + inferred
-
-
-def cfg_render_toml(config: dict) -> str:
-    """Hand-rolled TOML serializer for this schema only (an optional
-    top-level `strategy` string, a flat [policy] table, and an
-    array-of-tables [[reviewers]] with flat string/bool/list values) —
-    tomllib is read-only in stdlib, and adding a writer dependency would
-    break this repo's zero-dependency runtime.
-
-    Reviewers are normalized first (the same two steps load runs), then validated strictly:
-    an entry that fails validate_reviewer_fields is dropped individually (never aborts the
-    rest of the write) AND removed from policy.ladder -- a valid-looking ladder that
-    references a key with no corresponding [[reviewers]] entry is unusable
-    (resolve_ladder_pick can never satisfy it), so the two must never diverge."""
-    lines: list[str] = []
-    reviewers, notes = _cfg_render_reviewers(config)
+    `config` is {"strategy"?, "policy"?, "lanes": [entry, ...]}. Each entry's `purpose` picks its
+    role (D-24). Entries are normalised and validated as before: a rejected one is dropped with a
+    WARNING line on stderr. Only the roster parts are spliced: `strategy`, [lanes.policy] and the
+    [[lanes.review]] / [[lanes.execute]] arrays. Raises ValueError for a JSON still keyed
+    'reviewers', and ConfigError when existing_text is not valid TOML."""
+    if "reviewers" in config:
+        raise ValueError(_RENAMED_REVIEWERS)
+    entries, notes = _cfg_render_reviewers(config.get("lanes", []))
     if notes:
-        print(
-            "ai-kit-spec: render-toml: migrated legacy fields before writing "
-            f"({'; '.join(notes)})",
-            file=sys.stderr,
-        )
-    valid_reviewers, rejections, dropped_keys = _cfg_partition_reviewers(reviewers)
-
-    if "strategy" in config:
-        lines.append(f"strategy = {_toml_value(config['strategy'])}")
-        lines.append("")
-    policy = config.get("policy", {})
-    if policy:
-        lines.extend(_cfg_render_policy_lines(policy, dropped_keys, rejections))
-    lines.extend(_cfg_render_reviewer_lines(valid_reviewers))
+        print("ai-kit-spec: render-toml: migrated legacy fields before writing "
+              f"({'; '.join(notes)})", file=sys.stderr)
+    valid, rejections, dropped = _cfg_partition_reviewers(entries)
+    review, execute = config_migrate.split_by_purpose(valid)
+    parts = {
+        "strategy": config.get("strategy"),
+        "policy": _cfg_lanes_policy(config.get("policy"), dropped, rejections),
+        "review": review or None,
+        "execute": execute or None,
+    }
+    current = _current_lanes(existing_text)
+    text = _splice_roster(existing_text, current, parts)
+    if _current_lanes(text) != _expected_lanes(current, parts):
+        raise ConfigError("render-toml target", "the written roster does not match")
     if rejections:
-        print(
-            f"WARNING: {len(rejections)} issue(s) found and NOT written: {'; '.join(rejections)}",
-            file=sys.stderr,
-        )
-    return "\n".join(lines).rstrip("\n") + "\n"
+        print(f"WARNING: {len(rejections)} issue(s) found and NOT written: {'; '.join(rejections)}",
+              file=sys.stderr)
+    return text
 
 
 def cfg_write_toml(path: str, config: dict) -> None:
-    cache_write_text(path, cfg_render_toml(config))
+    """Write the roster into the config.toml at path through the splicer (D-08). A broken target is
+    a ConfigError before anything is written; the publish is atomic."""
+    existing = ""
+    if os.path.exists(path):
+        raw = cfg_read_bytes(path)
+        cfg_parse_toml_bytes(raw, path)
+        existing = raw.decode("utf-8")
+    toml_splice.publish(path, cfg_render_lanes(config, existing))
 
 
 def resolve_timeout_tiers(reviewer_entry: dict, policy: dict) -> list[int]:
-    """A reviewer's own `extra.timeout_tiers` (set via review-spec.toml, e.g. a known-slow
+    """A reviewer's own `extra.timeout_tiers` (set in the config.toml lanes, e.g. a known-slow
     effort=high CLI/model combination) overrides the policy-wide default for that entry only.
     `policy` is expected to already carry a real `timeout_tiers` list (DEFAULT_POLICY guarantees
     this via cfg_resolve's own merge) -- this function never invents its own fallback constant,

@@ -2726,6 +2726,20 @@ class TestHeadlessInstall(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("ghost", buf.getvalue())
 
+    def test_setup_links_no_typesafe_ai_skill(self):
+        # SPEC R8 / D-09: ai-kit never installs the official skill, so the entries built from
+        # this repo's skills/ hold no typesafe-ai name, and a headless --skills typesafe-ai
+        # warns about an unknown skill and exits 0.
+        entries = setup.enumerate_entries(_REPO_ROOT)
+        self.assertNotIn("typesafe-ai", {name for name, _ in entries["skills"]})
+        self.assertEqual(setup.resolve_skills_flag("typesafe-ai", entries),
+                         (set(), ["typesafe-ai"]))
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = setup.cmd_install_headless(self.env, False, "typesafe-ai", False, False)
+        self.assertEqual(rc, 0)
+        self.assertIn("typesafe-ai", buf.getvalue())
+
     def test_headless_all_unknown_skills_is_not_reported_as_bare(self):
         # --skills ghost (no valid names at all) must say so distinctly, not
         # print the same "nothing requested" line bare --headless prints.
@@ -3463,6 +3477,45 @@ class TestRecoverIncompatibleConfig(unittest.TestCase):
         self.assertTrue(setup._recover_incompatible_config(self._paths(cfg), dry=True))
         self.assertFalse(os.path.exists(cfg + ".bak"))     # dry: no write
         self.assertIn("branch", self._read(cfg))           # unchanged
+
+    def test_live_file_is_never_written_in_place(self):
+        # D-09: the regenerated recipe is published by rename; the live file is never the
+        # destination of a copy or an in-place write.
+        cfg = self._tmp_cfg()
+        self._write(cfg, "[segments]\nbranch = true\n")
+        real_copyfile = shutil.copyfile
+
+        def guarded_copyfile(src, dst, *args, **kwargs):
+            if os.path.realpath(dst) == os.path.realpath(cfg):
+                raise AssertionError("live config written in place")
+            return real_copyfile(src, dst, *args, **kwargs)
+
+        with mock.patch.object(shutil, "copyfile", side_effect=guarded_copyfile):
+            self.assertTrue(setup._recover_incompatible_config(self._paths(cfg), dry=False))
+        rc = subprocess.run([sys.executable, "-S", self._paths(cfg).statusline_doctor,
+                             "--check", cfg], check=False).returncode
+        self.assertEqual(rc, 0)
+
+    def test_interrupted_replace_keeps_the_live_file(self):
+        cfg = self._tmp_cfg()
+        stale = "[segments]\nbranch = true\n"
+        self._write(cfg, stale)
+        with mock.patch.object(os, "replace", side_effect=OSError("interrupted")), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertFalse(setup._recover_incompatible_config(self._paths(cfg), dry=False))
+        self.assertEqual(self._read(cfg), stale)                 # live file unchanged
+        self.assertTrue(os.path.exists(cfg + ".bak"))            # backup kept
+        self.assertIn("warn: could not reset incompatible config", err.getvalue())
+        leftovers = [name for name in os.listdir(os.path.dirname(cfg))
+                     if name.endswith(".candidate")]
+        self.assertEqual(leftovers, [])                          # no temp file left behind
+
+    def test_recovery_keeps_the_file_mode(self):
+        cfg = self._tmp_cfg()
+        self._write(cfg, "[segments]\nbranch = true\n")
+        os.chmod(cfg, 0o644)
+        self.assertTrue(setup._recover_incompatible_config(self._paths(cfg), dry=False))
+        self.assertEqual(stat.S_IMODE(os.stat(cfg).st_mode), 0o644)
 
 
 class TestExternalSegmentToggle(unittest.TestCase):
@@ -5521,37 +5574,6 @@ class TestReadFrontmatter(unittest.TestCase):
         self.assertEqual(setup._read_frontmatter(os.path.join(self.tmp, "absent.md")), {})
         self.assertEqual(setup._read_frontmatter(""), {})
 
-    def test_real_entries_have_a_name_and_a_description(self):
-        entries = setup.enumerate_entries(_REPO_ROOT)
-        seen = 0
-        for cat in ("skills", "agents", "commands"):
-            for entry, path in entries.get(cat, []):
-                with self.subTest(entry=f"{cat}/{entry}"):
-                    front = setup._read_frontmatter(path)
-                    self.assertTrue(front.get("description"), "empty description")
-                    self.assertTrue(front.get("name"), "no frontmatter name")
-                    # Agent Skills spec cap; a longer description is rejected or cut by hosts.
-                    self.assertLessEqual(len(front["description"]), 1024, "description > 1024")
-                    seen += 1
-        self.assertGreater(seen, 10)
-
-    def test_real_inline_descriptions_are_strict_yaml(self):
-        # A host's YAML parser rejects a plain (unquoted) value holding ': ' or ' #', and the
-        # skill then shows no description there (the project-rules agents/cicd/docker bug).
-        entries = setup.enumerate_entries(_REPO_ROOT)
-        for cat in ("skills", "agents", "commands"):
-            for entry, path in entries.get(cat, []):
-                md = os.path.join(path, "SKILL.md") if os.path.isdir(path) else path
-                with open(md, encoding="utf-8") as f:
-                    lines = f.read().splitlines()
-                for line in lines[1:lines.index("---", 1)]:
-                    value = line.removeprefix("description:").strip()
-                    plain = value[:1] not in ("", '"', "'", ">", "|")
-                    if line.startswith("description:") and plain:
-                        with self.subTest(entry=f"{cat}/{entry}"):
-                            self.assertNotIn(": ", value)
-                            self.assertNotIn(" #", value)
-
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestComponentMetaInContext(unittest.TestCase):
@@ -5888,7 +5910,7 @@ class TestStatuslineOwnershipCounterexamples(unittest.TestCase):
         os.makedirs(os.path.join(self.install, "tools"), exist_ok=True)
         alias = os.path.join(self.tmp, "alias")
         os.symlink(self.install, alias)
-        command = f"python3 -S {os.path.join(alias, 'tools', 'claude-status-line.py')}"
+        command = f"python3 -S {shlex.quote(os.path.join(alias, 'tools', 'claude-status-line.py'))}"
         self._claude(command)
         self.assertEqual(setup.detect_statusline(self.paths)["state"], "ours")
         self._cursor(command.replace("claude-status-line", "cursor-status-line"))

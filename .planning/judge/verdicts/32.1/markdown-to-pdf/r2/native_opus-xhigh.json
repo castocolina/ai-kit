@@ -1,0 +1,205 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": "native, xhigh (frontmatter, documented; not observed)",
+   "status_line": null,
+   "verdict_line": "{\"skill\":\"markdown-to-pdf\",\"judge\":\"native:opus-xhigh\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":14,\"D2\":12,\"D3\":12,\"D4\":12,\"D5\":13,\"D6\":13,\"D7\":12,\"D8\":12},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":100,\"max_total\":125,\"percent\":80.0,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":57,\"evidence\":\"The rule 'SVG on pandoc-latex needs rsvg-convert, PNG at -s 3 is the default' appears four times (lines 26-28, 44, 57-58, 92-94). 'Report the printed Wrote line verbatim' appears three times (lines 30, 50, 52). The 'Draft or final?' bullet (lines 24-25) ends in the same auto-selection the script makes anyway, so it changes nothing the agent does.\",\"fix\":\"State the SVG/rsvg-convert rule once, in the Never item, and point the table rows at it. Merge the 'Routine doc' and 'Exit code 0' rows into the sentence at line 30. Delete the 'Draft or final?' bullet.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":21,\"evidence\":\"'Before you run, decide' asks doc or deck, draft or final, and crisp diagrams, but never asks what the content needs. Line 42 even says force a backend 'Only when the user names one', yet pandoc's LaTeX and Typst writers silently drop raw HTML, so quality-ranked auto-selection is wrong for HTML- or CSS-heavy Markdown.\",\"fix\":\"Add a bullet: 'Does the doc rely on raw HTML or inline CSS (tables, styled divs)? pandoc-latex and typst drop raw HTML, so pass --backend weasyprint or chromium. Heavy LaTeX math: keep pandoc-latex.' Narrow line 42 to allow this content-driven override.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":85,\"evidence\":\"Two of the six NEVER items ('NEVER auto-install anything', 'NEVER edit the source .md') restate policy the script already enforces. A real environment trap is missing: on the chromium backend, md-to-pdf serves only the temp work folder (--basedir), and _localize_images leaves absolute local paths and file:// links unchanged, so those images silently go missing from the PDF.\",\"fix\":\"Add a Gotchas item: 'On chromium (md-to-pdf), only relative local image links render. Absolute paths and file:// URLs resolve against the temp HTTP server and vanish. Make them relative to the source or force a pandoc backend.'\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":3,\"evidence\":\"The description has WHAT, WHEN and keywords. It names no boundary against its near-miss neighbours (editing or merging existing PDFs, DOCX or HTML to PDF, single-diagram rendering, restyling a deck with marp-slide). It spends words on the internal backend ranking, and it has no 'even if they never say markdown' clause for prompts like 'turn the design doc into a PDF'.\",\"fix\":\"Convert a Markdown file into a PDF, or into a marp slide deck (PDF, PPTX or HTML), in one non-destructive command that renders every mermaid block with mmdc and embeds the images. Use when the user wants a .md file, README, design doc, report or notes exported, printed or shared as a PDF or as slides, even if they never say 'markdown' or 'mermaid' ('turn the design doc into a PDF', 'md to pdf', 'build a deck from this outline', 'export as pptx'). Picks the best installed backend (Pandoc+LaTeX > Typst > WeasyPrint > Chromium) and never auto-installs. Not for editing, merging, compressing, form-filling or text extraction on existing PDFs, DOCX or HTML to PDF, rendering a lone mermaid diagram to an image, or restyling an existing marp deck (use marp-slide). Keywords: markdown to pdf, md to pdf, mermaid, marp, slide deck, pptx, pandoc, typst, weasyprint.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/examples/sample-with-mermaid.md\",\"line\":null,\"evidence\":\"The skill ships examples/sample-with-mermaid.md, but neither SKILL.md nor references/backends.md mentions it and no test reads it, so nothing ever loads it.\",\"fix\":\"Gate it in the primary flow ('To smoke-test the toolchain before a real document, run the script on examples/sample-with-mermaid.md'), or move it to evals/files/ as an eval input.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":56,\"evidence\":\"Exit code 4 row: 'fix what it names, or pick another backend with --backend'. It gives no default for which backend to try next, and a --backend naming a backend that is not installed turns the failure into exit 3.\",\"fix\":\"Give a default: 'If the error is not fixable in the source, re-run with --backend set to the next installed backend in the quality order (pandoc-latex > typst > weasyprint > chromium). Never name one that is not installed.'\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/evals/evals.json\",\"line\":3,\"evidence\":\"The six evals cover the default run, the HTML deck without marp-slide, SVG on LaTeX, and exits 3, 4 and browser-missing. No eval covers the branch the skill says the agent must resolve itself, marp-slide IS available, which needs --render-only and then a hand-off. Nor is there one for a real mermaid syntax error at a line (exit 2).\",\"fix\":\"Add an eval 'Make slides from evals/files/kickoff-deck.md; the marp-slide skill is available', with assertions that the agent runs --render-only, hands <source>.rendered.md to marp-slide, and does not run --deck. Add one for exit 2 with a mermaid syntax error at a named line.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/evals/trigger-queries.json\",\"line\":2,\"evidence\":\"All 20 queries are clean, similar-length, single-sentence prompts with no file paths, typos, abbreviations or personal context (for example 'Can you export this markdown file to PDF so I can print it for the review?').\",\"fix\":\"Rewrite about half the queries with realistic detail: paths ('~/notes/arch-review.md'), casual typos ('md->pdf pls'), backstory ('my manager wants the runbook printed'), and one context-heavy multi-step prompt where the PDF export is buried.\"},{\"id\":\"D7-3\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/scripts/markdown_to_pdf.py\",\"line\":369,\"evidence\":\"argparse --help gives no description of exit codes 2, 3 and 4. The result is a free-text 'Wrote ... (backend: ..., diagrams: ...)' line, not structured output. The unit tests in tests/test_markdown_to_pdf.py are thorough, so the gap is the script interface, not test coverage.\",\"fix\":\"Add an epilog to the ArgumentParser listing the exit codes (0 ok, 2 mermaid render failed, 3 no backend, 4 backend failed). Optionally add --json to print {out, backend, diagrams} on stdout.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/scripts/render_mermaid.py\",\"line\":66,\"evidence\":\"render_one calls subprocess.run(['mmdc', ...]) without catching FileNotFoundError, and main() catches only MermaidRenderError, BackendUnavailable and BackendFailed. With mmdc missing and a mermaid fence present, the run ends in a Python traceback with exit 1, and the SKILL.md decision table (lines 48-59) has no row for it.\",\"fix\":\"Catch FileNotFoundError for mmdc and report it with a distinct message and exit code: 'mmdc not found; install: pnpm add -g @mermaid-js/mermaid-cli. Nothing was written.' Add the matching row to the decision table.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":95,\"evidence\":\"'Trust the script's selection over your own read of what's installed', yet the script has no way to report its selection without converting (detect_backends.py has no CLI and markdown_to_pdf.py has no dry-run). The trigger query 'Which PDF backend is installed for markdown conversion on this machine?' has no path to answer except probing tools by hand, which the NEVER item forbids.\",\"fix\":\"Add a --list-backends (or --dry-run) flag that prints each backend's availability and the one that would be selected, and route 'which backend is installed?' to it in the decision table.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":26,\"evidence\":\"'see the SVG landmine' (lines 26-27, 44) and 'see the portability landmine' (line 64) point to items that exist only as unnamed bullets under '## Never'. Also, the exit 2 row's 'Nothing was written' is false for --render-only, which creates <source>.rendered-assets/ and earlier diagrams before a later block fails.\",\"fix\":\"Name the targets ('see the --format svg item under Never', 'see the marp-slide probe item under Never'), and qualify the exit 2 row: 'with --render-only, delete the partial <source>.rendered-assets/ folder'.\"}]}"
+  }
+ ],
+ "digest": "4e95c3062c059d1b811b9d1d9dc7fad60fb18b264e79e8175e341228de23c418",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "native:opus-xhigh",
+ "loop": "32.1",
+ "modules": [
+  "tests/test_markdown_to_pdf.py",
+  "tests/test_markdown_to_pdf_e2e.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "e452c877cf0834a8963235df214cc098adc01fe3ed1a0d0d39258a358b9c5a67",
+ "round": 2,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "markdown-to-pdf",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": {
+  "reason": "failed: judge stopped: AIKIT-XAI status=transient cli=opencode model=router-env/my-referee-two exit=75 cli_rc=1 elapsed=1055s out=4142 tree=clean action=stop route=unknown rule=omniroute-model-unavailable pattern=verified attempts=12 cycles=0 retry_after_s=600 cycle=0; orchestrator stopped the 600 s hard-tier wait after 12 attempts (jev native_substitute 0.97)",
+  "replaces": "opencode:router-env/my-referee-two"
+ },
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "The rule 'SVG on pandoc-latex needs rsvg-convert, PNG at -s 3 is the default' appears four times (lines 26-28, 44, 57-58, 92-94). 'Report the printed Wrote line verbatim' appears three times (lines 30, 50, 52). The 'Draft or final?' bullet (lines 24-25) ends in the same auto-selection the script makes anyway, so it changes nothing the agent does.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "State the SVG/rsvg-convert rule once, in the Never item, and point the table rows at it. Merge the 'Routine doc' and 'Exit code 0' rows into the sentence at line 30. Delete the 'Draft or final?' bullet.",
+    "id": "D1-1",
+    "line": 57,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "'Before you run, decide' asks doc or deck, draft or final, and crisp diagrams, but never asks what the content needs. Line 42 even says force a backend 'Only when the user names one', yet pandoc's LaTeX and Typst writers silently drop raw HTML, so quality-ranked auto-selection is wrong for HTML- or CSS-heavy Markdown.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add a bullet: 'Does the doc rely on raw HTML or inline CSS (tables, styled divs)? pandoc-latex and typst drop raw HTML, so pass --backend weasyprint or chromium. Heavy LaTeX math: keep pandoc-latex.' Narrow line 42 to allow this content-driven override.",
+    "id": "D2-1",
+    "line": 21,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "Two of the six NEVER items ('NEVER auto-install anything', 'NEVER edit the source .md') restate policy the script already enforces. A real environment trap is missing: on the chromium backend, md-to-pdf serves only the temp work folder (--basedir), and _localize_images leaves absolute local paths and file:// links unchanged, so those images silently go missing from the PDF.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add a Gotchas item: 'On chromium (md-to-pdf), only relative local image links render. Absolute paths and file:// URLs resolve against the temp HTTP server and vanish. Make them relative to the source or force a pandoc backend.'",
+    "id": "D3-1",
+    "line": 85,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description has WHAT, WHEN and keywords. It names no boundary against its near-miss neighbours (editing or merging existing PDFs, DOCX or HTML to PDF, single-diagram rendering, restyling a deck with marp-slide). It spends words on the internal backend ranking, and it has no 'even if they never say markdown' clause for prompts like 'turn the design doc into a PDF'.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Convert a Markdown file into a PDF, or into a marp slide deck (PDF, PPTX or HTML), in one non-destructive command that renders every mermaid block with mmdc and embeds the images. Use when the user wants a .md file, README, design doc, report or notes exported, printed or shared as a PDF or as slides, even if they never say 'markdown' or 'mermaid' ('turn the design doc into a PDF', 'md to pdf', 'build a deck from this outline', 'export as pptx'). Picks the best installed backend (Pandoc+LaTeX > Typst > WeasyPrint > Chromium) and never auto-installs. Not for editing, merging, compressing, form-filling or text extraction on existing PDFs, DOCX or HTML to PDF, rendering a lone mermaid diagram to an image, or restyling an existing marp deck (use marp-slide). Keywords: markdown to pdf, md to pdf, mermaid, marp, slide deck, pptx, pandoc, typst, weasyprint.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "The skill ships examples/sample-with-mermaid.md, but neither SKILL.md nor references/backends.md mentions it and no test reads it, so nothing ever loads it.",
+    "file": "skills/markdown-to-pdf/examples/sample-with-mermaid.md",
+    "fix": "Gate it in the primary flow ('To smoke-test the toolchain before a real document, run the script on examples/sample-with-mermaid.md'), or move it to evals/files/ as an eval input.",
+    "id": "D5-1",
+    "line": null,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "Exit code 4 row: 'fix what it names, or pick another backend with --backend'. It gives no default for which backend to try next, and a --backend naming a backend that is not installed turns the failure into exit 3.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Give a default: 'If the error is not fixable in the source, re-run with --backend set to the next installed backend in the quality order (pandoc-latex > typst > weasyprint > chromium). Never name one that is not installed.'",
+    "id": "D6-1",
+    "line": 56,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The six evals cover the default run, the HTML deck without marp-slide, SVG on LaTeX, and exits 3, 4 and browser-missing. No eval covers the branch the skill says the agent must resolve itself, marp-slide IS available, which needs --render-only and then a hand-off. Nor is there one for a real mermaid syntax error at a line (exit 2).",
+    "file": "skills/markdown-to-pdf/evals/evals.json",
+    "fix": "Add an eval 'Make slides from evals/files/kickoff-deck.md; the marp-slide skill is available', with assertions that the agent runs --render-only, hands <source>.rendered.md to marp-slide, and does not run --deck. Add one for exit 2 with a mermaid syntax error at a named line.",
+    "id": "D7-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "All 20 queries are clean, similar-length, single-sentence prompts with no file paths, typos, abbreviations or personal context (for example 'Can you export this markdown file to PDF so I can print it for the review?').",
+    "file": "skills/markdown-to-pdf/evals/trigger-queries.json",
+    "fix": "Rewrite about half the queries with realistic detail: paths ('~/notes/arch-review.md'), casual typos ('md->pdf pls'), backstory ('my manager wants the runbook printed'), and one context-heavy multi-step prompt where the PDF export is buried.",
+    "id": "D7-2",
+    "line": 2,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "argparse --help gives no description of exit codes 2, 3 and 4. The result is a free-text 'Wrote ... (backend: ..., diagrams: ...)' line, not structured output. The unit tests in tests/test_markdown_to_pdf.py are thorough, so the gap is the script interface, not test coverage.",
+    "file": "skills/markdown-to-pdf/scripts/markdown_to_pdf.py",
+    "fix": "Add an epilog to the ArgumentParser listing the exit codes (0 ok, 2 mermaid render failed, 3 no backend, 4 backend failed). Optionally add --json to print {out, backend, diagrams} on stdout.",
+    "id": "D7-3",
+    "line": 369,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "render_one calls subprocess.run(['mmdc', ...]) without catching FileNotFoundError, and main() catches only MermaidRenderError, BackendUnavailable and BackendFailed. With mmdc missing and a mermaid fence present, the run ends in a Python traceback with exit 1, and the SKILL.md decision table (lines 48-59) has no row for it.",
+    "file": "skills/markdown-to-pdf/scripts/render_mermaid.py",
+    "fix": "Catch FileNotFoundError for mmdc and report it with a distinct message and exit code: 'mmdc not found; install: pnpm add -g @mermaid-js/mermaid-cli. Nothing was written.' Add the matching row to the decision table.",
+    "id": "D8-1",
+    "line": 66,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'Trust the script's selection over your own read of what's installed', yet the script has no way to report its selection without converting (detect_backends.py has no CLI and markdown_to_pdf.py has no dry-run). The trigger query 'Which PDF backend is installed for markdown conversion on this machine?' has no path to answer except probing tools by hand, which the NEVER item forbids.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add a --list-backends (or --dry-run) flag that prints each backend's availability and the one that would be selected, and route 'which backend is installed?' to it in the decision table.",
+    "id": "D8-2",
+    "line": 95,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'see the SVG landmine' (lines 26-27, 44) and 'see the portability landmine' (line 64) point to items that exist only as unnamed bullets under '## Never'. Also, the exit 2 row's 'Nothing was written' is false for --render-only, which creates <source>.rendered-assets/ and earlier diagrams before a later block fails.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Name the targets ('see the --format svg item under Never', 'see the marp-slide probe item under Never'), and qualify the exit 2 row: 'with --render-only, delete the partial <source>.rendered-assets/ folder'.",
+    "id": "D8-3",
+    "line": 26,
+    "severity": "low"
+   }
+  ],
+  "grade": "B",
+  "judge": "native:opus-xhigh",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 80.0,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 14,
+   "D2": 12,
+   "D3": 12,
+   "D4": 12,
+   "D5": 13,
+   "D6": 13,
+   "D7": 12,
+   "D8": 12
+  },
+  "skill": "markdown-to-pdf",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 100
+ }
+}

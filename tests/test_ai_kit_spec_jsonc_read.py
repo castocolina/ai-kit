@@ -87,6 +87,19 @@ class TestJsoncReadDrift(unittest.TestCase):
         self.assertEqual(sorted(_doctor_names(path) or []), ["a", "b"])
         self.assertNotEqual(_reader_without_comma_strip(path), _doctor_names(path))
 
+    def test_comma_before_a_final_string_element_is_kept(self):
+        cases = {
+            '["a", "b"]': ["a", "b"],
+            '{"k": ["a", "b",], "s": "x",}': {"k": ["a", "b"], "s": "x"},
+            '["a", /* c */ "b"]': ["a", "b"],
+            '{"k": "v", "w": "]"}': {"k": "v", "w": "]"},
+        }
+        for module in (jsonc_read, config_doctor_readers):
+            for text, expected in cases.items():
+                with self.subTest(module=module.__name__, text=text):
+                    stripped = module.strip_trailing_commas(module.strip_jsonc_comments(text))
+                    self.assertEqual(json.loads(stripped), expected)
+
     def test_invalid_file_returns_none(self):
         path = os.path.join(self.tmp, "broken.json")
         with open(path, "w", encoding="utf-8") as handle:

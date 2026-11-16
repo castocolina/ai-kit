@@ -7,7 +7,7 @@ scalar loader (`SKILL.md`, Step 0).
 
 ## Exit codes and the untrusted-config line
 
-**If the block prints `resolve-injection exit 2`**: a malformed `review-spec.toml`, or an
+**If the block prints `resolve-injection exit 2`**: a malformed `config.toml` (or an old roster that fails to migrate), or an
 entry with `purpose = "execute"` that can never execute (a custom `command` entry, grok, or a
 claude pair that does not run natively). STOP and relay its stderr verbatim; any other non-zero
 exit stops the same way.

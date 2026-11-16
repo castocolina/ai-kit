@@ -154,7 +154,7 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
             seams=reviewer_dispatch.ReviewerSeams(
                 build_tooling_guidance_fn=lambda *_a, **_kw: "",
                 resolve_shared_reference_fn=lambda: None,
-                codegraph_health_fn=lambda _cli: False,
+                code_index_registered_fn=lambda _cli: False,
             ),
         )
         assert result["returncode"] == 0, result

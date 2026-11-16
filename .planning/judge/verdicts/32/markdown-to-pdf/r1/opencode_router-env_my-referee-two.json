@@ -1,0 +1,175 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=48s out=148686 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"markdown-to-pdf\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":17,\"D2\":13,\"D3\":14,\"D4\":15,\"D5\":14,\"D6\":13,\"D7\":5,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":104,\"max_total\":125,\"percent\":83.2,\"grade\":\"B\",\"findings\":[{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"high\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":null,\"evidence\":\"No evals/ directory: no evals/evals.json and no evals/trigger-queries.json.\",\"fix\":\"Add evals/evals.json with at least three realistic prompts (casual, precise, one edge such as a broken mermaid fence or an SVG request under pandoc-latex), expected outputs, input files under evals/files/, and verifiable assertions; add evals/trigger-queries.json with about 20 queries, 8-10 should-trigger and 8-10 should-not-trigger including near-misses (edit a PDF, draw mermaid only, convert to docx).\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":16,\"evidence\":\"Turn a Markdown document with embedded mermaid diagrams into a PDF (or a marp deck) in one non-destructive command: every ```mermaid block is rendered to an image with mmdc, substituted into a temp copy, and that copy is fed to the best complete PDF pipeline installed.\",\"fix\":\"Delete the opening restatement of the description; start at the decision questions.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":21,\"evidence\":\"Before you run, decide is three binary questions, then a command and a situation table; the thinking does not cover the contradictory ranking or an unknown --backend name.\",\"fix\":\"Add one decision principle: when draft and final disagree with the script's quality order, trust the printed backend and do not re-rank; an unknown --backend name is a script error, not a reason to pick a tool yourself.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/examples/sample-with-mermaid.md\",\"line\":1,\"evidence\":\"examples/sample-with-mermaid.md is never referenced from SKILL.md or references/backends.md.\",\"fix\":\"Point the primary-flow example at examples/sample-with-mermaid.md when the user has no source file, or drop the file from the skill directory.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":25,\"evidence\":\"Final → let the quality-ranked auto-selection pick (LaTeX > Typst > WeasyPrint > Chromium).\",\"fix\":\"Replace that parenthetical with the script's actual order from detect_backends.py: pandoc-latex (4) > typst (3) > weasyprint (2) > chromium (1), and say the printed result line is the authority.\"},{\"id\":\"D6-2\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/references/backends.md\",\"line\":7,\"evidence\":\"Typst + Pandoc is scored Total 18 and called Winner, while the selection rule two sections later ranks Pandoc+LaTeX first.\",\"fix\":\"State one default: installed pipelines follow quality order Pandoc+LaTeX > Typst > WeasyPrint > Chromium; Typst+Pandoc is only the install recommendation when none is present.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":52,\"evidence\":\"Exit code 3 (no backend) | Show the printed install command as-is\",\"fix\":\"Say the install text is on stderr and name the three exits: 0 prints Wrote ... (backend, diagrams) on stdout; 2 aborts on stderr with the mermaid line and emits nothing; 3 prints No backend available and, when present, Recommended: install <name>.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/scripts/markdown_to_pdf.py\",\"line\":62,\"evidence\":\"chosen = next(b for b in detect_backends.BACKENDS if b.name == backend_name)\",\"fix\":\"Catch StopIteration and exit with the valid names (pandoc-latex, typst, weasyprint, chromium); argparse already rejects these on the CLI, so this is the programmatic path.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":76,\"evidence\":\"The Never list covers install, source edits, SVG+LaTeX, single-tool detection, install nagging, and filesystem probes, but not the ranking contradiction an agent will hit.\",\"fix\":\"Add: NEVER re-rank backends from the scored table; Typst's 18/20 is the install-when-absent recommendation, and an already-installed pandoc-latex pipeline outranks it.\"}]}"
+  }
+ ],
+ "digest": "90393e2bac916a6b5086f23c2bd581a6290899e381904070e25e8b34ea36f13f",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "32",
+ "modules": [
+  "tests/test_markdown_to_pdf.py",
+  "tests/test_markdown_to_pdf_e2e.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "2ac58b3c4ac38ad7c40b83ada1a5187c9a63a5331fbd103dd63c3e5db6d5ce3a",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "markdown-to-pdf",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D7",
+    "evidence": "No evals/ directory: no evals/evals.json and no evals/trigger-queries.json.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add evals/evals.json with at least three realistic prompts (casual, precise, one edge such as a broken mermaid fence or an SVG request under pandoc-latex), expected outputs, input files under evals/files/, and verifiable assertions; add evals/trigger-queries.json with about 20 queries, 8-10 should-trigger and 8-10 should-not-trigger including near-misses (edit a PDF, draw mermaid only, convert to docx).",
+    "id": "D7-1",
+    "line": null,
+    "severity": "high"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "Turn a Markdown document with embedded mermaid diagrams into a PDF (or a marp deck) in one non-destructive command: every ```mermaid block is rendered to an image with mmdc, substituted into a temp copy, and that copy is fed to the best complete PDF pipeline installed.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Delete the opening restatement of the description; start at the decision questions.",
+    "id": "D1-1",
+    "line": 16,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "Before you run, decide is three binary questions, then a command and a situation table; the thinking does not cover the contradictory ranking or an unknown --backend name.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add one decision principle: when draft and final disagree with the script's quality order, trust the printed backend and do not re-rank; an unknown --backend name is a script error, not a reason to pick a tool yourself.",
+    "id": "D2-1",
+    "line": 21,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "examples/sample-with-mermaid.md is never referenced from SKILL.md or references/backends.md.",
+    "file": "skills/markdown-to-pdf/examples/sample-with-mermaid.md",
+    "fix": "Point the primary-flow example at examples/sample-with-mermaid.md when the user has no source file, or drop the file from the skill directory.",
+    "id": "D5-1",
+    "line": 1,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "Final → let the quality-ranked auto-selection pick (LaTeX > Typst > WeasyPrint > Chromium).",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Replace that parenthetical with the script's actual order from detect_backends.py: pandoc-latex (4) > typst (3) > weasyprint (2) > chromium (1), and say the printed result line is the authority.",
+    "id": "D6-1",
+    "line": 25,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "Typst + Pandoc is scored Total 18 and called Winner, while the selection rule two sections later ranks Pandoc+LaTeX first.",
+    "file": "skills/markdown-to-pdf/references/backends.md",
+    "fix": "State one default: installed pipelines follow quality order Pandoc+LaTeX > Typst > WeasyPrint > Chromium; Typst+Pandoc is only the install recommendation when none is present.",
+    "id": "D6-2",
+    "line": 7,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "Exit code 3 (no backend) | Show the printed install command as-is",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Say the install text is on stderr and name the three exits: 0 prints Wrote ... (backend, diagrams) on stdout; 2 aborts on stderr with the mermaid line and emits nothing; 3 prints No backend available and, when present, Recommended: install <name>.",
+    "id": "D8-1",
+    "line": 52,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "chosen = next(b for b in detect_backends.BACKENDS if b.name == backend_name)",
+    "file": "skills/markdown-to-pdf/scripts/markdown_to_pdf.py",
+    "fix": "Catch StopIteration and exit with the valid names (pandoc-latex, typst, weasyprint, chromium); argparse already rejects these on the CLI, so this is the programmatic path.",
+    "id": "D8-2",
+    "line": 62,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "The Never list covers install, source edits, SVG+LaTeX, single-tool detection, install nagging, and filesystem probes, but not the ranking contradiction an agent will hit.",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add: NEVER re-rank backends from the scored table; Typst's 18/20 is the install-when-absent recommendation, and an already-installed pandoc-latex pipeline outranks it.",
+    "id": "D3-1",
+    "line": 76,
+    "severity": "low"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 83.2,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 17,
+   "D2": 13,
+   "D3": 14,
+   "D4": 15,
+   "D5": 14,
+   "D6": 13,
+   "D7": 5,
+   "D8": 13
+  },
+  "skill": "markdown-to-pdf",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 104
+ }
+}

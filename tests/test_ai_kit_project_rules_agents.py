@@ -133,17 +133,16 @@ class TestToolPresence(unittest.TestCase):
                 "modern-cli:sd": False,
                 "modern-cli:fd": False,
                 "modern-cli:eza": False,
-                "codegraph": False,
+                "codebase-memory-mcp": False,
                 "graphify": False,
                 "gsd": False,
             }
             for key, value in expected.items():
                 self.assertEqual(result[key], value, key)
 
-    def test_partial_tools_and_codegraph_dir(self):
+    def test_partial_tools_and_the_index_binary(self):
         with tempfile.TemporaryDirectory() as bin_dir, tempfile.TemporaryDirectory() as repo:
-            fake_bin(bin_dir, ["rg", "bat"], "#!/bin/sh\nexit 0\n")
-            os.makedirs(os.path.join(repo, ".codegraph"))
+            fake_bin(bin_dir, ["rg", "bat", "codebase-memory-mcp"], "#!/bin/sh\nexit 0\n")
             env = scoped_env(bin_dir, repo)
             result = tool_presence.check_tool_presence(
                 search_path=env["PATH"], repo_root=repo
@@ -154,7 +153,7 @@ class TestToolPresence(unittest.TestCase):
             self.assertFalse(result["modern-cli:sd"])
             self.assertFalse(result["modern-cli:fd"])
             self.assertFalse(result["modern-cli:eza"])
-            self.assertTrue(result["codegraph"])
+            self.assertTrue(result["codebase-memory-mcp"])
 
 
 class TestRuleChecker(unittest.TestCase):
@@ -172,7 +171,7 @@ class TestRuleChecker(unittest.TestCase):
         return finding
 
     def _always_false_presence(self):
-        presence = {"modern-cli": False, "codegraph": False,
+        presence = {"modern-cli": False, "codebase-memory-mcp": False,
                     "graphify": False, "gsd": False}
         presence.update(
             {f"modern-cli:{t}": False for t in tool_presence.MODERN_CLI_TOOLS}
@@ -549,7 +548,7 @@ class TestRemediation(unittest.TestCase):
     def test_entry_signals_are_what_a_clause_must_contain_to_classify_present(self):
         # The SKILL.md hand-off writes each clause around its entry's `signals`; the bare
         # summary alone classifies near_miss/missing for several rules (R01, R12, ...).
-        presence = {"gsd": True, "modern-cli": True, "codegraph": True,
+        presence = {"gsd": True, "modern-cli": True, "codebase-memory-mcp": True,
                     "graphify": True, "opengsd": "ok"}
         presence.update({f"modern-cli:{t}": True for t in tool_presence.MODERN_CLI_TOOLS})
         entries = remediation.build_remediation(

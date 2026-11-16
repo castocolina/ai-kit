@@ -1,0 +1,74 @@
+{
+  "skill_name": "ai-kit-usage-metrics",
+  "evals": [
+    {
+      "id": "casual-show-usage-dashboard",
+      "prompt": "show me how I use my AI CLIs",
+      "expected_output": "The agent runs the lookup block, then runs the resolved entrypoint with the run subcommand, and reports the dashboard path, the rows per runtime and the Cursor low-confidence caveat.",
+      "files": [],
+      "assertions": [
+        "The agent runs the lookup block in a Bash call before any capture command.",
+        "The agent runs the resolved entrypoint with the run subcommand and quotes the path.",
+        "The answer names the dashboard path and the rows per runtime.",
+        "The answer says Cursor rows carry a low source_confidence."
+      ]
+    },
+    {
+      "id": "precise-capture-source-failed",
+      "prompt": "My last run printed the stderr in the attached file. Is my usage dashboard current? The file is evals/files/run-stderr-capture-failed.txt.",
+      "expected_output": "The agent names opencode as the source whose capture failed, says the dashboard is not current for opencode, and reports the other sources as partial, not as a full success.",
+      "files": [
+        "evals/files/run-stderr-capture-failed.txt"
+      ],
+      "assertions": [
+        "The agent names opencode as the capture source that failed.",
+        "The agent says the dashboard is not current for opencode.",
+        "The agent does not report the whole run as a full success."
+      ]
+    },
+    {
+      "id": "edge-not-installed",
+      "prompt": "The lookup block printed ai-kit-usage-metrics is not installed when I ran it. Show my AI CLI usage anyway.",
+      "expected_output": "The agent stops, tells the user the skill is not installed, and does not read session logs or build a usage summary itself.",
+      "files": [],
+      "assertions": [
+        "The agent stops after the lookup message and does not continue the pipeline.",
+        "The agent tells the user that ai-kit-usage-metrics is not installed.",
+        "The agent does not parse session log files itself to produce usage numbers."
+      ]
+    },
+    {
+      "id": "edge-missing-refined-db",
+      "prompt": "I ran only the dashboard subcommand and the usage page is empty. What should I do?",
+      "expected_output": "The agent explains that refined.db is missing and runs refine before dashboard, instead of running dashboard again.",
+      "files": [],
+      "assertions": [
+        "The agent says refined.db is missing, so the empty page is expected.",
+        "The agent runs refine before dashboard.",
+        "The agent does not present the empty page as current usage data."
+      ]
+    },
+    {
+      "id": "edge-empty-capture",
+      "prompt": "I pointed CLAUDE_CONFIG_DIR at an empty scratch folder with no session logs. Run the usage pipeline and report what it found.",
+      "expected_output": "The agent runs the pipeline, reports zero rows as a normal outcome, and does not call it an error.",
+      "files": [],
+      "assertions": [
+        "The agent reports zero rows for the sources that have no session logs.",
+        "The agent does not describe the empty capture as a failure.",
+        "The agent still reports the dashboard path after the zero-row run."
+      ]
+    },
+    {
+      "id": "precise-classify-then-dashboard",
+      "prompt": "I want the inferred families shown in my dashboard. Run whatever is needed.",
+      "expected_output": "The agent runs classify, then runs dashboard as a separate invocation, and says that the run subcommand never classifies.",
+      "files": [],
+      "assertions": [
+        "The agent runs classify before dashboard, not run alone.",
+        "The agent runs dashboard as a separate invocation after classify.",
+        "The agent says the run subcommand never classifies."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+[
+  {"query": "apply this checklist review's findings to my design doc", "should_trigger": true},
+  {"query": "fix the CRITICAL and HIGH items in this spec review", "should_trigger": true},
+  {"query": "address every finding in the review report in place", "should_trigger": true},
+  {"query": "the reviewer flagged my plan, edit it to satisfy the Required lines", "should_trigger": true},
+  {"query": "run the fixer subagent step for ai-kit-spec-review", "should_trigger": true},
+  {"query": "resolve the HIGH findings without touching other sections", "should_trigger": true},
+  {"query": "produce a Fix Summary after editing the plan", "should_trigger": true},
+  {"query": "escalate the strategy finding and fix the rest", "should_trigger": true},
+  {"query": "edit both documents for the cross-document finding", "should_trigger": true},
+  {"query": "re-run fixes on the design after the second review", "should_trigger": true},
+  {"query": "write a review report for this design doc", "should_trigger": false},
+  {"query": "review this pull request diff for bugs", "should_trigger": false},
+  {"query": "fix the failing unit test in the parser module", "should_trigger": false},
+  {"query": "reformat this markdown file with consistent headings", "should_trigger": false},
+  {"query": "summarize this spec in five bullet points", "should_trigger": false},
+  {"query": "apply a GSD plan-checker finding with the GSD revise flow", "should_trigger": false},
+  {"query": "proofread the prose of this README for typos", "should_trigger": false},
+  {"query": "generate a new implementation plan from the spec", "should_trigger": false},
+  {"query": "rate this design on a rubric from one to ten", "should_trigger": false},
+  {"query": "translate this spec document into Spanish", "should_trigger": false}
+]

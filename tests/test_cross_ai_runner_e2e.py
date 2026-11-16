@@ -651,7 +651,7 @@ class TestReviewStatusesE2E(unittest.TestCase):
         lines: list[str] = []
         seams = ReviewerSeams(
             runner_seams=RunnerSeams(env_fn=lambda: env, print_fn=lines.append),
-            codegraph_health_fn=lambda _runtime: False,
+            code_index_registered_fn=lambda _runtime: False,
         )
         result = dispatch_reviewer(
             ReviewerDispatchSpec(self._entry(model), "hi", tiers, {}, cwd=cwd), seams,

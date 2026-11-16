@@ -127,7 +127,8 @@ class ShimHarnessMixin(unittest.TestCase):
         cmd = [NODE or "node", str(HARNESS), host, str(shim), fixture_path]
         if mode:
             cmd.append(mode)
-        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO),
+        # A scratch cwd, never the repo root's own .aikit/config.toml (WR-502).
+        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=base,
                               env=env, timeout=timeout, check=False)
         return proc, env
 
@@ -217,7 +218,7 @@ class TestShimsE2E(ShimHarnessMixin, unittest.TestCase):
                 cmd = [NODE or "node", str(HARNESS), host, str(shim), str(fixture)]
                 started = time.monotonic()
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        text=True, cwd=str(REPO), env=env)
+                                        text=True, cwd=base, env=env)
                 timed_out = False
                 stdout = ""
                 try:

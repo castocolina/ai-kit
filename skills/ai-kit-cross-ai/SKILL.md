@@ -17,7 +17,7 @@ The canonical guide for calling ai-kit's cross-AI runner from any host. The runn
 runtime's flags and model grammar; this skill owns the call, the wait, the reading and the
 caller's answer. The ladder, the config and the catalog are
 [`references/subprocess-quota-policy.md`](references/subprocess-quota-policy.md): read it when
-you configure `workflow.cross_ai_retry`, add an overlay row, or interpret `route=`/`rule=`; a
+you configure the runner's retry table (`[runner.retry]` in ai-kit's `config.toml`), add an overlay row, or interpret `route=`/`rule=`; a
 plain launch and read does not need it. Per-host launch and wait patterns are
 [`references/launch-and-wait.md`](references/launch-and-wait.md).
 
@@ -88,7 +88,7 @@ AIKIT-XAI status=auth cli=pi model=fake/auth exit=69 cli_rc=1 elapsed=0s out=0 t
 Before it, on a stop, come the report and the upstream lines (self-test case `auth`):
 
 ```
-cross-ai: report status=auth lane=pi/fake/auth route=unknown attempts=1 cycles=0 first_failure=2026-10-25T17:26:29.839Z last_failure=2026-10-25T17:26:29.855Z due_at=- stopped=class upstream=present
+cross-ai: report status=auth lane=pi/fake/auth route=unknown attempts=1 cycles=0 first_failure=<iso time> last_failure=<iso time> due_at=- stopped=class upstream=present
 cross-ai: upstream body="401 unauthorized"
 cross-ai: upstream fields=-
 ```

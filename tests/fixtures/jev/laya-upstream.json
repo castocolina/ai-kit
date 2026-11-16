@@ -1,0 +1,296 @@
+{
+ "health_idle": {
+  "checkpoint_devices": {},
+  "cpu_fallbacks": {},
+  "device": "cuda",
+  "device_is_preference": true,
+  "idle_seconds": 1806.2,
+  "idle_unload_seconds": 600.0,
+  "loaded": [],
+  "revisions": {},
+  "status": "ok"
+ },
+ "health_loaded": {
+  "checkpoint_devices": {},
+  "cpu_fallbacks": {},
+  "device": "cuda",
+  "device_is_preference": true,
+  "idle_seconds": 2.0,
+  "idle_unload_seconds": 600.0,
+  "loaded": [
+   "laya-english"
+  ],
+  "revisions": {
+   "laya-english": "rev-a1"
+  },
+  "status": "ok"
+ },
+ "openapi": {
+  "components": {
+   "schemas": {
+    "HTTPValidationError": {
+     "properties": {
+      "detail": {
+       "items": {
+        "$ref": "#/components/schemas/ValidationError"
+       },
+       "title": "Detail",
+       "type": "array"
+      }
+     },
+     "title": "HTTPValidationError",
+     "type": "object"
+    },
+    "ValidationError": {
+     "properties": {
+      "ctx": {
+       "title": "Context",
+       "type": "object"
+      },
+      "input": {
+       "title": "Input"
+      },
+      "loc": {
+       "items": {
+        "anyOf": [
+         {
+          "type": "string"
+         },
+         {
+          "type": "integer"
+         }
+        ]
+       },
+       "title": "Location",
+       "type": "array"
+      },
+      "msg": {
+       "title": "Message",
+       "type": "string"
+      },
+      "type": {
+       "title": "Error Type",
+       "type": "string"
+      }
+     },
+     "required": [
+      "loc",
+      "msg",
+      "type"
+     ],
+     "title": "ValidationError",
+     "type": "object"
+    }
+   }
+  },
+  "info": {
+   "summary": "Laya System-1 decisions over the TypeSafe Jev /v1/systemone protocol",
+   "title": "laya-serve",
+   "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+   "/health": {
+    "get": {
+     "operationId": "health_health_get",
+     "parameters": [
+      {
+       "in": "header",
+       "name": "authorization",
+       "required": false,
+       "schema": {
+        "anyOf": [
+         {
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Authorization"
+       }
+      }
+     ],
+     "responses": {
+      "200": {
+       "content": {
+        "application/json": {
+         "schema": {
+          "additionalProperties": true,
+          "title": "Response Health Health Get",
+          "type": "object"
+         }
+        }
+       },
+       "description": "Successful Response"
+      },
+      "422": {
+       "content": {
+        "application/json": {
+         "schema": {
+          "$ref": "#/components/schemas/HTTPValidationError"
+         }
+        }
+       },
+       "description": "Validation Error"
+      }
+     },
+     "summary": "Health"
+    }
+   },
+   "/v1/route": {
+    "post": {
+     "operationId": "route_v1_route_post",
+     "parameters": [
+      {
+       "in": "header",
+       "name": "authorization",
+       "required": false,
+       "schema": {
+        "anyOf": [
+         {
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Authorization"
+       }
+      }
+     ],
+     "responses": {
+      "200": {
+       "content": {
+        "application/json": {
+         "schema": {}
+        }
+       },
+       "description": "Successful Response"
+      },
+      "422": {
+       "content": {
+        "application/json": {
+         "schema": {
+          "$ref": "#/components/schemas/HTTPValidationError"
+         }
+        }
+       },
+       "description": "Validation Error"
+      }
+     },
+     "summary": "Route"
+    }
+   },
+   "/v1/systemone": {
+    "post": {
+     "operationId": "systemone_v1_systemone_post",
+     "parameters": [
+      {
+       "in": "header",
+       "name": "authorization",
+       "required": false,
+       "schema": {
+        "anyOf": [
+         {
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Authorization"
+       }
+      }
+     ],
+     "responses": {
+      "200": {
+       "content": {
+        "application/json": {
+         "schema": {}
+        }
+       },
+       "description": "Successful Response"
+      },
+      "422": {
+       "content": {
+        "application/json": {
+         "schema": {
+          "$ref": "#/components/schemas/HTTPValidationError"
+         }
+        }
+       },
+       "description": "Validation Error"
+      }
+     },
+     "summary": "Systemone"
+    }
+   },
+   "/v1/systemone/batch": {
+    "post": {
+     "operationId": "systemone_batch_v1_systemone_batch_post",
+     "parameters": [
+      {
+       "in": "header",
+       "name": "authorization",
+       "required": false,
+       "schema": {
+        "anyOf": [
+         {
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Authorization"
+       }
+      }
+     ],
+     "responses": {
+      "200": {
+       "content": {
+        "application/json": {
+         "schema": {}
+        }
+       },
+       "description": "Successful Response"
+      },
+      "422": {
+       "content": {
+        "application/json": {
+         "schema": {
+          "$ref": "#/components/schemas/HTTPValidationError"
+         }
+        }
+       },
+       "description": "Validation Error"
+      }
+     },
+     "summary": "Systemone Batch"
+    }
+   }
+  }
+ },
+ "pypi_0_4_27": {
+  "info": {
+   "description": "# laya\n\n## What's new in 0.4.27\n\n* **Long documents up to 8,192 tokens** for `laya-multilingual`.\n* **Batch scoring** through `/v1/systemone/batch`.\n\n## Where to go next\n\nmore\n",
+   "name": "laya",
+   "version": "0.4.27"
+  }
+ },
+ "pypi_latest": {
+  "info": {
+   "description": "# laya\n\n## Installation\n\nSee the docs.\n\n## What's new in 0.4.34\n\n* **Documentation only; the code is the same as 0.4.32.** The README opens with where to train\n  your own decision engine: [studio.embedding.in](https://studio.embedding.in).\n\nFrom 0.4.32:\n\n* **Calibration fits about 2.4x faster.** Fitting temperatures, abstention thresholds and the\n  binning map over 100,000 records went from 6.4 s to 2.7 s, with byte-identical results (#1496).\n* **`LayaToolSelector` takes a per-bucket `min_confidence` map.** It used to crash comparing a\n  number with the map; it now gates each answer at its own bucket's threshold, as the core gate\n  does (#1494).\n* **`OptionStabilityHook` no longer counts the original question twice** when the option keys\n  are already `A`, `B`, ...; that doubled one rendering's weight and could turn a `VERIFY`\n  into an `ACCEPT` (#1498).\n\n## Where to go next\n\nmore\n",
+   "name": "laya",
+   "version": "0.4.34"
+  },
+  "releases": {
+   "0.4.27": [],
+   "0.4.32": [],
+   "0.4.34": []
+  }
+ },
+ "readme": "# laya\n\n## What's new in 0.4.34\n\n* **Documentation only; the code is the same as 0.4.32.** The README opens with where to train\n  your own decision engine: [studio.embedding.in](https://studio.embedding.in).\n\nFrom 0.4.32:\n\n* **Calibration fits about 2.4x faster.** Fitting temperatures, abstention thresholds and the\n  binning map over 100,000 records went from 6.4 s to 2.7 s, with byte-identical results (#1496).\n* **`LayaToolSelector` takes a per-bucket `min_confidence` map.** It used to crash comparing a\n  number with the map; it now gates each answer at its own bucket's threshold, as the core gate\n  does (#1494).\n* **`OptionStabilityHook` no longer counts the original question twice** when the option keys\n  are already `A`, `B`, ...; that doubled one rendering's weight and could turn a `VERIFY`\n  into an `ACCEPT` (#1498).\n\n## Where to go next\n\nmore\n",
+ "whats_new_latest": "\n* **Documentation only; the code is the same as 0.4.32.** The README opens with where to train\n  your own decision engine: [studio.embedding.in](https://studio.embedding.in).\n\nFrom 0.4.32:\n\n* **Calibration fits about 2.4x faster.** Fitting temperatures, abstention thresholds and the\n  binning map over 100,000 records went from 6.4 s to 2.7 s, with byte-identical results (#1496).\n* **`LayaToolSelector` takes a per-bucket `min_confidence` map.** It used to crash comparing a\n  number with the map; it now gates each answer at its own bucket's threshold, as the core gate\n  does (#1494).\n* **`OptionStabilityHook` no longer counts the original question twice** when the option keys\n  are already `A`, `B`, ...; that doubled one rendering's weight and could turn a `VERIFY`\n  into an `ACCEPT` (#1498).\n"
+}

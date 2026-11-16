@@ -25,7 +25,7 @@ sys.path.insert(
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute"))
 
 import detect_framework as router_detect_framework
-from ai_kit_spec import detection, routing, runner_dispatch
+from ai_kit_spec import routing, runner_dispatch
 from ai_kit_spec_superpowers import cli as superpowers_cli
 from ai_kit_spec_superpowers import dispatch_injection, task_classification
 
@@ -1772,9 +1772,7 @@ class TestCliDispatchTask(unittest.TestCase):
                     ],
                     detect_tool_availability_fn=lambda: {},
                     resolve_agents_tooling_path_fn=lambda: None,
-                    probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
-                        False, False, None, "skip"
-                    ),
+                    cbm_registered_fn=lambda cli: False,
                     stdout=io.StringIO(),
                 )
         self.assertIn("external_cli", str(ctx.exception))
@@ -1845,7 +1843,7 @@ class TestCliDispatchTask(unittest.TestCase):
                 dispatch_superpowers_task_fn=fake_dispatch,
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
-                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(False, False, None, "skip"),
+                cbm_registered_fn=lambda cli: False,
                 stdout=out,
             )
             self.assertEqual(rc, 0)
@@ -1884,7 +1882,7 @@ class TestCliDispatchTask(unittest.TestCase):
                 dispatch_superpowers_task_fn=fake_dispatch,
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
-                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(False, False, None, "skip"),
+                cbm_registered_fn=lambda cli: False,
                 stdout=io.StringIO(),
             )
         self.assertEqual(rc, 0)
@@ -1944,7 +1942,7 @@ class TestCliDispatchTask(unittest.TestCase):
                 dispatch_superpowers_task_fn=fake_dispatch,
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
-                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(False, False, None, "skip"),
+                cbm_registered_fn=lambda cli: False,
                 stdout=out,
             )
             self.assertEqual(rc, 0)
@@ -2013,7 +2011,7 @@ class TestCliDispatchTask(unittest.TestCase):
                 dispatch_superpowers_task_fn=fake_dispatch,
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
-                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(False, False, None, "skip"),
+                cbm_registered_fn=lambda cli: False,
                 stdout=io.StringIO(),
             )
             self.assertEqual(rc, 0)
@@ -2022,8 +2020,7 @@ class TestCliDispatchTask(unittest.TestCase):
         self.assertIn("original implementer report", content)
         self.assertIn("fix round 1 report", content)
 
-    def test_dispatch_task_prints_install_hint_on_stderr_when_probe_unhealthy(self):
-        hint = detection.codegraph_install_command("codex")
+    def test_unregistered_host_runs_no_index_and_gets_no_mcp_guidance(self):
         index_dirs = []
         injection = {
             "mode": "external_cli",
@@ -2036,8 +2033,8 @@ class TestCliDispatchTask(unittest.TestCase):
         captured = {}
 
         def fake_dispatch(request, guidance=None, seams=None):
-            captured["codegraph_registered"] = (
-                guidance.codegraph_registered if guidance is not None else False
+            captured["code_index_registered"] = (
+                guidance.code_index_registered if guidance is not None else False
             )
             return {
                 "runtime": "codex",
@@ -2081,19 +2078,15 @@ class TestCliDispatchTask(unittest.TestCase):
                     dispatch_superpowers_task_fn=fake_dispatch,
                     detect_tool_availability_fn=lambda: {},
                     resolve_agents_tooling_path_fn=lambda: None,
-                    probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
-                        True, False, hint, "unhealthy"
-                    ),
-                    run_codegraph_index_fn=lambda d: index_dirs.append(d) or True,
+                    cbm_registered_fn=lambda cli: False,
+                    run_cbm_index_fn=lambda d: index_dirs.append(d) or True,
                     stdout=out,
                 )
             self.assertEqual(rc, 0)
-            self.assertIn(hint, stderr.getvalue())
-            self.assertNotIn(hint, out.getvalue())
             self.assertEqual(index_dirs, [])
-            self.assertFalse(captured["codegraph_registered"])
+            self.assertFalse(captured["code_index_registered"])
 
-    def test_dispatch_task_runs_index_after_healthy_probe(self):
+    def test_dispatch_task_runs_index_for_a_registered_host(self):
         index_dirs = []
         injection = {
             "mode": "external_cli",
@@ -2106,8 +2099,8 @@ class TestCliDispatchTask(unittest.TestCase):
         captured = {}
 
         def fake_dispatch(request, guidance=None, seams=None):
-            captured["codegraph_registered"] = (
-                guidance.codegraph_registered if guidance is not None else False
+            captured["code_index_registered"] = (
+                guidance.code_index_registered if guidance is not None else False
             )
             return {
                 "runtime": "codex",
@@ -2148,36 +2141,127 @@ class TestCliDispatchTask(unittest.TestCase):
                 dispatch_superpowers_task_fn=fake_dispatch,
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
-                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(True, True, None, "ok"),
-                run_codegraph_index_fn=lambda d: index_dirs.append(d) or True,
+                cbm_registered_fn=lambda cli: True,
+                run_cbm_index_fn=lambda d: index_dirs.append(d) or True,
+                which_fn=lambda name: "/usr/bin/" + name,
                 stdout=io.StringIO(),
             )
             self.assertEqual(index_dirs, [tmp])
-            self.assertTrue(captured["codegraph_registered"])
+            self.assertTrue(captured["code_index_registered"])
 
 
-class TestCodegraphUnknownHealth(unittest.TestCase):
-    def test_registered_with_unknown_health_is_indexed(self):
+class TestCodeIndexRegistration(unittest.TestCase):
+    def test_registered_without_the_binary_runs_no_index_and_is_silent(self):
         index_dirs = []
         deps = superpowers_cli.CliDeps()._replace(
-            probe_codegraph_fn=lambda cli: detection.CodegraphProbe(
-                True, None, None, "health not observable"),
-            run_codegraph_index_fn=lambda d: index_dirs.append(d) or True,
+            cbm_registered_fn=lambda cli: True,
+            run_cbm_index_fn=lambda d: index_dirs.append(d) or True,
+            which_fn=lambda name: None,
         )
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            self.assertTrue(superpowers_cli._codegraph_registered_for_cli("codex", "/repo", deps))
-        self.assertEqual(index_dirs, ["/repo"])
-        self.assertIn("is unknown", err.getvalue())
+            self.assertTrue(superpowers_cli._code_index_registered_for_cli("codex", "/repo", deps))
+        self.assertEqual(index_dirs, [])
+        self.assertEqual(err.getvalue(), "")
 
-    def test_known_unhealthy_is_not_indexed(self):
+    def test_registered_with_index_ok_indexes_once_and_is_silent(self):
         index_dirs = []
         deps = superpowers_cli.CliDeps()._replace(
-            probe_codegraph_fn=lambda cli: detection.CodegraphProbe(True, False, None, "down"),
-            run_codegraph_index_fn=lambda d: index_dirs.append(d) or True,
+            cbm_registered_fn=lambda cli: True,
+            run_cbm_index_fn=lambda d: index_dirs.append(d) or True,
+            which_fn=lambda name: "/usr/bin/" + name,
         )
-        self.assertFalse(superpowers_cli._codegraph_registered_for_cli("codex", "/repo", deps))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertTrue(superpowers_cli._code_index_registered_for_cli("codex", "/repo", deps))
+        self.assertEqual(index_dirs, ["/repo"])
+        self.assertEqual(err.getvalue(), "")
+
+    def test_registered_with_failed_index_stays_registered_and_reports_the_index(self):
+        deps = superpowers_cli.CliDeps()._replace(
+            cbm_registered_fn=lambda cli: True,
+            run_cbm_index_fn=lambda d: False,
+            which_fn=lambda name: "/usr/bin/" + name,
+        )
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertTrue(superpowers_cli._code_index_registered_for_cli("codex", "/repo", deps))
+        self.assertIn(
+            "codebase-memory-mcp: pre-dispatch index_repository failed in /repo", err.getvalue())
+        self.assertNotIn("no MCP registration", err.getvalue())
+
+    def test_not_registered_runs_no_index(self):
+        index_dirs = []
+        deps = superpowers_cli.CliDeps()._replace(
+            cbm_registered_fn=lambda cli: False,
+            run_cbm_index_fn=lambda d: index_dirs.append(d) or True,
+        )
+        self.assertFalse(superpowers_cli._code_index_registered_for_cli("codex", "/repo", deps))
         self.assertEqual(index_dirs, [])
+
+    def test_a_failed_index_still_gets_the_mcp_guidance(self):
+        captured = {}
+
+        def fake_dispatch(request, guidance=None, seams=None):
+            captured["code_index_registered"] = (
+                guidance.code_index_registered if guidance is not None else False
+            )
+            return {
+                "runtime": "codex",
+                "model": "gpt-5.6-terra",
+                "command": "codex exec ...",
+                "returncode": 0,
+                "stdout": "DONE",
+                "stderr": "",
+                "timed_out": False,
+            }
+
+        injection = {
+            "mode": "external_cli",
+            "key": "codex/terra",
+            "runtime": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": None,
+            "service_tier": None,
+        }
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = os.path.join(tmp, "prompt.txt")
+            with open(prompt_file, "w") as f:
+                f.write("do the task")
+            format_block_file = os.path.join(tmp, "format.md")
+            with open(format_block_file, "w") as f:
+                f.write("status: DONE")
+            report_file = os.path.join(tmp, "task-1-report.md")
+            with contextlib.redirect_stderr(err):
+                superpowers_cli.main(
+                    [
+                        "dispatch-task",
+                        "--injection-json",
+                        json.dumps(injection),
+                        "--prompt-file",
+                        prompt_file,
+                        "--target-dir",
+                        tmp,
+                        "--heartbeat-interval",
+                        "60",
+                        "--timeout",
+                        "900",
+                        "--format-block-file",
+                        format_block_file,
+                        "--report-file",
+                        report_file,
+                    ],
+                    dispatch_superpowers_task_fn=fake_dispatch,
+                    detect_tool_availability_fn=lambda: {},
+                    resolve_agents_tooling_path_fn=lambda: None,
+                    cbm_registered_fn=lambda cli: True,
+                    run_cbm_index_fn=lambda d: False,
+                    which_fn=lambda name: "/usr/bin/" + name,
+                    stdout=io.StringIO(),
+                )
+        self.assertTrue(captured["code_index_registered"])
+        self.assertIn("pre-dispatch index_repository failed", err.getvalue())
 
 
 class TestCliClassifyDispatchFailure(unittest.TestCase):
@@ -2338,17 +2422,16 @@ class TestUntrustedLocalExecuteEntry(unittest.TestCase):
     def test_untrusted_local_execute_entry_absent_until_trusted(self):
         import tempfile
 
-        from ai_kit_spec import config_io, trust
+        from ai_kit_spec import config_io
 
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as xdg:
             env = {"HOME": home, "XDG_CONFIG_HOME": xdg}
             cwd = tempfile.mkdtemp()
             self.addCleanup(shutil.rmtree, cwd, True)
-            local_dir = os.path.join(cwd, ".aikit")
-            os.makedirs(local_dir)
-            local_path = os.path.join(local_dir, "review-spec.toml")
+            local_path = config_io.cfg_local_path(cwd)
+            os.makedirs(os.path.dirname(local_path))
             raw = (
-                b'strategy = "local-only"\n[[reviewers]]\nkey = "x1"\nmodel = "m"\n'
+                b'[lanes]\nstrategy = "local-only"\n[[lanes.execute]]\nkey = "x1"\nmodel = "m"\n'
                 b'vendor = "v"\ncli = "codex"\ncommand = "codex exec -m {model}"\n'
                 b'purpose = "execute"\n'
             )
@@ -2357,9 +2440,7 @@ class TestUntrustedLocalExecuteEntry(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 candidates, _ = dispatch_injection.assemble_candidates(cwd, env)
             self.assertNotIn("x1", [c["key"] for c in candidates])
-            trust.record_trust(
-                config_io.cfg_trust_store_dir(env), os.path.realpath(local_path), raw
-            )
+            config_io.cfg_trust_project(cwd, env)
             with contextlib.redirect_stderr(io.StringIO()):
                 candidates, _ = dispatch_injection.assemble_candidates(cwd, env)
             self.assertIn("x1", [c["key"] for c in candidates])
@@ -2971,7 +3052,7 @@ class TestStartStep(unittest.TestCase):
         calls = index_fakes.index_calls(index_fakes.fakes_dir(self.root / "home") / "calls.log")
         in_repo = {call["name"] for call in calls
                    if pathlib.Path(call["cwd"]).resolve() == self.repo.resolve()}
-        self.assertTrue({"codegraph", "graphify"} <= in_repo, calls)
+        self.assertTrue({"codebase-memory-mcp", "graphify"} <= in_repo, calls)
         # _run() commits the plan on main first; the boundary adds nothing after that commit
         self.assertEqual(main_before, fold_fixtures.run_git(
             self.repo, self.env, "rev-parse", "main^").strip())

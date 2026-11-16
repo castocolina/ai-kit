@@ -254,6 +254,55 @@ class TestGsdAdapter(CliCase):
         self.assertEqual(after.stdout.splitlines(),
                          ["07-01: folded", "07-02: folded", "07-03: unfinished"])
 
+    def _late_fix_after_fold(self, late):
+        """Plan 07-01 merged back and folded, `late` fix(07-01) commits, then plan 07-02's
+        worktree merged back on top: the history a wave:post checkpoint met in phase 32.4."""
+        root = pathlib.Path(tempfile.mkdtemp(dir=self.tmp))
+        repo = make_repo(root, self.env)
+        self.git(repo, "checkout", "-q", "-b", PHASE_BRANCH)
+        commit(repo, self.env, _plan_files([{"plan": "01", "stems": ("a", "b")},
+                                            {"plan": "02", "stems": ("c", "d")}]),
+               "docs(07): create phase plan")
+        folded = []
+        for plan, stems in (("01", ("a", "b")), ("02", ("c", "d"))):
+            self.git(repo, "checkout", "-q", "-b", f"worktree-agent-{plan}", PHASE_BRANCH)
+            for files, message, author in gsd_plan_commits(plan, stems, state=False):
+                commit(repo, self.env, files, message, author)
+            self.git(repo, "checkout", "-q", PHASE_BRANCH)
+            merge_no_ff(repo, self.env, f"worktree-agent-{plan}",
+                        f"chore: merge executor worktree (worktree-agent-{plan})")
+            if plan == "01":
+                self.assertEqual(self.run_cli(root, repo, "gsd", "--phase", "7").returncode, 0)
+                folded = self.git(repo, "rev-list", "--first-parent", "HEAD").split()
+                for number in range(late):
+                    commit(repo, self.env, {"a.py": f"a fixed {number}\n".encode()},
+                           f"fix(07-01): late fix {number}")
+        return root, repo, folded
+
+    def test_late_commit_of_a_folded_plan_is_not_refolded_and_the_merge_folds_away(self):
+        root, repo, folded = self._late_fix_after_fold(late=1)
+        tip_tree = self._tree(repo, "HEAD")
+        proc = self.run_cli(root, repo, "gsd", "--phase", "7")
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout)
+        self.assertIn("outcome: 07-02 folded (inline)", proc.stdout)
+        self.assertNotIn("07-01 folded", proc.stdout)
+        self.assertEqual(self.git(repo, "rev-list", "--merges", "main..HEAD"), "")
+        first_parent = self.git(repo, "rev-list", "--first-parent", "HEAD").split()
+        self.assertTrue(set(folded) <= set(first_parent))
+        self.assertEqual(self._tree(repo, "HEAD"), tip_tree)
+        subjects = self.git(repo, "log", "--format=%s", "main..HEAD").splitlines()
+        self.assertEqual(len(subjects), len(set(subjects)), msg=subjects)
+
+    def test_late_commits_under_a_later_merge_back_refuse_and_move_nothing(self):
+        root, repo, _folded = self._late_fix_after_fold(late=2)
+        head = self.git(repo, "rev-parse", "HEAD")
+        proc = self.run_cli(root, repo, "gsd", "--phase", "7")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("outcome: 07-01 refused foreign_merge (inline)", proc.stdout)
+        self.assertIn("forks from inside it", proc.stdout)
+        self.assertEqual(self.git(repo, "rev-parse", "HEAD"), head)
+        self.assertEqual(len(self.git(repo, "tag", "--list", "ai-kit-fold/*").splitlines()), 1)
+
     def test_dirty_tree_refusal_leaves_the_plan_unfolded(self):
         root, repo = self.copy_of(self.seq1)
         (repo / "base.txt").write_text("changed\n", encoding="utf-8")

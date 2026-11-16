@@ -17,7 +17,7 @@ _STATE_MACHINE_RUNTIMES = frozenset({"opencode", "codex", "cursor"})
 # D-19: Codex's post-2026-07-27 tool-call shape wraps a JS-source-string
 # body that awaits a `tools.*(...)` call. Only names whose JSON argument
 # object represents an actual shell invocation belong here -- grounded by
-# a real-store enumeration (see 15.1-02-SUMMARY.md), not guessed. A name
+# a real-store enumeration (Phase 15.1), not guessed. A name
 # such as `web__run` or `apply_patch` is a real observed `tools.*` call in
 # the same wrapper shape that must NOT be treated as a command.
 _CODEX_EXEC_TOOL_NAMES = frozenset({"exec_command"})

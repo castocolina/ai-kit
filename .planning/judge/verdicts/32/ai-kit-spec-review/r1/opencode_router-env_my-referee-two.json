@@ -1,0 +1,239 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=67s out=284609 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"ai-kit-spec-review\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":16,\"D2\":14,\"D3\":13,\"D4\":14,\"D5\":11,\"D6\":14,\"D7\":9,\"D8\":12},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":103,\"max_total\":125,\"percent\":82.4,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review/SKILL.md\",\"line\":6,\"evidence\":\"## Your Task restates that the orchestrator drives a review-and-fix loop and never edits the document, which the steps already specify.\",\"fix\":\"Delete the Your Task section; start at Inputs.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review/SKILL.md\",\"line\":496,\"evidence\":\"SKILL.md is 496 lines, at the process-pattern ceiling, with the loop's branch detail still in the body rather than only in gated references.\",\"fix\":\"Move the Step 1 route prose that duplicates cross-ai-dispatch.md into that file and leave a one-line gate in the loop.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review/SKILL.md\",\"line\":223,\"evidence\":\"## NEVER lists two landmines and defers the rest to the Hard rules table, so the landmines are split across two sections.\",\"fix\":\"Keep one NEVER list and point the Hard rules table at it instead of repeating rules.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review/SKILL.md\",\"line\":3,\"evidence\":\"Description names frameworks and flags but not the near-miss of reviewing code or a pull request rather than a spec, plan, or design document.\",\"fix\":\"Use when a design, spec, requirements, or plan document needs review-and-fix before the next step, even if the user only says \\\"review this\\\" and passes a document path. Framework-aware across superpowers, GSD, OpenSpec, Spec Kit, Kiro, BMAD, and generic docs. Orchestrates a reviewer and routes fixes through the framework skill, slash command, or direct-edit fixer, with optional --cross-ai/--no-cross-ai reviewer dispatch. Not for code review, PR review, or editing the document in this session.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review/SKILL.md\",\"line\":153,\"evidence\":\"Every run must read all of references/cross-ai-dispatch.md (385 lines), including when --no-cross-ai skips only points 3-6.\",\"fix\":\"Gate the full file on a cross-AI or subprocess route; for --no-cross-ai, require only the path-resolution section.\"},{\"id\":\"D5-2\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review/references/ranking-weights.toml\",\"line\":1,\"evidence\":\"ranking-weights.toml is loaded by model_ranker.py and is never named in SKILL.md or a reference as a conditional read.\",\"fix\":\"In Step 0.7, say to read references/ranking-weights.toml only when explaining or changing model-ranking weights.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review/SKILL.md\",\"line\":157,\"evidence\":\"Probe-quota says two parts of the shipped walk go beyond the owner quote and are not owner-ruled yet, then still tells the agent to walk them and say so.\",\"fix\":\"State one default: walk the configured ladder, name both extra cases in the Step 5 message, and stop after dispatch.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-review/evals/01-superpowers-plan-routes-writing-plans.md\",\"line\":1,\"evidence\":\"No evals/evals.json or evals/trigger-queries.json. The four eval markdown files use the retired name review-spec and have prose pass criteria, not assertions.\",\"fix\":\"Add evals/evals.json with at least three prompts, expected output, and verifiable assertions, and evals/trigger-queries.json with about 20 should and should-not queries including near-misses.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review/ai-kit-spec.py\",\"line\":4,\"evidence\":\"The package entry calls argparse and exits with a status, and the listed test modules cover it, but the runner script references/cross-ai.mjs has no --help usage text.\",\"fix\":\"Add a --help path to references/cross-ai.mjs that prints usage, flags, and exit codes to stdout.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review/references/loop-diagram.md\",\"line\":31,\"evidence\":\"The diagram's first edge is Start to Dispatch reviewer, skipping the pending-lane resume that enters mid-loop, and it has no Failure or hard-tier wait node.\",\"fix\":\"Add a resume entry into the pending-lane wait, and a Failure status edge from Parse Status line to Surface to user.\"}]}"
+  }
+ ],
+ "digest": "538598a3fc0bf9676c6904289d220d07b53c527d1690c4e4bfca52a17cd3d38d",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "32",
+ "modules": [
+  "tests/test_ai_kit_commit_fold.py",
+  "tests/test_ai_kit_commit_fold_adapters.py",
+  "tests/test_ai_kit_commit_fold_e2e.py",
+  "tests/test_ai_kit_gsd_curated_config.py",
+  "tests/test_ai_kit_gsd_curated_config_matrix.py",
+  "tests/test_ai_kit_session_wake.py",
+  "tests/test_ai_kit_session_wake_fire.py",
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_check_providers.py",
+  "tests/test_ai_kit_spec_e2e.py",
+  "tests/test_ai_kit_spec_env_scrub.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_e2e.py",
+  "tests/test_ai_kit_spec_goal_prompt_evals.py",
+  "tests/test_ai_kit_spec_goal_prompt_golden.py",
+  "tests/test_ai_kit_spec_gsd_tools.py",
+  "tests/test_ai_kit_spec_jsonc_read.py",
+  "tests/test_ai_kit_spec_legacy_config.py",
+  "tests/test_ai_kit_spec_routing.py",
+  "tests/test_ai_kit_spec_runner_dispatch.py",
+  "tests/test_ai_kit_spec_runtimes_table.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_ai_kit_spec_trust.py",
+  "tests/test_arch.py",
+  "tests/test_check_dogfood.py",
+  "tests/test_cross_ai_catalog.py",
+  "tests/test_cross_ai_runner_e2e.py",
+  "tests/test_cross_ai_selftest_logic_1_e2e.py",
+  "tests/test_cross_ai_selftest_logic_2_e2e.py",
+  "tests/test_cross_ai_selftest_logic_3_e2e.py",
+  "tests/test_cross_ai_selftest_logic_4_e2e.py",
+  "tests/test_cross_ai_selftest_runtime_1_e2e.py",
+  "tests/test_cross_ai_selftest_runtime_2_e2e.py",
+  "tests/test_cross_ai_selftest_runtime_3_e2e.py",
+  "tests/test_cross_ai_selftest_runtime_4_e2e.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_apply.py",
+  "tests/test_curated_config_apply_e2e.py",
+  "tests/test_curated_config_e2e.py",
+  "tests/test_curated_config_followups.py",
+  "tests/test_curated_config_golden.py",
+  "tests/test_curated_config_inventory.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_curated_config_skills.py",
+  "tests/test_cursor_agents.py",
+  "tests/test_flow_boundary.py",
+  "tests/test_flow_brief.py",
+  "tests/test_flow_checkpoint.py",
+  "tests/test_flow_contract.py",
+  "tests/test_flow_index.py",
+  "tests/test_flow_index_e2e.py",
+  "tests/test_flow_stack.py",
+  "tests/test_gate_scope.py",
+  "tests/test_gsd_curated_eval.py",
+  "tests/test_pi_live_tools.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_run_unittest_parallel.py",
+  "tests/test_runtime_list_drift.py",
+  "tests/test_sibling_resolution.py"
+ ],
+ "prompt_sha256": "a49c8d381a6a88c146879711e91d3f9822452dcf4d5c32d6558a38b06a2d9e52",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "ai-kit-spec-review",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "## Your Task restates that the orchestrator drives a review-and-fix loop and never edits the document, which the steps already specify.",
+    "file": "skills/ai-kit-spec-review/SKILL.md",
+    "fix": "Delete the Your Task section; start at Inputs.",
+    "id": "D1-1",
+    "line": 6,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "SKILL.md is 496 lines, at the process-pattern ceiling, with the loop's branch detail still in the body rather than only in gated references.",
+    "file": "skills/ai-kit-spec-review/SKILL.md",
+    "fix": "Move the Step 1 route prose that duplicates cross-ai-dispatch.md into that file and leave a one-line gate in the loop.",
+    "id": "D2-1",
+    "line": 496,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "## NEVER lists two landmines and defers the rest to the Hard rules table, so the landmines are split across two sections.",
+    "file": "skills/ai-kit-spec-review/SKILL.md",
+    "fix": "Keep one NEVER list and point the Hard rules table at it instead of repeating rules.",
+    "id": "D3-1",
+    "line": 223,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "Description names frameworks and flags but not the near-miss of reviewing code or a pull request rather than a spec, plan, or design document.",
+    "file": "skills/ai-kit-spec-review/SKILL.md",
+    "fix": "Use when a design, spec, requirements, or plan document needs review-and-fix before the next step, even if the user only says \"review this\" and passes a document path. Framework-aware across superpowers, GSD, OpenSpec, Spec Kit, Kiro, BMAD, and generic docs. Orchestrates a reviewer and routes fixes through the framework skill, slash command, or direct-edit fixer, with optional --cross-ai/--no-cross-ai reviewer dispatch. Not for code review, PR review, or editing the document in this session.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "Every run must read all of references/cross-ai-dispatch.md (385 lines), including when --no-cross-ai skips only points 3-6.",
+    "file": "skills/ai-kit-spec-review/SKILL.md",
+    "fix": "Gate the full file on a cross-AI or subprocess route; for --no-cross-ai, require only the path-resolution section.",
+    "id": "D5-1",
+    "line": 153,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "ranking-weights.toml is loaded by model_ranker.py and is never named in SKILL.md or a reference as a conditional read.",
+    "file": "skills/ai-kit-spec-review/references/ranking-weights.toml",
+    "fix": "In Step 0.7, say to read references/ranking-weights.toml only when explaining or changing model-ranking weights.",
+    "id": "D5-2",
+    "line": 1,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "Probe-quota says two parts of the shipped walk go beyond the owner quote and are not owner-ruled yet, then still tells the agent to walk them and say so.",
+    "file": "skills/ai-kit-spec-review/SKILL.md",
+    "fix": "State one default: walk the configured ladder, name both extra cases in the Step 5 message, and stop after dispatch.",
+    "id": "D6-1",
+    "line": 157,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "No evals/evals.json or evals/trigger-queries.json. The four eval markdown files use the retired name review-spec and have prose pass criteria, not assertions.",
+    "file": "skills/ai-kit-spec-review/evals/01-superpowers-plan-routes-writing-plans.md",
+    "fix": "Add evals/evals.json with at least three prompts, expected output, and verifiable assertions, and evals/trigger-queries.json with about 20 should and should-not queries including near-misses.",
+    "id": "D7-1",
+    "line": 1,
+    "severity": "high"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The package entry calls argparse and exits with a status, and the listed test modules cover it, but the runner script references/cross-ai.mjs has no --help usage text.",
+    "file": "skills/ai-kit-spec-review/ai-kit-spec.py",
+    "fix": "Add a --help path to references/cross-ai.mjs that prints usage, flags, and exit codes to stdout.",
+    "id": "D7-2",
+    "line": 4,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The diagram's first edge is Start to Dispatch reviewer, skipping the pending-lane resume that enters mid-loop, and it has no Failure or hard-tier wait node.",
+    "file": "skills/ai-kit-spec-review/references/loop-diagram.md",
+    "fix": "Add a resume entry into the pending-lane wait, and a Failure status edge from Parse Status line to Surface to user.",
+    "id": "D8-1",
+    "line": 31,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 82.4,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 16,
+   "D2": 14,
+   "D3": 13,
+   "D4": 14,
+   "D5": 11,
+   "D6": 14,
+   "D7": 9,
+   "D8": 12
+  },
+  "skill": "ai-kit-spec-review",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 103
+ }
+}

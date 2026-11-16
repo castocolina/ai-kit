@@ -1,0 +1,166 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=33s out=35048 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"markdown-to-pdf\",\"judge\":\"opencode:router-env/my-referee-three\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":17,\"D2\":12,\"D3\":14,\"D4\":13,\"D5\":13,\"D6\":14,\"D7\":13,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":109,\"max_total\":125,\"percent\":87.2,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":15,\"evidence\":\"Intro paragraph 'Turn a Markdown document with embedded mermaid diagrams into a PDF ... The source .md is never touched.' restates the description and the NEVER list\",\"fix\":\"Delete the intro paragraph; the description and the 'NEVER edit the source .md' item already carry it\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":21,\"evidence\":\"'Before you run, decide' gives three questions, but there is no check step after the run (open the PDF, confirm every diagram was replaced, confirm the page count is sane)\",\"fix\":\"Add a short post-run check: confirm the result line names the expected backend and diagram format, and that no raw ```mermaid fence is left in the output, before reporting success\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":91,\"evidence\":\"The NEVER list is strong, but it has no gotcha for marp deck links: '--to html keeps your relative image links as written' appears only in body prose\",\"fix\":\"Add a NEVER item: never move a --to html deck away from its <output stem>-assets/ folder or its relative images, because they stop resolving\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":3,\"evidence\":\"The description has WHAT, WHEN and keywords but no boundary against near-miss neighbours (DOCX/HTML to PDF, editing or merging PDFs, polishing an existing marp theme, a lone mermaid diagram to PNG)\",\"fix\":\"Convert a Markdown document (with embedded mermaid diagrams) into a PDF, or into a marp slide deck (pdf, pptx, html), in one non-destructive command; every ```mermaid block is rendered with mmdc and embedded. Use when the user wants to turn a .md file into a PDF or slides: \\\"export markdown to pdf\\\", \\\"md to pdf\\\", \\\"render mermaid and make a PDF\\\", \\\"build a deck from this markdown\\\", even when they only say 'make the design doc printable'. Auto-detects the best installed backend (Pandoc+LaTeX > Typst > WeasyPrint > Chromium) and never auto-installs. Keywords: markdown to pdf, md to pdf, mermaid, marp deck, slide deck, pandoc, typst. Not for editing, merging or filling existing PDFs, converting DOCX/HTML to PDF, theming an existing marp deck, or rendering a single standalone mermaid diagram.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/examples/sample-with-mermaid.md\",\"line\":null,\"evidence\":\"examples/sample-with-mermaid.md is tracked in the skill but SKILL.md never references it\",\"fix\":\"Reference it with a condition (for example 'to smoke-test an install, run the script on examples/sample-with-mermaid.md'), or delete it\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":78,\"evidence\":\"'Hand the .rendered.md to marp-slide for themes/polish/export' gives no default output target or cleanup of the .rendered.md/.rendered-assets/ files written next to the source\",\"fix\":\"State the default (pass --to pdf unless the user asked otherwise) and whether to delete <source>.rendered.md and its assets folder after marp-slide finishes\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/scripts/markdown_to_pdf.py\",\"line\":404,\"evidence\":\"The script returns only exit codes plus a free-text 'Wrote ... (backend: ..., diagrams: ...)' line, with no structured (JSON) output option; tests/test_markdown_to_pdf_e2e.py holds a single test\",\"fix\":\"Add a --json flag that emits {output, backend, diagram_format, exit_reason} on stdout, and add e2e cases for the deck and --render-only paths\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/markdown-to-pdf/SKILL.md\",\"line\":47,\"evidence\":\"The troubleshooting table maps exit code 2 only to mermaid or browser failures, but argparse also exits 2 on a bad flag (for example an invalid --backend), so that branch sends the agent to fix a mermaid block that is fine\",\"fix\":\"Add a row: 'Exit code 2 with a usage: line → a bad flag; re-run with a valid --backend/--format value', or give mermaid failures a distinct exit code\"}]}"
+  }
+ ],
+ "digest": "4e95c3062c059d1b811b9d1d9dc7fad60fb18b264e79e8175e341228de23c418",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-three",
+ "loop": "32.1",
+ "modules": [
+  "tests/test_markdown_to_pdf.py",
+  "tests/test_markdown_to_pdf_e2e.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "83067e78e60e5fd0374d1b1a29a635497e4e83fba20773089e0354377d26e209",
+ "round": 2,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "markdown-to-pdf",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "Intro paragraph 'Turn a Markdown document with embedded mermaid diagrams into a PDF ... The source .md is never touched.' restates the description and the NEVER list",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Delete the intro paragraph; the description and the 'NEVER edit the source .md' item already carry it",
+    "id": "D1-1",
+    "line": 15,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "'Before you run, decide' gives three questions, but there is no check step after the run (open the PDF, confirm every diagram was replaced, confirm the page count is sane)",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add a short post-run check: confirm the result line names the expected backend and diagram format, and that no raw ```mermaid fence is left in the output, before reporting success",
+    "id": "D2-1",
+    "line": 21,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "The NEVER list is strong, but it has no gotcha for marp deck links: '--to html keeps your relative image links as written' appears only in body prose",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add a NEVER item: never move a --to html deck away from its <output stem>-assets/ folder or its relative images, because they stop resolving",
+    "id": "D3-1",
+    "line": 91,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description has WHAT, WHEN and keywords but no boundary against near-miss neighbours (DOCX/HTML to PDF, editing or merging PDFs, polishing an existing marp theme, a lone mermaid diagram to PNG)",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Convert a Markdown document (with embedded mermaid diagrams) into a PDF, or into a marp slide deck (pdf, pptx, html), in one non-destructive command; every ```mermaid block is rendered with mmdc and embedded. Use when the user wants to turn a .md file into a PDF or slides: \"export markdown to pdf\", \"md to pdf\", \"render mermaid and make a PDF\", \"build a deck from this markdown\", even when they only say 'make the design doc printable'. Auto-detects the best installed backend (Pandoc+LaTeX > Typst > WeasyPrint > Chromium) and never auto-installs. Keywords: markdown to pdf, md to pdf, mermaid, marp deck, slide deck, pandoc, typst. Not for editing, merging or filling existing PDFs, converting DOCX/HTML to PDF, theming an existing marp deck, or rendering a single standalone mermaid diagram.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "examples/sample-with-mermaid.md is tracked in the skill but SKILL.md never references it",
+    "file": "skills/markdown-to-pdf/examples/sample-with-mermaid.md",
+    "fix": "Reference it with a condition (for example 'to smoke-test an install, run the script on examples/sample-with-mermaid.md'), or delete it",
+    "id": "D5-1",
+    "line": null,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "'Hand the .rendered.md to marp-slide for themes/polish/export' gives no default output target or cleanup of the .rendered.md/.rendered-assets/ files written next to the source",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "State the default (pass --to pdf unless the user asked otherwise) and whether to delete <source>.rendered.md and its assets folder after marp-slide finishes",
+    "id": "D6-1",
+    "line": 78,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The script returns only exit codes plus a free-text 'Wrote ... (backend: ..., diagrams: ...)' line, with no structured (JSON) output option; tests/test_markdown_to_pdf_e2e.py holds a single test",
+    "file": "skills/markdown-to-pdf/scripts/markdown_to_pdf.py",
+    "fix": "Add a --json flag that emits {output, backend, diagram_format, exit_reason} on stdout, and add e2e cases for the deck and --render-only paths",
+    "id": "D7-1",
+    "line": 404,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The troubleshooting table maps exit code 2 only to mermaid or browser failures, but argparse also exits 2 on a bad flag (for example an invalid --backend), so that branch sends the agent to fix a mermaid block that is fine",
+    "file": "skills/markdown-to-pdf/SKILL.md",
+    "fix": "Add a row: 'Exit code 2 with a usage: line → a bad flag; re-run with a valid --backend/--format value', or give mermaid failures a distinct exit code",
+    "id": "D8-1",
+    "line": 47,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-three",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 87.2,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 17,
+   "D2": 12,
+   "D3": 14,
+   "D4": 13,
+   "D5": 13,
+   "D6": 14,
+   "D7": 13,
+   "D8": 13
+  },
+  "skill": "markdown-to-pdf",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 109
+ }
+}

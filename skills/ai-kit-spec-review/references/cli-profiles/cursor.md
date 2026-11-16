@@ -73,7 +73,7 @@ actually use — do not treat that list as availability; always run
 trusting it works.
 
 **Config is global-only and gets overwritten per run — do not rely on a
-per-repo cursor config file.** Unlike `review-spec.toml`'s own local/
+per-repo cursor config file.** Unlike ai-kit's own `config.toml` local/
 global split, cursor-agent's own settings live in a single global
 location (`~/.cursor/cli-config.json`) that each invocation can rewrite;
 there is no per-project cursor config this design should read or write.
@@ -100,7 +100,7 @@ itself, not a separate flag** — confirmed live (`--help`): "Parameterized
 models accept quoted bracket overrides, e.g.
 `claude-opus-4-8[context=1m,effort=high,fast=false]`".
 `build-model-id --runtime cursor` builds this string for the entry's `model`
-field — never hand-write the bracket syntax in `review-spec.toml` directly.
+field — never hand-write the bracket syntax in `config.toml` directly.
 
 The runner's review formula (ask is the default; `cursor_mode = "plan"`
 swaps the mode) is:

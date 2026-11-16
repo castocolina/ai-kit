@@ -51,6 +51,12 @@ the cap. Oversized Claude transcripts are read from the last bounded window, wit
 deleted after injection and swept after 24 h. Its header records the session
 id, host, per-label chunk counts, skipped-line counters and elapsed time.
 
+The hooks follow the jev knob: `[jev] enabled = false` in the project's `.aikit/config.toml` or the
+user's `config.toml`, or `GSD_PATH_JEV=0` in the session, turns the jev-backed hooks off. The hook
+resolves the knob itself (project over user) and hands its client only `GSD_PATH_JEV=0`; the client's
+`XDG_CONFIG_HOME` still points at a folder that is never created, so no recorded consent, `laya_url`
+or `JEV_ALLOW_REMOTE` reaches it, and the hooks never fetch upstream notes.
+
 The `compact`-matcher `SessionStart` entry then injects that session's file as
 `additionalContext` and deletes it. Neither entry ever blocks: every path
 exits 0, no output carries a `decision` field, and Claude Code still writes

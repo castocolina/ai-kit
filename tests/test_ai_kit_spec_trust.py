@@ -1,5 +1,5 @@
-"""R5 trust lifecycle + R13 loud-config-error tests for the project-local review-spec.toml
-trust gate (Plan 16.1-08, HARD-03/HARD-05). Every test uses temp HOME/XDG_CONFIG_HOME --
+"""R5 trust lifecycle + R13 loud-config-error tests for the project-local config.toml trust
+gate (Plan 16.1-08, HARD-03/HARD-05; Plan 33-07 D-11). Every test uses temp HOME/XDG_CONFIG_HOME --
 never the real user config."""
 import io
 import json
@@ -24,14 +24,17 @@ def _local_spec(argv_cmd: str) -> bytes:
     # TOML literal strings ('...') need no escaping, so shlex.quote's single-quoted form is
     # valid TOML as-is -- the template is exactly what split_command_template will tokenize.
     return (
+        "[lanes]\n"
         'strategy = "local-only"\n'
-        "[[reviewers]]\n"
+        "\n"
+        "[[lanes.review]]\n"
         'key = "local"\n'
         'model = "m"\n'
         'vendor = "v"\n'
         'cli = "codex"\n'
         f"command = {shlex.quote(argv_cmd)}\n"
-        "[policy]\n"
+        "\n"
+        "[lanes.policy]\n"
         'mode = "single"\n'
         'ladder = ["local"]\n'
     ).encode()
@@ -63,10 +66,19 @@ class TrustEnvTestCase(unittest.TestCase):
     def write_local(self, raw: bytes) -> str:
         local_dir = os.path.join(self.cwd, ".aikit")
         os.makedirs(local_dir, exist_ok=True)
-        path = os.path.join(local_dir, "review-spec.toml")
+        path = os.path.join(local_dir, "config.toml")
         with open(path, "wb") as f:
             f.write(raw)
         return path
+
+    def canonical_of(self, raw: bytes) -> bytes:
+        """The D-11 canonical bytes of a project config.toml holding raw (what trust pins)."""
+        lanes = config_io.cfg_lanes_table(config_io.cfg_parse_toml_bytes(raw, "config.toml"),
+                                          "config.toml")
+        canonical = config_io.cfg_project_trust_bytes(lanes, dict(os.environ))
+        if canonical is None:
+            raise AssertionError("the fixture has no command-bearing lane entry")
+        return canonical
 
 
 class TestTrustLifecycle(TrustEnvTestCase):
@@ -117,11 +129,11 @@ class TestTrustLifecycle(TrustEnvTestCase):
     def test_show_lists_runtime_and_custom_entries(self):
         factory = "codex exec --sandbox read-only --skip-git-repo-check -m {model}"
         custom = "mycli --fast {model}"
-        text = ('strategy = "local-only"\n'
-                '[[reviewers]]\nkey = "codex"\ncli = "codex"\n'
+        text = ('[lanes]\nstrategy = "local-only"\n'
+                '[[lanes.review]]\nkey = "codex"\ncli = "codex"\n'
                 'model = "gpt-5.6-sol"\n'
                 f"command = '{factory}'\n"
-                '[[reviewers]]\nkey = "custom"\ncli = "mycli"\n'
+                '[[lanes.review]]\nkey = "custom"\ncli = "mycli"\n'
                 'model = "custom-model"\n'
                 f"command = '{custom}'\n")
         self.write_local(text.encode())
@@ -136,7 +148,7 @@ class TestTrustLifecycle(TrustEnvTestCase):
 
     def test_show_renders_a_pair_with_its_top_level_knobs(self):
         # B-WR-06: the consent argv carries the same effort flag dispatch passes.
-        self.write_local(b'strategy = "local-only"\n[[reviewers]]\nkey = "c"\n'
+        self.write_local(b'[lanes]\nstrategy = "local-only"\n[[lanes.review]]\nkey = "c"\n'
                          b'runtime = "codex"\nmodel = "gpt"\neffort = "high"\n')
         argv = self.show_lines()[0]["argv"]
         self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
@@ -145,7 +157,7 @@ class TestTrustLifecycle(TrustEnvTestCase):
         # A-CR-01: a placeholder must never hide what runs -- the consent display shows the
         # rendered argv, with only the prompt kept symbolic.
         self.write_local(
-            b'strategy = "local-only"\n[[reviewers]]\nkey = "x"\ncli = "codex"\n'
+            b'[lanes]\nstrategy = "local-only"\n[[lanes.review]]\nkey = "x"\ncli = "codex"\n'
             b'model = "gpt-5"\ntool = "./evil-tool"\n'
             b'flag = "--dangerously-bypass-approvals-and-sandbox"\n'
             b'command = "{tool} exec {flag} -m {model} {prompt}"\n')
@@ -159,10 +171,10 @@ class TestTrustLifecycle(TrustEnvTestCase):
         # command's placeholders, so --show must render the merged entry.
         cfg_dir = os.path.join(self.xdg, "ai-kit")
         os.makedirs(cfg_dir, exist_ok=True)
-        with open(os.path.join(cfg_dir, "review-spec.toml"), "w", encoding="utf-8") as f:
-            f.write('[[reviewers]]\nkey = "g"\nmodel = "m"\nvendor = "v"\ncli = "codex"\n'
+        with open(os.path.join(cfg_dir, "config.toml"), "w", encoding="utf-8") as f:
+            f.write('[[lanes.review]]\nkey = "g"\nmodel = "m"\nvendor = "v"\ncli = "codex"\n'
                     'flag = "--safe"\ncommand = "codex exec {flag} -m {model}"\n')
-        self.write_local(b'[[reviewers]]\nkey = "g"\nflag = "--yolo"\n')
+        self.write_local(b'[lanes]\n[[lanes.review]]\nkey = "g"\nflag = "--yolo"\n')
         line = self.show_lines()[0]
         # a non-factory command stays custom, so the merged local flag is visible
         self.assertEqual(line["key"], "g")
@@ -195,23 +207,25 @@ class TestTrustLifecycle(TrustEnvTestCase):
         with open(os.path.join(self.store, records[0]), encoding="utf-8") as f:
             record = json.load(f)
         self.assertEqual(record["path"], os.path.realpath(path))
-        self.assertEqual(record["sha256"], trust.content_sha256(_local_spec(self.PROBE_CMD)))
+        self.assertEqual(record["sha256"],
+                         trust.content_sha256(self.canonical_of(_local_spec(self.PROBE_CMD))))
         code, calls, _, _ = self.probe_quota()
         self.assertEqual(code, 0)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0], [sys.executable, "-c", "pass"])
 
     def test_edit_after_trust_reblocks(self):
-        path = self.write_local(_local_spec(self.PROBE_CMD))
+        # D-11: editing the command of a trusted command-bearing lane drops the trust.
+        self.write_local(_local_spec(self.PROBE_CMD))
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(cli.main(["trust-local", "--cwd", self.cwd]), 0)
-        with open(path, "ab") as f:
-            f.write(b"# edit\n")
+        self.write_local(_local_spec(f"{self.PROBE_CMD} --edited"))
         _, calls, _, err = self.probe_quota()
         self.assertEqual(calls, [])
         self.assertIn("trust-local", err)
 
-    def test_crlf_only_edit_needs_new_trust(self):
+    def test_crlf_only_edit_keeps_trust(self):
+        # D-11: a CRLF-only edit changes no command-bearing lane, so the trust holds.
         path = self.write_local(_local_spec(self.PROBE_CMD))
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(cli.main(["trust-local", "--cwd", self.cwd]), 0)
@@ -220,7 +234,7 @@ class TestTrustLifecycle(TrustEnvTestCase):
         with open(path, "wb") as f:
             f.write(raw.replace(b"\n", b"\r\n"))
         _, calls, _, _ = self.probe_quota()
-        self.assertEqual(calls, [])
+        self.assertEqual(len(calls), 1)
 
     def test_revoke_removes_trust(self):
         self.write_local(_local_spec(self.PROBE_CMD))
@@ -249,14 +263,13 @@ class TestTrustLifecycle(TrustEnvTestCase):
     def test_non_object_trust_record_reads_untrusted_and_revoke_skips_it(self):
         # A-IN-01: a trust record holding a JSON list/string must not crash the gate.
         path = self.write_local(_local_spec(self.PROBE_CMD))
-        with open(path, "rb") as f:
-            raw = f.read()
+        canonical = self.canonical_of(_local_spec(self.PROBE_CMD))
         real = os.path.realpath(path)
         os.makedirs(self.store, exist_ok=True)
-        name = trust.trust_key(real, trust.content_sha256(raw)) + ".json"
+        name = trust.trust_key(real, trust.content_sha256(canonical)) + ".json"
         with open(os.path.join(self.store, name), "w", encoding="utf-8") as f:
             f.write("[1, 2]")
-        self.assertFalse(trust.is_trusted(self.store, real, raw))
+        self.assertFalse(trust.is_trusted(self.store, real, canonical))
         self.assertEqual(trust.revoke_trust(self.store, real), 0)
         _, calls, _, err = self.probe_quota()
         self.assertEqual(calls, [])
@@ -277,12 +290,14 @@ class TestTrustLifecycle(TrustEnvTestCase):
         self.assertIn("config error", err.getvalue())
 
     def test_render_toml_out_never_trusts_the_file_it_writes(self):
-        # C-WR-05/D-09: the wizard's write path must leave the local file untrusted.
+        # C-WR-05/D-09: the wizard's write path must leave the local file untrusted. render-toml
+        # writes the project's config.toml, and a command-bearing lane it writes stays untrusted
+        # until trust-local records it (C1-13).
         json_path = os.path.join(self.cwd, "cfg.json")
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump({"policy": {"mode": "single", "ladder": ["local"]},
-                       "reviewers": [{"key": "local", "model": "m", "vendor": "v",
-                                      "cli": "codex", "command": self.PROBE_CMD}]}, f)
+                       "lanes": [{"key": "local", "model": "m", "vendor": "v",
+                                  "cli": "codex", "command": self.PROBE_CMD}]}, f)
         local = config_io.cfg_local_path(self.cwd)
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(cli.main(["render-toml", "--json-config", json_path,
@@ -303,9 +318,9 @@ class TestTrustLifecycle(TrustEnvTestCase):
 
         cfg_dir = os.path.join(self.xdg, "ai-kit")
         os.makedirs(cfg_dir, exist_ok=True)
-        with open(os.path.join(cfg_dir, "review-spec.toml"), "w", encoding="utf-8") as f:
-            f.write('[[reviewers]]\nkey = "g"\nmodel = "m"\nvendor = "v"\ncli = "codex"\n'
-                    f'command = "{self.PROBE_CMD}"\n[policy]\nladder = ["g"]\n')
+        with open(os.path.join(cfg_dir, "config.toml"), "w", encoding="utf-8") as f:
+            f.write('[[lanes.review]]\nkey = "g"\nmodel = "m"\nvendor = "v"\ncli = "codex"\n'
+                    f'command = "{self.PROBE_CMD}"\n[lanes.policy]\nladder = ["g"]\n')
         quota_path = os.path.join(self.cwd, "quota.json")
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -326,10 +341,10 @@ class TestTrustLifecycle(TrustEnvTestCase):
         self.assertNotIn('"local"', out.getvalue())
 
     def test_concurrent_trust_records_stay_valid(self):
-        path = self.write_local(_local_spec(self.PROBE_CMD))
+        self.write_local(_local_spec(self.PROBE_CMD))
+        path = os.path.join(self.cwd, ".aikit", "config.toml")
         real = os.path.realpath(path)
-        with open(path, "rb") as f:
-            raw = f.read()
+        raw = self.canonical_of(_local_spec(self.PROBE_CMD))
         errors = []
 
         def writer():
@@ -352,9 +367,8 @@ class TestTrustLifecycle(TrustEnvTestCase):
         self.assertTrue(trust.is_trusted(self.store, real, raw))
 
 
-
 class TestLoudConfigErrors(TrustEnvTestCase):
-    """R13 (Plan 16.1-08 Task 2): a malformed or non-UTF-8 review-spec.toml raises
+    """R13 (Plan 16.1-08 Task 2): a malformed or non-UTF-8 config.toml raises
     ConfigError and stops all three CLIs with exit 2 + the path on stderr; a missing file
     stays a silent default and a zero-byte file is valid TOML."""
 
@@ -367,7 +381,7 @@ class TestLoudConfigErrors(TrustEnvTestCase):
         self.assertEqual(config_io.cfg_load_toml(path), {})
 
     def test_malformed_toml_raises_with_path_and_parser_message(self):
-        path = self.write_local(b"[[reviewers]\nkey=")
+        path = self.write_local(b"[[lanes.review]\nkey=")
         with self.assertRaises(config_io.ConfigError) as ctx:
             config_io.cfg_load_toml(path)
         self.assertIn(path, str(ctx.exception))
@@ -380,14 +394,14 @@ class TestLoudConfigErrors(TrustEnvTestCase):
         self.assertEqual(ctx.exception.path, path)
 
     def test_missing_tomllib_on_existing_file_raises(self):
-        path = self.write_local(b'[policy]\nmode = "single"\n')
+        path = self.write_local(b'[lanes.policy]\nmode = "single"\n')
         with mock.patch.object(config_io, "tomllib", None), \
                 self.assertRaises(config_io.ConfigError) as ctx:
             config_io.cfg_load_toml(path)
         self.assertIn("Python 3.11+", ctx.exception.message)
 
     def test_two_readers_of_one_malformed_file_both_report(self):
-        path = self.write_local(b"[[reviewers]\nkey=")
+        path = self.write_local(b"[[lanes.review]\nkey=")
         errors = []
 
         def reader():
@@ -408,11 +422,11 @@ class TestLoudConfigErrors(TrustEnvTestCase):
     def _write_global(self, raw: bytes) -> None:
         cfg_dir = os.path.join(self.xdg, "ai-kit")
         os.makedirs(cfg_dir, exist_ok=True)
-        with open(os.path.join(cfg_dir, "review-spec.toml"), "wb") as f:
+        with open(os.path.join(cfg_dir, "config.toml"), "wb") as f:
             f.write(raw)
 
     def test_review_spec_main_exits_2_on_malformed_local(self):
-        self.write_local(b"[[reviewers]\n")
+        self.write_local(b"[[lanes.review]\n")
         quota_path = os.path.join(self.cwd, "quota.json")
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -423,7 +437,7 @@ class TestLoudConfigErrors(TrustEnvTestCase):
         self.assertIn(config_io.cfg_local_path(self.cwd), err.getvalue())
 
     def test_review_spec_main_exits_2_on_malformed_global(self):
-        self._write_global(b"[[reviewers]\n")
+        self._write_global(b"[[lanes.review]\n")
         quota_path = os.path.join(self.cwd, "quota.json")
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -431,11 +445,11 @@ class TestLoudConfigErrors(TrustEnvTestCase):
                              "--quota-path", quota_path],
                             which_fn=lambda _name, **_kwargs: None, run_fn=lambda *_a, **_k: None)
         self.assertEqual(code, 2)
-        self.assertIn(os.path.join(self.xdg, "ai-kit", "review-spec.toml"), err.getvalue())
+        self.assertIn(os.path.join(self.xdg, "ai-kit", "config.toml"), err.getvalue())
 
     def test_superpowers_cli_exits_2_on_malformed_local(self):
         from ai_kit_spec_superpowers import cli as superpowers_cli
-        self.write_local(b"[[reviewers]\n")
+        self.write_local(b"[[lanes.review]\n")
         task_path = os.path.join(self.cwd, "task-1-brief.md")
         with open(task_path, "w", encoding="utf-8") as f:
             f.write("### Task 1\n**Files:**\n- Create: `a.py`\n")
@@ -450,7 +464,7 @@ class TestLoudConfigErrors(TrustEnvTestCase):
     def test_malformed_untrusted_local_still_exits_2(self):
         # Parsing happens BEFORE the trust check (D-08 interpretation) -- the malformed
         # file here was never trusted, and the loud error fires regardless.
-        self.write_local(b"[[reviewers]\n")
+        self.write_local(b"[[lanes.review]\n")
         quota_path = os.path.join(self.cwd, "quota.json")
         err = io.StringIO()
         with redirect_stdout(io.StringIO()), redirect_stderr(err):

@@ -58,6 +58,18 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   `skill-judge` rubric defines the bands and the total, so this rule carries no
   absolute score), and no regression against the previous judged result of the
   same skill beyond the judge's run-to-run variation.
+  A judge loop stops after three rounds per skill: its result is recorded as it
+  stands, and an unmet bar goes to the owner. When a round leaves 3 or fewer
+  findings of severity critical, important or high, counted together across the
+  skill's judges, fix them in the skill's own files and continue: that fix needs no
+  further judge round. Record the fix commit beside the round's record (a
+  `fixes.md` in the round folder, committed with the fix), and note that the
+  skill's digest is stale by design until its next loop. With more than 3 such
+  findings, the three-round rule applies. A disputed finding counts as refuted
+  only through a recorded run (the finding id, `path:line`, the command and its
+  observed output), never through another judge round. SKILL.md describes
+  behaviour; provenance and version history live in a trailing section or a
+  reference, and version-specific text appears only as a conditional.
 - Commit one coherent, buildable logical change (a logical commit) with its
   tests and documentation together. Let pre-commit hooks run; never use
   `--no-verify` to skip pre-commit checks or dodge a real failure. The one
@@ -119,7 +131,7 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   intentionally unicode-rich UI), `pylint~=4.0` (`max-args=5`,
   `max-locals=15`, `max-branches=12`, `max-returns=6`, `max-statements=50`),
   `pyright~=1.1` (`basic` mode), `vulture~=2.14` (`min_confidence=80`),
-  `pre-commit~=4.4`, `textual>=8.0,<9.0` (dev/wizard-only).
+  `pre-commit~=4.4`, `textual>=8.0,<9.0` (dev/wizard-only), `libcst>=1.5,<2` (dev-only: cst-refactor's behaviour tests in `unit-uv`).
 - `tools/install.sh` and `tests/test_install.sh` are checked with
   `shellcheck` — fix findings, don't suppress without a documented reason.
 - Don't add a new dev dependency without checking whether an existing
@@ -198,11 +210,15 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   they took 55.4 s (2026-11-04: 24 CPUs, 9 and 5 workers, share 0.40, one-minute
   load 4.48 at start; unit and arch 34.4 s, wizard 21.0 s); after the test-time
   cuts, 30.7 s (2026-11-04: 9 and 7 workers, load 1.90; unit and arch 21.6 s,
-  wizard 9.0 s). The pyright (9.7 s), vulture (1.9 s), check-dogfood (0.5 s) and
+  wizard 9.0 s); after the four slowest hook modules were split by test class and
+  the runner started the slowest modules first, 45.4 s (2026-11-13: 24 CPUs, 9 and
+  9 workers, load 1.37; unit and arch 27.5 s, wizard 17.9 s). The pyright (11.2 s),
+  vulture (2.2 s), check-dogfood (8.1 s: its no-write guard runs the real gsd-tools
+  tests and its judge records check rebuilds the staged-mapper index) and
   deferred-e2e (0.0 s, no push range; no e2e module is over the commit budget)
   times are recorded beside the subtotal, never inside the 60 s figure, with
   `push-worst` (all six pre-push hooks timed alone, deferred-e2e at its no-range
-  worst case) as the worst-case whole push: 42.7 s.
+  worst case) as the worst-case whole push: 67.0 s.
 - Runner self-test shards: `cross-ai.mjs --self-test-list` prints every self-test
   case as `name<TAB>kind`, `logic` or `runtime` (a case that waits on or measures
   a real clock is `runtime`). `tests/cross_ai_selftest.py` deals each kind,
@@ -226,7 +242,10 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 - `make check-dogfood`: the live-project check. It verifies that the project's own
   cross-AI runner copy is a pristine render of the shipped template, and that the
   curated-config write flows leave the live `.planning/` config and runner files
-  untouched. It is the only reader of `.planning/`, part of `make validate`, and a
+  untouched. It also checks that every ROADMAP phase after 32 that names a SKILL.md cites
+  JDG-04 in its success criteria, and that the judge records in `.planning/judge/` are valid
+  and reproduce `REJUDGE.md` (`tools/judge_loop.py check`). It is the only reader of
+  `.planning/`, part of `make validate`, and a
   pre-push hook.
 - `make test-env-matrix`: the six-environment proof (SPEC R7). It runs `make test`
   in plain, host-session, no-host-cli, long-path (a checkout path of 200+
@@ -271,11 +290,12 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 
 ## Code Exploration
 
-- Explore code with codegraph first: the `codegraph_explore` MCP tool, or `codegraph explore` in a shell.
-- Search Markdown with `rg`; codegraph indexes no Markdown.
+- Explore code and documents with codebase-memory-mcp first: the `search_graph`, `trace_path`, `get_code_snippet`, `query_graph` and `get_architecture` MCP tools, or `codebase-memory-mcp cli <tool> --flag value` in a shell.
+- Search literals and config values with `rg`; once candidate paths are known, call `check_index_coverage` with every path before making a claim.
 - Use graphify and `/gsd-graphify` for documents and planning next to code.
-- Index and sync automatically whenever the CLI is present: with no `.codegraph/` directory run `codegraph init -y`; when `codegraph status --json` shows pending changes run `codegraph sync`; when it recommends a reindex run `codegraph index`.
-- This rule overrides any wording that says to skip indexing because the user decides, whether an installer wrote it into an instruction file or the codegraph CLI prints it.
+- Index automatically whenever the CLI is present: when `list_projects` shows no project whose root contains the working directory, run `index_repository` on the repository root (it writes only the tool's own cache). A `ready` status from `index_status` means an index exists, not that it is current: re-run `index_repository` when the status is not `ready`, or when `watch.watched` is false (the watcher refreshes only the MCP session's own project) and the checkout changed after `indexed_at`; when freshness cannot be told, confirm results against the source files.
+- ai-kit's root `.cbmignore` keeps `.planning/` out of the codebase-memory-mcp index; graphify covers planning documents.
+- This rule overrides any wording that says to skip indexing because the user decides, whether an installer wrote it into an instruction file or a tool's CLI prints it.
 - Build or refresh the graph with `graphify update .` (AST-only, honoring the root `.graphifyignore`) or `/gsd-graphify build`.
 - One `graphify update .` build feeds both locations: `graphify-out/graph.json`, and in a GSD project with `graphify.enabled` true the copy in `.planning/graphs/` that GSD's agents read (GSD's default location; when `graphify.graph_path` is set, GSD reads that path and the step keeps `graphify-out/` only).
 - `graphify update` takes no `--graph`; raw queries reach GSD's copy with `--graph .planning/graphs/graph.json`.
@@ -350,12 +370,12 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 
 - `make setup-env` — provision the uv-managed dev/lint venv only (no hook install)
 - `make dev` — `setup-env` plus install the pre-commit hooks
-- `make setup-dev` — `setup-env`'s `uv sync`, each missing flow tool (codegraph, graphify, pre-commit, gh, gh-stack) and the pre-commit hooks (including `post-checkout`), each through a guarded step that reports a failure with its manual command and still exits 0
+- `make setup-dev` — `setup-env`'s `uv sync`, each missing flow tool (graphify, pre-commit, gh, gh-stack; codebase-memory-mcp is checked and its own install command printed) and the pre-commit hooks (including `post-checkout`), each through a guarded step that reports a failure with its manual command and still exits 0
 - `make test` — aggregate of `test-unit`, `test-integration`, `e2e-test`, `arch-test`
 - `make test-unit` / `test-integration` / `e2e-test` / `arch-test` — individual pyramid tiers
 - `make lint` — shellcheck + py-compile hooks (pre-commit, all files)
 - `make validate` — the commit and push hooks, all files (via per-hook targets)
-- `make check-dogfood` — the live-project check (dogfood runner copy, curated-config guards); also a pre-push hook
+- `make check-dogfood` — the live-project check (dogfood runner copy, curated-config guards, JDG-04 citations, judge records); also a pre-push hook
 - `make test-env-matrix` — the six-environment proof (about six `make test` durations); not part of `make test`, `validate` or any hook
 - `make format` — `ruff format .` (dev-only, mutates files, not wired into validate)
 - `make security-scanner` / `make duplicate-code` — informational/non-gating checks, not wired into `validate`

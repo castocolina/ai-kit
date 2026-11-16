@@ -1,0 +1,71 @@
+{
+  "skill_name": "markdown-to-pdf",
+  "evals": [
+    {
+      "id": "casual-report-to-pdf",
+      "prompt": "Turn evals/files/quarterly-report.md into a PDF I can print. It has a chart and a diagram in it.",
+      "expected_output": "The agent runs scripts/markdown_to_pdf.py on the report without editing it, then reports the printed Wrote line with its backend and diagram format.",
+      "files": ["evals/files/quarterly-report.md", "evals/files/img/revenue.svg"],
+      "assertions": [
+        "The agent runs scripts/markdown_to_pdf.py on evals/files/quarterly-report.md with the default flags.",
+        "The agent does not edit the source Markdown file, which stays byte-for-byte the same after the run.",
+        "The agent reports the printed Wrote line verbatim, including its backend and diagrams fields."
+      ]
+    },
+    {
+      "id": "precise-html-deck",
+      "prompt": "Build an HTML slide deck from evals/files/kickoff-deck.md. The marp-slide skill is not available here.",
+      "expected_output": "The agent runs the deck path with --deck and --to html, and says the diagrams sit in an assets folder beside the HTML that must move with it.",
+      "files": ["evals/files/kickoff-deck.md"],
+      "assertions": [
+        "The agent runs scripts/markdown_to_pdf.py with --deck and --to html on evals/files/kickoff-deck.md.",
+        "The agent tells the user the diagrams are written to <output stem>-assets/ beside the HTML and must stay with it.",
+        "The agent does not invent a marp-slide hand-off step, because the skill list shows marp-slide is not available."
+      ]
+    },
+    {
+      "id": "precise-svg-on-latex",
+      "prompt": "I want crisp vector diagrams in the PDF for evals/files/quarterly-report.md, and the backend picked is pandoc-latex. Should I pass --format svg?",
+      "expected_output": "The agent checks whether rsvg-convert is on PATH and passes --format svg only when it is, otherwise keeps the PNG default.",
+      "files": ["evals/files/quarterly-report.md"],
+      "assertions": [
+        "The agent checks whether rsvg-convert is on PATH before it suggests --format svg.",
+        "The agent keeps the PNG default when rsvg-convert is not found, and says so to the user.",
+        "The agent does not pass --format svg with pandoc-latex when rsvg-convert is missing."
+      ]
+    },
+    {
+      "id": "edge-exit-3-no-backend",
+      "prompt": "I ran the PDF script on my report and it printed this and exited 3: 'No backend available - nothing was converted. Recommended: install typst: cargo install --locked typst-cli'. Make it work.",
+      "expected_output": "The agent shows the recommended install command exactly as printed, installs nothing, and says no PDF was written.",
+      "files": [],
+      "assertions": [
+        "The agent shows the install command from the Recommended line exactly as printed, without changing it.",
+        "The agent does not run any install command, package manager or installer, and says the user runs it.",
+        "The agent says that nothing was converted and that no PDF was written."
+      ]
+    },
+    {
+      "id": "edge-exit-4-backend-failed",
+      "prompt": "The PDF script exited with code 4 and printed: typst failed: error: unknown font. What is going on and what do I do?",
+      "expected_output": "The agent explains that the backend ran and failed, shows the error, and suggests fixing what it names or choosing another backend with --backend.",
+      "files": [],
+      "assertions": [
+        "The agent says the backend ran and failed, and does not blame the mermaid source.",
+        "The agent shows the error line typst failed: error: unknown font to the user verbatim.",
+        "The agent suggests fixing what the error names or picking another backend with --backend, and installs nothing."
+      ]
+    },
+    {
+      "id": "edge-browser-missing",
+      "prompt": "The PDF script exited 2 and printed: Could not find Chrome (Puppeteer cache). Did my mermaid diagram break?",
+      "expected_output": "The agent says the mermaid source is fine, that mmdc's headless browser is missing, and points at PUPPETEER_EXECUTABLE_PATH.",
+      "files": [],
+      "assertions": [
+        "The agent says the mermaid source is not at fault, because the browser that mmdc needs is missing.",
+        "The agent names PUPPETEER_EXECUTABLE_PATH as the setting that points mmdc at an installed Chrome or Chromium.",
+        "The agent does not tell the user to edit the mermaid block at a line number."
+      ]
+    }
+  ]
+}

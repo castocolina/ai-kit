@@ -39,9 +39,8 @@ Never read or write the operator's real config to "just see real data"
 during development; tests and verification use scratch `XDG_DATA_HOME` /
 `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `CURSOR_CONFIG_DIR` trees.
 
-Scheduling (cron / systemd timer) is out of this milestone. Invocation is
-manual only (D-07). The gap is tracked as Backlog 999.2
-("Cron/scheduling automation for usage-metrics daily ingestion").
+Scheduling (cron / systemd timer) is not supported: invocation is
+manual only.
 
 ## Resolve the entrypoint
 
@@ -49,18 +48,23 @@ Resolve once per invocation, in one Bash call, and record the printed path as
 a **literal absolute path**.
 
 ```bash
+TOOLS_PY=""
 for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-usage-metrics}" \
-         "$HOME/.claude/skills/ai-kit-usage-metrics" \
-         "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-usage-metrics" \
+         "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/ai-kit-usage-metrics" \
          "$HOME/.agents/skills/ai-kit-usage-metrics" \
-         "$(dirname "<absolute path to THIS SKILL.md>")"; do
-  [ -f "$d/ai-kit-usage-metrics.py" ] && { printf '%s\n' "$d/ai-kit-usage-metrics.py"; break; }
+         "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-usage-metrics" \
+         "${CURSOR_CONFIG_DIR:-$HOME/.cursor}/skills/ai-kit-usage-metrics" \
+         "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/skills/ai-kit-usage-metrics"; do
+  [ -f "$d/ai-kit-usage-metrics.py" ] && { TOOLS_PY="$d/ai-kit-usage-metrics.py"; break; }
 done
+if [ -z "$TOOLS_PY" ]; then
+  printf 'ai-kit-usage-metrics is not installed\n'
+  exit 1
+fi
+printf '%s\n' "$TOOLS_PY"
 ```
 
-If no candidate exists, stop and report that the skill is not installed.
-Substitute the directory containing this SKILL.md for the fifth candidate
-(used when the skill is invoked from a checkout).
+It prints one absolute path; record it as `$TOOLS_PY`. On `ai-kit-usage-metrics is not installed`, stop and tell the user; never re-implement the pipeline.
 
 ## Subcommands
 
@@ -80,6 +84,18 @@ The pipeline never sends data off-machine.
 Partial runs use the same entrypoint with `capture`, `refine`, or
 `dashboard`. Regenerating the dashboard never rereads `raw/*.jsonl`; it
 queries `refined.db` only.
+
+## After run
+
+- On a non-zero exit: show stderr and stop; do not open or describe the dashboard.
+- Exit 0 but stderr holds `capture[<name>] failed:` or `capture[<name>] persist failed:` lines: name each failed source, say the dashboard is not current for it, and report the rest as partial.
+- `refined.db` missing (a `dashboard` run on its own shows an empty page): run `refine` before `dashboard`.
+- No session logs anywhere: report zero rows; that is not a failure.
+- Success: report the dashboard path (`${XDG_DATA_HOME:-$HOME/.local/share}/ai-kit/usage-metrics/dashboard.html`), the rows per runtime from the command below, and the caveats: Cursor rows carry a low `source_confidence`, and `command_shape` has the limitation its section names.
+
+```bash
+python3 -c "import sqlite3, sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT runtime, COUNT(*) FROM refined_commands GROUP BY runtime ORDER BY runtime').fetchall())" "${XDG_DATA_HOME:-$HOME/.local/share}/ai-kit/usage-metrics/refined/refined.db"
+```
 
 ## Refined schema
 
@@ -173,7 +189,7 @@ recognized as shell-executing inside a `custom_tool_call` — grounded by
 a full enumeration of the real captured store, the only observed
 `tools.*` name whose JSON argument carries a `cmd` key. Every other
 observed name sharing the same wrapper (`apply_patch`, `web__run`,
-`update_plan`, `write_stdin`, `mcp__codegraph__codegraph_explore`,
+`update_plan`, `write_stdin`, `mcp__codegraph__codegraph_explore` (codegraph's MCP tool; codebase-memory-mcp replaced codegraph),
 `append`, `create_goal`, `update_goal`, `values`) is deliberately NOT
 treated as a command. The working directory is taken from the tool
 call's own `workdir` argument when present, seeded once per record
@@ -200,11 +216,7 @@ mine". Invoking `classify` for real, against a user's own accumulated
 history, is a separate, later, user-initiated action, not something this
 phase's own automated delivery performs on the user's behalf.
 
-`DEFAULT_MIN_OCCURRENCES` (currently `2` in `classify_loop.py`) is a
-documented placeholder, not a researched constant. The PRD's own framing
-is "exact threshold TBD once real data volume is known". A future tuning
-pass should change that constant once real volume is known; do not treat
-`2` as a measured optimum.
+`DEFAULT_MIN_OCCURRENCES` is 2 in `classify_loop.py`, a placeholder not tuned on real data. Change the constant only after real volume shows a better value; do not treat `2` as a measured optimum.
 
 `classify` updates SQLite only — it does NOT regenerate `dashboard.html`.
 Seeing updated `inferred_family`/`inferred_confidence` values in the
@@ -309,5 +321,4 @@ Like `family`, it is empty for any row whose `command_shape` is not
 - Never read the operator's real `~/.claude` / `~/.codex` / `~/.cursor`
   trees to "just see real data" during development — use scratch env
   overrides.
-- Never invent a cron/timer for this pipeline this milestone — that is
-  Backlog 999.2.
+- Never invent a cron/timer for this pipeline: scheduling is not supported.

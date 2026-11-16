@@ -1,0 +1,203 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": "native, xhigh (frontmatter, documented; not observed)",
+   "status_line": null,
+   "verdict_line": "{\"skill\":\"ai-kit-spec-review-checklist\",\"judge\":\"native:opus-xhigh\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":14,\"D2\":12,\"D3\":13,\"D4\":12,\"D5\":13,\"D6\":14,\"D7\":4,\"D8\":11},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":93,\"max_total\":125,\"percent\":74.4,\"grade\":\"C\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":283,\"evidence\":\"The Common Mistakes table (lines 283-295) repeats rules the body already states: audit only (line 12), the folder-name trap (151-152), declared paths win (166-173), [NEEDS CLARIFICATION] -> HIGH (99, 148), read the content and not just check that the file exists (178-181), constitution/state docs are context (66-67), clean-context reviewer only (16-18)\",\"fix\":\"Keep only the rows that add a correction the body does not state, such as plan-level strictness on intent docs. Delete the other rows, or delete the body copies and keep the table as the single place each rule is stated. This saves about 10 lines of duplicated context.\"},{\"id\":\"D1-2\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":93,\"evidence\":\"Generic review items the model already applies take checklist lines: 'Not testable -- fast, user-friendly, robust with no measurable criterion' (93), 'missing error/failure paths' (129), 'undefined success criteria, missing rollback, test-coverage gaps' (134). The budget incident at lines 197-200 is also repeated in Evidence at line 299\",\"fix\":\"Cut each generic item to its severity assignment in one clause (for example 'untestable adjective -> HIGH') and spend the saved lines on framework-specific checks. State the budget incident once: keep line 299 and replace the parenthetical at lines 197-200 with 'see Evidence'.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":69,\"evidence\":\"'## Phase 2 -- Apply the checklist' is a 2-line stub. The checklists, Framework conventions, Codebase grounding, the linter rule, the budget rule and Tool preference follow as unordered sibling H2 sections, so the review order is never given as a sequence: when to read SHARED_TOOLING_PATH, when to ground, when to print findings inline\",\"fix\":\"Turn Phase 2 into a numbered sequence: 1. Read SHARED_TOOLING_PATH if given. 2. Apply each archetype checklist. 3. Apply the profile conventions. 4. Ground design and requirements claims against the caller's root, reading file content. 5. Print each finding inline in its final one-line form. Then nest the checklists and rule sections as H3 under Phase 2.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":291,\"evidence\":\"Some anti-pattern rows give no reason: 'Ignoring the framework's requirement syntax | A non-EARS Kiro requirement / SHALL-less OpenSpec requirement is a real finding.' and line 295 'Reviewing in the same context that wrote the doc | Stop. Clean-context reviewer only'\",\"fix\":\"Add the non-obvious reason to each row. For the syntax row, state what breaks downstream, such as the framework's own validator or task generation silently dropping the clause. For the same-context row: 'the author's context fills gaps the document leaves out, so omissions and undefined terms go unseen.'\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":3,\"evidence\":\"The description has WHAT, WHEN and keywords. It has no boundary against the sibling fixer (ai-kit-spec-review-fixer), the /ai-kit-spec-review loop or code review, no trigger for users who never say 'spec', and it spends about 150 characters on internals: 'Accepts a pre-resolved FRAMEWORK_PROFILE_PATH + ARCHETYPE from the orchestrator; falls back to its own framework detection...'\",\"fix\":\"Review a spec-driven-development document (intent, requirements, design or plan) for the semantic defects linters miss - contradictions, untestable requirements, wrong task order, spec-plan gaps, false claims about existing code, and breaks of the source framework's own rules (EARS, RFC-2119 SHALL, Given/When/Then, OpenSpec ADDED/MODIFIED/REMOVED deltas, Spec Kit [NEEDS CLARIFICATION] and [P] markers, constitutional gates). Use when a design doc, PRD, RFC, spec, requirements.md, tasks.md or PLAN.md from superpowers, OpenSpec, Spec Kit, Kiro, BMAD, GSD or docs/rfcs needs review before the next step, even if the user only asks 'is this plan ready?' or 'sanity-check my spec'. Audit only, returns a CRITICAL/HIGH/MEDIUM findings report and never edits. Not for fixing the document (ai-kit-spec-review-fixer), running the whole review-fix loop (/ai-kit-spec-review), or reviewing code diffs and PRs.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":217,\"evidence\":\"SKILL.md has 299 dense lines, an estimated 6,000 tokens against the spec's ~5,000. It keeps run-conditional material inline: 'Tool preference during review' (217-241) applies only when the dispatch prompt carries SHARED_TOOLING_PATH or TOOL_AVAILABILITY\",\"fix\":\"Move the Tool preference section to references/tool-preference.md and gate it in Phase 2: 'Read references/tool-preference.md only when your dispatch prompt carries SHARED_TOOLING_PATH or TOOL_AVAILABILITY; otherwise skip it and never raise the legacy-tool finding.' Keep the two budget rules inline, because a budget-starved run should not pay for an extra read.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":191,\"evidence\":\"''Required for functionality' or no comment -> HIGH' rates every bare lint suppression HIGH, while line 135 says 'LOW / Tooling-Catchable: mechanical lint only'. A bare '# noqa: E501' on a long URL line gets the same severity as an untestable requirement\",\"fix\":\"Rate an unjustified suppression HIGH only when it silences a security rule (nosec/bandit) or a type-safety rule (type: ignore) on code the plan introduces. A style-only suppression without a comment is LOW / Tooling-Catchable.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/evals/test-scenarios.md\",\"line\":3,\"evidence\":\"There is no evals/evals.json. The output evidence is a narrative TDD record ('Results captured below in summary form') with three fixtures. It uses 'Variant A/B' output names the current SKILL.md no longer has, and its grounding case depends on a commit-message skill outside the repo (sample-review-report.md cites /home/user-zero/.claude/skills/commit-message/SKILL.md). No case covers framework conventions (EARS, OpenSpec deltas, Spec Kit markers), fallback detection, an intent doc, the not-on-disk Failure, or the legacy-tool rule\",\"fix\":\"Add evals/evals.json with 4-6 cases that reuse evals/fixtures/ plus new inputs: a Kiro requirements.md with a non-EARS clause, an OpenSpec delta whose MODIFIED entry targets a missing requirement, a Spec Kit tasks.md with a [P] task that shares state, and an inline-content input (expect '### Status: Failure -- input not on disk'). Give each verifiable assertions, such as 'Document Type line reads kiro · requirements' and 'a HIGH finding names the clause line'. Put a commit-message stub in evals/files/ so the grounding case runs inside the repo.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":null,\"evidence\":\"There is no evals/trigger-queries.json, so the description's triggering and its near-miss boundaries (the fixer, the orchestrator loop, code review) are untested\",\"fix\":\"Add evals/trigger-queries.json with about 20 queries. Include 8-10 that should trigger, for example 'can you sanity-check docs/superpowers/specs/2026-05-01-auth-design.md before I write the plan' and 'look over .kiro/specs/login/requirements.md, is it ready?'. Include 8-10 near-miss negatives, for example 'apply the findings in review.md to my plan', 'run the full spec review loop on this doc', 'review this PR diff', 'write a design doc for the cache layer'.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":42,\"evidence\":\"The fallback says 'detect the framework from path markers and read its seed profile at references/frameworks/<id>.md', while lines 48-50 say 'do not load the other framework profiles'. SKILL.md never lists the markers, which live only in each profile's detection_signals, so in the fallback branch the agent must guess or open every profile\",\"fix\":\"Add a marker table to the fallback step: .kiro/specs/ -> kiro.md; openspec/changes/ or openspec/specs/ -> openspec.md; .specify/ or specs/NNN-*/spec.md -> spec-kit.md; .planning/ -> gsd.md; docs/superpowers/ -> superpowers.md; .bmad-core/, bmad-modules.yaml or docs/prd.md -> bmad.md; no match -> generic, with no profile.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":46,\"evidence\":\"'If nothing resolves, ask the user.' contradicts line 154: 'If no profile is available, review with the generic archetype checklists and say so.' The description advertises 'generic (docs/rfcs, docs/designs)', but no generic profile exists, and a clean-context subagent (lines 16-18) usually has no user to ask\",\"fix\":\"Replace line 46 with: 'If no framework matches, record the framework as generic, classify the archetype by content shape, and review with the archetype checklists. Ask the user only when the content fits no archetype, or fits two archetypes with conflicting strictness (design vs plan).'\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":266,\"evidence\":\"The Plan checklist defines 'LOW / Tooling-Catchable' (line 135), but the Issues Found template has only CRITICAL/HIGH/MEDIUM headings. It also drops the '### Files Read' block that the Approved template requires (line 256)\",\"fix\":\"Add '### LOW (optional)' and '### Files Read' to the Issues Found template, or state explicitly that LOW findings are left out of the report.\"}]}"
+  }
+ ],
+ "digest": "badfd951f94006e616816b372e831cd4825866a6be60368541f37ec354bc9e62",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "native:opus-xhigh",
+ "loop": "32",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_framework_profiles.py"
+ ],
+ "prompt_sha256": "7a11895077df8f81640bb0ba6c5c4a970e798bccbe942aff08cc15981d780cab",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-spec-review-checklist",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": {
+  "reason": "failed: AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=43s out=204525 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+  "replaces": "opencode:router-env/my-referee-two"
+ },
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "The Common Mistakes table (lines 283-295) repeats rules the body already states: audit only (line 12), the folder-name trap (151-152), declared paths win (166-173), [NEEDS CLARIFICATION] -> HIGH (99, 148), read the content and not just check that the file exists (178-181), constitution/state docs are context (66-67), clean-context reviewer only (16-18)",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Keep only the rows that add a correction the body does not state, such as plan-level strictness on intent docs. Delete the other rows, or delete the body copies and keep the table as the single place each rule is stated. This saves about 10 lines of duplicated context.",
+    "id": "D1-1",
+    "line": 283,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "Generic review items the model already applies take checklist lines: 'Not testable -- fast, user-friendly, robust with no measurable criterion' (93), 'missing error/failure paths' (129), 'undefined success criteria, missing rollback, test-coverage gaps' (134). The budget incident at lines 197-200 is also repeated in Evidence at line 299",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Cut each generic item to its severity assignment in one clause (for example 'untestable adjective -> HIGH') and spend the saved lines on framework-specific checks. State the budget incident once: keep line 299 and replace the parenthetical at lines 197-200 with 'see Evidence'.",
+    "id": "D1-2",
+    "line": 93,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "'## Phase 2 -- Apply the checklist' is a 2-line stub. The checklists, Framework conventions, Codebase grounding, the linter rule, the budget rule and Tool preference follow as unordered sibling H2 sections, so the review order is never given as a sequence: when to read SHARED_TOOLING_PATH, when to ground, when to print findings inline",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Turn Phase 2 into a numbered sequence: 1. Read SHARED_TOOLING_PATH if given. 2. Apply each archetype checklist. 3. Apply the profile conventions. 4. Ground design and requirements claims against the caller's root, reading file content. 5. Print each finding inline in its final one-line form. Then nest the checklists and rule sections as H3 under Phase 2.",
+    "id": "D2-1",
+    "line": 69,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "Some anti-pattern rows give no reason: 'Ignoring the framework's requirement syntax | A non-EARS Kiro requirement / SHALL-less OpenSpec requirement is a real finding.' and line 295 'Reviewing in the same context that wrote the doc | Stop. Clean-context reviewer only'",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Add the non-obvious reason to each row. For the syntax row, state what breaks downstream, such as the framework's own validator or task generation silently dropping the clause. For the same-context row: 'the author's context fills gaps the document leaves out, so omissions and undefined terms go unseen.'",
+    "id": "D3-1",
+    "line": 291,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description has WHAT, WHEN and keywords. It has no boundary against the sibling fixer (ai-kit-spec-review-fixer), the /ai-kit-spec-review loop or code review, no trigger for users who never say 'spec', and it spends about 150 characters on internals: 'Accepts a pre-resolved FRAMEWORK_PROFILE_PATH + ARCHETYPE from the orchestrator; falls back to its own framework detection...'",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Review a spec-driven-development document (intent, requirements, design or plan) for the semantic defects linters miss - contradictions, untestable requirements, wrong task order, spec-plan gaps, false claims about existing code, and breaks of the source framework's own rules (EARS, RFC-2119 SHALL, Given/When/Then, OpenSpec ADDED/MODIFIED/REMOVED deltas, Spec Kit [NEEDS CLARIFICATION] and [P] markers, constitutional gates). Use when a design doc, PRD, RFC, spec, requirements.md, tasks.md or PLAN.md from superpowers, OpenSpec, Spec Kit, Kiro, BMAD, GSD or docs/rfcs needs review before the next step, even if the user only asks 'is this plan ready?' or 'sanity-check my spec'. Audit only, returns a CRITICAL/HIGH/MEDIUM findings report and never edits. Not for fixing the document (ai-kit-spec-review-fixer), running the whole review-fix loop (/ai-kit-spec-review), or reviewing code diffs and PRs.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "SKILL.md has 299 dense lines, an estimated 6,000 tokens against the spec's ~5,000. It keeps run-conditional material inline: 'Tool preference during review' (217-241) applies only when the dispatch prompt carries SHARED_TOOLING_PATH or TOOL_AVAILABILITY",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Move the Tool preference section to references/tool-preference.md and gate it in Phase 2: 'Read references/tool-preference.md only when your dispatch prompt carries SHARED_TOOLING_PATH or TOOL_AVAILABILITY; otherwise skip it and never raise the legacy-tool finding.' Keep the two budget rules inline, because a budget-starved run should not pay for an extra read.",
+    "id": "D5-1",
+    "line": 217,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "''Required for functionality' or no comment -> HIGH' rates every bare lint suppression HIGH, while line 135 says 'LOW / Tooling-Catchable: mechanical lint only'. A bare '# noqa: E501' on a long URL line gets the same severity as an untestable requirement",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Rate an unjustified suppression HIGH only when it silences a security rule (nosec/bandit) or a type-safety rule (type: ignore) on code the plan introduces. A style-only suppression without a comment is LOW / Tooling-Catchable.",
+    "id": "D6-1",
+    "line": 191,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "There is no evals/evals.json. The output evidence is a narrative TDD record ('Results captured below in summary form') with three fixtures. It uses 'Variant A/B' output names the current SKILL.md no longer has, and its grounding case depends on a commit-message skill outside the repo (sample-review-report.md cites /home/user-zero/.claude/skills/commit-message/SKILL.md). No case covers framework conventions (EARS, OpenSpec deltas, Spec Kit markers), fallback detection, an intent doc, the not-on-disk Failure, or the legacy-tool rule",
+    "file": "skills/ai-kit-spec-review-checklist/evals/test-scenarios.md",
+    "fix": "Add evals/evals.json with 4-6 cases that reuse evals/fixtures/ plus new inputs: a Kiro requirements.md with a non-EARS clause, an OpenSpec delta whose MODIFIED entry targets a missing requirement, a Spec Kit tasks.md with a [P] task that shares state, and an inline-content input (expect '### Status: Failure -- input not on disk'). Give each verifiable assertions, such as 'Document Type line reads kiro · requirements' and 'a HIGH finding names the clause line'. Put a commit-message stub in evals/files/ so the grounding case runs inside the repo.",
+    "id": "D7-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "There is no evals/trigger-queries.json, so the description's triggering and its near-miss boundaries (the fixer, the orchestrator loop, code review) are untested",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Add evals/trigger-queries.json with about 20 queries. Include 8-10 that should trigger, for example 'can you sanity-check docs/superpowers/specs/2026-05-01-auth-design.md before I write the plan' and 'look over .kiro/specs/login/requirements.md, is it ready?'. Include 8-10 near-miss negatives, for example 'apply the findings in review.md to my plan', 'run the full spec review loop on this doc', 'review this PR diff', 'write a design doc for the cache layer'.",
+    "id": "D7-2",
+    "line": null,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The fallback says 'detect the framework from path markers and read its seed profile at references/frameworks/<id>.md', while lines 48-50 say 'do not load the other framework profiles'. SKILL.md never lists the markers, which live only in each profile's detection_signals, so in the fallback branch the agent must guess or open every profile",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Add a marker table to the fallback step: .kiro/specs/ -> kiro.md; openspec/changes/ or openspec/specs/ -> openspec.md; .specify/ or specs/NNN-*/spec.md -> spec-kit.md; .planning/ -> gsd.md; docs/superpowers/ -> superpowers.md; .bmad-core/, bmad-modules.yaml or docs/prd.md -> bmad.md; no match -> generic, with no profile.",
+    "id": "D8-1",
+    "line": 42,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'If nothing resolves, ask the user.' contradicts line 154: 'If no profile is available, review with the generic archetype checklists and say so.' The description advertises 'generic (docs/rfcs, docs/designs)', but no generic profile exists, and a clean-context subagent (lines 16-18) usually has no user to ask",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Replace line 46 with: 'If no framework matches, record the framework as generic, classify the archetype by content shape, and review with the archetype checklists. Ask the user only when the content fits no archetype, or fits two archetypes with conflicting strictness (design vs plan).'",
+    "id": "D8-2",
+    "line": 46,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The Plan checklist defines 'LOW / Tooling-Catchable' (line 135), but the Issues Found template has only CRITICAL/HIGH/MEDIUM headings. It also drops the '### Files Read' block that the Approved template requires (line 256)",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Add '### LOW (optional)' and '### Files Read' to the Issues Found template, or state explicitly that LOW findings are left out of the report.",
+    "id": "D8-3",
+    "line": 266,
+    "severity": "low"
+   }
+  ],
+  "grade": "C",
+  "judge": "native:opus-xhigh",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 74.4,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 14,
+   "D2": 12,
+   "D3": 13,
+   "D4": 12,
+   "D5": 13,
+   "D6": 14,
+   "D7": 4,
+   "D8": 11
+  },
+  "skill": "ai-kit-spec-review-checklist",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 93
+ }
+}

@@ -12,7 +12,10 @@ then one batch per consented remote row, and returns a per-item rung trail so th
 map rungs to its own columns. The persisted remote-consent record lives here too (D-06):
 `consent grant|revoke|show <backend>` owns `${XDG_CONFIG_HOME:-~/.config}/ai-kit/jev-consent.json`.
 
-Commands: `jev_review.py [--probe | --skip-local]` screens stdin; `consent grant|revoke|show
+Commands: `jev_review.py [--probe | --check-updates | --skip-local]` screens stdin (`--probe`
+also learns the Laya version and the TypeSafe docs; `--check-updates` re-fetches both now);
+`config set <key> <value>` saves one `[jev]` setting in the user config.toml (the first-run
+answer); `consent grant|revoke|show
 <backend>` manages the record; `ladder [--second-opinion]` and `detect` answer through the
 ladder caller in `jev_ladder.py`. `consent` takes `--client PATH` only to delegate through that
 caller too; `ladder` and `detect` take `--client PATH` as well.
@@ -29,6 +32,7 @@ import contextlib
 import datetime
 import hashlib
 import http.client
+import importlib.util
 import ipaddress
 import json
 import logging
@@ -37,7 +41,6 @@ import os
 import re
 import socket
 import sys
-import tempfile
 import threading
 import time
 import urllib.error
@@ -53,23 +56,64 @@ CLIENT_PROTOCOL = 2
 # host as well as in the JSON, and it is the only thing this client ever logs.
 _LOG = logging.getLogger("jev_review")
 
+
+def _load_sibling(filename, module_name):
+    """A sibling script loaded by path: this file is itself loaded by path and runs from copied
+    skill folders, where a plain import would not find its sibling."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), filename)
+    spec = None
+    if os.path.isfile(path):
+        spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"jev-fast-decision: cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_CONFIG = _load_sibling("jev_config.py", "jev_config_sibling")
+_LEARN = _load_sibling("jev_learn.py", "jev_learn_sibling")
+
+
+def _cwd():
+    """The folder whose .aikit/config.toml is the [jev] project layer (one seam for tests)."""
+    return os.getcwd()
+
+
+def _knob():
+    """Whether jev runs this call: GSD_PATH_JEV, then [jev] enabled, then on (D-01)."""
+    return _CONFIG.knob(_cwd(), os.environ)
+
+
+_ENABLED_NOTICE = ("jev is on by default; ask the user once, then save the answer with: "
+                   "jev_review.py config set enabled true|false")
+
+
+def _settings(knob):
+    """The knob's state as the probe reports it: the switch, where it came from, any problem,
+    and the one-time notice while the user has not answered."""
+    settings = {"enabled": knob["on"], "enabled_source": knob["source"]}
+    if knob["problem"]:
+        settings["problem"] = knob["problem"]
+    if knob["needs_answer"]:
+        settings["notice"] = _ENABLED_NOTICE
+    return settings
+
+
 LAYA_DEFAULT_URL = "http://127.0.0.1:8010"
 SYSTEMONE_PATH = "/v1/systemone"
-ZEN_KEY_FILE = "keys.json"  # pi's key file under PI_CODING_AGENT_DIR, read-only here
 USER_AGENT = "jev-fast-decision/2.0"
 _VALIDATION_MODEL = "x"  # request_body needs a model string to validate with; nothing is sent
 # A real answer is a few KiB; anything bigger is refused, never parsed (T-21.1-11).
 _MAX_RESPONSE_BYTES = 1 << 20
 _PROBE_TIMEOUT = 0.7  # SPEC R9: --probe with nothing reachable must stay under 3 s
+_FETCH_TIMEOUT = 5.0  # D-06: one public fetch (PyPI, GitHub raw, docs) gets 5 s in total
 _RETRY_AFTER_CAP = 2.0
 _LAYA_CALLER_CODES = (400, 413, 422)  # a caller bug fails remotely too, so it never escalates
 _UNAUTHORIZED_CODES = (401, 403)
 _TYPESAFE_CALLER_CODES = (400, 404, 413, 422)  # a 402 here is billing, so it is not a caller bug
-_QUOTA_CODES = (402, 429)  # Zen's budget signals: ask the row's next model id, not the user
-_OPENCODE_CALLER_CODES = (400,)  # the 2026-10-11 note: a 400 from Zen is a bad model id
 _WORLD_READABLE = 0o077  # the state-file key is unusable when group or other can read it
 _FORCED_FLAG = "forced_fallback"  # internal: popped in _finalize, never in the output
-_KILL_SWITCH = "GSD_PATH_JEV"
 _NOT_SENT = "not_sent"  # a _DeadlineHit raised before any socket: its body never left
 _READ_CHUNK = 65536
 
@@ -565,24 +609,157 @@ def _systemone_url(base):
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
-def _laya_url():
-    """(endpoint, None) or (None, reason): loopback only.
+def _url_host(raw):
+    """The hostname of a URL, or None when it does not parse."""
+    try:
+        return urllib.parse.urlsplit(raw).hostname
+    except ValueError:
+        return None
 
-    A non-loopback `JEV_API_URL` is skipped, never refused — it is the live skill's Zen
-    endpoint, and a shell still exporting it must keep the Laya rung, as the pre-move
-    spec-discuss ladder's `laya_url` did. A non-loopback `JEV_LAYA_URL`/`AI_KIT_LAYA_URL` is
-    refused (D-08).
+
+def _laya_url_source():
+    """(raw, source) of the Laya address (D-01), first match wins: the session environment
+    (`JEV_LAYA_URL`, then `AI_KIT_LAYA_URL`), the project `[jev] laya_url`, the user's, then the
+    legacy loopback `JEV_API_URL`, then `LAYA_DEFAULT_URL`. `raw` is None when the config
+    cannot be read or holds a value that is not a string; "" is the declined first-run answer.
     """
-    for name in ("JEV_LAYA_URL", "AI_KIT_LAYA_URL"):
-        raw = os.environ.get(name, "").strip()
-        if raw:
-            if not _is_loopback(urllib.parse.urlsplit(raw).hostname):
-                return None, "non_loopback_url"  # D-08 / T-21.1-09
-            return _systemone_url(raw), None
+    raw, source = _CONFIG.laya_url_setting(_cwd(), os.environ)
+    if source != "default":
+        return raw, source
     shared = os.environ.get("JEV_API_URL", "").strip()
-    if shared and _is_loopback(urllib.parse.urlsplit(shared).hostname):
-        return _systemone_url(shared), None
-    return _systemone_url(LAYA_DEFAULT_URL), None
+    if shared and _is_loopback(_url_host(shared)):
+        return shared, "env:JEV_API_URL"
+    return LAYA_DEFAULT_URL, "default"
+
+
+def _laya_url():
+    """(endpoint, None) or (None, reason) for the Laya row (D-01, SPEC R1).
+
+    `laya_declined` is the saved first-run answer. A malformed address is `invalid_url:<key>`,
+    named by the key that set it: `laya_url` in a config file, `jev_laya_url` in the environment.
+    A config file that cannot be read is `config_error`. An address off loopback is not refused
+    by its address: it needs the host-bound consent (`_needs_consent`). A key only travels over
+    https or loopback http, so a keyed address off loopback over plain http is `insecure_url`.
+    """
+    raw, source = _laya_url_source()
+    if raw is None:
+        return None, "config_error" if source == "config_error" else "invalid_url:laya_url"
+    if raw == "":
+        return None, "laya_declined"
+    if not _CONFIG.valid_url(raw):
+        key = "laya_url" if source == "config" else source.removeprefix("env:").lower()
+        return None, f"invalid_url:{key}"
+    if not _is_loopback(_url_host(raw)) and _laya_key()[0]:
+        refused = _remote_url(raw)[1]  # T-34-40: the bearer never crosses plain http
+        if refused:
+            return None, refused
+    return _systemone_url(raw), None
+
+
+def _laya_configured_version():
+    """The `laya_version` the project or user [jev] table names, or None (D-04, second source)."""
+    try:
+        value = _CONFIG.jev_table(_cwd(), os.environ).get("laya_version")
+    except _CONFIG.ConfigError:
+        return None
+    text = value.strip() if isinstance(value, str) else ""
+    return text if text and _CONFIG.valid_version(text) else None
+
+
+def _get_json(url, timeout, remote):
+    """One JSON object from a local endpoint under its own deadline, or None (review C1-13).
+
+    Only the User-Agent goes out. The deadline is armed in `_exchange` and checked in `_read_body`,
+    so a server that trickles bytes ends at that instant instead of at the size cap.
+    """
+    deadline = _Deadline(timeout)
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with (_exchange(deadline, timeout, remote) as opener,
+              opener.open(request, timeout=timeout) as stream):
+            data, over_cap = _read_body(stream, _MAX_RESPONSE_BYTES, deadline)
+    except urllib.error.HTTPError as answered:
+        answered.close()
+        return None
+    except (_DeadlineHit, OSError, ValueError, http.client.HTTPException, RecursionError):
+        return None
+    if deadline.fired or over_cap:
+        return None
+    try:
+        value = json.loads(data)
+    except (ValueError, RecursionError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _public_get(url):
+    """The bytes of one public keyless GET (D-06, D-09). Only `--probe` and `--check-updates`
+    call it, never the answer path. Only the User-Agent goes out (T-34-19); https, or loopback
+    http for the tests, is the only scheme that passes. Five seconds in total, 1 MiB at most,
+    and no redirect. Raises OSError or ValueError when the fetch fails.
+    """
+    checked, reason = _remote_url(url)
+    if checked is None:
+        raise ValueError(reason)
+    deadline = _Deadline(_FETCH_TIMEOUT)
+    request = urllib.request.Request(checked, headers={"User-Agent": USER_AGENT})
+    try:
+        with (_exchange(deadline, _FETCH_TIMEOUT, True) as opener,
+              opener.open(request, timeout=_FETCH_TIMEOUT) as stream):
+            data, over_cap = _read_body(stream, _MAX_RESPONSE_BYTES, deadline)
+    except _DeadlineHit:
+        raise OSError("deadline") from None
+    except urllib.error.HTTPError as answered:
+        answered.close()
+        if answered.code == 404:  # an answer ("no such page"), not an outage: jev_learn settles it
+            raise FileNotFoundError("http_404") from None
+        raise OSError(f"http_{answered.code}") from None
+    except http.client.HTTPException as broken:
+        raise OSError(type(broken).__name__) from broken
+    if deadline.fired:
+        raise OSError("deadline")
+    if over_cap:
+        raise ValueError("response over the size cap")
+    return data
+
+
+def _laya_learn(row, entry, force=False, fetch_allowed=True):
+    """The Laya probe fields: where its address came from (`url_source`), the first-run question
+    (`needs_answer`) when nothing names a Laya and nothing answers at the default (D-03), and
+    the version, its source, the fingerprint and the record word (D-04..D-07).
+
+    An address the user configured never asks, even one equal to the default. A Laya that does not
+    answer reports no version and learns nothing, so the ladder falls through as before (SPEC R2).
+    """
+    _raw, source = _laya_url_source()
+    fields = {"url_source": source}
+    if not entry["usable"]:
+        if source == "default":
+            fields["needs_answer"] = ["laya_url"]
+        fields.update(version=None, version_source="unreachable", fingerprint=None,
+                      record="unknown")
+        return fields
+    if not fetch_allowed:  # a probe under a run deadline reads nothing upstream or from Laya
+        fields.update(version=None, version_source="not_read", fingerprint=None,
+                      record="skipped_deadline")
+        return fields
+    endpoint = row["url"]()[0]
+    if endpoint is None:  # the address changed after the probe resolved it: learn nothing (WR-101)
+        fields.update(version=None, version_source="unreachable", fingerprint=None,
+                      record="unknown")
+        return fields
+    health = _get_json(_origin(endpoint, "/health"), _PROBE_TIMEOUT, row["remote"]) or {}
+    openapi = _get_json(_origin(endpoint, "/openapi.json"), _PROBE_TIMEOUT, row["remote"])
+    verified = frozenset(feature for feature, cell in row["cells"].items()
+                         if cell[0] in SUPPORTED_CELL_STATUSES)
+    server = {"health": health, "openapi": openapi,
+              "configured_version": _laya_configured_version()}
+    options = {"force": force, "fetch_allowed": fetch_allowed, "verified": verified}
+    try:
+        fields.update(_LEARN.learn_laya(server, _state_dir(), _public_get, options))
+    except OSError:  # no absolute home to hold the record (WR-501)
+        fields["record"] = "write_failed"
+    return fields
 
 
 def _laya_key():
@@ -673,13 +850,18 @@ def _env_key(name):
     return (value, "env") if value else (None, None)
 
 
-def _remote_url(raw):
+def _remote_url(raw, malformed="invalid_url"):
     """(url, None) or (None, "insecure_url"): a remote row's key travels only over https.
+    An address urlsplit cannot parse gives `malformed` as the reason.
 
     Plain http is allowed for a loopback host alone (the in-process test stubs); any other
     scheme or a non-loopback http host is refused before a socket opens (T-21.1-07)."""
-    parts = urllib.parse.urlsplit(raw)
-    if parts.scheme == "https" or (parts.scheme == "http" and _is_loopback(parts.hostname)):
+    try:
+        parts = urllib.parse.urlsplit(raw)
+        host = parts.hostname
+    except ValueError:  # e.g. an unclosed IPv6 bracket: a probe error naming the key, no traceback
+        return None, malformed
+    if parts.scheme == "https" or (parts.scheme == "http" and _is_loopback(host)):
         return raw, None
     return None, "insecure_url"
 
@@ -732,9 +914,10 @@ def _mycreds_value(path, names):
     never `source`d, and the value never enters any child process env; the same 0600 rule as
     `secrets.env` applies (group/other bits → refuse before the value is read).
 
-    Transitional D-07 fallback: the key normally comes from the environment (`TYPESAFE_API_KEY`,
-    which the owner's shell gets by sourcing this file); running agents only fall back to the
-    file until they inherit the env. Remove once the env is the only path again."""
+    D-07 fallback, kept with a recorded reason: the key normally comes from the environment
+    (`TYPESAFE_API_KEY`, which the owner's shell gets by sourcing this file), but no test can show
+    that every agent shell inherits it, since a multiplexer server or a host started before the
+    export keeps its old environment."""
     try:
         if os.stat(path).st_mode & _WORLD_READABLE:
             return None, "world_readable"
@@ -755,11 +938,12 @@ def _mycreds_value(path, names):
 
 
 def _typesafe_key_sources():
-    """The ordered source labels `--probe` reports as `key_expected` (D-07 order, env first)."""
+    """The ordered source labels `--probe` reports as `key_expected`. The order equals
+    `_typesafe_key`'s resolution order, with the home file `~/.mycreds` strictly last (JEV-01)."""
     expected = ["env:TYPESAFE_API_KEY", "env:JEV_API_KEY"]
     if os.environ.get("JEV_API_KEY_FILE", "").strip():
         expected.append("file:JEV_API_KEY_FILE")
-    expected += ["file:secrets.env", "file:~/.mycreds", "state"]
+    expected += ["file:secrets.env", "state", "file:~/.mycreds"]
     return expected
 
 
@@ -770,26 +954,34 @@ def _typesafe_url():
     (docs.typesafe.ai/api.md, checked 2026-10-23).
     """
     default = "https://api.typesafe.ai/v1/systemone"  # the row's own endpoint (D-06)
-    return _remote_url(os.environ.get("JEV_TYPESAFE_URL", default).strip())
+    return _remote_url(os.environ.get("JEV_TYPESAFE_URL", default).strip(),
+                       "invalid_url:jev_typesafe_url")
 
 
 def _typesafe_key():
     """D-07's order: `TYPESAFE_API_KEY`, `JEV_API_KEY`, `JEV_API_KEY_FILE`,
     `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, the
     `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` state file, and last
-    `~/.mycreds` — a transitional fallback (shortcut: remove once running agents inherit
-    `TYPESAFE_API_KEY` from their shell; the env stays the documented path). Every file is
-    0600; `~/.mycreds` is parsed, never sourced."""
+    `~/.mycreds`. Kept, with a recorded reason: no test can show that every agent shell inherits
+    `TYPESAFE_API_KEY` (a multiplexer server or host started before the export keeps its old
+    environment); the env stays the documented path. Every file is 0600; `~/.mycreds` is
+    parsed, never sourced."""
     key_file = os.path.expanduser(os.environ.get("JEV_API_KEY_FILE", "").strip())
-    state = os.environ.get("XDG_STATE_HOME", "").strip() or os.path.expanduser("~/.local/state")
-    secrets = os.path.join(_config_dir(), "secrets.env")
+    try:
+        state_key = os.path.join(_state_base(), "typesafe", "api_key")
+    except OSError:
+        state_key = ""  # no absolute home: an empty path reads as missing_file
+    try:
+        secrets = os.path.join(_config_dir(), "secrets.env")
+    except OSError:
+        secrets = ""  # no absolute home: an empty path reads as missing_file
     mycreds = os.path.expanduser("~/.mycreds")
     return _first_key(("TYPESAFE_API_KEY", "JEV_API_KEY"), [
         (lambda: "file:JEV_API_KEY_FILE" if key_file else None,
          lambda: _read_key(key_file) if key_file else (None, "missing_file")),
         ("file:secrets.env", lambda: _secrets_env_value(secrets, "TYPESAFE_API_KEY")),
         ("file:secrets.env", lambda: _secrets_env_value(secrets, "JEV_API_KEY")),
-        ("state", lambda: _read_key(os.path.join(state, "typesafe", "api_key"))),
+        ("state", lambda: _read_key(state_key)),
         ("file:~/.mycreds", lambda: _mycreds_value(mycreds, ("TYPESAFE_API_KEY",
                                                              "JEV_API_KEY"))),
     ])
@@ -825,67 +1017,31 @@ def _typesafe_classify(error):
     return "escalate", f"http_{error.code}"
 
 
-def _opencode_url():
-    """Zen's OpenAI-compatible root: `JEV_OPENCODE_URL` replaces the whole base (D-11).
-
-    The POST target is this URL verbatim: the documented Jev endpoint
-    `https://opencode.ai/inference/systemone/v1/systemone` (opencode.ai/docs/zen, checked
-    2026-10-23). The bearer probe path is not documented and stays unverified until a live run.
-    """
-    default = "https://opencode.ai/inference/systemone/v1/systemone"  # the row's own endpoint
-    return _remote_url(os.environ.get("JEV_OPENCODE_URL", default).strip())
-
-
-def _opencode_key_file():
-    """(value, reason) from `opencode-zen.key` in pi's keys.json, 0600 enforced like TypeSafe's."""
-    agent = os.environ.get("PI_CODING_AGENT_DIR", "").strip() or "~/.pi/agent"
-    path = os.path.join(os.path.expanduser(agent), ZEN_KEY_FILE)
+def _typesafe_note_model(model_id):
+    """D-09: a new versioned model id an answer named becomes a local pending note. No network."""
     try:
-        if os.stat(path).st_mode & _WORLD_READABLE:
-            return None, "world_readable"
-        with open(path, encoding="utf-8") as handle:
-            parsed = json.load(handle)
-    except (OSError, ValueError, UnicodeError, RecursionError):
-        return None, "missing_file"
-    entry = parsed.get("opencode-zen") if isinstance(parsed, dict) else None
-    key = entry.get("key") if isinstance(entry, dict) else None
-    if isinstance(key, str) and key.strip():
-        return key.strip(), None
-    return None, "empty_file"
+        return _LEARN.note_model(_state_dir(), model_id)
+    except OSError:  # no absolute home to hold the note (WR-501)
+        return False
 
 
-def _opencode_key():
-    """`OPENCODE_ZEN_API_KEY` wins over `${PI_CODING_AGENT_DIR:-~/.pi/agent}/keys.json`'s
-    `opencode-zen.key` (D-11)."""
-    return _first_key(("OPENCODE_ZEN_API_KEY",), [(f"file:{ZEN_KEY_FILE}", _opencode_key_file)])
+def _typesafe_note_unknown(model_id, names):
+    """Primitive or option names this skill does not know, noted under a model id (review C1-10).
+    `model_id` None means the latest recorded id. No network."""
+    try:
+        return _LEARN.note_unknown(_state_dir(), model_id, names)
+    except OSError:  # no absolute home to hold the note (WR-501)
+        return False
 
 
-def _opencode_probe(row, timeout, deadline=None):
-    """A bearer `GET /inference/v1/models` on the endpoint's origin: Zen's documented model
-    list (opencode.ai/docs/zen, 2026-10-23). The docs show it without auth, so a 200 proves
-    reachability only, not the key: the row's `key_check` is `unverified` (D-11)."""
-    return _get_probe(_origin(row["url"]()[0], "/inference/v1/models"), row["key"]()[0],
-                      timeout, deadline)
-
-
-def _opencode_classify(error):
-    """(action, reason) for one Zen failure (D-11).
-
-    401/403 → escalate + `unauthorized`; 402/429 → the row's next model id; 5xx → retry with
-    bounded backoff, escalating when the retries run out; every other 4xx → `caller_error`.
-    """
-    if not isinstance(error, urllib.error.HTTPError):
-        return "escalate", "network_error"
-    _error_body(error)
-    if error.code in _UNAUTHORIZED_CODES:
-        return "escalate", "unauthorized"
-    if error.code in _QUOTA_CODES:
-        return "next_model", f"http_{error.code}"
-    if 500 <= error.code < 600:
-        return "retry", f"http_{error.code}"
-    if error.code in _OPENCODE_CALLER_CODES:
-        return "caller_error", f"caller_error:http_{error.code}"
-    return "escalate", f"http_{error.code}"
+def _typesafe_learn(_row, _entry, force=False, fetch_allowed=True):
+    """Read the official TypeSafe doc flow once per pending model id (D-09, SPEC R4). Only the
+    probe and `--check-updates` call this; the answer path never does."""
+    try:
+        return _LEARN.learn_models(_state_dir(), _public_get,
+                                   {"force": force, "fetch_allowed": fetch_allowed})
+    except OSError:  # no absolute home to hold the record (WR-501)
+        return {"model_record": "write_failed"}
 
 
 Row = dict[str, Any]
@@ -913,6 +1069,7 @@ TABLE: tuple[Row, ...] = (
         "url": _laya_url,
         "key": _laya_key,
         "probe": _laya_probe,
+        "learn": _laya_learn,  # probe-only fields: url_source, and the first-run question
         "classify": _laya_classify,
         # (status, source, date) per capability cell — the matrix the docs will show (D-24).
         "cells": {CHOICE: ("verified-live", "llm-env check-server", "2026-10-12"),
@@ -939,9 +1096,17 @@ TABLE: tuple[Row, ...] = (
         "url": _typesafe_url,
         "key": _typesafe_key,
         "key_sources": _typesafe_key_sources,
+        # Shown only when the key does not come from this process's environment (JEV-01).
+        "key_hint": ("the key is not in this process's environment: a terminal multiplexer server "
+                     "keeps the environment it started with, so export TYPESAFE_API_KEY in a "
+                     "fresh shell and restart the multiplexer server, or keep the key in a 0600 "
+                     "key file"),
         "probe": _typesafe_probe,
         "key_check": "documented",  # its GET /v1/models needs the key (docs.typesafe.ai)
         "classify": _typesafe_classify,
+        "learn": _typesafe_learn,  # probe-only: the doc flow of the pending model ids
+        "note_model": _typesafe_note_model,  # answer path: a local pending note, no fetch
+        "note_unknown": _typesafe_note_unknown,  # answer path: unknown names, no fetch
         "cells": {CHOICE: ("verified-live", "todo notes 2026-10-13/14", "2026-10-14"),
                   NOUL: ("verified-live", "todo notes 2026-10-13/14", "2026-10-14"),
                   BATCH: ("verified-live", "todo notes 2026-10-13/14", "2026-10-14"),
@@ -950,35 +1115,6 @@ TABLE: tuple[Row, ...] = (
                   IMAGE: ("documented", "docs.typesafe.ai images", "2026-10-18"),
                   IMAGES_COMPARED: ("documented", "docs.typesafe.ai images", "2026-10-18"),
                   LONG_CONTEXT: ("documented", "docs.typesafe.ai models", "2026-10-18")},
-    },
-    {
-        "name": "opencode",
-        "remote": True,
-        "batch": False,  # Zen answers one question per call: two ids, free tier first (D-11)
-        "min_confidence": 0.75,
-        "models": ("jev-1.13-free", "jev-1.13"),
-        "model_env": "JEV_OPENCODE_MODEL",
-        "response_model": _JEV_RESPONSE,
-        "retry_limit": 2,  # a 5xx gets bounded backoff, then the item escalates
-        "state_chars_limit": 8000,
-        "url": _opencode_url,
-        "key": _opencode_key,
-        "probe": _opencode_probe,
-        "key_check": "unverified",  # its model list is documented without auth
-        "classify": _opencode_classify,
-        "cells": {CHOICE: ("verified-live", "jev-1.13-free 14/14", "2026-10-11"),
-                  NOUL: ("verified-live", "jev-1.13-free 14/14", "2026-10-11"),
-                  BATCH: ("verified-live", "jev-1.13-free 14/14", "2026-10-11"),
-                  SCORE: ("unverified", "opencode.ai/docs/zen lists text ids only",
-                          "2026-10-18"),
-                  BOX: ("unverified", "opencode.ai/docs/zen lists text ids only",
-                        "2026-10-18"),
-                  IMAGE: ("unverified", "opencode.ai/docs/zen lists text ids only",
-                          "2026-10-18"),
-                  IMAGES_COMPARED: ("unverified", "opencode.ai/docs/zen lists text ids only",
-                                    "2026-10-18"),
-                  LONG_CONTEXT: ("unverified", "opencode.ai/docs/zen lists text ids only",
-                                 "2026-10-18")},
     },
 )
 
@@ -1074,10 +1210,17 @@ def _gate_open(name):
 # ─── consent record (D-06: format unchanged from the pre-move spec-discuss ladder, 24 D-10) ───
 
 def _config_dir():
-    """ai-kit's per-user config dir: ${XDG_CONFIG_HOME:-~/.config}/ai-kit."""
-    base = os.environ.get("XDG_CONFIG_HOME", "").strip() or os.path.join(
-        os.environ.get("HOME", "~"), ".config")
-    return os.path.join(os.path.expanduser(base), "ai-kit")
+    """ai-kit's per-user config dir by ai-kit's one user-dir rule (a copy of
+    config_io.cfg_config_base, pinned by tests/test_config_dir_parity.py): an absolute
+    XDG_CONFIG_HOME (surrounding whitespace removed), else an absolute HOME/.config. With no
+    absolute home there is no user dir, so this raises OSError."""
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    if os.path.isabs(xdg):
+        return os.path.join(xdg, "ai-kit")
+    home = os.environ.get("HOME", "")
+    if os.path.isabs(home):
+        return os.path.join(home, ".config", "ai-kit")
+    raise OSError("no absolute home directory to hold ai-kit's config")
 
 
 def consent_path():
@@ -1100,16 +1243,19 @@ def write_consent(data):
     0600 temp mode carries over to the file (T-21.1-06)."""
     path = consent_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".jev-consent-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        os.replace(tmp, path)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+    _LEARN.write_json_atomic(path, data, ".jev-consent-")
+
+
+def leftover_entries():
+    """Backend names a consent record or `JEV_ALLOW_REMOTE` still lists that the table no longer
+    has: name and source only, never a value."""
+    entries = [{"name": name, "source": "consent_record"}
+               for name in sorted(read_consent()) if row_named(name) is None]
+    raw = os.environ.get("JEV_ALLOW_REMOTE", "").strip()
+    parts = [] if raw == "1" else dict.fromkeys(p.strip() for p in raw.split(",") if p.strip())
+    entries += [{"name": name, "source": "JEV_ALLOW_REMOTE"}
+                for name in parts if row_named(name) is None]
+    return entries
 
 
 def _row_host(row):
@@ -1118,6 +1264,16 @@ def _row_host(row):
     if reason or not endpoint:
         return None
     return urllib.parse.urlsplit(endpoint).hostname
+
+
+def _needs_consent(row):
+    """True when this row's own consent gates it: every remote row, and a local row whose address
+    is off loopback (Resolved Open Question 2). A row whose address does not parse has no host
+    to bind a record to, so its URL reason answers first, not consent."""
+    if row["remote"]:
+        return True
+    host = _row_host(row)
+    return host is not None and not _is_loopback(host)
 
 
 def record_consent(row):
@@ -1134,22 +1290,29 @@ def record_consent(row):
 
 
 def allowed_remotes():
-    """The gate (D-07): the session value's names union the rows whose own record's host
-    equals their current host. A record for one remote never enables another (T-21.1-13)."""
+    """The gate (D-07): the names of the rows whose consent is in force. The session value opens
+    remote rows only; a local row moved off loopback opens only through its own host-bound
+    record, because its address can come from a cloned project's file (Resolved Open Question
+    2). A record for one row never enables another (T-21.1-13)."""
     return [row["name"] for row in TABLE
-            if row["remote"] and (_gate_open(row["name"]) or record_consent(row))]
+            if _needs_consent(row)
+            and ((row["remote"] and _gate_open(row["name"])) or record_consent(row))]
 
 
 def _remote_allowed(row):
-    """Whether this row may touch the network at all: a local row always may. `_send` checks
-    this before any socket opens (SPEC R6 ordering edge, T-21.1-02)."""
-    return not row["remote"] or row["name"] in allowed_remotes()
+    """Whether this row may touch the network at all: a row that needs no consent always may.
+    `_send` checks this before any socket opens (SPEC R6 ordering edge, T-21.1-02)."""
+    if not _needs_consent(row):
+        return True
+    return (row["remote"] and _gate_open(row["name"])) or bool(record_consent(row))
 
 
 def _keyed_remotes():
-    """Remote rows that have a key and no consent yet: the rows a consent decision is about."""
+    """Rows that need consent they lack: the rows a consent decision is about. A remote row
+    counts with a key; a local row moved off loopback counts without one."""
     return [row["name"] for row in TABLE
-            if row["remote"] and not _remote_allowed(row) and row["key"]()[0]]
+            if _needs_consent(row) and not _remote_allowed(row)
+            and (row["key"]()[0] or not row["remote"])]
 
 
 def _consent_used(run):
@@ -1160,7 +1323,7 @@ def _consent_used(run):
                 if "error" not in entry}
     used = []
     for row in TABLE:
-        if row["remote"] and row["name"] in answered:
+        if _needs_consent(row) and row["name"] in answered:
             granted = record_consent(row)
             if granted:
                 used.append({"backend": row["name"], "granted": granted})
@@ -1170,11 +1333,17 @@ def _consent_used(run):
 def consent_command(action, backend):
     """`consent grant|revoke|show <backend>` (D-06): the record's own output keys, and on a
     grant the minimal announcement — TypeSafe's retention terms are unverified (RESEARCH 11)."""
+    try:
+        consent_path()
+    except OSError:  # no absolute home: there is no record file to read or write (IN-05)
+        return {"ok": False, "reason": "no_user_config_dir"}
     row = row_named(backend)
     if row is None:
+        if action in ("show", "revoke") and backend in {e["name"] for e in leftover_entries()}:
+            return _leftover_consent(action, backend)
         return {"ok": False, "reason": "unknown_backend"}
-    if not row["remote"]:
-        return {"ok": False, "reason": "not_remote"}  # laya stays local: no record to give
+    if not _needs_consent(row):
+        return _stored_consent(action, backend, row)
     host = _row_host(row)
     if host is None:
         return {"ok": False, "reason": "no_endpoint_configured"}
@@ -1190,7 +1359,40 @@ def consent_command(action, backend):
     if action == "grant":
         result["note"] = (f"questions go to {host}; retention terms unverified; revoke with: "
                           f"jev_review.py consent revoke {backend}")
+    if action == "show":
+        result["leftover"] = leftover_entries()
     return result
+
+
+def _stored_consent(action, backend, row):
+    """`consent <action> <backend>` while the row's address needs no consent (loopback, declined,
+    malformed). A stored record can still be shown and revoked, its host taken from the record;
+    otherwise the answer is the URL's own reason, or not_remote (WR-102)."""
+    data = read_consent()
+    if action not in ("show", "revoke") or not isinstance(data.get(backend), dict):
+        return {"ok": False, "reason": row["url"]()[1] or "not_remote"}
+    host = data[backend].get("host")
+    if action == "revoke":
+        del data[backend]
+        write_consent(data)
+    result = {"ok": True, "backend": backend, "host": host,
+              "consent": None if action == "revoke" else data[backend].get("granted"),
+              "file": consent_path()}
+    if action == "show":
+        result["leftover"] = leftover_entries()
+    return result
+
+
+def _leftover_consent(action, backend):
+    """`consent show|revoke <leftover>`: a name the table no longer has. Revoke deletes its record
+    key through `write_consent`; a `JEV_ALLOW_REMOTE` entry is edited in the environment instead."""
+    if action == "revoke":
+        data = read_consent()
+        if backend in data:
+            del data[backend]
+            write_consent(data)
+    return {"ok": True, "backend": backend, "leftover": leftover_entries(),
+            "file": consent_path()}
 
 
 def _parse_jev_min_confidence():
@@ -1302,15 +1504,41 @@ def _backend_entry(row, reason):
     entry = {"name": row["name"], "remote": row["remote"], "batch": row["batch"],
              "host": urllib.parse.urlsplit(endpoint).hostname if endpoint else None,
              "usable": reason is None, "key_source": row["key"]()[1]}
-    if row["remote"]:
+    if _needs_consent(row):
         entry["consent"] = record_consent(row)
     if row.get("key_check"):
         entry["key_check"] = row["key_check"]
     if row.get("key_sources"):
         entry["key_expected"] = row["key_sources"]()
+    if row.get("key_hint") and not str(entry["key_source"] or "").startswith("env"):
+        entry["key_hint"] = row["key_hint"]
     if reason:
         entry["reason"] = reason
     return entry
+
+
+def _pinned_table():
+    """TABLE with each row's address read once (WR-101): the probe, the consent check and the
+    learn fetch of one run all see that one read, so a config change in between cannot send a
+    keyless GET to an address nobody checked."""
+    rows = []
+    for row in TABLE:
+        resolved = row["url"]()
+        rows.append({**row, "url": lambda resolved=resolved: resolved})
+    return rows
+
+
+def _probe_fields(rows, entries, fetch_allowed=True):
+    """Merge each row's probe-only fields into its entry (a row with a `learn` adapter, in table
+    order) and return the questions they ask: the agent asks the user, then saves the answer.
+    `fetch_allowed` False (a hook or detect probe under a deadline) lets no public fetch run."""
+    questions = []
+    for row, entry in zip(rows, entries, strict=True):
+        if "learn" in row:
+            fields = row["learn"](row, entry, False, fetch_allowed)
+            questions += fields.pop("needs_answer", [])
+            entry.update(fields)
+    return questions
 
 
 def probe_report():
@@ -1318,8 +1546,15 @@ def probe_report():
 
     One probe per row (one socket at most): the ladder order `JEV_BACKEND` would run in is
     read from those results, never from a second `_selection()` pass."""
+    knob = _knob()
+    if not knob["on"]:
+        return {"status": "disabled", "settings": _settings(knob), "needs_answer": []}
     choice = _backend_choice()
-    usable, unavailable, entries = _probe_reasons(TABLE)
+    rows = _pinned_table()
+    usable, unavailable, entries = _probe_reasons(rows)
+    # Pitfall 3: a probe under a run deadline (a hook, detect) never fetches upstream.
+    fetch_allowed = not os.environ.get("GSD_PATH_JEV_DEADLINE_SECONDS", "").strip()
+    questions = _probe_fields(rows, entries, fetch_allowed)
     names = {row["name"] for row in usable}
     candidates = [row["name"] for row in rows_in_order()
                   if row["name"] in names and choice in ("auto", row["name"])]
@@ -1329,6 +1564,11 @@ def probe_report():
               "selected": candidates[0] if candidates else None,
               "candidates": candidates, "unavailable": unavailable,
               "backends": entries}
+    report["leftover"] = leftover_entries()
+    if knob["needs_answer"]:
+        questions.append("enabled")
+    report["needs_answer"] = sorted(set(questions))
+    report["settings"] = _settings(knob)
     if candidates:
         return report
     consent = _consent_result(choice, unavailable, [], {})
@@ -1338,6 +1578,20 @@ def probe_report():
         return report
     report["reason"] = _unusable_reason(choice, unavailable)
     return report
+
+
+def check_updates():
+    """`--check-updates` (D-08, Resolved Open Question 4): re-fetch the current Laya key and the
+    pending plus latest TypeSafe ids now, and say what each record did. A failed refresh keeps the
+    old entry and says so (the learn adapters report it). Knob off: nothing is fetched."""
+    knob = _knob()
+    if not knob["on"]:
+        return {"status": "disabled", "settings": _settings(knob)}
+    rows = _pinned_table()
+    _usable, _unavailable, entries = _probe_reasons(rows)
+    updates = {row["name"]: row["learn"](row, entry, True, True)
+               for row, entry in zip(rows, entries, strict=True) if "learn" in row}
+    return {"status": "ok", "updates": updates}
 
 
 # ─── sending ──────────────────────────────────────────────────────────────────
@@ -1376,6 +1630,7 @@ class _Run:
         self.failed: dict[str, str] = {}      # final item errors by id
         self.last_error: dict[str, str] = {}  # last escalate-class reason per still-pending id
         self.trail: dict[str, list] = {}      # id -> ordered rung entries
+        self.unknown: dict[tuple, set] = {}   # (row name, answering model id) -> unknown names
 
     def no_time(self):
         """True once the run's total deadline has passed: no new request may start."""
@@ -1462,18 +1717,21 @@ def _capped_nap(seconds, deadline):
 def _send(row, body, timeout, deadline=None):
     """POST one request body to this row's endpoint: (parsed response, encoded body).
 
-    Raises before any socket when the kill switch is off, when this row's URL is refused, or
-    when a remote row has no consent yet (D-17); the consent check and every later gate run
-    before the socket opens (SPEC R6 ordering edge). The exchange runs under the deadline
+    Raises before any socket when jev is switched off (the knob, D-01), when this row's URL is
+    refused, or when a remote row has no consent yet (D-17); the consent check and every later
+    gate run before the socket opens (SPEC R6 ordering edge). The exchange runs under the deadline
     watchdog, and a fired watchdog makes this request's outcome the deadline outcome no
     matter what the exchange then raised or returned — a shutdown mid-headers can parse as
     a short 200 (review cycle 3).
     """
-    if os.environ.get(_KILL_SWITCH) != "1":
+    if not _knob()["on"]:
         raise PermissionError("disabled")
+    # One read of the address for the consent check and the request (WR-101): a config change
+    # between two reads must not send to a host nobody consented to.
+    url, reason = row["url"]()
+    row = {**row, "url": lambda: (url, reason)}
     if not _remote_allowed(row):
         raise PermissionError("consent_required_for_remote")
-    url, reason = row["url"]()
     if reason:
         raise PermissionError(reason)
     if deadline is not None and deadline.left() <= 0:
@@ -1482,9 +1740,8 @@ def _send(row, body, timeout, deadline=None):
     key, _label = row["key"]()
     headers = {**({"Authorization": f"Bearer {key}"} if key else {}),
                "Content-Type": "application/json",
-               # Zen's edge (Cloudflare) blocks the bare "Python-urllib/x.y" default
-               # User-Agent with error 1010. This is the script's own UA; do not spoof the
-               # OpenCode client UA — reports say the free-tier gate keys on it.
+               # Some edges block the default "Python-urllib/x.y" User-Agent (Cloudflare 1010):
+               # this is the script's own UA, never another client's.
                "User-Agent": USER_AGENT}
     request = urllib.request.Request(url, data=encoded, headers=headers)
     timeout = _capped_timeout(deadline, timeout)
@@ -1521,7 +1778,7 @@ def _post(row, body, timeout, run):
     Returns `(response, state_chars, action, reason, sent_body)`; `sent_body` is the encoded
     body the row last saw, so every rung entry can name the bytes its outcome came from. A
     `next_model` row action re-sends this same group with the row's next model id; an
-    exhausted `retry` or `next_model` (a TypeSafe 402, a paid Zen 402/429) becomes an
+    exhausted `retry` or `next_model` (a TypeSafe 402) becomes an
     escalate-class error, so auto selection moves that item to
     the next usable row exactly as it moves a 500 (SPEC R1, the 2026-10-11 todo) while an
     explicit backend keeps it as the item error.
@@ -1604,6 +1861,10 @@ def _group_answer(row, group, timeout, run):
         if str(failure).startswith("invalid_input"):
             raise
         return {}, ("escalate", "invalid_response"), sent_body
+    if row.get("note_unknown"):
+        names = _unknown_response_names(response)
+        if names:
+            run.unknown.setdefault((row["name"], checked["model"]), set()).update(names)
     return _finalize(row, checked, run), None, sent_body
 
 
@@ -1654,12 +1915,23 @@ def _rung(row, items, timeout, run):
 
 # ─── answer log (D-19) ────────────────────────────────────────────────────────
 
-def _state_dir():
-    """`$XDG_STATE_HOME` (or ~/.local/state) + /ai-kit — same convention as the consent dir."""
+def _state_base():
+    """`$XDG_STATE_HOME`, or ~/.local/state. A relative value is ignored, as the XDG spec says and
+    as the config reader does for `XDG_CONFIG_HOME` (WR-205). An empty or relative HOME is no home
+    either: it raises OSError, so no state lands under the cwd (WR-501); each writer already treats
+    OSError as "no state dir"."""
     base = os.environ.get("XDG_STATE_HOME", "").strip()
-    if not base:
-        base = os.path.join(os.environ.get("HOME", "~"), ".local", "state")
-    return os.path.join(os.path.expanduser(base), "ai-kit")
+    if os.path.isabs(base):
+        return base
+    home = os.environ.get("HOME", "")
+    if not os.path.isabs(home):
+        raise OSError("no absolute home directory to hold ai-kit's state")
+    return os.path.join(home, ".local", "state")
+
+
+def _state_dir():
+    """`_state_base()` + /ai-kit — same convention as the consent dir."""
+    return os.path.join(_state_base(), "ai-kit")
 
 
 def answer_log_path():
@@ -1897,6 +2169,59 @@ def _refused_result(refused, run):
              "request_sha256": _request_sha256(refused.sent_bodies), **run.provenance}
 
 
+# The keys this skill reads from a response, its usage object and each answer type. A key outside
+# these sets is an unknown option: it is noted once per model id (SPEC R4, review C1-10).
+_RESPONSE_KEYS = frozenset({"model", "answers", "usage"})
+_USAGE_KEYS = frozenset({"input_tokens", "output_tokens", "truncated"})
+_ANSWER_KEYS = {
+    CHOICE: frozenset({"type", "choice", "probabilities", "confidence"}),
+    NOUL: frozenset({"type", "noul"}),
+    SCORE: frozenset({"type", "score", "confidence", "legend", "probabilities"}),
+}
+
+
+def _unknown_response_names(response):
+    """Sorted `option:<key>` names for the fields a response carries that this skill never reads.
+
+    Covers the top level, each `usage` key and each key of an answer whose type the skill knows.
+    A field the live API already sends outside these sets is noted once per model id and read about
+    once, since the note makes the next probe read the docs (a known limit, not a bug).
+    """
+    names = {f"option:{key}" for key in response if key not in _RESPONSE_KEYS}
+    usage = response.get("usage")
+    if isinstance(usage, dict):
+        names.update(f"option:{key}" for key in usage if key not in _USAGE_KEYS)
+    answers = response.get("answers")
+    for answer in answers.values() if isinstance(answers, dict) else ():
+        if isinstance(answer, dict) and answer.get("type") in _ANSWER_KEYS:
+            known = _ANSWER_KEYS[answer["type"]]
+            names.update(f"option:{key}" for key in answer if key not in known)
+    return sorted(names)
+
+
+def _unknown_item_names(payload):
+    """Sorted, unique `primitive:<type>` names of the caller's items whose type this skill does not
+    know. A refused item made no call, so its names are noted at the refusal. A caller's extra item
+    key is never noted: it is as likely a typo as a new option, and a note makes the next probe
+    read the docs (IN-201)."""
+    items = payload.get("items") if isinstance(payload, dict) else None
+    names = set()
+    for item in items if isinstance(items, list) else ():
+        kind = item.get("type") if isinstance(item, dict) else None
+        if isinstance(kind, str) and kind not in VALID_TYPES | {BOX}:
+            names.add(f"primitive:{kind}")
+    return sorted(names)
+
+
+def _note_unknown_items(payload):
+    """Note a refused payload's unknown names under the latest recorded model id (no network)."""
+    names = _unknown_item_names(payload)
+    if names:
+        for row in TABLE:
+            if "note_unknown" in row:
+                row["note_unknown"](None, names)
+
+
 class _Checked(NamedTuple):
     """The pre-ladder call state: the validated payload and timeouts, or the result to return.
 
@@ -1961,6 +2286,9 @@ def _preflight() -> _Checked:
     choice = _backend_choice()
     row = row_named(choice) if choice != "auto" else None
     stopped, dropped = _feature_refusal(payload, row)
+    if stopped is not None or dropped:
+        # The feature pass refused or dropped items before validation: a note, never a request.
+        _note_unknown_items(payload)
     if stopped is not None:
         return _Checked(stopped, {}, 0.0)
     if dropped:
@@ -1970,6 +2298,7 @@ def _preflight() -> _Checked:
     try:
         request_body(payload, _VALIDATION_MODEL)
     except ValueError as error:
+        _note_unknown_items(payload)
         return _Checked(_invalid_input(error), {}, 0.0)
     provenance_head = payload["reviewed_head"]
     try:
@@ -1989,12 +2318,26 @@ def _no_rung_result(choice, run):
             "unavailable": run.unavailable, "attempts": run.attempts, **run.provenance}
 
 
+def _note_models(run):
+    """D-09 and review C1-10, after the answer log: every answering model id a row can note is
+    noted as a local pending entry, and the unknown names of each answer are noted under the id
+    that gave them. Only local writes: nothing here fetches, on the answer path or anywhere else."""
+    for answer in [*run.answers.values(), *run.tentative.values()]:
+        row = row_named(answer.get("backend"))
+        if row is not None and "note_model" in row:
+            row["note_model"](answer.get("model"))
+    for (name, model_id), names in run.unknown.items():
+        row = row_named(name)
+        if row is not None and "note_unknown" in row:
+            row["note_unknown"](model_id, sorted(names))
+
+
 def screen(skip_local=False):
-    """Kill switch, stdin, validation, selection, ladder: the advisory result (never a gate).
+    """Knob, stdin, validation, selection, ladder: the advisory result (never a gate).
 
     Every item that reached dispatch appends its line to the answer log on the way out —
     refused or not — and a log failure never changes the answer or the exit code (D-19)."""
-    if os.environ.get(_KILL_SWITCH) != "1":
+    if not _knob()["on"]:
         return {"status": "disabled"}
     checked = _preflight()
     if checked.stopped is not None:
@@ -2014,6 +2357,7 @@ def screen(skip_local=False):
     except DispatchError as refused:
         outcome = _refused_result(refused, run)
     _log_run(run)
+    _note_models(run)
     return outcome
 
 
@@ -2030,6 +2374,9 @@ def build_parser():
                         help="print the backend table report and exit")
     parser.add_argument("--skip-local", action="store_true",
                         help="skip every non-remote row: a second opinion, no local run")
+    parser.add_argument("--check-updates", action="store_true",
+                        help="re-fetch the recorded Laya notes and TypeSafe model docs for the "
+                             "current keys, then exit")
     sub = parser.add_subparsers(dest="command")
     consent = sub.add_parser("consent", help="manage the per-user remote-consent record")
     consent.add_argument("action", choices=("grant", "revoke", "show"))
@@ -2041,22 +2388,36 @@ def build_parser():
     ladder.add_argument("--client", default=None, help=CLIENT_HELP)
     detect = sub.add_parser("detect", help="report the backend table by label; never a key")
     detect.add_argument("--client", default=None, help=CLIENT_HELP)
+    cfg = sub.add_parser("config", help="save one [jev] setting in the user config.toml")
+    cfg.add_argument("action", choices=("set",))
+    cfg.add_argument("key", choices=_CONFIG.JEV_KEYS)
+    cfg.add_argument("value", help="the value; an empty string records the declined answer")
     return parser
 
 
 def main(argv=None):
-    """`--probe` prints the table report, `consent` edits the record, `ladder` and `detect`
-    answer through jev_ladder.py, anything else screens stdin. Always exit 0, except the
-    ladder's exit 2 for unusable stdin."""
+    """`--probe` prints the table report, `consent` edits the record, `config set` saves one
+    `[jev]` setting, `ladder` and `detect` answer through jev_ladder.py, anything else screens
+    stdin. Exit 0, except: the ladder's exit 2 for unusable stdin, and exit 2 for a refused
+    `config set` or a consent call with no user config dir."""
     args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
     if args.command in ("ladder", "detect") or (args.command == "consent" and args.client):
         # Loaded only for these commands: the screen and --probe paths never import it.
         import jev_ladder  # pylint: disable=import-outside-toplevel
         return jev_ladder.main(args)
+    if args.command == "config":
+        out = _CONFIG.config_set(args.key, args.value, os.environ, _cwd())
+        print(json.dumps(out, sort_keys=True))
+        return 0 if out["ok"] else 2
     if args.command == "consent":
         out = consent_command(args.action, args.backend)
+        if out.get("reason") == "no_user_config_dir":
+            print(json.dumps(out, sort_keys=True))
+            return 2
     elif args.probe:
         out = probe_report()
+    elif args.check_updates:
+        out = check_updates()
     else:
         out = {"advisory": True, **screen(skip_local=args.skip_local)}
     print(json.dumps(out, sort_keys=True, allow_nan=False))

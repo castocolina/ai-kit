@@ -70,7 +70,7 @@ from ai_kit_spec.config_io import (
     cfg_load_toml,
     cfg_local_path,
     cfg_merge_reviewers,
-    cfg_render_toml,
+    cfg_render_lanes,
     cfg_resolve,
     cfg_write_toml,
     tomllib,
@@ -103,6 +103,8 @@ from ai_kit_spec.review_reports import (
 )
 from ai_kit_spec.runner_dispatch import PI_EXEC_NOTE, RunnerResult
 from ai_kit_spec.vendor import infer_vendor_from_model
+
+from tests import host_fakes
 
 # Fixture provenance (JSON cannot hold comments, so the record lives here, next to the
 # constant the tests read the fixture through):
@@ -173,6 +175,10 @@ PI_RPC_FIXTURE_PATH = os.path.join(
 PI_RPC_REAL_FIXTURE_PATH = os.path.join(
     os.path.dirname(__file__), "fixtures", "pi_rpc_get_available_models_real.json"
 )
+# Synthetic catalog whose every coding and agentic index is null (no Artificial Analysis data).
+NULL_INDEX_CATALOG_PATH = os.path.join(
+    os.path.dirname(__file__), "fixtures", "model_catalog_null_index.json"
+)
 
 def _read_bytes(path: str) -> bytes:
     with open(path, "rb") as handle:
@@ -197,26 +203,29 @@ def tearDownModule():
 
 class TestConfigPaths(unittest.TestCase):
     def test_local_path_under_cwd_aikit(self):
-        self.assertEqual(cfg_local_path("/repo"), "/repo/.aikit/review-spec.toml")
+        self.assertEqual(cfg_local_path("/repo"), "/repo/.aikit/config.toml")
 
     def test_global_path_uses_xdg_config_home(self):
         env = {"XDG_CONFIG_HOME": "/x/config"}
-        self.assertEqual(cfg_global_path(env), "/x/config/ai-kit/review-spec.toml")
+        self.assertEqual(cfg_global_path(env), "/x/config/ai-kit/config.toml")
 
     def test_global_path_falls_back_to_home_dot_config(self):
         env = {"HOME": "/home/u"}
-        self.assertEqual(cfg_global_path(env), "/home/u/.config/ai-kit/review-spec.toml")
+        self.assertEqual(cfg_global_path(env), "/home/u/.config/ai-kit/config.toml")
 
     def test_base_is_never_relative_to_the_cwd(self):
-        # A-WR-01: an unset/relative HOME or XDG_CONFIG_HOME must not resolve under the
-        # project (a repo could then ship its own "global" config and trust store).
-        with unittest.mock.patch.object(config_io.os.path, "expanduser", lambda p: "/pw/home"):
-            self.assertEqual(config_io.cfg_config_base({}), "/pw/home/.config/ai-kit")
+        # A-WR-01 / C1-3: an unset, empty or relative HOME or XDG_CONFIG_HOME must not resolve
+        # under the project (a repo could then ship its own "global" config and trust store).
+        # HOME comes from env only: any ambient home lookup fails the test.
+        with unittest.mock.patch.object(config_io.os.path, "expanduser",
+                                        side_effect=AssertionError("ambient home lookup")):
             self.assertEqual(config_io.cfg_config_base({"XDG_CONFIG_HOME": "rel", "HOME": "/h"}),
                              "/h/.config/ai-kit")
-        with unittest.mock.patch.object(config_io.os.path, "expanduser", lambda p: "~"), \
-                self.assertRaises(config_io.ConfigError):
-            config_io.cfg_trust_store_dir({})
+            for env in ({}, {"HOME": ""}, {"HOME": "rel"}):
+                with self.assertRaises(config_io.ConfigError):
+                    config_io.cfg_config_base(env)
+            with self.assertRaises(config_io.ConfigError):
+                config_io.cfg_trust_store_dir({})
 
 
 class TestLoadToml(unittest.TestCase):
@@ -224,7 +233,7 @@ class TestLoadToml(unittest.TestCase):
         self.assertEqual(cfg_load_toml("/no/such/file.toml"), {})
 
     def test_malformed_toml_raises_config_error(self):
-        # D-11/R13 (Plan 16.1-08): a broken review-spec.toml fails LOUDLY (ConfigError with
+        # D-11/R13 (Plan 16.1-08): a broken config.toml fails LOUDLY (ConfigError with
         # the path and parser message) instead of silently disabling cross-AI review.
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "bad.toml")
@@ -263,7 +272,7 @@ class TestMergeReviewers(unittest.TestCase):
         self.assertEqual(merged[0]["model"], "m1-override")
 
     def test_entry_with_no_key_is_skipped_not_raised(self):
-        # one hand-written mistake in review-spec.toml must not crash the
+        # one hand-written mistake in config.toml must not crash the
         # whole orchestrator (matches cfg_load_toml's never-raises contract)
         global_list = [{"key": "a", "model": "m1"}, {"model": "no-key-here"}]
         local_list = [{"model": "also-no-key"}]
@@ -280,27 +289,19 @@ class TestResolveConfig(unittest.TestCase):
         self.env = {"HOME": self.global_home}
         os.makedirs(os.path.join(self.global_home, ".config", "ai-kit"), exist_ok=True)
         with open(
-            os.path.join(self.global_home, ".config", "ai-kit", "review-spec.toml"),
+            os.path.join(self.global_home, ".config", "ai-kit", "config.toml"),
             "w",
             encoding="utf-8",
         ) as f:
             f.write(
-                '[policy]\nmode = "single"\nladder = ["a"]\n'
-                '[[reviewers]]\nkey = "a"\nmodel = "m1"\nvendor = "openai"\n'
+                '[lanes.policy]\nmode = "single"\nladder = ["a"]\n'
+                '[[lanes.review]]\nkey = "a"\nmodel = "m1"\nvendor = "openai"\n'
             )
 
-    def _trust_local_file(self, local_path: str) -> None:
-        with open(local_path, "rb") as f:
-            self._trust_local(f.read())
-
-    def _trust_local(self, raw: bytes) -> None:
-        """Record trust for this test's own local .aikit/review-spec.toml -- a local file is
-        only applied once its exact content is trusted (Plan 16.1-08, HARD-03)."""
-        trust.record_trust(
-            config_io.cfg_trust_store_dir(self.env),
-            os.path.realpath(config_io.cfg_local_path(self.tmp)),
-            raw,
-        )
+    def _trust_local_file(self) -> None:
+        """Trust this test's own project config.toml (D-11: a file with no command lane needs
+        no trust, and one with a command lane is applied only once it is trusted)."""
+        config_io.cfg_trust_project(self.tmp, self.env)
 
     def test_no_local_file_uses_global_only(self):
         resolved = cfg_resolve(self.tmp, self.env)
@@ -309,10 +310,10 @@ class TestResolveConfig(unittest.TestCase):
 
     def test_local_only_strategy_ignores_global(self):
         os.makedirs(os.path.join(self.tmp, ".aikit"), exist_ok=True)
-        local_path = os.path.join(self.tmp, ".aikit", "review-spec.toml")
+        local_path = config_io.cfg_local_path(self.tmp)
         with open(local_path, "w", encoding="utf-8") as f:
-            f.write('strategy = "local-only"\n[policy]\nmode = "double"\n')
-        self._trust_local_file(local_path)
+            f.write('[lanes]\nstrategy = "local-only"\n[lanes.policy]\nmode = "double"\n')
+        self._trust_local_file()
         resolved = cfg_resolve(self.tmp, self.env)
         self.assertEqual(resolved["policy"]["mode"], "double")
         # local declared no reviewers, global not consulted
@@ -320,10 +321,11 @@ class TestResolveConfig(unittest.TestCase):
 
     def test_global_merge_is_the_default_strategy(self):
         os.makedirs(os.path.join(self.tmp, ".aikit"), exist_ok=True)
-        local_path = os.path.join(self.tmp, ".aikit", "review-spec.toml")
+        local_path = config_io.cfg_local_path(self.tmp)
         with open(local_path, "w", encoding="utf-8") as f:
-            f.write('[[reviewers]]\nkey = "a"\nmodel = "m1"\nvendor = "openai"\neffort = "low"\n')
-        self._trust_local_file(local_path)
+            f.write('[[lanes.review]]\nkey = "a"\nmodel = "m1"\n'
+                    'vendor = "openai"\neffort = "low"\n')
+        self._trust_local_file()
         resolved = cfg_resolve(self.tmp, self.env)
         self.assertEqual(resolved["policy"]["mode"], "single")  # inherited from global
         self.assertEqual(resolved["reviewers"][0]["effort"], "low")  # local override applied
@@ -336,66 +338,66 @@ class TestRenderAndWriteToml(unittest.TestCase):
 
         config = {
             "policy": {"mode": "double", "ladder": ["a", "b"]},
-            "reviewers": [{"key": "a", "model": "m1", "vendor": "openai"}],
+            "lanes": [{"key": "a", "model": "m1", "vendor": "openai"}],
         }
-        rendered = cfg_render_toml(config)
+        rendered = cfg_render_lanes(config)
         parsed = tomllib.loads(rendered)
-        self.assertEqual(parsed["policy"]["mode"], "double")
-        self.assertEqual(parsed["policy"]["ladder"], ["a", "b"])
-        self.assertEqual(parsed["reviewers"][0]["key"], "a")
+        self.assertEqual(parsed["lanes"]["policy"]["mode"], "double")
+        self.assertEqual(parsed["lanes"]["policy"]["ladder"], ["a", "b"])
+        self.assertEqual(parsed["lanes"]["review"][0]["key"], "a")
 
     def test_write_toml_creates_parent_dirs(self):
         with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "nested", "review-spec.toml")
-            cfg_write_toml(path, {"policy": {"mode": "single"}, "reviewers": []})
+            path = os.path.join(d, "nested", "config.toml")
+            cfg_write_toml(path, {"policy": {"mode": "single"}, "lanes": []})
             self.assertTrue(os.path.exists(path))
 
     def test_write_toml_replaces_atomically(self):
         with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "review-spec.toml")
-            config = {"policy": {"mode": "single"}, "reviewers": []}
-            cfg_write_toml(path, {"policy": {"mode": "double"}, "reviewers": []})
+            path = os.path.join(d, "config.toml")
+            config = {"policy": {"mode": "single"}, "lanes": []}
+            cfg_write_toml(path, {"policy": {"mode": "double"}, "lanes": []})
             with mock.patch("ai_kit_spec.cache.os.replace", wraps=os.replace) as replace:
                 cfg_write_toml(path, config)
             replace.assert_called_once()
             with open(path, encoding="utf-8") as f:
-                self.assertEqual(f.read(), cfg_render_toml(config))
-            self.assertEqual(os.listdir(d), ["review-spec.toml"])
+                self.assertEqual(f.read(), cfg_render_lanes(config))
+            self.assertEqual(os.listdir(d), ["config.toml"])
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_escapes_quotes_and_backslashes_in_strings(self):
-        rendered = cfg_render_toml(
-            {"policy": {}, "reviewers": [{"key": "a", "command": 'echo "hi" \\ done'}]}
+        rendered = cfg_render_lanes(
+            {"policy": {}, "lanes": [{"key": "a", "command": 'echo "hi" \\ done'}]}
         )
         import tomllib
 
         parsed = tomllib.loads(rendered)
-        self.assertEqual(parsed["reviewers"][0]["command"], 'echo "hi" \\ done')
+        self.assertEqual(parsed["lanes"]["review"][0]["command"], 'echo "hi" \\ done')
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_renders_top_level_strategy_when_present(self):
-        rendered = cfg_render_toml(
-            {"strategy": "local-only", "policy": {"mode": "single"}, "reviewers": []}
+        rendered = cfg_render_lanes(
+            {"strategy": "local-only", "policy": {"mode": "single"}, "lanes": []}
         )
         import tomllib
 
         parsed = tomllib.loads(rendered)
-        self.assertEqual(parsed["strategy"], "local-only")
+        self.assertEqual(parsed["lanes"]["strategy"], "local-only")
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_omits_strategy_line_when_absent(self):
-        rendered = cfg_render_toml({"policy": {"mode": "single"}, "reviewers": []})
+        rendered = cfg_render_lanes({"policy": {"mode": "single"}, "lanes": []})
         import tomllib
 
         parsed = tomllib.loads(rendered)
-        self.assertNotIn("strategy", parsed)
+        self.assertNotIn("strategy", parsed.get("lanes", {}))
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_ladder_renders_as_priority_fallback_comment(self):
-        rendered = cfg_render_toml(
+        rendered = cfg_render_lanes(
             {
                 "policy": {"mode": "double", "ladder": ["codex-gpt", "sonnet-native"]},
-                "reviewers": [],
+                "lanes": [],
             }
         )
         self.assertIn("# Priority fallback order", rendered)
@@ -404,19 +406,19 @@ class TestRenderAndWriteToml(unittest.TestCase):
         import tomllib
 
         parsed = tomllib.loads(rendered)  # comment must not break parsing
-        self.assertEqual(parsed["policy"]["ladder"], ["codex-gpt", "sonnet-native"])
+        self.assertEqual(parsed["lanes"]["policy"]["ladder"], ["codex-gpt", "sonnet-native"])
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_empty_ladder_renders_no_priority_comment(self):
-        rendered = cfg_render_toml({"policy": {"mode": "single", "ladder": []}, "reviewers": []})
+        rendered = cfg_render_lanes({"policy": {"mode": "single", "ladder": []}, "lanes": []})
         self.assertNotIn("# Priority fallback order", rendered)
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_single_mode_ladder_comment_omits_secondary_clause(self):
-        rendered = cfg_render_toml(
+        rendered = cfg_render_lanes(
             {
                 "policy": {"mode": "single", "ladder": ["codex-gpt", "sonnet-native"]},
-                "reviewers": [],
+                "lanes": [],
             }
         )
         self.assertIn("# Priority fallback order", rendered)
@@ -425,39 +427,39 @@ class TestRenderAndWriteToml(unittest.TestCase):
     def test_render_toml_rejects_invalid_purpose_value(self):
         config = {
             "policy": {},
-            "reviewers": [
+            "lanes": [
                 {"key": "a", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"}
             ],
         }
-        output = config_io.cfg_render_toml(config)
+        output = config_io.cfg_render_lanes(config)
         self.assertNotIn("not-a-real-purpose", output)
 
     def test_render_toml_rejects_non_string_purpose_without_raising(self):
         # HIGH finding: a non-string (unhashable) purpose value must be REJECTED, never crash
-        # cfg_render_toml with an unhandled TypeError from a bare `in <set>` membership test.
+        # cfg_render_lanes with an unhandled TypeError from a bare `in <set>` membership test.
         config = {
             "policy": {},
-            "reviewers": [
+            "lanes": [
                 {"key": "a", "model": "m", "vendor": "v", "purpose": ["review", "execute"]}
             ],
         }
-        output = config_io.cfg_render_toml(config)  # must not raise
-        self.assertNotIn("[[reviewers]]", output)
+        output = config_io.cfg_render_lanes(config)  # must not raise
+        self.assertNotIn("[[lanes.review]]", output)
 
     def test_render_toml_keeps_valid_purpose_value(self):
         config = {
             "policy": {},
-            "reviewers": [{"key": "a", "model": "m", "vendor": "v", "purpose": "execute"}],
+            "lanes": [{"key": "a", "model": "m", "vendor": "v", "purpose": "execute"}],
         }
-        output = config_io.cfg_render_toml(config)
+        output = config_io.cfg_render_lanes(config)
         self.assertIn('purpose = "execute"', output)
 
     def test_render_toml_rejects_non_bool_is_router(self):
         config = {
             "policy": {},
-            "reviewers": [{"key": "a", "model": "m", "vendor": "v", "is_router": "yes"}],
+            "lanes": [{"key": "a", "model": "m", "vendor": "v", "is_router": "yes"}],
         }
-        output = config_io.cfg_render_toml(config)
+        output = config_io.cfg_render_lanes(config)
         self.assertNotIn("is_router", output)
 
     def test_render_toml_drops_rejected_reviewer_from_the_ladder_too(self):
@@ -465,12 +467,12 @@ class TestRenderAndWriteToml(unittest.TestCase):
         # a config that LOOKS valid (parses fine) but resolve_ladder_pick can never satisfy.
         config = {
             "policy": {"mode": "single", "ladder": ["bad", "good"]},
-            "reviewers": [
+            "lanes": [
                 {"key": "bad", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"},
                 {"key": "good", "model": "m2", "vendor": "v2"},
             ],
         }
-        output = config_io.cfg_render_toml(config)
+        output = config_io.cfg_render_lanes(config)
         self.assertNotIn('"bad"', output)
         ladder_line = next(line for line in output.splitlines() if line.startswith("ladder"))
         self.assertNotIn("bad", ladder_line)
@@ -479,11 +481,11 @@ class TestRenderAndWriteToml(unittest.TestCase):
     def test_render_toml_no_dangling_ladder_warning_when_rejected_key_not_in_ladder(self):
         # MEDIUM finding: a rejected reviewer whose key was never referenced in policy.ladder
         # at all must not trigger the "dropped dangling reference" stderr warning -- only an
-        # actual ladder/reviewers divergence should. cfg_render_toml prints rejections to
+        # actual ladder/reviewers divergence should. cfg_render_lanes prints rejections to
         # stderr (Step 5's implementation), not into its returned string, so capture stderr.
         config = {
             "policy": {"mode": "single", "ladder": ["good"]},
-            "reviewers": [
+            "lanes": [
                 {"key": "bad", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"},
                 {"key": "good", "model": "m2", "vendor": "v2"},
             ],
@@ -493,26 +495,26 @@ class TestRenderAndWriteToml(unittest.TestCase):
 
         captured = io.StringIO()
         with redirect_stderr(captured):
-            config_io.cfg_render_toml(config)
+            config_io.cfg_render_lanes(config)
         self.assertNotIn("dangling", captured.getvalue())
 
     def test_render_toml_rejects_dict_valued_reviewer_field(self):
-        # WR-03 (code review, 01.2): `_toml_value` had no `dict` branch, so a dict-valued
+        # WR-03 (code review, 01.2): the old writer had no `dict` branch, so a dict-valued
         # reviewer field (e.g. a hand-edited/generated `extra = { timeout_tiers = [...] }`,
         # the exact failure mode SKILL.md documents as a known constraint) fell through to the
         # final `str(v)` branch and rendered Python's str()-of-a-dict as a quoted TOML STRING
         # (corrupted data, not a table) instead of being rejected like every other malformed
         # reviewer field. Must be rejected via the same rejections/WARNING pathway -- the
-        # ENTIRE reviewer entry dropped, `[[reviewers]]` for it never emitted -- not silently
+        # ENTIRE reviewer entry dropped, `[[lanes.review]]` for it never emitted -- not silently
         # written as corrupted TOML.
         config = {
             "policy": {},
-            "reviewers": [
+            "lanes": [
                 {"key": "a", "model": "m", "vendor": "v", "extra": {"timeout_tiers": [900, 1800]}}
             ],
         }
-        output = config_io.cfg_render_toml(config)  # must not raise
-        self.assertNotIn("[[reviewers]]", output)
+        output = config_io.cfg_render_lanes(config)  # must not raise
+        self.assertNotIn("[[lanes.review]]", output)
         self.assertNotIn("timeout_tiers", output)
         self.assertNotIn("{'timeout_tiers'", output)  # the corrupted str(dict) rendering
 
@@ -522,13 +524,14 @@ class TestRenderAndWriteToml(unittest.TestCase):
         # the ladder cfg_resolve sees contains no reference to the dropped key.
         config = {
             "policy": {"mode": "single", "ladder": ["bad", "good"]},
-            "reviewers": [
+            "lanes": [
                 {"key": "bad", "model": "m", "vendor": "v", "purpose": "not-a-real-purpose"},
                 {"key": "good", "model": "m2", "vendor": "v2", "runtime": "opencode"},
             ],
         }
         with tempfile.TemporaryDirectory() as d:
-            path = config_io.cfg_local_path(d)  # ./.aikit/review-spec.toml under d
+            # the roster as the project's config.toml holds it, read back by cfg_resolve
+            path = config_io.cfg_local_path(d)
             config_io.cfg_write_toml(path, config)
             with open(path, "rb") as f:
                 raw = f.read()
@@ -1226,10 +1229,10 @@ class TestPiHostEndToEnd(unittest.TestCase):
         self.assertEqual(host, "pi")
         # Only Claude Code aliases are per-call selectable today, so a pi host's native
         # entry is the session default: an empty model and no runtime.
-        rendered = config_io.cfg_render_toml(
-            {"policy": {}, "reviewers": [{"key": "native-primary", "model": ""}]}
+        rendered = config_io.cfg_render_lanes(
+            {"policy": {}, "lanes": [{"key": "native-primary", "model": ""}]}
         )
-        self.assertIn("[[reviewers]]", rendered)
+        self.assertIn("[[lanes.review]]", rendered)
         self.assertIn('model = ""', rendered)
         self.assertNotIn("runtime =", rendered)
 
@@ -1737,7 +1740,10 @@ class TestDetectToolAvailability(unittest.TestCase):
         result = detection.detect_tool_availability(which_fn=fake_which)
         self.assertEqual(
             result,
-            {"rg": True, "sd": False, "bat": False, "eza": False, "fd": True, "codegraph": False},
+            {
+                "rg": True, "sd": False, "bat": False, "eza": False, "fd": True,
+                "codebase-memory-mcp": False,
+            },
         )
 
 
@@ -1768,8 +1774,14 @@ class TestResolveAgentsToolingPath(unittest.TestCase):
             self.assertIsNone(detection.resolve_agents_tooling_path(env=env))
 
 
-class TestFindCodegraphAlternative(unittest.TestCase):
+class TestFindCodeIndexAlternative(unittest.TestCase):
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="ai-kit-alt-")
+        self.addCleanup(shutil.rmtree, self.home, True)
+        self.env = {"HOME": self.home, "PATH": ""}
+
     def test_finds_grok_model_reachable_via_cursor_agent(self):
+        host_fakes.write_cbm_registration(self.home, ["cursor"])
         snapshot = {
             "clis": {
                 "cursor-agent": {
@@ -1779,12 +1791,20 @@ class TestFindCodegraphAlternative(unittest.TestCase):
                 "opencode": {"installed": True, "models": ["opencode-go/qwen3.8-max"]},
             }
         }
-        result = detection.find_codegraph_alternative("grok", "grok-4.6", snapshot)
+        result = detection.find_code_index_alternative("grok", "grok-4.6", snapshot, self.env)
         self.assertEqual(result, "cursor")
 
-    def test_returns_none_when_cli_already_supports_codegraph(self):
+    def test_an_alternative_without_the_server_registered_is_not_offered(self):
         snapshot = {"clis": {"cursor-agent": {"installed": True, "models": ["cursor-grok-4.6"]}}}
-        result = detection.find_codegraph_alternative("cursor-agent", "cursor-grok-4.6", snapshot)
+        self.assertIsNone(
+            detection.find_code_index_alternative("grok", "grok-4.6", snapshot, self.env))
+        host_fakes.write_cbm_registration(self.home, ["cursor"], disabled=["cursor"])
+        self.assertIsNone(
+            detection.find_code_index_alternative("grok", "grok-4.6", snapshot, self.env))
+
+    def test_returns_none_when_the_cli_has_a_registration_reader(self):
+        snapshot = {"clis": {"cursor-agent": {"installed": True, "models": ["cursor-grok-4.6"]}}}
+        result = detection.find_code_index_alternative("cursor-agent", "cursor-grok-4.6", snapshot)
         self.assertIsNone(result)
 
     def test_returns_none_when_no_matching_model_found_anywhere(self):
@@ -1794,279 +1814,13 @@ class TestFindCodegraphAlternative(unittest.TestCase):
                 "opencode": {"installed": True, "models": ["opencode-go/qwen3.8-max"]},
             }
         }
-        result = detection.find_codegraph_alternative("grok", "grok-4.6", snapshot)
+        result = detection.find_code_index_alternative("grok", "grok-4.6", snapshot)
         self.assertIsNone(result)
 
-    def test_skips_a_codegraph_capable_cli_that_is_not_installed(self):
+    def test_skips_a_multi_provider_cli_that_is_not_installed(self):
         snapshot = {"clis": {"cursor-agent": {"installed": False}}}
-        result = detection.find_codegraph_alternative("grok", "grok-4.6", snapshot)
+        result = detection.find_code_index_alternative("grok", "grok-4.6", snapshot)
         self.assertIsNone(result)
-
-
-class TestProbeCodegraph(unittest.TestCase):
-    def _is_get(self, argv):
-        return len(argv) >= 3 and argv[2] == "get"
-
-    def test_grok_is_unsupported_without_running_any_command(self):
-        probe = detection.probe_codegraph(
-            "grok",
-            run_fn=lambda *a, **k: (_ for _ in ()).throw(
-                AssertionError("must not run any command for grok")
-            ),
-        )
-        self.assertEqual(probe.registered, False)
-        self.assertEqual(probe.healthy, False)
-        self.assertIsNone(probe.install_command)
-        self.assertIn("grok", probe.detail)
-
-    def test_unknown_cli_is_unsupported(self):
-        self.assertFalse(detection.check_codegraph_mcp_usable("some-future-cli"))
-
-    def test_claude_healthy_when_mcp_get_exits_zero_and_connected(self):
-        probe = detection.probe_codegraph(
-            "claude",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="codegraph:\n  Status: ✔ Connected\n"
-            ),
-        )
-        self.assertTrue(probe.registered)
-        self.assertTrue(probe.healthy)
-        self.assertIsNone(probe.install_command)
-        self.assertTrue(
-            detection.check_codegraph_mcp_usable(
-                "claude",
-                run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                    returncode=0, stdout="Status: ✔ Connected\n"
-                ),
-            )
-        )
-
-    def test_claude_unhealthy_when_get_shows_failed_to_connect(self):
-        probe = detection.probe_codegraph(
-            "claude",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="Status: ✘ Failed to connect — CONNECTION_CLOSED\n"
-            ),
-        )
-        self.assertTrue(probe.registered)
-        self.assertFalse(probe.healthy)
-        self.assertEqual(probe.install_command, detection.codegraph_install_command("claude"))
-
-    def test_claude_missing_when_get_and_list_both_fail(self):
-        def fake_run(argv, **k):
-            if self._is_get(argv):
-                return unittest.mock.MagicMock(returncode=1)
-            return unittest.mock.MagicMock(returncode=0, stdout="other-tool: x - Connected\n")
-
-        probe = detection.probe_codegraph("claude", run_fn=fake_run)
-        self.assertFalse(probe.registered)
-        self.assertFalse(probe.healthy)
-        self.assertEqual(probe.install_command, detection.codegraph_install_command("claude"))
-
-    def test_claude_get_success_skips_list_fallback(self):
-        seen = []
-
-        def fake_run(argv, **k):
-            seen.append(argv)
-            return unittest.mock.MagicMock(returncode=0, stdout="Status: ✔ Connected\n")
-
-        detection.probe_codegraph("claude", run_fn=fake_run)
-        self.assertEqual(seen, [detection._MCP_GET_COMMANDS["claude"]])
-
-    def test_claude_get_fails_but_list_finds_healthy_entry(self):
-        def fake_run(argv, **k):
-            if self._is_get(argv):
-                return unittest.mock.MagicMock(returncode=1)
-            return unittest.mock.MagicMock(returncode=0, stdout="codegraph: x - ✔ Connected\n")
-
-        probe = detection.probe_codegraph("claude", run_fn=fake_run)
-        self.assertTrue(probe.registered and probe.healthy)
-
-    def test_codex_registered_with_health_unknown_never_healthy(self):
-        # A-WR-10/RUN-11: codex exposes no health, so it is never reported healthy.
-        def run(*_a, **_k):
-            return unittest.mock.MagicMock(returncode=0, stdout="anything\n")
-
-        probe = detection.probe_codegraph("codex", run_fn=run)
-        self.assertTrue(probe.registered)
-        self.assertIsNone(probe.healthy)
-        self.assertIsNone(probe.install_command)
-        self.assertEqual(probe.detail, "registered; codex does not expose health")
-        self.assertTrue(detection.check_codegraph_mcp_usable("codex", run_fn=run))
-
-    def test_codex_get_output_with_a_failure_signal_is_unhealthy(self):
-        probe = detection.probe_codegraph(
-            "codex",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="codegraph ✘ not connected\n"),
-        )
-        self.assertTrue(probe.registered)
-        self.assertFalse(probe.healthy)
-        self.assertEqual(probe.install_command, detection.codegraph_install_command("codex"))
-
-    def test_failed_mcp_list_is_unknown_with_no_install_hint(self):
-        # A-IN-05: a failing `mcp list` proves nothing about registration.
-        probe = detection.probe_codegraph(
-            "cursor-agent",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=1, stdout=""),
-        )
-        self.assertIsNone(probe.registered)
-        self.assertIsNone(probe.healthy)
-        self.assertIsNone(probe.install_command)
-
-    def test_cursor_agent_parses_list_name_token(self):
-        fake_list = "codegraph: some-command - ✔ Connected\nother-tool: x\n"
-        probe = detection.probe_codegraph(
-            "cursor-agent",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list),
-        )
-        self.assertTrue(probe.registered and probe.healthy)
-
-    def test_cursor_agent_false_when_codegraph_only_in_description(self):
-        fake_list = "other-tool: some codegraph-related command - ✔ Connected\n"
-        probe = detection.probe_codegraph(
-            "cursor-agent",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list),
-        )
-        self.assertFalse(probe.registered)
-
-    def test_cursor_agent_unhealthy_line_gets_install_hint(self):
-        fake_list = "codegraph: cmd - ✘ Failed to connect\n"
-        probe = detection.probe_codegraph(
-            "cursor-agent",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=0, stdout=fake_list),
-        )
-        self.assertTrue(probe.registered)
-        self.assertFalse(probe.healthy)
-        self.assertEqual(probe.install_command, detection.codegraph_install_command("cursor-agent"))
-
-    def test_opencode_list_parsing_matches_cursor_agent(self):
-        probe = detection.probe_codegraph(
-            "opencode",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="codegraph: ✔ connected\n"
-            ),
-        )
-        self.assertTrue(probe.registered and probe.healthy)
-
-    def test_list_client_false_when_no_codegraph_entry(self):
-        probe = detection.probe_codegraph(
-            "cursor-agent",
-            run_fn=lambda *a, **k: unittest.mock.MagicMock(
-                returncode=0, stdout="No MCP servers configured\n"
-            ),
-        )
-        self.assertFalse(probe.registered)
-
-    def test_timeout_yields_unknown_registered_and_healthy(self):
-        def fake_run(argv, **k):
-            raise subprocess.TimeoutExpired(cmd=argv, timeout=k["timeout"])
-
-        probe = detection.probe_codegraph("claude", run_fn=fake_run)
-        self.assertIsNone(probe.registered)
-        self.assertIsNone(probe.healthy)
-        self.assertIsNone(probe.install_command)
-
-    def test_oserror_yields_unknown_with_detail(self):
-        def fake_run(argv, **k):
-            raise OSError("no such binary")
-
-        probe = detection.probe_codegraph("claude", run_fn=fake_run)
-        self.assertIsNone(probe.registered)
-        self.assertIn("no such binary", probe.detail)
-
-    def test_every_subprocess_uses_argv_list_and_probe_timeout(self):
-        recorded = []
-
-        def fake_run(argv, **k):
-            recorded.append((argv, k))
-            return unittest.mock.MagicMock(returncode=1, stdout="")
-
-        detection.probe_codegraph("claude", run_fn=fake_run)
-        self.assertGreaterEqual(len(recorded), 2)
-        for argv, kw in recorded:
-            self.assertIsInstance(argv, (list, tuple))
-            self.assertEqual(kw.get("timeout"), detection.CODEGRAPH_PROBE_TIMEOUT_SECONDS)
-            joined = " ".join(argv)
-            self.assertNotIn("install", joined)
-
-    def test_no_supported_client_ever_runs_install_even_when_codegraph_missing(self):
-        # R12: for every client, a "codegraph not registered" answer yields only a hint.
-        for client in sorted(detection._SUPPORTED_CODEGRAPH_CLIENTS):
-            with self.subTest(cli=client):
-                recorded = []
-
-                def fake_run(argv, recorded=recorded, **k):
-                    recorded.append(list(argv))
-                    # "mcp get" misses (rc 1); "mcp list" succeeds with no codegraph entry
-                    return unittest.mock.MagicMock(
-                        returncode=1 if "get" in argv else 0, stdout="")
-
-                probe = detection.probe_codegraph(client, run_fn=fake_run)
-                self.assertTrue(recorded)
-                for argv in recorded:
-                    self.assertNotIn("install", argv)
-                    self.assertNotIn("add", argv)
-                self.assertIs(probe.registered, False)
-                self.assertTrue(probe.install_command)
-
-    def test_hanging_cli_binary_respects_probe_timeout(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            fake_claude = os.path.join(tmp, "claude")
-            with open(fake_claude, "w", encoding="utf-8") as f:
-                f.write("#!/bin/sh\nexec sleep 30\n")  # exec: the probe timeout kills sleep itself
-            os.chmod(fake_claude, stat.S_IRWXU)
-            env = os.environ.copy()
-            env["PATH"] = tmp + os.pathsep + env.get("PATH", "")
-
-            def patched_run(argv, **kw):
-                kw["env"] = env
-                return subprocess.run(argv, **kw)
-
-            start = time.monotonic()
-            probe = detection.probe_codegraph("claude", run_fn=patched_run, timeout=1)
-            elapsed = time.monotonic() - start
-            self.assertLess(elapsed, 5.0)
-            self.assertIsNone(probe.registered)
-
-
-class TestRunCodegraphIndex(unittest.TestCase):
-    def test_sync_success_returns_true_without_init(self):
-        calls = []
-
-        def fake_run(argv, **kw):
-            calls.append((argv, kw))
-            return unittest.mock.MagicMock(returncode=0)
-
-        self.assertTrue(detection.run_codegraph_index("/repo/root", run_fn=fake_run))
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][0], ["codegraph", "sync"])
-        self.assertEqual(calls[0][1]["cwd"], "/repo/root")
-
-    def test_sync_failure_runs_init_in_target_dir(self):
-        attempt = {"n": 0}
-
-        def fake_run(argv, **kw):
-            attempt["n"] += 1
-            return unittest.mock.MagicMock(returncode=0 if attempt["n"] == 2 else 1)
-
-        self.assertTrue(detection.run_codegraph_index("/tmp/a b", run_fn=fake_run))
-        self.assertEqual(attempt["n"], 2)
-
-    def test_both_fail_returns_false(self):
-        def fake_run(argv, **kw):
-            return unittest.mock.MagicMock(returncode=1)
-
-        self.assertFalse(detection.run_codegraph_index("/repo", run_fn=fake_run))
-
-    def test_timeout_returns_false(self):
-        def fake_run(argv, **kw):
-            raise subprocess.TimeoutExpired(cmd=argv, timeout=15)
-
-        self.assertFalse(detection.run_codegraph_index("/repo", run_fn=fake_run))
-
-    def test_minimum_index_timeout_constant(self):
-        self.assertEqual(detection.CODEGRAPH_INDEX_TIMEOUT_SECONDS, 15)
 
 
 class TestBuildRuntimesSnapshot(unittest.TestCase):
@@ -4534,21 +4288,19 @@ class TestMainCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
             os.makedirs(os.path.join(home, ".config", "ai-kit"))
             cfg_write_toml(
-                os.path.join(home, ".config", "ai-kit", "review-spec.toml"),
+                os.path.join(home, ".config", "ai-kit", "config.toml"),
                 {
                     "policy": {"mode": "single", "ladder": ["codex-gpt"]},
-                    "reviewers": [{"key": "codex-gpt", "model": "gpt-5.2",
-                                  "vendor": "openai", "runtime": "codex"}],
+                    "lanes": [{"key": "codex-gpt", "model": "gpt-5.2",
+                               "vendor": "openai", "runtime": "codex"}],
                 },
             )
             os.makedirs(os.path.join(cwd, ".aikit"))
-            local_path = os.path.join(cwd, ".aikit", "review-spec.toml")
-            raw = b'[[reviewers]]\nkey = "codex-gpt"\nmodel = "gpt-5.2-mini"\n'
+            local_path = config_io.cfg_local_path(cwd)
+            raw = b'[[lanes.review]]\nkey = "codex-gpt"\nmodel = "gpt-5.2-mini"\n'
             with open(local_path, "wb") as f:
                 f.write(raw)
-            trust.record_trust(
-                config_io.cfg_trust_store_dir({"HOME": home}), os.path.realpath(local_path), raw
-            )
+            config_io.cfg_trust_project(cwd, {"HOME": home})
             quota_path = os.path.join(cwd, "quota.json")
             cache_write_json(quota_path, {})
             buf = io.StringIO()
@@ -4585,9 +4337,9 @@ class TestMainCli(unittest.TestCase):
             config_dir = os.path.join(home, ".config", "ai-kit")
             os.makedirs(config_dir)
             cfg_write_toml(
-                os.path.join(config_dir, "review-spec.toml"),
+                os.path.join(config_dir, "config.toml"),
                 {"policy": {"ladder": ["native"]},
-                 "reviewers": [{"key": "native", "model": "opus", "runtime": "claude"}]},
+                 "lanes": [{"key": "native", "model": "opus", "runtime": "claude"}]},
             )
             quota_path = os.path.join(cwd, "quota.json")
             fake_runner = mock.Mock(
@@ -4610,10 +4362,10 @@ class TestMainCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
             os.makedirs(os.path.join(home, ".config", "ai-kit"))
             cfg_write_toml(
-                os.path.join(home, ".config", "ai-kit", "review-spec.toml"),
+                os.path.join(home, ".config", "ai-kit", "config.toml"),
                 {
                     "policy": {"mode": "single", "ladder": ["codex-gpt"]},
-                    "reviewers": [
+                    "lanes": [
                         {
                             "key": "codex-gpt",
                             "model": "gpt-5.2",
@@ -4645,9 +4397,9 @@ class TestMainCli(unittest.TestCase):
                 tempfile.TemporaryDirectory() as other_home:
             os.makedirs(os.path.join(home, ".config", "ai-kit"))
             cfg_write_toml(
-                os.path.join(home, ".config", "ai-kit", "review-spec.toml"),
+                os.path.join(home, ".config", "ai-kit", "config.toml"),
                 {"policy": {"ladder": ["cu"]},
-                 "reviewers": [{"key": "cu", "model": "m", "command": "mycli {model}"}]},
+                 "lanes": [{"key": "cu", "model": "m", "command": "mycli {model}"}]},
             )
             fake_custom = mock.Mock(return_value=_probe_result(None, "ok"))
             with mock.patch.object(os, "environ", {"HOME": other_home}):
@@ -4795,48 +4547,52 @@ class TestMainCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             json_path = os.path.join(d, "config.json")
             with open(json_path, "w", encoding="utf-8") as f:
-                json.dump({"policy": {"mode": "single"}, "reviewers": []}, f)
+                json.dump({"policy": {"mode": "single"}, "lanes": []}, f)
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = main(["render-toml", "--json-config", json_path])
             self.assertEqual(code, 0)
             self.assertIn("mode", buf.getvalue())
-            self.assertFalse(os.path.exists(os.path.join(d, "review-spec.toml")))
+            self.assertFalse(os.path.exists(os.path.join(d, "config.toml")))
 
     def test_render_toml_with_out_writes_via_cfg_write_toml(self):
         with tempfile.TemporaryDirectory() as d:
             json_path = os.path.join(d, "config.json")
             with open(json_path, "w", encoding="utf-8") as f:
-                json.dump({"policy": {"mode": "double", "ladder": ["a"]}, "reviewers": []}, f)
-            out_path = os.path.join(d, "nested", "review-spec.toml")
+                json.dump({"policy": {"mode": "double", "ladder": ["a"]}, "lanes": []}, f)
+            out_path = os.path.join(d, "nested", "config.toml")
             code = main(["render-toml", "--json-config", json_path, "--out", out_path])
             self.assertEqual(code, 0)
             written = cfg_load_toml(out_path)
-            self.assertEqual(written["policy"]["mode"], "double")
+            self.assertEqual(written["lanes"]["policy"]["mode"], "double")
 
     def test_render_toml_out_refuses_existing_file_without_replace(self):
+        # Data safety (C1-17): an existing [lanes] table is replaced only with --replace. A file
+        # with other tables is not refused (see TestRenderTomlCli in test_config_layers.py).
         import io
         from contextlib import redirect_stderr, redirect_stdout
 
         with tempfile.TemporaryDirectory() as d:
             json_path = os.path.join(d, "config.json")
             with open(json_path, "w", encoding="utf-8") as f:
-                json.dump({"policy": {"mode": "double", "ladder": ["a"]}, "reviewers": []}, f)
-            out_path = os.path.join(d, "review-spec.toml")
+                json.dump({"policy": {"mode": "double", "ladder": ["a"]}, "lanes": []}, f)
+            out_path = os.path.join(d, "config.toml")
+            existing = '# user config\n[lanes]\nstrategy = "global-merge"\n'
             with open(out_path, "w", encoding="utf-8") as f:
-                f.write("# user config\n")
+                f.write(existing)
             err = io.StringIO()
             with redirect_stdout(io.StringIO()), redirect_stderr(err):
                 code = main(["render-toml", "--json-config", json_path, "--out", out_path])
             self.assertEqual(code, 1)
-            self.assertIn("refusing to replace", err.getvalue())
+            self.assertIn("refusing to replace the [lanes] table", err.getvalue())
+            self.assertIn("(nothing written)", err.getvalue())
             with open(out_path, encoding="utf-8") as f:
-                self.assertEqual(f.read(), "# user config\n")
+                self.assertEqual(f.read(), existing)
             with redirect_stdout(io.StringIO()):
                 code = main(["render-toml", "--json-config", json_path, "--out", out_path,
                              "--replace"])
             self.assertEqual(code, 0)
-            self.assertEqual(cfg_load_toml(out_path)["policy"]["mode"], "double")
+            self.assertEqual(cfg_load_toml(out_path)["lanes"]["policy"]["mode"], "double")
 
     def test_infer_vendor_prints_matched_vendor(self):
         import io
@@ -4874,7 +4630,7 @@ class TestMainCli(unittest.TestCase):
         self.assertIn("--model", argv)
         self.assertIn("{model}", argv)
         self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
-        self.assertIn("review-spec.toml stores runtime and model", err.getvalue())
+        self.assertIn("a config.toml lane stores runtime and model", err.getvalue())
         self.assertIn("codex", err.getvalue())
 
     def test_build_command_cursor_agent_passes_mode_flag(self):
@@ -4889,7 +4645,7 @@ class TestMainCli(unittest.TestCase):
         self.assertEqual(body["kind"], "runner")
         argv = body["argv"]
         self.assertEqual(argv[argv.index("--cursor-mode") + 1], "plan")
-        self.assertIn("review-spec.toml stores runtime and model", err.getvalue())
+        self.assertIn("a config.toml lane stores runtime and model", err.getvalue())
 
     def test_build_command_grok_prints_custom_template(self):
         import io
@@ -5071,14 +4827,19 @@ class TestMainCliDetectTools(unittest.TestCase):
         result = json.loads(buf.getvalue())
         self.assertEqual(
             result,
-            {"rg": True, "sd": False, "bat": False, "eza": False, "fd": False, "codegraph": False},
+            {
+                "rg": True, "sd": False, "bat": False, "eza": False, "fd": False,
+                "codebase-memory-mcp": False,
+            },
         )
 
 
 class TestBuildToolingGuidance(unittest.TestCase):
+    CLI_FORM = "codebase-memory-mcp cli <tool> --flag value"
+
     def test_empty_when_nothing_confirmed(self):
         result = tooling_guidance.build_tooling_guidance(
-            "grok", tool_availability={}, agents_tooling_path=None, codegraph_registered=False
+            "grok", tool_availability={}, agents_tooling_path=None, code_index_registered=False
         )
         self.assertEqual(result, "")
 
@@ -5087,45 +4848,67 @@ class TestBuildToolingGuidance(unittest.TestCase):
             "claude",
             tool_availability={},
             agents_tooling_path="/home/u/.agents/AGENTS-TOOLING.md",
-            codegraph_registered=False,
+            code_index_registered=False,
         )
         self.assertIn("/home/u/.agents/AGENTS-TOOLING.md", result)
 
-    def test_mentions_codegraph_explore_only_when_registered(self):
-        result = tooling_guidance.build_tooling_guidance(
-            "claude",
-            tool_availability={"codegraph": True},
-            agents_tooling_path=None,
-            codegraph_registered=True,
-        )
-        self.assertIn("codegraph_explore", result)
+    def test_registered_runtimes_get_the_mcp_tools_in_order(self):
+        for rid in detection.RUNTIMES:
+            with self.subTest(runtime=rid):
+                result = tooling_guidance.build_tooling_guidance(
+                    rid, {"codebase-memory-mcp": True}, None, True
+                )
+                if rid not in detection.CBM_REGISTRATION_KEYS:
+                    # No registration reader (grok): the CLI form only, never the MCP list.
+                    self.assertIn(self.CLI_FORM, result)
+                    self.assertNotIn("configured for this CLI", result)
+                    continue
+                positions = [result.index(tool) for tool in tooling_guidance.CBM_TOOLS]
+                self.assertEqual(positions, sorted(positions))
+                self.assertIn("configured for this CLI", result)
+                self.assertNotIn(self.CLI_FORM, result)
+                if detection.CBM_REGISTRATION_KEYS[rid] is None:
+                    self.assertIn("inferred from its extension file", result)
+                    self.assertNotIn("read from its config", result)
+                else:
+                    self.assertIn("read from its config", result)
+                    self.assertNotIn("inferred from its extension file", result)
 
-    def test_omits_codegraph_explore_when_not_registered_even_if_binary_present(self):
-        result = tooling_guidance.build_tooling_guidance(
-            "grok",
-            tool_availability={"codegraph": True},
-            agents_tooling_path=None,
-            codegraph_registered=False,
-        )
-        self.assertNotIn("codegraph_explore", result)
+    def test_unregistered_runtimes_get_the_cli_form(self):
+        for rid in detection.RUNTIMES:
+            with self.subTest(runtime=rid):
+                result = tooling_guidance.build_tooling_guidance(
+                    rid, {"codebase-memory-mcp": True}, None, False
+                )
+                self.assertIn(self.CLI_FORM, result)
+                self.assertNotIn("configured for this CLI", result)
 
-    def test_omits_codegraph_explore_when_registered_but_binary_not_detected(self):
-        result = tooling_guidance.build_tooling_guidance(
-            "claude",
-            tool_availability={"codegraph": False},
-            agents_tooling_path=None,
-            codegraph_registered=True,
+    def test_a_legacy_alias_gets_the_table_id_guidance(self):
+        alias = tooling_guidance.build_tooling_guidance(
+            "cursor-agent", {"codebase-memory-mcp": True}, None, True
         )
-        self.assertNotIn("codegraph_explore", result)
+        table_id = tooling_guidance.build_tooling_guidance(
+            "cursor", {"codebase-memory-mcp": True}, None, True
+        )
+        self.assertEqual(alias, table_id)
+        self.assertIn("configured for this CLI", alias)
 
-    def test_grok_never_gets_codegraph_explore_even_with_inconsistent_true_inputs(self):
-        result = tooling_guidance.build_tooling_guidance(
-            "grok",
-            tool_availability={"codegraph": True},
-            agents_tooling_path=None,
-            codegraph_registered=True,
+    def test_absent_binary_names_no_tool(self):
+        for rid in detection.RUNTIMES:
+            for registered in (True, False):
+                with self.subTest(runtime=rid, registered=registered):
+                    result = tooling_guidance.build_tooling_guidance(
+                        rid, {"codebase-memory-mcp": False}, None, registered
+                    )
+                    self.assertNotIn("search_graph", result)
+                    self.assertNotIn("codebase-memory-mcp cli", result)
+
+    def test_building_twice_gives_the_same_text(self):
+        args = ("opencode", {"codebase-memory-mcp": True, "rg": True}, None, True)
+        self.assertEqual(
+            tooling_guidance.build_tooling_guidance(*args),
+            tooling_guidance.build_tooling_guidance(*args),
         )
-        self.assertNotIn("codegraph_explore", result)
 
     def test_resolve_shared_tooling_reference_path_points_to_a_real_file(self):
         path = tooling_guidance.resolve_shared_tooling_reference_path()
@@ -5330,14 +5113,16 @@ class TestDispatchExecute(unittest.TestCase):
                     prompt="do the task",
                     target_dir=target,
                     timeout=600,
-                    tool_availability={"codegraph": True},
+                    tool_availability={"codebase-memory-mcp": True},
                     agents_tooling_path="/repo/AGENTS-TOOLING.md",
-                    codegraph_registered=True,
+                    code_index_registered=True,
                 ),
                 seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
             )
         self.assertIn("/repo/AGENTS-TOOLING.md", captured["prompt"])
-        self.assertIn("codegraph_explore", captured["prompt"])
+        self.assertIn("search_graph", captured["prompt"])
+        self.assertIn("configured for this CLI", captured["prompt"])
+        self.assertNotIn("codebase-memory-mcp cli <tool> --flag value", captured["prompt"])
 
     def test_includes_output_format_block_when_given(self):
         candidate = {
@@ -5508,7 +5293,7 @@ class TestExecuteCliRejection(unittest.TestCase):
 
     def test_grok_keeps_its_custom_entry_generator(self):
         # R10/D-29 boundary: the table builders are gone; grok still generates the custom
-        # command a review-spec.toml entry stores.
+        # command a config.toml entry stores.
         self.assertEqual(
             commands.build_grok_command(),
             "grok -p {prompt} -m {model} --output-format plain",
@@ -5636,7 +5421,7 @@ class TestFilterByPurpose(unittest.TestCase):
         self.assertEqual([c["key"] for c in result], ["a"])
 
     def test_missing_purpose_key_entirely_treated_as_no_preference(self):
-        # pre-migration review-spec.toml: the field is absent, not None
+        # pre-migration config.toml: the field is absent, not None
         candidates = [{"key": "a"}]
         result = execute_selection.filter_by_purpose(candidates, "execute")
         self.assertEqual([c["key"] for c in result], ["a"])
@@ -5802,7 +5587,7 @@ class TestDispatchReviewer(unittest.TestCase):
                 runner_tiers_fn=fake_tiers,
                 build_tooling_guidance_fn=lambda *a, **kw: "TOOLING GUIDANCE HERE",
                 resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
-                codegraph_health_fn=lambda cli: True,
+                code_index_registered_fn=lambda cli: True,
             ),
         )
 
@@ -5844,7 +5629,7 @@ class TestDispatchReviewer(unittest.TestCase):
             seams=reviewer_dispatch.ReviewerSeams(
                 custom_fn=fake_custom,
                 resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
-                codegraph_health_fn=lambda cli: False,
+                code_index_registered_fn=lambda cli: False,
             ),
         )
 
@@ -5854,7 +5639,7 @@ class TestDispatchReviewer(unittest.TestCase):
         self.assertIn("Read the checklist and review...", prompt_element)
         self.assertEqual(captured["prompt"], prompt_element)
 
-    def test_codegraph_health_is_resolved_internally_not_asked_of_the_caller(self):
+    def test_code_index_registration_is_resolved_internally_not_asked_of_the_caller(self):
         asked = []
 
         def fake_tiers(spec, tiers, prompt, seams):
@@ -5867,11 +5652,11 @@ class TestDispatchReviewer(unittest.TestCase):
 
         captured_guidance_args = {}
 
-        def fake_guidance(cli, availability, agents_path, codegraph_registered, **kw):
+        def fake_guidance(cli, availability, agents_path, code_index_registered, **kw):
             del cli
             del availability
             del agents_path
-            captured_guidance_args["codegraph_registered"] = codegraph_registered
+            captured_guidance_args["code_index_registered"] = code_index_registered
             return ""
 
         reviewer_dispatch.dispatch_reviewer(
@@ -5886,20 +5671,20 @@ class TestDispatchReviewer(unittest.TestCase):
                 },
                 prompt="p",
                 timeout_tiers=[600],
-                tool_availability={"codegraph": True},
+                tool_availability={"codebase-memory-mcp": True},
             ),
             seams=reviewer_dispatch.ReviewerSeams(
                 runner_tiers_fn=fake_tiers,
                 build_tooling_guidance_fn=fake_guidance,
                 resolve_shared_reference_fn=lambda: None,
-                codegraph_health_fn=fake_health,
+                code_index_registered_fn=fake_health,
             ),
         )
 
         self.assertEqual(asked, ["codex"])
-        self.assertTrue(captured_guidance_args["codegraph_registered"])
+        self.assertTrue(captured_guidance_args["code_index_registered"])
 
-    def test_custom_entry_never_runs_the_codegraph_health_check(self):
+    def test_custom_entry_never_runs_the_registration_check(self):
         asked = []
 
         def fake_custom(spec, prompt, seams):
@@ -5922,7 +5707,7 @@ class TestDispatchReviewer(unittest.TestCase):
             seams=reviewer_dispatch.ReviewerSeams(
                 custom_fn=fake_custom,
                 resolve_shared_reference_fn=lambda: None,
-                codegraph_health_fn=lambda cli: asked.append(cli) or True,
+                code_index_registered_fn=lambda cli: asked.append(cli) or True,
             ),
         )
 
@@ -5945,7 +5730,7 @@ class TestDispatchReviewer(unittest.TestCase):
                 ),
                 seams=reviewer_dispatch.ReviewerSeams(
                     resolve_shared_reference_fn=lambda: None,
-                    codegraph_health_fn=lambda cli: False,
+                    code_index_registered_fn=lambda cli: False,
                     runner_tiers_fn=lambda *a: (_ for _ in ()).throw(AssertionError(a)),
                 ),
             )
@@ -6081,7 +5866,7 @@ class TestDispatchReviewer(unittest.TestCase):
 class TestTimeoutTiers(unittest.TestCase):
     def setUp(self):
         # The CLI tests merge the global layer; without a temp HOME/XDG_CONFIG_HOME they read
-        # the real ~/.config/ai-kit/review-spec.toml (pre-existing, 20-REVIEW WR-11).
+        # the real ~/.config/ai-kit/config.toml (pre-existing, 20-REVIEW WR-11).
         home = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, home, ignore_errors=True)
         isolated = {"HOME": home, "XDG_CONFIG_HOME": os.path.join(home, ".config")}
@@ -6097,7 +5882,7 @@ class TestTimeoutTiers(unittest.TestCase):
             return {}
 
         with unittest.mock.patch.object(config_io, "cfg_load_toml", fake_load):
-            resolved = config_io.cfg_resolve("/nonexistent", {})
+            resolved = config_io.cfg_resolve("/nonexistent", dict(os.environ))
         self.assertEqual(resolved["policy"]["timeout_tiers"], [600, 1200, 1800])
 
     def test_resolve_timeout_tiers_uses_reviewer_override_when_present(self):
@@ -6116,8 +5901,8 @@ class TestTimeoutTiers(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, ".aikit"))
-            with open(os.path.join(d, ".aikit", "review-spec.toml"), "w", encoding="utf-8") as f:
-                f.write('[policy]\nmode = "single"\nladder = []\n')
+            with open(os.path.join(d, ".aikit", "config.toml"), "w", encoding="utf-8") as f:
+                f.write('[lanes.policy]\nmode = "single"\nladder = []\n')
             reviewers_path = os.path.join(d, "reviewers.json")
             with open(reviewers_path, "w", encoding="utf-8") as f:
                 json.dump(
@@ -6153,7 +5938,7 @@ class TestTimeoutTiers(unittest.TestCase):
         from contextlib import redirect_stdout
 
         with tempfile.TemporaryDirectory() as d:
-            # No .aikit/review-spec.toml at all -- cfg_resolve degrades to DEFAULT_POLICY.
+            # No .aikit/config.toml at all -- cfg_resolve degrades to DEFAULT_POLICY.
             reviewers_path = os.path.join(d, "reviewers.json")
             with open(reviewers_path, "w", encoding="utf-8") as f:
                 json.dump(
@@ -6843,6 +6628,80 @@ class TestRankerPurposeFloor(unittest.TestCase):
         model_ranker.score_candidates(entries, "mechanical", w)
         # entries should not be mutated (same object structure, no added keys)
         self.assertEqual(entries, entries_copy)
+
+    def _null_index_entries(self):
+        with open(NULL_INDEX_CATALOG_PATH, encoding="utf-8") as handle:
+            raw = json.load(handle)
+        entries, meta = model_catalog.split_catalog_meta(raw)
+        self.assertEqual(meta.get("schema_version"), 3)
+        return [{**entry, "key": key} for key, entry in entries.items()]
+
+    def test_null_index_catalog_ranks_mechanical_by_price(self):
+        entries = self._null_index_entries()
+        before = copy.deepcopy(entries)
+        w = model_ranker.load_ranking_weights()
+        ranked = model_ranker.score_candidates(entries, "mechanical", w)
+        self.assertEqual(
+            [e["key"] for e in ranked],
+            ["example/alpha", "example/beta", "example/gamma", "example/delta"],
+        )
+        self.assertEqual(entries, before)
+
+    def test_null_index_catalog_ranks_every_purpose(self):
+        entries = self._null_index_entries()
+        w = model_ranker.load_ranking_weights()
+        for purpose in model_ranker.CANONICAL_PURPOSES:
+            with self.subTest(purpose=purpose):
+                ranked = model_ranker.score_candidates(entries, purpose, w)
+                self.assertEqual(len(ranked), 4)
+
+    def test_single_null_index_entry_is_ranked(self):
+        entries = self._null_index_entries()[:1]
+        w = model_ranker.load_ranking_weights()
+        ranked = model_ranker.score_candidates(entries, "mechanical", w)
+        self.assertEqual([e["key"] for e in ranked], ["example/alpha"])
+
+    def test_entries_without_scores_are_ranked(self):
+        entries = [
+            {"key": "example/n1", "pricing": {"input_per_1m": 1}},
+            {"key": "example/n2", "pricing": {"input_per_1m": 10}},
+        ]
+        w = model_ranker.load_ranking_weights()
+        ranked = model_ranker.score_candidates(entries, "mechanical", w)
+        self.assertEqual([e["key"] for e in ranked], ["example/n1", "example/n2"])
+
+    def test_empty_entry_list_ranks_nothing(self):
+        w = model_ranker.load_ranking_weights()
+        self.assertEqual(model_ranker.score_candidates([], "mechanical", w), [])
+
+    def test_mixed_catalog_keeps_the_floor(self):
+        def mixed_entry(key, coding):
+            return {
+                "key": key,
+                "scores": {"coding_index": coding, "intelligence_index": 50,
+                           "agentic_index": 50},
+                "pricing": {"input_per_1m": 1},
+            }
+
+        entries = [
+            mixed_entry("m20", 20),
+            mixed_entry("m40", 40),
+            mixed_entry("m35", 35),
+            mixed_entry("m349", 34.9),
+            mixed_entry("mnull", None),
+        ]
+        w = model_ranker.load_ranking_weights()
+        ranked = model_ranker.score_candidates(entries, "mechanical", w)
+        self.assertEqual(sorted(e["key"] for e in ranked), ["m35", "m40"])
+
+    def test_one_scored_entry_below_the_floor_empties_mechanical(self):
+        # D-01 per-call rule: one finite coding index arms the floor for the whole call, so the
+        # null entries beside a below-floor score are excluded and the ranking is empty.
+        entries = self._null_index_entries()
+        entries[0]["scores"]["coding_index"] = 20
+        w = model_ranker.load_ranking_weights()
+        self.assertEqual(model_ranker.score_candidates(entries, "mechanical", w), [])
+        self.assertEqual(len(model_ranker.score_candidates(entries, "execution", w)), 4)
 
 
 class TestLoadSecret(unittest.TestCase):
@@ -8148,7 +8007,7 @@ class TestBuildModelCatalog(unittest.TestCase):
         # cfg_resolve/--extra-candidate parsing itself -- build_model_catalog is given the
         # already-fully-reconciled `discovered_models` list by its caller (the CLI command,
         # Step 5) and this test only confirms it treats every one of them uniformly,
-        # regardless of whether the candidate came from a runtimes snapshot, review-spec.toml,
+        # regardless of whether the candidate came from a runtimes snapshot, config.toml,
         # or --extra-candidate -- there's no special-casing by origin inside this function.
         discovered = [
             {"runtime": "opencode", "model_id": "openai/gpt-5.6-sol"},
@@ -8746,7 +8605,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
 
     def test_single_provider_cli_candidate_pulled_from_review_spec_toml(self):
         # Same network-free technique as above (--if-stale + a fresh fetch-meta sidecar).
-        # HIGH finding: this resolves review-spec.toml's global-merge path too (cfg_resolve),
+        # HIGH finding: this resolves config.toml's global-merge path too (cfg_resolve),
         # so `env_fn` MUST point HOME at this tempdir -- never the real dict(os.environ) --
         # or this test would silently read whatever global config exists on the machine
         # actually running the suite.
@@ -8757,18 +8616,16 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             runtimes_path = self._write_runtimes(
                 d, {"codex": {"installed": True}}
             )  # no "models" key -- single-provider
-            local_cfg = os.path.join(d, ".aikit", "review-spec.toml")
+            local_cfg = config_io.cfg_local_path(d)
             os.makedirs(os.path.dirname(local_cfg))
             raw = (
-                b'[[reviewers]]\nkey = "codex-primary"\n'
+                b'[[lanes.review]]\nkey = "codex-primary"\n'
                 b'model = "vendor/already-registered"\n'
                 b'vendor = "vendor"\ncli = "codex"\n'
             )
             with open(local_cfg, "wb") as f:
                 f.write(raw)
-            trust.record_trust(
-                config_io.cfg_trust_store_dir({"HOME": d}), os.path.realpath(local_cfg), raw
-            )
+            config_io.cfg_trust_project(d, {"HOME": d})
             import io
             from contextlib import redirect_stdout
 
@@ -8805,19 +8662,17 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             self._write_current_schema_catalog(catalog_path)
             self._write_fresh_fetch_meta(catalog_path)
             runtimes_path = self._write_runtimes(d, {"grok": {"installed": True}})
-            local_cfg = os.path.join(d, ".aikit", "review-spec.toml")
+            local_cfg = config_io.cfg_local_path(d)
             os.makedirs(os.path.dirname(local_cfg))
             raw = (
-                b'[[reviewers]]\nkey = "grok-flagship"\nmodel = "grok-x"\nvendor = "xai"\n'
+                b'[[lanes.review]]\nkey = "grok-flagship"\nmodel = "grok-x"\nvendor = "xai"\n'
                 b'command = "grok -p {prompt} -m {model} --output-format plain"\n'
-                b'[[reviewers]]\nkey = "script"\nmodel = "m"\nvendor = "v"\n'
+                b'[[lanes.review]]\nkey = "script"\nmodel = "m"\nvendor = "v"\n'
                 b'command = "my-script {model} {prompt}"\n'
             )
             with open(local_cfg, "wb") as f:
                 f.write(raw)
-            trust.record_trust(
-                config_io.cfg_trust_store_dir({"HOME": d}), os.path.realpath(local_cfg), raw
-            )
+            config_io.cfg_trust_project(d, {"HOME": d})
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = main(
@@ -11666,7 +11521,7 @@ class TestDispatchReviewerRealChild(unittest.TestCase):
                         custom_fn=runner_dispatch.run_custom_command,
                         build_tooling_guidance_fn=lambda *a, **kw: "",
                         resolve_shared_reference_fn=lambda: None,
-                        codegraph_health_fn=lambda cli: False,
+                        code_index_registered_fn=lambda cli: False,
                     ),
                 )
             self.assertEqual(result["returncode"], 0, result)

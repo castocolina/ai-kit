@@ -8,12 +8,11 @@ import time
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from ai_kit_spec import provider_check, routing, trust
+from ai_kit_spec import config_migrate, provider_check, routing, toml_splice, trust
 from ai_kit_spec.cache import (
     cache_is_stale,
     cache_read_json,
     cache_write_json,
-    cache_write_text,
 )
 from ai_kit_spec.catalog_build import (
     CatalogSources,
@@ -33,10 +32,15 @@ from ai_kit_spec.config_io import (
     DEFAULT_POLICY,
     ConfigError,
     cfg_combine,
+    cfg_lanes_table,
+    cfg_lanes_view,
     cfg_local_path,
+    cfg_migrate_project,
+    cfg_migrate_target,
     cfg_parse_toml_bytes,
+    cfg_project_trust_bytes,
     cfg_read_bytes,
-    cfg_render_toml,
+    cfg_render_lanes,
     cfg_resolve,
     cfg_trust_store_dir,
     resolve_timeout_tiers,
@@ -49,7 +53,7 @@ from ai_kit_spec.detection import (
     cache_runtimes_path,
     detect_current_runtime,
     detect_tool_availability,
-    find_codegraph_alternative,
+    find_code_index_alternative,
     group_models_by_family,
     normalize_runtime_keys,
     runtime_id,
@@ -166,7 +170,7 @@ def _register_cache_detect_parsers(sub: argparse._SubParsersAction) -> None:
         help="report opencode providers configured but no longer served (read-only)")
     p_check_providers.add_argument(
         "--cwd", default=None,
-        help="project dir holding .aikit/review-spec.toml; defaults to the process cwd")
+        help="project dir holding .aikit/config.toml; defaults to the process cwd")
 
 
 
@@ -177,13 +181,14 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
         help="path to a detect-runtimes snapshot (as saved via --save/--if-stale)")
     p_catalog.add_argument("--catalog-path", required=True)
     p_catalog.add_argument("--cwd", default=None,
-                            help="for resolving review-spec.toml's already-registered "
+                            help="for resolving config.toml's already-registered "
                                  "single-provider-CLI models; defaults to the process cwd")
     p_catalog.add_argument(
         "--extra-candidate", action="append", default=[], metavar="CLI:MODEL_ID",
         help="repeatable; a wizard-typed single-provider-CLI candidate not yet in "
-             "review-spec.toml (e.g. a first-time codex/grok setup with nothing registered "
-             "yet) -- still goes through the same matching/enrichment path as anything else.")
+             "the config.toml [lanes] roster (e.g. a first-time codex/grok setup with "
+             "nothing registered yet) -- still goes through the same matching/enrichment "
+             "path as anything else.")
     p_catalog.add_argument(
         "--if-stale", action="store_true",
         help="gate NETWORK CALLS ONLY: when --catalog-path exists, is fresher than "
@@ -226,6 +231,10 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
         "--no-save-runtimes", action="store_true",
         help="route from the runtimes cache but never write it (pair with a throwaway "
              "--quota-path for a run that persists nothing)")
+    p_quota.add_argument(
+        "--no-migrate", action="store_true",
+        help="read an old roster read-only and report the pending migration instead of "
+             "migrating it (the --check-only flow)")
 
     p_resolve = sub.add_parser("resolve-reviewers")
     p_resolve.add_argument("--cwd", required=True)
@@ -306,7 +315,7 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
     p_group.add_argument("--runtime", "--cli", dest="runtime", required=True,
                           help="which runtime's models array to group, e.g. opencode, cursor")
 
-    p_alt = sub.add_parser("check-codegraph-alternative")
+    p_alt = sub.add_parser("check-code-index-alternative")
     p_alt.add_argument("--runtime", "--cli", dest="runtime", required=True,
                         help="runtime id, e.g. opencode, cursor")
     p_alt.add_argument("--model", required=True)
@@ -345,7 +354,7 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
                                   "mode whose caller already knows its own output convention")
     p_dispatch.add_argument("--tool-availability-json", default=None)
     p_dispatch.add_argument("--agents-tooling-path", default=None)
-    p_dispatch.add_argument("--codegraph-registered", action="store_true")
+    p_dispatch.add_argument("--code-index-registered", action="store_true")
     p_dispatch.add_argument(
         "--stdout-only", action="store_true",
         help="print ONLY the dispatched CLI's own stdout (result['stdout'], verbatim, no JSON "
@@ -686,7 +695,7 @@ def _cmd_apply_heuristic_correction(args: argparse.Namespace, deps: CliDeps) -> 
     return 0
 
 def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
-    config = cfg_resolve(args.cwd, deps.env_fn())
+    config = cfg_resolve(args.cwd, deps.env_fn(), migrate=not args.no_migrate)
     routes = _route_reviewers(config, deps, persist=not args.no_save_runtimes)
     ladder = routing.probe_keys(config.get("policy", {}).get("ladder", []), routes)
     existing = cache_read_json(args.quota_path) or {}
@@ -756,19 +765,59 @@ def _cmd_merge_reports(args: argparse.Namespace, deps: CliDeps) -> int:
     print(render_merged_report(merged, args.doc_paths, any_source_issues))
     return 0
 
+def _checked_target(path: str) -> tuple[str, dict]:
+    """The text and parsed document of a render-toml target ("" and {} when it is missing).
+
+    A broken or non-UTF-8 file is a ConfigError (exit 2), raised before any write (C1-16)."""
+    if not os.path.exists(path):
+        return "", {}
+    raw = cfg_read_bytes(path)
+    doc = cfg_parse_toml_bytes(raw, path)
+    return raw.decode("utf-8"), doc
+
+
+def _render_toml_refusal(out: str, doc: dict, replace: bool) -> str | None:
+    """The refusal for a render-toml write that needs --replace (C1-17, C1-18): an existing [lanes]
+    table, or an old roster beside the target that would migrate into it. The check runs before the
+    migration, so a refusal writes nothing at all."""
+    if replace:
+        return None
+    if "lanes" in doc:
+        return (f"render-toml: refusing to replace the [lanes] table in {out} (nothing written); "
+                "pass --replace only after the user approved replacing it")
+    # Only a config.toml has a sibling old roster that migrates into it (IN-06).
+    legacy = config_migrate.pending(out) if os.path.basename(out) == "config.toml" else None
+    if legacy is not None:
+        return (f"render-toml: refusing to replace the old roster {legacy} that migrates into "
+                f"{out} (nothing written); pass --replace only after the user approved "
+                "replacing it")
+    return None
+
+
 def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
-    if args.out and os.path.exists(args.out) and not args.replace:
-        # Data safety: an existing config is replaced only with explicit consent.
-        print(f"render-toml: refusing to replace existing {args.out} (nothing written); "
-              "pass --replace only after the user approved replacing it", file=sys.stderr)
-        return 1
+    env = deps.env_fn()
     with open(args.json_config, encoding="utf-8") as f:
         config = json.load(f)
-    rendered = cfg_render_toml(config)
+    existing, doc = _checked_target(args.out) if args.out else ("", {})
     if args.out:
-        # Write the already-rendered bytes: rendering again would print the migration note
-        # a second time.
-        cache_write_text(args.out, rendered)
+        refusal = _render_toml_refusal(args.out, doc, args.replace)
+        if refusal is not None:
+            print(refusal, file=sys.stderr)
+            return 1
+        if os.path.basename(args.out) == "config.toml":
+            cfg_migrate_target(args.out, env)
+            existing, _ = _checked_target(args.out)  # the migration may have written config.toml
+    try:
+        rendered = cfg_render_lanes(config, existing)
+    except ConfigError:
+        raise
+    except ValueError as exc:
+        message = str(exc)
+        print(message if message.startswith("render-toml") else f"render-toml: {message}",
+              file=sys.stderr)
+        return 1
+    if args.out:
+        toml_splice.publish(args.out, rendered)
     print(rendered)
     return 0
 
@@ -813,15 +862,15 @@ def _cmd_resolve_timeout_tiers(args: argparse.Namespace, deps: CliDeps) -> int:
     print(",".join(str(t) for t in tiers))
     return 0
 
-def _trust_local_argv_lines(config: dict, env: dict) -> list[dict]:
-    """One {key, argv} (or {key, error}) per local reviewer with a command, rendered as
-    dispatch would see it once trusted: merged with the global config per `strategy`, same
+def _trust_local_argv_lines(lanes: dict, env: dict) -> list[dict]:
+    """One {key, argv} (or {key, error}) per project lane with a command, rendered as
+    dispatch would see it once trusted: merged with the user layer per `strategy`, same
     to_resolved split, so every value the file substitutes is visible and only the prompt
     stays symbolic (A-CR-01)."""
-    local_keys = {r.get("key") for r in config.get("reviewers", [])}
+    local_keys = {r.get("key") for r in cfg_lanes_view(lanes)["reviewers"]}
     lines = []
-    # the parsed local file, not cfg_resolve: --show must render a file that is not trusted yet
-    for r in cfg_combine(config, env)["reviewers"]:
+    # the parsed project lanes, not cfg_resolve: --show must render a file that is not trusted yet
+    for r in cfg_combine(lanes, env)["reviewers"]:
         if not (r.get("runtime") or r.get("command")) or r.get("key") not in local_keys:
             continue
         try:
@@ -838,22 +887,36 @@ def _cmd_trust_local(args: argparse.Namespace, deps: CliDeps) -> int:
     env = dict(os.environ)
     store = cfg_trust_store_dir(env)
     if args.revoke:  # works after the file was deleted or moved (A-IN-07)
-        n = trust.revoke_trust(store, real)
+        # Before any migration (C2-3): an old roster's own record goes too, so the next read
+        # migrates it untrusted instead of carrying the revoked consent into config-trust/.
+        n = trust.revoke_trust(store, real) + config_migrate.revoke_legacy_trust(local_path, store)
         print(f"revoked {n} trust record(s) for {real}")
         return 0
+    # The CR-01 guard runs inside the migration, only when an old roster is pending (WR-101):
+    # a linked config.toml with nothing to migrate is read, never written, so it can be trusted.
+    cfg_migrate_project(args.cwd, env)
     if not os.path.exists(local_path):
         print(f"no project-local config at {local_path}", file=sys.stderr)
         return 1
     raw = cfg_read_bytes(local_path)
-    for line in _trust_local_argv_lines(cfg_parse_toml_bytes(raw, local_path), env):
+    lanes = cfg_lanes_table(cfg_parse_toml_bytes(raw, local_path), local_path)
+    if not lanes:
+        print(f"no [lanes] table in {local_path}", file=sys.stderr)
+        return 1
+    canonical = cfg_project_trust_bytes(lanes, env)
+    for line in _trust_local_argv_lines(lanes, env):
         if args.show and "argv" in line:
-            line.update(trusted=trust.is_trusted(store, real, raw), path=real)
+            line.update(trusted=canonical is None or trust.is_trusted(store, real, canonical),
+                        path=real)
         print(json.dumps(line))
     if args.show:
         return 0
-    sha = trust.content_sha256(raw)
-    trust.record_trust(store, real, raw)
-    print(f"trusted {real} sha256={sha}")
+    # Trust is recorded for the bytes already read and shown above: no second read (WR-03).
+    if canonical is None:
+        print(f"nothing to trust: {real} has no command-bearing lane entries")
+        return 0
+    trust.record_trust(store, real, canonical)
+    print(f"trusted {real} sha256={trust.content_sha256(canonical)}")
     return 0
 
 def _cmd_infer_vendor(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -871,7 +934,7 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
         )
         argv = build_runner_argv(spec, "<runner>", "node")
         print(json.dumps({"kind": "runner", "argv": argv}))
-        print(f"build-command: review-spec.toml stores runtime and model for {rid}; "
+        print(f"build-command: a config.toml lane stores runtime and model for {rid}; "
               f"the runner builds this argv at dispatch", file=sys.stderr)
         return 0
     if rid == "grok":
@@ -896,10 +959,10 @@ def _cmd_group_models(args: argparse.Namespace, deps: CliDeps) -> int:
     print(json.dumps(group_models_by_family(models)))
     return 0
 
-def _cmd_check_codegraph_alternative(args: argparse.Namespace, deps: CliDeps) -> int:
+def _cmd_check_code_index_alternative(args: argparse.Namespace, deps: CliDeps) -> int:
     snapshot = cache_read_json(args.runtimes_json) or {}
     snapshot = {**snapshot, "clis": normalize_runtime_keys(snapshot.get("clis"))}
-    alternative = find_codegraph_alternative(runtime_id(args.runtime), args.model, snapshot)
+    alternative = find_code_index_alternative(runtime_id(args.runtime), args.model, snapshot)
     print(json.dumps({"alternative_cli": alternative}))
     return 0
 
@@ -934,7 +997,7 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
                 format_block=format_block,
                 tool_availability=tool_availability,
                 agents_tooling_path=args.agents_tooling_path,
-                codegraph_registered=args.codegraph_registered,
+                code_index_registered=args.code_index_registered,
             )
         )
     except ValueError as exc:
@@ -1020,7 +1083,7 @@ _COMMANDS = {
     "build-command": _cmd_build_command,
     "build-model-id": _cmd_build_model_id,
     "group-models": _cmd_group_models,
-    "check-codegraph-alternative": _cmd_check_codegraph_alternative,
+    "check-code-index-alternative": _cmd_check_code_index_alternative,
     "dispatch-execute": _cmd_dispatch_execute,
     "dispatch-reviewer": _cmd_dispatch_reviewer,
     "check-reviewer": _cmd_check_reviewer,

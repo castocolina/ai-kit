@@ -1,0 +1,5 @@
+from a import old_fn
+
+
+def test_a():
+    assert old_fn(1)

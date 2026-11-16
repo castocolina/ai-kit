@@ -103,7 +103,9 @@ def _config_doctor_checks():
 def resolve_paths(env):
     """Resolve every path the installer touches, mirroring install.sh's env
     precedence: AI_KIT_DIR > the checkout holding this script; CLAUDE_CONFIG_DIR > ~/.claude;
-    CURSOR_CONFIG_DIR > ~/.cursor; XDG_CONFIG_HOME/ai-kit > ~/.config/ai-kit.
+    CURSOR_CONFIG_DIR > ~/.cursor; ai-kit's own folder is the one user-dir rule
+    (common_config.cfg_ai_kit_dir: absolute XDG_CONFIG_HOME, else absolute HOME/.config);
+    with no absolute home the installer exits with a message.
 
     The Cursor *config* pair (`cursor_config_dir`/`cursor_cli_config`, D-21) is the
     CLI's own layout — non-blank CURSOR_CONFIG_DIR, then non-blank
@@ -119,10 +121,12 @@ def resolve_paths(env):
     pi_dir = env.get("PI_CODING_AGENT_DIR") or os.path.join(home, ".pi", "agent")
     backups_dir = _sibling("config_doctor_appliers").backups_root(env)
     cursor_dir = env.get("CURSOR_CONFIG_DIR") or os.path.join(home, ".cursor")
-    config_base = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    config_base = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")  # opencode only
     opencode_dir = (env.get("OPENCODE_CONFIG_DIR") or
                     os.path.join(config_base, "opencode"))
-    config_dir = os.path.join(config_base, "ai-kit")
+    config_dir = _sibling("common_config").cfg_ai_kit_dir(env)
+    if not config_dir:
+        raise SystemExit("setup: no absolute home directory to hold ai-kit's config (set HOME)")
     cursor_cli_config = _config_doctor_checks().resolve_runtime_config_paths(env)["cursor"]
     cursor_config_dir = os.path.dirname(cursor_cli_config)
     return Paths(
@@ -3494,7 +3498,22 @@ def _recover_incompatible_config(paths, dry, host="claude"):
         return True
     try:
         shutil.copyfile(cfg, bak)
-        shutil.copyfile(sample, cfg)
+        # The live file is replaced by rename, never written in place (D-09): the recipe goes to
+        # a temp file beside it, keeps the live file's mode, and os.replace publishes it.
+        target = os.path.realpath(cfg)
+        mode = stat.S_IMODE(os.stat(target).st_mode)
+        with open(sample, encoding="utf-8") as handle:
+            text = handle.read()
+        tmp = _candidate_file(target, text)
+        if tmp is None:
+            raise OSError("could not write a temp file beside the config")
+        try:
+            os.chmod(tmp, mode)
+            os.replace(tmp, target)
+        except OSError:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
     except OSError as exc:
         print(f"warn: could not reset incompatible config ({exc})", file=sys.stderr)
         return False
@@ -3725,16 +3744,18 @@ def _statusline_hosts_present(paths):
     return tuple(statusline_hosts_detected(paths))
 
 
-GLOBAL_RULES_ITEM: tuple[str, str] = ("global rules", "codegraph sentence")
+GLOBAL_RULES_ITEM: tuple[str, str] = ("global rules", "codebase-memory-mcp block")
 
 
 def _global_rules_review(rules_env):
-    """The Review item for codegraph's sentence (Phase 30, D-11): None when no
-    global file holds it, else the replace Changes and their preview lines."""
+    """The Review item for the global-rules migration (Phase 30 D-11, Phase 32.5): None when
+    no global file holds a leftover codegraph block for the codebase-memory-mcp block to
+    replace, else the replace Changes and their preview lines."""
     if rules_env is None:
         return None
     global_rules = _sibling("global_rules")
-    changes = [c for c in global_rules.plan_changes(rules_env) if c.status == "replace"]
+    changes = [c for c in global_rules.plan_changes(rules_env)
+               if c.status in global_rules.WRITE_STATUSES]
     if not changes:
         return None
     return {"changes": changes, "preview": global_rules.preview_lines(changes)}
@@ -4815,7 +4836,8 @@ def _headless_replace(paths, entries, skills_flag, dry, counts):
 
 
 def _headless_apply_global_rules(env, dry):
-    """--with-global-rules: rewrite codegraph's sentence in the four global files.
+    """--with-global-rules: replace a leftover codegraph block with the codebase-memory-mcp
+    block in the four global files, or remove it where a codebase-memory-mcp block is there.
 
     Prints one line per file (and the preview under --dry-run); False when a backup or
     write failed. Skips (missing file, no block) are not failures."""
@@ -5216,9 +5238,14 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
                         help="(--headless only) bare wires rows marked on below; "
                              "=<id[:host],...> wires exactly those rows additively: "
                              + "; ".join(hook_description(i) for i in HOOK_IDS))
-    parser.add_argument("--with-global-rules", action="store_true",
-                        help="(--headless only) rewrite codegraph's \"user decides\" sentence "
-                             "in the global instruction files (backup first; --dry-run previews)")
+    parser.add_argument(
+        "--with-global-rules", action="store_true",
+        help=(
+            "(--headless only) replace a leftover codegraph block with the codebase-memory-mcp "
+            "block in the global instruction files, or remove it beside an existing "
+            "codebase-memory-mcp block (backup first; --dry-run previews)"
+        ),
+    )
     parser.add_argument("--hooks", default=None, metavar="<id[:host],...>",
                         help="(uninstall only) remove only these hooks")
     parser.add_argument(

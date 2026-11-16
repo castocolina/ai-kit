@@ -51,44 +51,53 @@ Both soft classes (transient, and quota on a confirmed router lane) share one la
 
 ## Configuration
 
-The documented project block, byte for byte the template CONFIG `retry` object:
+The runner's retry settings live in ai-kit's own config file, table `[runner.retry]`, in the
+project layer `.aikit/config.toml` over the user layer `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml`,
+per key. The documented table, byte for byte the template CONFIG `retry` object:
 
-```json
-{
-  "workflow": {
-    "cross_ai_retry": {
-      "base_s": 1,
-      "factor": 1.5,
-      "hard_waits_s": [
-        600,
-        900,
-        1800
-      ],
-      "max_retries": 5,
-      "session_resets": 1
-    }
-  }
-}
+```toml
+[runner.retry]
+base_s = 1
+factor = 1.5
+hard_waits_s = [600, 900, 1800]
+max_retries = 5
+session_resets = 1
 ```
 
-`gsd-tools` `config-set` refuses `workflow.cross_ai_retry.*` (`Unknown config key`), so the project
-key is hand-edited. `config-get` reads it, and a later `config-set` of another key keeps the
-block.
+A GSD project or workstream keeps its own values under `[runner.retry.scopes."<scope>"]`, `<scope>`
+being the config folder's path under `.planning/` (`myproj`, `workstreams/ws1`,
+`myproj/workstreams/ws1`), read before `[runner.retry]` for the active scope.
 
-Sources, in order, read once at call start. Nothing here writes a config file:
+Inside the `[runner]` and `[runner.*]` tables the runner reads a TOML subset: `key = value` lines
+with basic strings, integers, floats, booleans and one-line arrays of numbers or strings, plus
+comments. Anything else there (an inline table, a literal or multi-line string, a date, a nested
+array, a key or table defined twice, a key that is also a table) makes it skip that file with one
+notice and take every key from the next source. Every other table, the `[lanes]` roster with its
+inline tables included, is skipped unread. Anywhere in the file, a table header whose name the runner cannot read (a name part that is neither a bare key nor a
+double-quoted string, such as a literal-quoted `'lanes'`), a multi-line string outside `[lanes]` and
+`[[lanes.*]]` (inside them it is skipped until its delimiter closes), an array of tables outside `[lanes]`,
+or bytes that are not valid UTF-8 make the file skipped the same way; nothing else outside the runner
+tables does. A `'''` or `"""` inside a comment or a one-line string is not a multi-line string.
 
-1. The project key `workflow.cross_ai_retry`, from the same scoped files as
-   `workflow.cross_ai_timeout` (`.planning[/$GSD_PROJECT][/workstreams/$GSD_WORKSTREAM]/config.json`,
-   then the root config under a workstream).
-2. The user file `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json`, holding
-   `{"cross_ai_retry": {...}}`.
-3. The rendered CONFIG `retry` object, then the built-in defaults.
+Sources, in order, read once at call start, per key:
+
+1. the project `.aikit/config.toml` (the active scope's table, then `[runner.retry]`);
+2. the user `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml` (the same two tables);
+3. the rendered CONFIG `retry` object, then the built-in defaults.
+
+Before that read, the runner migrates a `workflow.cross_ai_retry` block once from the active
+scope's GSD `config.json` into the project `.aikit/config.toml` (the scope's own table), removes
+the block from the GSD file with every other byte kept, and records the file in
+`[runner] migrated_from`; a block found later in a recorded file is ignored with a notice. The
+user `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json` moves the same way into the user
+`config.toml` and is renamed `cross-ai.json.migrated`. Each migration prints one line naming both
+files and never a value.
 
 Each key falls back on its own. A value out of bounds, of the wrong type, or an unknown key is
 refused: the runner prints the key and the source, ignores that key and uses the next source.
 Bounds: `base_s` 0..60, `factor` 1.0..3.0, `max_retries` 0..10, `session_resets` 0..3,
 `hard_waits_s` 1..6 entries each 0..`capS`. `capS` (14400) cannot be raised: a CONFIG value above
-14400 is refused and 14400 is used. A symlink whose real path leaves `.planning` or
+14400 is refused and 14400 is used. A symlink whose real path leaves `.aikit` or
 `<config dir>/ai-kit` is refused by name (`resolves outside`; retry config reads are confined, and
 a symlink out of the root is not followed).
 

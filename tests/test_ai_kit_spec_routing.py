@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-k
 from ai_kit_spec import routing
 from ai_kit_spec.cache import cache_read_json, cache_write_json
 from ai_kit_spec.cli import main
-from ai_kit_spec.config_io import cfg_render_toml, cfg_resolve, cfg_write_toml
+from ai_kit_spec.config_io import cfg_render_lanes, cfg_resolve, cfg_write_toml
 from ai_kit_spec.detection import (
     CLAUDE_FALLBACK_MODEL_IDS,
     CLAUDE_MODEL_ALIASES,
@@ -61,8 +61,8 @@ class TestResolveRoutes(unittest.TestCase):
 
     def _write_config(self, xdg, reviewers, ladder):
         cfg_write_toml(
-            os.path.join(xdg, "ai-kit", "review-spec.toml"),
-            {"policy": {"mode": "single", "ladder": ladder}, "reviewers": reviewers},
+            os.path.join(xdg, "ai-kit", "config.toml"),
+            {"policy": {"mode": "single", "ladder": ladder}, "lanes": reviewers},
         )
 
     def _write_runtimes(self, env, snapshot, age_s):
@@ -208,7 +208,6 @@ class TestResolveRoutes(unittest.TestCase):
 
     def test_saved_session_default_round_trips_into_dispatch_reviewer(self):
         """V2: a saved session default resolves native and dispatch-reviewer spawns nothing."""
-        from ai_kit_spec import detection
         with tempfile.TemporaryDirectory() as root:
             env = self._env(root)
             self._write_config(env["XDG_CONFIG_HOME"], [{"key": "sd", "model": ""}], ["sd"])
@@ -227,10 +226,8 @@ class TestResolveRoutes(unittest.TestCase):
             def never(*_args):
                 raise AssertionError("a native session default must not spawn")
 
-            skip = detection.CodegraphProbe(False, False, None, "skip")
             err = io.StringIO()
-            with mock.patch.object(detection, "probe_codegraph", return_value=skip), \
-                    redirect_stdout(io.StringIO()), redirect_stderr(err):
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
                 code = main(["dispatch-reviewer", "--reviewers-json", reviewers, "--index", "0",
                              "--prompt-file", prompt, "--timeout-tiers", "600"],
                             runner_tiers_fn=never, custom_fn=never)
@@ -346,12 +343,12 @@ class TestRouting(unittest.TestCase):
             xdg = os.path.join(root, "xdg")
             os.makedirs(os.path.join(xdg, "ai-kit"))
             factory = "codex exec --sandbox read-only --skip-git-repo-check -m {model}"
-            path = os.path.join(xdg, "ai-kit", "review-spec.toml")
+            path = os.path.join(xdg, "ai-kit", "config.toml")
             with open(path, "w", encoding="utf-8") as stream:
-                stream.write('[[reviewers]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
+                stream.write('[[lanes.review]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
                              f"command={json.dumps(factory)}\n")
             custom = "mycli --fast {model}"
-            merged = cfg_combine({"reviewers": [{"key": "k", "command": custom}]},
+            merged = cfg_combine({"review": [{"key": "k", "command": custom}]},
                                  {"HOME": os.path.join(root, "home"), "XDG_CONFIG_HOME": xdg},
                                  warn_fn=lambda _msg: None, local_path="local.toml")
             self.assertEqual(
@@ -680,10 +677,10 @@ class TestUnverifiedNote(unittest.TestCase):
             os.makedirs(cache)
             env = {"HOME": home, "XDG_CONFIG_HOME": xdg, "XDG_CACHE_HOME": cache}
             cfg_write_toml(
-                os.path.join(xdg, "ai-kit", "review-spec.toml"),
+                os.path.join(xdg, "ai-kit", "config.toml"),
                 {"policy": {"mode": "single", "ladder": ["cx"]},
-                 "reviewers": [{"key": "cx", "runtime": "codex", "model": "gpt-x",
-                                "vendor": "openai"}]})
+                 "lanes": [{"key": "cx", "runtime": "codex", "model": "gpt-x",
+                            "vendor": "openai"}]})
             path = routing.cache_runtimes_path(env)
             cache_write_json(path, {"schema_version": RUNTIMES_SCHEMA_VERSION,
                                     "clis": {"codex": {"installed": True,
@@ -710,9 +707,9 @@ class TestRouteNeverStored(unittest.TestCase):
     def test_render_rejects_route(self):
         err = io.StringIO()
         with redirect_stderr(err):
-            rendered = cfg_render_toml({
-                "reviewers": [{"key": "k", "runtime": "codex", "model": "gpt-x",
-                               "route": "native"}]})
+            rendered = cfg_render_lanes({
+                "lanes": [{"key": "k", "runtime": "codex", "model": "gpt-x",
+                           "route": "native"}]})
         self.assertNotIn("route", rendered)
         self.assertIn("'route' is decided per run and is never stored", err.getvalue())
 
@@ -720,9 +717,9 @@ class TestRouteNeverStored(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             xdg = os.path.join(root, "xdg")
             os.makedirs(os.path.join(xdg, "ai-kit"))
-            path = os.path.join(xdg, "ai-kit", "review-spec.toml")
+            path = os.path.join(xdg, "ai-kit", "config.toml")
             with open(path, "w", encoding="utf-8") as stream:
-                stream.write('[[reviewers]]\nkey="k"\nruntime="codex"\nmodel="gpt-x"\n'
+                stream.write('[[lanes.review]]\nkey="k"\nruntime="codex"\nmodel="gpt-x"\n'
                              'route="native"\n')
             notes = []
             resolved = cfg_resolve(root, {"HOME": os.path.join(root, "home"),
@@ -738,9 +735,10 @@ class TestRouteNeverStored(unittest.TestCase):
             os.makedirs(os.path.join(root, "cache"))
             env = {"HOME": os.path.join(root, "home"), "XDG_CONFIG_HOME": xdg,
                    "XDG_CACHE_HOME": os.path.join(root, "cache")}
-            path = os.path.join(xdg, "ai-kit", "review-spec.toml")
-            cfg_write_toml(path, {"policy": {"mode": "single", "ladder": ["k"]},
-                                  "reviewers": [{"key": "k", "model": "", "vendor": ""}]})
+            path = os.path.join(xdg, "ai-kit", "config.toml")
+            with open(path, "w", encoding="utf-8") as stream:
+                stream.write('[lanes.policy]\nmode = "single"\nladder = ["k"]\n\n'
+                             '[[lanes.review]]\nkey = "k"\nmodel = ""\nvendor = ""\n')
             with open(path, "rb") as stream:
                 before = stream.read()
             out = io.StringIO()

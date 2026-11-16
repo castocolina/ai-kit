@@ -87,6 +87,8 @@ def runner_env(tmp: str) -> dict[str, str]:
     return {
         "PATH": path,
         "HOME": home,
+        # the self-test root (xai-st-*) and anything a killed runner leaves stay under tmp
+        "TMPDIR": tmp,
         "XDG_CONFIG_HOME": os.path.join(home, ".config"),
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_NOSYSTEM": "1",

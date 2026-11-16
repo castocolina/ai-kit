@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Score labelled cases through screen(). Stdlib only.
 
-One `screen()` call per case in `evals/cases.jsonl` (the kill switch applies: with
-`GSD_PATH_JEV` unset the script prints the disabled result and sends nothing). Metrics print
+One `screen()` call per case in `evals/cases.jsonl` (the jev knob applies: with jev switched off,
+by `GSD_PATH_JEV=0` or `[jev] enabled = false` and no session override, the script prints the
+disabled result and sends nothing). Metrics print
 only when all 32 cases came back `ok`; results are written only to the explicit path given
 with `--record PATH`, never inside the skill directory. `--calibrate PATH` reads a recorded
 results file, proposes each backend's threshold, and rewrites that backend's own
 `min_confidence` number in `scripts/jev_review.py` — located with `ast` inside the `TABLE`
 assignment, so another row's threshold can never change; a row that is not a dict literal, or
-that lacks or repeats the key, exits non-zero before anything is written.
+that lacks or repeats the key, exits non-zero before anything is written. `--record` also saves
+the answering row's server identity (version or fingerprint, checkpoint revisions), the metrics,
+the row's `min_confidence` and the date inside that backend's own `results` entry, which a
+calibration record needs (D-10); a run of another backend never overwrites them. A record from
+before that change keeps these fields at the top level and is still read.
 
 Every saved case carries the client's own `needs_fallback` flag and the answering `backend`
 beside `id`, `top`, `correct` and `ambiguous`, so a recorded `fallback_rate` can be re-derived
@@ -21,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import datetime
 import importlib.util
 import io
 import json
@@ -85,11 +91,18 @@ def summarize(records: list[dict]) -> dict:
             "fallback_rate": flagged / n, "accuracy_when_not_fallback": kept}
 
 
-def merge_results(existing: dict, backend: str, cases: list[dict]) -> dict:
+def merge_results(existing: dict, backend: str, cases: list[dict],
+                  identity: dict | None = None) -> dict:
+    """`existing` with this backend's entry replaced. `identity` (server, summary, min_confidence,
+    recorded_at) lives inside the entry, so another backend's run never overwrites it (WR-206).
+    An older file's top-level copies of those four fields are dropped: they may name a mixed
+    backend, and nothing reads them (IN-503)."""
     kept = [entry for entry in existing.get("results", []) if entry.get("backend") != backend]
-    kept.append({"backend": backend, "cases": cases})
+    kept.append({"backend": backend, "cases": cases, **(identity or {})})
     kept.sort(key=lambda entry: entry["backend"])
-    return {**existing, "results": kept}
+    legacy = {"server", "summary", "min_confidence", "recorded_at"}
+    return {**{key: value for key, value in existing.items() if key not in legacy},
+            "results": kept}
 
 
 def calibrate(cases: list[dict]) -> float | None:
@@ -188,6 +201,27 @@ def _atomic_write(path: pathlib.Path, text: str) -> None:
         raise
 
 
+SERVER_KEYS = ("host", "url_source", "version", "version_source", "fingerprint", "revisions")
+
+
+def _server_fields(review, backend: str) -> dict:
+    """The answering row's server identity from `--probe` (D-10): what a calibration names."""
+    for entry in review.probe_report().get("backends", []):
+        if entry.get("name") == backend:
+            return {key: entry.get(key) for key in SERVER_KEYS}
+    return {}
+
+
+def _merge_backend(review, existing: dict, backend: str, records: list[dict]) -> dict:
+    """`existing` with the cases this backend answered and its own identity merged in (WR-206)."""
+    mine = [record for record in records if record["backend"] == backend]
+    identity = {"server": _server_fields(review, backend),
+                "summary": summarize(mine),
+                "min_confidence": review.row_named(backend)["min_confidence"],
+                "recorded_at": datetime.date.today().isoformat()}
+    return merge_results(existing, backend, mine, identity)
+
+
 def _flag_value(name: str) -> str | None:
     if name in sys.argv:
         index = sys.argv.index(name)
@@ -251,12 +285,11 @@ def main() -> int:
     print(json.dumps(report, sort_keys=True))
     if record_path and report["backend"]:
         path = pathlib.Path(record_path)
-        existing = (json.loads(path.read_text(encoding="utf-8"))
-                    if path.exists() else {"results": []})
+        existing: dict = (json.loads(path.read_text(encoding="utf-8"))
+                          if path.exists() else {"results": []})
         path.parent.mkdir(parents=True, exist_ok=True)
         for backend in sorted({record["backend"] for record in records}):
-            existing = merge_results(existing, backend, [record for record in records
-                                                         if record["backend"] == backend])
+            existing = _merge_backend(review, existing, backend, records)
         _atomic_write(path, json.dumps(existing, sort_keys=True, indent=2) + "\n")
     return 0
 

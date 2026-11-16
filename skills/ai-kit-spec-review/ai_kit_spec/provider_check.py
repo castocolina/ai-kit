@@ -1,8 +1,9 @@
 """Stale opencode provider report for `ai-kit-spec.py check-providers` (SPEC R5, D-02, D-03).
 
-Read-only: each review-spec and catalog file is read once and nothing is written. The report
-prints provider ids and the reviewer/catalog model reference only; it never opens opencode's
-auth.json and never prints a key or an apiKey value. Stdlib only.
+Read-only: each config.toml (or the old roster still pending beside it) and catalog file is read
+once and nothing is written. The report prints provider ids and the reviewer/catalog model
+reference only; it never opens opencode's auth.json and never prints a key or an apiKey value.
+Stdlib only.
 
 It matches on the provider part of each model id (`provider/model`), never a substring.
 """
@@ -10,14 +11,14 @@ It matches on the provider part of each model id (`provider/model`), never a sub
 import os
 from typing import NamedTuple
 
-from ai_kit_spec import cache, config_io, detection, jsonc_read, trust
+from ai_kit_spec import cache, config_io, config_migrate, detection, jsonc_read, trust
 from ai_kit_spec.model_catalog import cache_catalog_path
 
 UNCONFIRMED_SUFFIX = (
     " (unconfirmed: config file only; built-in, login and environment providers not checked)"
 )
-LOCAL_ONLY_REASON = 'local review-spec sets strategy = "local-only"'
-UNTRUSTED_REASON = "local review-spec is not trusted"
+LOCAL_ONLY_REASON = 'project config.toml sets strategy = "local-only"'
+UNTRUSTED_REASON = "project config.toml is not trusted"
 
 
 class SourceStatus(str):
@@ -51,9 +52,9 @@ class _Scan(NamedTuple):
     cat_refs: list
 
 
-def review_spec_strategy(data: dict) -> str:
-    """Top-level `strategy`, defaulting to `global-merge` when absent or not a string."""
-    strategy = data.get("strategy", "global-merge")
+def lanes_strategy(lanes: dict) -> str:
+    """The [lanes] `strategy`; `global-merge` when absent or not a string."""
+    strategy = lanes.get("strategy", "global-merge")
     return strategy if isinstance(strategy, str) else "global-merge"
 
 
@@ -62,52 +63,111 @@ def _first_line(message: str) -> str:
     return lines[0] if lines else ""
 
 
-def _opencode_refs(path: str, data: dict) -> list[Reference]:
-    """One Reference per opencode reviewer whose model names a provider (`provider/model`)."""
+def _opencode_refs(path: str, lanes: dict) -> list[Reference]:
+    """One Reference per opencode lane (review, then execute) whose model names a provider
+    (`provider/model`); a (key, model) pair already reported is not repeated."""
     refs: list[Reference] = []
-    reviewers = data.get("reviewers", [])
-    if not isinstance(reviewers, list):
-        return refs
-    for entry in reviewers:
-        if not isinstance(entry, dict):
+    seen: set[tuple[str, str]] = set()
+    for role in ("review", "execute"):
+        entries = lanes.get(role, [])
+        if not isinstance(entries, list):
             continue
-        if entry.get("runtime") != "opencode" and entry.get("cli") != "opencode":
-            continue
-        model = entry.get("model")
-        if isinstance(model, str) and "/" in model:
-            provider = model.split("/", 1)[0]
-            refs.append(Reference(path, str(entry.get("key", "")), "model", model, provider))
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("runtime") != "opencode" and entry.get("cli") != "opencode":
+                continue
+            model = entry.get("model")
+            if not isinstance(model, str) or "/" not in model:
+                continue
+            key = str(entry.get("key", ""))
+            if (key, model) in seen:
+                continue
+            seen.add((key, model))
+            refs.append(Reference(path, key, "model", model, model.split("/", 1)[0]))
     return refs
 
 
-def _is_trusted(env: dict, path: str, raw: bytes) -> bool:
+def _is_trusted(env: dict, path: str, raw: bytes, legacy: bool = False) -> bool:
+    """Trust of path's bytes; legacy reads the old roster's trust store (old raw-byte rule)."""
     try:
         store = config_io.cfg_trust_store_dir(env)
     except config_io.ConfigError:
         return False
+    if legacy:
+        store = config_migrate.legacy_trust_dir(store)
     return trust.is_trusted(store, os.path.realpath(path), raw)
 
 
-def scan_review_spec(
-    path: str, env: dict, gate_trust: bool = False
-) -> tuple[SourceStatus, list[Reference], dict | None, bool]:
-    """Read one review-spec file once. Returns (status, refs, parsed data or None, trusted).
+def _unreadable(message: str) -> SourceStatus:
+    return SourceStatus(f"scanned (unreadable: {_first_line(message)})")
 
-    `trusted` is only decided for the project-local file (`gate_trust`), as cfg_resolve does;
-    an untrusted local file is reported as inactive and is never trusted for its strategy.
-    """
-    if not os.path.exists(path):
+
+def _gated(status: SourceStatus, refs: list, lanes: dict, trusted: bool) -> tuple:
+    """The given status when trusted, else the untrusted status (its references are inactive)."""
+    if trusted:
+        return status, refs, lanes, True
+    return SourceStatus("scanned-inactive (untrusted)", reason=UNTRUSTED_REASON), refs, lanes, False
+
+
+def _scan_lanes(path: str, env: dict, lanes: dict, gate_trust: bool) -> tuple:
+    """A config.toml with a [lanes] table: trusted when it has no command-bearing entry or its
+    canonical bytes are trusted (D-11); only the project layer is gated."""
+    status = SourceStatus("scanned")
+    refs = _opencode_refs(path, lanes)
+    if not gate_trust:
+        return status, refs, lanes, True
+    try:
+        canonical = config_io.cfg_project_trust_bytes(lanes, env)
+    except config_io.ConfigError as exc:
+        return _unreadable(exc.message), [], None, False
+    return _gated(status, refs, lanes, canonical is None or _is_trusted(env, path, canonical))
+
+
+def _scan_pending(path: str, env: dict, gate_trust: bool) -> tuple:
+    """No [lanes] in config.toml: a pending old roster is read in memory and reported (migration
+    pending, nothing written); with no old roster the source is absent."""
+    old = config_migrate.pending(path)
+    if old is None:
         return SourceStatus("absent"), [], None, False
     try:
-        raw = config_io.cfg_read_bytes(path)
-        data = config_io.cfg_parse_toml_bytes(raw, path)
+        found = config_migrate.read_legacy(path)
+    except config_migrate.LegacyRosterError as exc:
+        return _unreadable(exc.message), [], None, False
+    if found is None:  # removed between the two reads
+        return SourceStatus("absent"), [], None, False
+    lanes, raw = found
+    status = SourceStatus(f"scanned (migration pending: {old})")
+    refs = _opencode_refs(old, lanes)
+    if not gate_trust:
+        return status, refs, lanes, True
+    try:
+        canonical = config_io.cfg_project_trust_bytes(lanes, env)
     except config_io.ConfigError as exc:
-        status = SourceStatus(f"scanned (unreadable: {_first_line(exc.message)})")
-        return status, [], None, False
-    if gate_trust and not _is_trusted(env, path, raw):
-        status = SourceStatus("scanned-inactive (untrusted)", reason=UNTRUSTED_REASON)
-        return status, _opencode_refs(path, data), data, False
-    return SourceStatus("scanned"), _opencode_refs(path, data), data, True
+        return _unreadable(exc.message), [], None, False
+    return _gated(status, refs, lanes,
+                  canonical is None or _is_trusted(env, old, raw, legacy=True))
+
+
+def scan_config(
+    path: str, env: dict, gate_trust: bool = False
+) -> tuple[SourceStatus, list[Reference], dict | None, bool]:
+    """Read one config.toml (or the pending old roster beside it) once. Returns (status, refs,
+    the [lanes] table or None, trusted).
+
+    `trusted` is only decided for the project layer (`gate_trust`), as cfg_resolve does; an
+    untrusted [lanes] is reported as inactive and is never trusted for its strategy. Nothing is
+    migrated or written.
+    """
+    if os.path.exists(path):
+        try:
+            raw = config_io.cfg_read_bytes(path)
+            lanes = config_io.cfg_lanes_table(config_io.cfg_parse_toml_bytes(raw, path), path)
+        except config_io.ConfigError as exc:
+            return _unreadable(exc.message), [], None, False
+        if lanes:
+            return _scan_lanes(path, env, lanes, gate_trust)
+    return _scan_pending(path, env, gate_trust)
 
 
 def scan_catalog(path: str) -> tuple[SourceStatus, list[Reference]]:
@@ -162,8 +222,8 @@ def served_providers(deps, env: dict, cwd: str) -> tuple[set[str] | None, str, b
 
 
 def _global_source(path: str, env: dict, local_only: bool) -> tuple[SourceStatus, list]:
-    status, refs, _data, _trusted = scan_review_spec(path, env)
-    if local_only and status == "scanned":
+    status, refs, _lanes, _trusted = scan_config(path, env)
+    if local_only and (status == "scanned" or status.startswith("scanned (migration pending")):
         status = SourceStatus("scanned-inactive", reason=LOCAL_ONLY_REASON)
     return status, refs
 
@@ -172,11 +232,11 @@ def _scan_sources(env: dict, cwd: str) -> _Scan:
     local_path = config_io.cfg_local_path(cwd)
     global_path = config_io.cfg_global_path(env)
     catalog_path = cache_catalog_path(env)
-    local_status, local_refs, local_data, trusted = scan_review_spec(
+    local_status, local_refs, local_lanes, trusted = scan_config(
         local_path, env, gate_trust=True
     )
-    local_only = trusted and local_data is not None and (
-        review_spec_strategy(local_data) == "local-only"
+    local_only = trusted and local_lanes is not None and (
+        lanes_strategy(local_lanes) == "local-only"
     )
     global_status, global_refs = _global_source(global_path, env, local_only)
     cat_status, cat_refs = scan_catalog(catalog_path)

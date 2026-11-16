@@ -14,8 +14,17 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 
+from ai_kit_spec import jsonc_read
 from ai_kit_spec.cache import cache_base
 from ai_kit_spec.vendor import _MODEL_TIER_SUFFIXES
+
+try:
+    import tomllib as _tomllib_impl
+
+    tomllib = _tomllib_impl
+except ModuleNotFoundError:
+    # stdlib boundary: absent on Python < 3.11; config_io imports this module, so not shared.
+    tomllib = None  # type: ignore[assignment]
 
 RUNTIMES_TTL_SECONDS = 30 * 24 * 3600   # ~30 days: CLI/model presence is near-static
 
@@ -46,18 +55,16 @@ _LABEL_PI = (
 )
 _LABEL_OPENCODE = (
     "live-verified (01.2 on opencode 1.x; Phase 20 on v2.0.31 via a headless opencode run "
-    "--standalone env dump, names only; 20-SMOKE-OPENCODE.md)."
+    "--standalone env dump, names only)."
 )
 _LABEL_CURSOR = (
     "live-verified (Phase 21) via a headless cursor-agent 2026.10.14-941492e session's env dump "
-    "(names only; 21-SMOKE-CURSOR.md) — TUI confirmation pending "
-    "21-INTERACTIVE-CURSOR.md step 2."
+    "(names only) — TUI confirmation pending (an interactive session check)."
 )
 # One label for both codex signals (D-05 keeps both names; the evidence is the same run).
 _LABEL_CODEX = (
     "live-verified (Phase 20) via a headless codex exec 0.162.1 session's env dump "
-    "(names only; 20-SMOKE-CODEX.md) — TUI confirmation pending "
-    "20-INTERACTIVE-CODEX.md step 2."
+    "(names only) — TUI confirmation pending (an interactive session check)."
 )
 _LABEL_CLAUDE = "live-verified (01.2) via the process's own env dump."
 
@@ -70,7 +77,6 @@ class Runtime(NamedTuple):
     native_selectors: tuple[str, ...] = ()
     review_only: bool = False
     model_suffix: str | None = None
-    mcp_list: bool = False
     multi_provider: bool = False
     runner: bool = True
 
@@ -88,7 +94,6 @@ RUNTIMES: dict[str, Runtime] = {
         (("OPENCODE", _LABEL_OPENCODE),),
         list_argv=("models",),
         model_suffix=r"#[^#/]+$",
-        mcp_list=True,
         multi_provider=True,
     ),
     "cursor": Runtime(
@@ -96,7 +101,6 @@ RUNTIMES: dict[str, Runtime] = {
         (("CURSOR_AGENT", _LABEL_CURSOR),),
         list_argv=("models",),
         model_suffix=r"\[[^\]]*\]$",
-        mcp_list=True,
         multi_provider=True,
     ),
     "codex": Runtime(
@@ -104,7 +108,6 @@ RUNTIMES: dict[str, Runtime] = {
         (("CODEX_THREAD_ID", _LABEL_CODEX), ("CODEX_VERSION", _LABEL_CODEX)),
         scrub_signals=("CODEX_SANDBOX",),
         list_argv=("debug", "models"),
-        mcp_list=True,
     ),
     "claude": Runtime(
         ("claude",),
@@ -112,7 +115,6 @@ RUNTIMES: dict[str, Runtime] = {
         scrub_signals=("CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"),
         native_selectors=("fable", "opus", "sonnet", "haiku"),
         review_only=True,
-        mcp_list=True,
     ),
     # copilot has no known host signal (unverified) and its runner rows are unverified.
     "copilot": Runtime(("copilot",), (), runner=True),
@@ -133,7 +135,7 @@ KNOWN_CLIS = tuple(RUNTIMES)
 CLAUDE_MODEL_ALIASES = RUNTIMES["claude"].native_selectors
 
 # 16 D-04: DATED FALLBACK, not a live list -- these four ids were verified present in
-# models.dev's `anthropic` provider on 2026-09-23 (16-RESEARCH.md), one per current family
+# models.dev's `anthropic` provider on 2026-09-23 (Phase 16 research), one per current family
 # (Fable 5.1, Opus 5.5, Sonnet 5, Haiku 4.5). Used only when model-catalog.json has no
 # recorded anthropic ids; refresh the ids and the date together when a new generation ships.
 CLAUDE_FALLBACK_MODEL_IDS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5",
@@ -249,25 +251,23 @@ def detect_current_runtime(env: Mapping[str, object] | None = None) -> str:
     (16 D-01, amended by Phase 20 D-02).
 
     Signal verification is NOT uniform — never treat all six as equally
-    confirmed (AGENTS.md certainty-labeling; 01.2-RESEARCH.md Common Pitfall 2):
+    confirmed (AGENTS.md certainty-labeling):
 
     - pi (`PI_CODING_AGENT`): source-inspected-only — confirmed in the
       installed `@earendil-works/pi-coding-agent` package's
       `dist/config.js`, not live-verified from a real pi session (16 D-03;
       live validation is Phase 22).
     - opencode (`OPENCODE`): live-verified (01.2 on opencode 1.x; Phase 20
-      on v2.0.31 via a headless opencode run --standalone env dump, names only;
-      20-SMOKE-OPENCODE.md).
+      on v2.0.31 via a headless opencode run --standalone env dump, names only).
     - cursor (`CURSOR_AGENT`): live-verified (Phase 21) via a headless
-      cursor-agent 2026.10.14-941492e session's env dump (names only;
-      21-SMOKE-CURSOR.md) — TUI confirmation pending
-      21-INTERACTIVE-CURSOR.md step 2.
+      cursor-agent 2026.10.14-941492e session's env dump (names only) —
+      TUI confirmation pending (an interactive session check).
     - codex (`CODEX_THREAD_ID`): live-verified (Phase 20) via a headless
-      codex exec 0.162.1 session's env dump (names only; 20-SMOKE-CODEX.md) —
-      TUI confirmation pending 20-INTERACTIVE-CODEX.md step 2.
+      codex exec 0.162.1 session's env dump (names only) —
+      TUI confirmation pending (an interactive session check).
     - codex (`CODEX_VERSION`): live-verified (Phase 20) via a headless
-      codex exec 0.162.1 session's env dump (names only; 20-SMOKE-CODEX.md) —
-      TUI confirmation pending 20-INTERACTIVE-CODEX.md step 2.
+      codex exec 0.162.1 session's env dump (names only) —
+      TUI confirmation pending (an interactive session check).
     - claude (`CLAUDECODE`): live-verified (01.2) via the process's own
       env dump.
     """
@@ -1126,18 +1126,17 @@ def claude_runtime_is_current(runtimes_data, catalog_fn=None) -> bool:
 
 def detect_tool_availability(which_fn=shutil.which) -> dict:
     """Deterministic presence check for the token-efficient tooling AGENTS-TOOLING.md
-    recommends. codegraph is included here (binary presence only, Tier 1 of the two-tier
-    check design §9 established) -- MCP registration per-client is a separate concern,
-    see check_codegraph_mcp_usable below."""
+    recommends. codebase-memory-mcp is binary presence only; its per-host MCP registration is
+    cbm_registration."""
     return {name: which_fn(name) is not None
-            for name in ("rg", "sd", "bat", "eza", "fd", "codegraph")}
+            for name in ("rg", "sd", "bat", "eza", "fd", "codebase-memory-mcp")}
 
 
 def resolve_agents_tooling_path(env=None) -> str | None:
     """Machine-level file, not project-level -- never hardcode one user's absolute path.
     AGENTS_TOOLING_PATH env override wins IF it actually exists on disk; else the conventional
     ~/.agents/AGENTS-TOOLING.md location if it exists; else None (the caller omits tooling
-    guidance entirely, same never-guess principle as the codegraph MCP check below). The
+    guidance entirely, same never-guess principle as `cbm_registration`). The
     override is validated, not trusted blindly -- a stale/misconfigured env var must never put
     an unverified path into a dispatch prompt."""
     env = env if env is not None else os.environ
@@ -1148,182 +1147,202 @@ def resolve_agents_tooling_path(env=None) -> str | None:
     return candidate if os.path.isfile(candidate) else None
 
 
-# Confirmed live, 2026-08-30, against each installed CLI's own --help AND real invocations
-# (`claude mcp list`, `codex mcp list`, `cursor-agent mcp list`, `opencode mcp list` all ran
-# clean, exit 0, on this machine). grok is deliberately absent -- confirmed unsupported, never
-# attempt a lookup for it.
-#
-# claude/codex: `mcp get <name>` is the PRIMARY check where it exists -- direct per-name lookup,
-#   deterministic exit code (0 = registered, nonzero = "No MCP server named ..."). `mcp list`
-#   is a FALLBACK for these two as well: `get`'s nonzero exit means "not registered" in the
-#   common case, but could also mean something else went wrong with the `get` invocation itself
-#   (a CLI bug, an auth hiccup) -- cross-checking via `list` before concluding "not registered"
-#   costs one extra subprocess call only in the nonzero-exit case, and avoids a false negative
-#   from trusting a single command's exit code alone.
-# cursor-agent/opencode: no `get` subcommand exists (confirmed via --help) -- `mcp list` is the
-#   ONLY check, not a fallback.
-# All `mcp list` parsing looks for a line whose name token (text before the first ':') is
-# exactly "codegraph"; every observed list format uses that "name: ..." convention.
-#
-# HEALTH, not just presence: confirmed live that a registered server can be currently
-# disconnected -- `claude mcp list` showed `plugin:playwright:playwright: ... - ✘ Failed to
-# connect — CONNECTION_CLOSED`, moments before `claude mcp get plugin:playwright:playwright`
-# printed `Status: ✔ Connected` for that same server (connection state visibly fluctuates
-# between calls). Registered-but-unhealthy must be treated the same as not-registered for the
-# purpose this check serves -- telling a subagent to use a currently-broken MCP tool wastes a
-# dispatch on a guaranteed failure. Both `get` and `list` output include a `Status:`/inline
-# health indicator; look for an explicit failure signal in the relevant text before declaring
-# healthy, never assume health from presence alone.
-_SUPPORTED_CODEGRAPH_CLIENTS = frozenset(
-    rid for rid, row in RUNTIMES.items() if row.mcp_list
-)
-
-_MCP_GET_COMMANDS = {
-    "claude": ("claude", "mcp", "get", "codegraph"),
-    "codex": ("codex", "mcp", "get", "codegraph"),
-}
-_MCP_LIST_COMMANDS = {
-    rid: (row.binaries[0], "mcp", "list")
-    for rid, row in RUNTIMES.items() if row.mcp_list
+# codebase-memory-mcp (SPEC R3, D-05): a read-only registration reader per host, and one index
+# refresh call. Detection never writes a host config and never runs the tool's installer.
+CBM_NAME = "codebase-memory-mcp"
+# A first full index of a large repository takes seconds to a minute (4.2 s on the owner's machine).
+CBM_INDEX_TIMEOUT_SECONDS = 120
+# The top-level key that holds MCP servers in each host's config, as codebase-memory-mcp 0.12.1's
+# installer writes it. pi has no key: its installer writes an extension file (None). tools/ never
+# imports skills/, so the doctor keeps its own copy of this table (Plan 07); keep the two equal.
+CBM_REGISTRATION_KEYS: dict[str, str | None] = {
+    "claude": "mcpServers",
+    "opencode": "mcp",
+    "cursor": "mcpServers",
+    "copilot": "mcpServers",
+    "codex": "mcp_servers",
+    "pi": None,
 }
 
-# Confirmed live in claude's own output ("✔ Connected" / "✘ Failed to connect — ..."); codex/
-# cursor-agent/opencode not yet observed with a real failing entry (nothing was registered to
-# test against during this plan's own session) -- Task 3 Step 5's live smoke test must confirm
-# these same signals appear (or find and add the real ones) for whichever of those three CLIs
-# it tests against an actually-unhealthy server.
-_UNHEALTHY_SIGNALS = ("✘", "failed to connect", "not connected")
 
-
-def _text_is_healthy(text: str) -> bool:
-    lowered = text.lower()
-    return not any(marker.lower() in lowered for marker in _UNHEALTHY_SIGNALS)
-
-
-CODEGRAPH_PROBE_TIMEOUT_SECONDS = 15
-
-
-class CodegraphProbe(NamedTuple):
-    registered: bool | None
-    healthy: bool | None
-    install_command: str | None
+class CbmRegistration(NamedTuple):
+    registered: bool | None  # None: unknown (no reader, or a config that cannot be read)
     detail: str
 
 
-def codegraph_install_command(cli: str) -> str:
-    return f"codegraph install --target={runtime_id(cli)} --location=global --yes --init"
+def _cbm_config_paths(runtime: str, env) -> list[str]:
+    """Registration files for one runtime, lowest precedence first; relative paths are dropped."""
+    home = env.get("HOME", "")
+    # shortcut: user-level files only; per-project overrides (Claude's projects map, opencode
+    # project files) are not read; read them when a lane reports a mismatch
+    if runtime == "claude":
+        # per Claude Code's CLAUDE_CONFIG_DIR documentation (not live-checked on this machine):
+        # the global config moves to $CLAUDE_CONFIG_DIR/.claude.json; a relative base is dropped
+        paths = [os.path.join(env.get("CLAUDE_CONFIG_DIR") or home, ".claude.json")]
+    elif runtime == "opencode":
+        paths = jsonc_read.opencode_user_config_paths(env)
+        paths.append(env.get("OPENCODE_CONFIG", ""))
+    elif runtime == "cursor":
+        paths = [os.path.join(home, ".cursor", "mcp.json")]
+    elif runtime == "copilot":
+        copilot_home = env.get("COPILOT_HOME") or os.path.join(home, ".copilot")
+        paths = [os.path.join(copilot_home, "mcp-config.json")]
+    elif runtime == "codex":
+        codex_home = env.get("CODEX_HOME") or os.path.join(home, ".codex")
+        paths = [os.path.join(codex_home, "config.toml")]
+    elif runtime == "pi":
+        pi_home = env.get("PI_CODING_AGENT_DIR") or os.path.join(home, ".pi", "agent")
+        paths = [os.path.join(pi_home, "extensions", "cbmem.ts")]
+    else:
+        paths = []
+    return [path for path in paths if os.path.isabs(path)]
 
 
-def _probe_codegraph_from_get(cli: str, result, hint: str) -> CodegraphProbe | None:
-    if result.returncode != 0:
-        return None
-    healthy = _text_is_healthy(result.stdout)
-    if cli == "codex" and healthy:
-        # A-WR-10/RUN-11: registered, but codex exposes no health -- unknown, never True.
-        return CodegraphProbe(True, None, None, "registered; codex does not expose health")
-    detail = result.stdout.strip() or ("healthy" if healthy else "unhealthy")
-    return CodegraphProbe(True, healthy, None if healthy else hint, detail)
-
-
-def _probe_codegraph_from_list(stdout: str, hint: str) -> CodegraphProbe:
-    for line in stdout.splitlines():
-        name = line.split(":", 1)[0].strip()
-        if name != "codegraph":
-            continue
-        healthy = _text_is_healthy(line)
-        return CodegraphProbe(True, healthy, None if healthy else hint, line.strip())
-    return CodegraphProbe(False, False, hint, "codegraph not listed")
-
-
-def probe_codegraph(cli: str, run_fn=subprocess.run,
-                    timeout: int = CODEGRAPH_PROBE_TIMEOUT_SECONDS) -> CodegraphProbe:
-    """Report-only codegraph MCP probe for one CLI. Never installs or registers anything --
-    when the server is missing or unhealthy, ``install_command`` carries the suggested command
-    for the user (or tools-installer) to run. Timeout/OSError yields unknown registered/healthy."""
-    cli = runtime_id(cli)
-    if cli not in _SUPPORTED_CODEGRAPH_CLIENTS:
-        return CodegraphProbe(
-            False, False, None, f"codegraph MCP is not supported for client {cli!r}")
-    hint = codegraph_install_command(cli)
+def _cbm_read_config(path: str):
+    """The config parsed as data, or None when it cannot be read or parsed. Only the parsed
+    value leaves this function, never the text: the file may hold API keys."""
     try:
-        get_argv = _MCP_GET_COMMANDS.get(cli)
-        if get_argv is not None:
-            result = run_fn(
-                get_argv, capture_output=True, text=True, check=False, timeout=timeout)
-            from_get = _probe_codegraph_from_get(cli, result, hint)
-            if from_get is not None:
-                return from_get
-        list_result = run_fn(
-            _MCP_LIST_COMMANDS[cli], capture_output=True, text=True, check=False, timeout=timeout)
-        if list_result.returncode != 0:
-            # A failed list proves nothing about registration (A-IN-05): unknown, no hint.
-            return CodegraphProbe(None, None, None,
-                                  f"mcp list failed (exit {list_result.returncode})")
-        return _probe_codegraph_from_list(list_result.stdout, hint)
-    except subprocess.TimeoutExpired:
-        return CodegraphProbe(None, None, None, "probe timed out")
-    except OSError as exc:
-        return CodegraphProbe(None, None, None, str(exc))
+        with open(path, "rb") as handle:
+            text = handle.read().decode("utf-8")
+        if path.endswith(".toml"):
+            return tomllib.loads(text) if tomllib is not None else None
+        return json.loads(jsonc_read.strip_trailing_commas(jsonc_read.strip_jsonc_comments(text)))
+    except (OSError, ValueError, RecursionError):
+        return None
 
 
-def check_codegraph_mcp_usable(cli: str, run_fn=subprocess.run) -> bool:
-    """True when ``probe_codegraph`` reports codegraph registered and not known unhealthy --
-    health may be unknown (codex exposes none), so this never claims "healthy". The execute
-    adapters' index step still requires ``healthy is True`` (D-20)."""
-    probe = probe_codegraph(runtime_id(cli), run_fn)
-    return probe.registered is True and probe.healthy is not False
+def _cbm_entry(data, key: str) -> tuple[str, dict | None]:
+    """("ok", entry) for the codebase-memory-mcp table under `key`, else ("no entry" or
+    "unknown", None): a servers key or an entry that is not a table is unknown."""
+    if not isinstance(data, dict):
+        return "unknown", None
+    servers = data.get(key)
+    if servers is None:
+        return "no entry", None
+    if not isinstance(servers, dict):
+        return "unknown", None
+    entry = servers.get(CBM_NAME)
+    if entry is None:
+        return "no entry", None
+    if not isinstance(entry, dict):
+        return "unknown", None
+    return "ok", entry
+
+
+def _cbm_entry_state(path: str, key: str) -> str:
+    """"no file", "no entry", "registered", "disabled" or "unknown" for one config file."""
+    if not os.path.exists(path):
+        return "no file"
+    state, entry = _cbm_entry(_cbm_read_config(path), key)
+    if entry is None:
+        return state
+    # both spellings occur in MCP client configs; opencode uses `enabled`
+    if entry.get("enabled") is False or entry.get("disabled") is True:
+        return "disabled"
+    return "registered"
+
+
+def _cbm_pi(path: str) -> CbmRegistration:
+    # inferred: the installer-chosen extension file name, not a documented contract (AGENTS.md)
+    if os.path.isfile(path):
+        return CbmRegistration(
+            True, f"inferred: extension file {path} exists "
+                  "(installer-chosen name, not a documented contract)")
+    return CbmRegistration(False, f"not registered (checked {path})")
+
+
+def _cbm_decide(paths: list[str], key: str) -> CbmRegistration:
+    """The highest-precedence file that holds the entry or cannot be read decides."""
+    decided = None
+    for path in paths:
+        state = _cbm_entry_state(path, key)
+        if state in ("registered", "disabled", "unknown"):
+            decided = (state, path)
+    if decided is None:
+        return CbmRegistration(False, f"not registered (checked {', '.join(paths)})")
+    state, path = decided
+    if state == "registered":
+        return CbmRegistration(True, f"configured in {path}")
+    if state == "disabled":
+        return CbmRegistration(False, f"disabled in {path}")
+    return CbmRegistration(None, f"unreadable or malformed: {path}")
+
+
+def cbm_registration(cli: str, env=None) -> CbmRegistration:
+    """Whether codebase-memory-mcp is configured for one host, read from that host's config as
+    data. Never writes, never starts a subprocess. An absent file or entry is not registered, a
+    disabled entry is not registered, and an unreadable or malformed file is unknown."""
+    env = os.environ if env is None else env
+    runtime = runtime_id(cli)
+    if runtime not in CBM_REGISTRATION_KEYS:
+        return CbmRegistration(None, f"no registration reader for {runtime}")
+    paths = _cbm_config_paths(runtime, env)
+    if not paths:
+        return CbmRegistration(None, f"no registration file location for {runtime}")
+    key = CBM_REGISTRATION_KEYS[runtime]
+    if key is None:
+        return _cbm_pi(paths[0])
+    return _cbm_decide(paths, key)
+
+
+def check_cbm_registered(cli: str, env=None) -> bool:
+    """True only when cbm_registration reads the entry as registered."""
+    return cbm_registration(cli, env).registered is True
+
+
+def run_cbm_index(target_dir: str, run_fn=subprocess.run) -> bool:
+    """Refresh the target's index with one index_repository call (decision Q4). Not a read-only
+    check: it writes the tool's own cache, never a host config or the repository (no
+    --persistence). True only when the tool reports status indexed."""
+    try:
+        proc = run_fn(
+            [CBM_NAME, "cli", "index_repository", "--repo-path", ".", "--mode", "full"],
+            cwd=target_dir, capture_output=True, text=True, check=False,
+            timeout=CBM_INDEX_TIMEOUT_SECONDS,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    if proc.returncode != 0:
+        return False
+    try:
+        data = json.loads(proc.stdout)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("status") == "indexed"
 
 
 # The two multi-provider CLIs with their own per-model catalog (a single-vendor CLI's
 # list - codex's enumerated slugs included - only ever serves that one vendor's models, so
 # it can never be a *target* alternative for another CLI's model here; only these two
 # multi-provider CLIs can).
-_CODEGRAPH_CAPABLE_MULTI_PROVIDER_CLIS = tuple(
+_MULTI_PROVIDER_CLIS = tuple(
     rid for rid, row in RUNTIMES.items() if row.multi_provider
 )
 
 
-def find_codegraph_alternative(cli: str, model: str, runtimes_snapshot: dict) -> str | None:
-    """Best-effort only (design spec §8, §14): when `cli` has no codegraph/MCP support (not in
-    _SUPPORTED_CODEGRAPH_CLIENTS) but a substring match suggests the SAME base model is also
-    reachable through a codegraph-capable CLI's own model catalog, return that CLI's name --
-    informational only, never a hard filter. Model-id naming conventions differ across CLIs
-    (e.g. "grok-4.6" vs. "cursor-grok-4.6-high") so this is a substring heuristic, not a
-    guarantee; a missed match degrades silently to None, never a false claim."""
+def find_code_index_alternative(
+    cli: str, model: str, runtimes_snapshot: dict, env=None
+) -> str | None:
+    """Best-effort only (design spec §8, §14): when `cli` has no codebase-memory-mcp registration
+    reader (not in CBM_REGISTRATION_KEYS; today grok, which gets the CLI form only) but a
+    substring match suggests the SAME base model is reachable through a multi-provider CLI
+    that has codebase-memory-mcp registered (read from its config), return that CLI's name --
+    informational only, never a
+    hard filter. Model-id naming conventions differ across CLIs (e.g. "grok-4.6" vs.
+    "cursor-grok-4.6-high") so this is a substring heuristic, not a guarantee; a missed match
+    degrades silently to None, never a false claim."""
     cli = runtime_id(cli)
     clis = normalize_runtime_keys(
         runtimes_snapshot.get("clis") if isinstance(runtimes_snapshot, dict) else None
     )
-    if cli in _SUPPORTED_CODEGRAPH_CLIENTS:
+    if cli in CBM_REGISTRATION_KEYS:
         return None
     needle = model.lower()
-    for candidate_cli in _CODEGRAPH_CAPABLE_MULTI_PROVIDER_CLIS:
+    for candidate_cli in _MULTI_PROVIDER_CLIS:
         entry = clis.get(candidate_cli, {})
-        if not entry.get("installed"):
+        if not entry.get("installed") or not check_cbm_registered(candidate_cli, env):
             continue
         for candidate_model in entry.get("models", []):
             if needle in candidate_model.lower():
                 return candidate_cli
     return None
-
-
-CODEGRAPH_INDEX_TIMEOUT_SECONDS = 15  # agreed minimum, safety margin over the typical <5s runtime
-
-
-def run_codegraph_index(target_dir: str, run_fn=subprocess.run) -> bool:
-    """Run ``codegraph sync`` then ``codegraph init`` on failure, scoped to ``target_dir``.
-    Only invoked after a healthy probe; returns True only when sync or init exits 0."""
-    run_kw = {
-        "cwd": target_dir,
-        "capture_output": True,
-        "text": True,
-        "timeout": CODEGRAPH_INDEX_TIMEOUT_SECONDS,
-    }
-    try:
-        sync = run_fn(["codegraph", "sync"], check=False, **run_kw)
-        if sync.returncode == 0:
-            return True
-        init = run_fn(["codegraph", "init"], check=False, **run_kw)
-        return init.returncode == 0
-    except (subprocess.TimeoutExpired, OSError):
-        return False

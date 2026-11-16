@@ -1,4 +1,4 @@
-"""Pure decision logic for D-03's two literal preference ladders (07-CONTEXT.md Specifics):
+"""Pure decision logic for D-03's two literal preference ladders (Phase 7 Specifics):
 execution-delegation preference and plan-review preference. Consumes `model_detect.
 build_candidate_pool`'s output (a plain `{cli_name: [model_id, ...]}` pool) -- no I/O, no
 subprocess -- so this decision logic is unit-testable against a synthetic pool with zero
@@ -37,7 +37,7 @@ except ImportError:
     def _hint_matches(hint: str, lowered: str) -> bool:
         return re.search(rf"\b{re.escape(hint)}\b", lowered) is not None
 
-# Fixed runtime search order for BOTH ladders (07-CONTEXT.md's Specifics section states this
+# Fixed runtime search order for BOTH ladders (Phase 7's Specifics section states this
 # order for plan-review explicitly and gives no contrary order for execution, so this module
 # applies the same order to both for one consistent, documented search policy rather than
 # inventing a second one).
@@ -84,7 +84,7 @@ def _gpt_sol_predicate(model_id: str) -> bool:
     return _GPT_SOL_PATTERN.search(model_id.lower()) is not None
 
 
-# Declared rule order (07-CONTEXT.md D-03 Specifics, execution): coding/executor bounded-
+# Declared rule order (Phase 7 D-03 Specifics, execution): coding/executor bounded-
 # substring; composer>=2.5; grok>=4.6; deepseek-flash bounded-substring; luna bounded-substring.
 EXECUTION_RULES = (
     ("coding-or-executor", _bounded_hint_predicate("coding", "executor")),
@@ -94,7 +94,7 @@ EXECUTION_RULES = (
     ("luna", _bounded_hint_predicate("luna")),
 )
 
-# Declared rule order (07-CONTEXT.md D-03 Specifics, plan-review): plan-review bounded-
+# Declared rule order (Phase 7 D-03 Specifics, plan-review): plan-review bounded-
 # substring; gpt-<ver>-sol bounded pattern; glm-5.2/glm-5.3 bounded-substring.
 REVIEW_RULES = (
     ("plan-review", _bounded_hint_predicate("plan-review")),

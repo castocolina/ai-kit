@@ -1,4 +1,4 @@
-"""Detection layer for the two execution/plan-review preference ladders (07-CONTEXT.md D-02,
+"""Detection layer for the two execution/plan-review preference ladders (Phase 7 D-02,
 D-03 Specifics). Reuses `ai_kit_spec`'s own `detect-runtimes` CLI subcommand via subprocess for
 the actual CLI/model enumeration -- this module never re-implements detection logic itself, it
 only shells out to the already-live-verified pipeline

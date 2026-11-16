@@ -35,8 +35,8 @@ LEGACY_NAMES = {"grep": "grep", "cat": "cat", "sed-range": "sed",
                 "sed-edit": "sed", "find": "find"}
 _ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _RANGE_RE = re.compile(r"^(\d+)(?:,(\d+))?p$")
-CODEGRAPH_LINE = ("ai-kit advice: this checkout is codegraph-indexed: explore code with "
-                  "codegraph_explore (or codegraph explore in a shell); keep rg for Markdown.")
+CBM_LINE = ("ai-kit advice: indexed checkout: explore code with search_graph and trace_path "
+            "before grep (MCP tools, or codebase-memory-mcp cli search_graph in a shell).")
 # Search options that take a value (rg, grep and find); the value is skipped, never a path.
 _VALUE_FLAGS = frozenset({
     "-g", "--glob", "--iglob", "-t", "--type", "--include", "--exclude", "-e", "--regexp",
@@ -165,8 +165,8 @@ def installed_tools(env):
     detect = importlib.import_module("detect")
     result = detect.detect_substitutions(env.get("PATH", ""))
     names = {pair["modern"] for pair in result["pairs"] if pair["installed"]}
-    if shutil.which("codegraph", path=env.get("PATH", "")):
-        names.add("codegraph")
+    if shutil.which("codebase-memory-mcp", path=env.get("PATH", "")):
+        names.add("codebase-memory-mcp")
     return names
 
 
@@ -372,24 +372,33 @@ def _is_code_search(event):
     return False
 
 
-def codegraph_advice(event, installed):
-    """Point a code search in a codegraph-indexed checkout at codegraph (advisor events only)."""
-    if event.get("kind", "advisor") != "advisor" or "codegraph" not in installed:
+def cbm_advice(event, installed, env):
+    """Point a code search in an indexed checkout at codebase-memory-mcp (advisor events only)."""
+    if event.get("kind", "advisor") != "advisor" or "codebase-memory-mcp" not in installed:
         return []
     if not _is_code_search(event):
         return []
     start = event.get("cwd")
     if not isinstance(start, str) or not start:
         start = os.getcwd()
-    return [("codegraph-search", CODEGRAPH_LINE)] if indexed_checkout(start) else []
+    return [("cbm-search", CBM_LINE)] if indexed_checkout(start, env) else []
 
 
-def indexed_checkout(start_dir):
-    """True when the checkout (first directory up holding `.git`) holds `.codegraph/`."""
+def _cbm_db_path(top, env):
+    """Path of the codebase-memory-mcp database for the checkout at top, in the tool's cache."""
+    cache = env.get("CBM_CACHE_DIR") or os.path.join(
+        env.get("HOME", ""), ".cache", "codebase-memory-mcp")
+    # shortcut: other path characters are normalized by the tool; a miss means no advice.
+    name = os.path.realpath(top).lstrip("/").replace("/", "-")
+    return os.path.join(cache, name + ".db")
+
+
+def indexed_checkout(start_dir, env):
+    """True when the checkout holding `.git` above start_dir has a codebase-memory-mcp database."""
     current = os.path.realpath(start_dir)
     while True:
         if os.path.exists(os.path.join(current, ".git")):
-            return os.path.isdir(os.path.join(current, ".codegraph"))
+            return os.path.isfile(_cbm_db_path(current, env))
         parent = os.path.dirname(current)
         if parent == current:
             return False
@@ -486,14 +495,14 @@ def with_state(env, session_id, update):
         os.close(fd)
 
 
-def _candidate_advice(event, installed):
+def _candidate_advice(event, installed, env):
     items = []
     if event.get("tool") == "bash":
         items = bash_advice(event.get("command"), installed)
     elif event.get("tool") == "read":
         item = read_report(event.get("path"), event.get("offset"), event.get("limit"), installed)
         items = [item] if item else []
-    return items + codegraph_advice(event, installed)
+    return items + cbm_advice(event, installed, env)
 
 
 def advise(event, env):
@@ -508,7 +517,7 @@ def advise(event, env):
     if kind == "reminder" and (event.get("tool") != "bash"
                                or event.get("output_lines", 0) <= 0):
         return None
-    candidates = _candidate_advice(event, installed)
+    candidates = _candidate_advice(event, installed, env)
     if not candidates:
         return None
     key = call_key(event)

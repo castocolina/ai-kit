@@ -39,15 +39,38 @@ archetype checklist(s) plus framework conventions, **(3) output** the structured
      that archetype's checklist (below) **plus** the framework conventions the profile encodes
      (see *Framework conventions*). For a `fused` doc the orchestrator may pass several
      archetypes — apply each one's checklist.
-   - **Else (fallback)**: detect the framework from path markers and read its seed profile at
-     `references/frameworks/<id>.md` **resolved against this skill's own directory** (the seeds
-     ship with the skill; never against the CWD, which is the user's repo) if one matches;
-     classify the archetype from the profile's `doc_types` glob, or by content shape (below). If
-     nothing resolves, ask the user.
+   - **Else (fallback)**: pick the framework by the path markers in the table below and read
+     its seed profile at `references/frameworks/<id>.md` **resolved against this skill's own
+     directory** (the seeds ship with the skill; never against the CWD, which is the user's
+     repo); classify the archetype from the profile's `doc_types` glob, or by content shape
+     (below).
 
    In either case, load only the matched framework profile — do not load the other framework
    profiles under `references/frameworks/`; they describe different frameworks and add nothing
    to this review.
+
+   | Profile | Markers (the profile's `detection_signals`) |
+   |---|---|
+   | `superpowers` | `docs/superpowers/specs/*.md`, `docs/superpowers/plans/*.md` |
+   | `openspec` | `openspec/changes/*/proposal.md`, `openspec/specs/*/spec.md` |
+   | `spec-kit` | `.specify/`, `specs/[0-9][0-9][0-9]-*/spec.md` |
+   | `kiro` | `.kiro/specs/*/requirements.md`, `.kiro/steering/` |
+   | `bmad` | `docs/prd.md`, `bmad-modules.yaml`, `.bmad-core/` |
+   | `gsd` | `.planning/PROJECT.md`, `.planning/ROADMAP.md` |
+
+   A marker that matches the document's own path beats a repository-level marker (a folder, or
+   a project-root file such as `bmad-modules.yaml` or `.planning/ROADMAP.md`); when two profiles
+   still tie, the first row of the table wins. Look for repository-level markers in the codebase
+   root the caller gave you; with none, in the current working directory. Name the profile you
+   used on the `### Document Type` line. With `FRAMEWORK_PROFILE_PATH = none`, or no matching
+   marker, review with the generic archetype checklists and record `generic` as the framework on
+   the `### Document Type` line.
+
+   Never stop to ask a question, in any mode: a headless dispatch has no one to answer and a
+   native subagent cannot converse either, so every run ends with one of the three Status
+   lines. When neither a profile's `doc_types` glob nor the content shape settles a document's
+   archetype, end with `### Status: Failure — archetype not settled: <path>`, never Approved and
+   never Issues Found (the fixer cannot supply a missing input).
 
 Record framework + archetype(s) on the output's `### Document Type` line.
 
@@ -196,13 +219,12 @@ When you were dispatched via a headless CLI (`codex exec`, `grok`, etc.) rather 
 native subagent, your transcript itself consumes the same limited budget you're reviewing
 against — verbose narration or full-file echoes can burn enough of it that you never reach
 `### Status:`, silently losing the whole review. Two rules, load-bearing for exactly this
-failure mode (confirmed live: an unconstrained run produced ~8000 lines and still hit a
-provider usage-limit wall before synthesizing a report; a budget-unaware run separately ran out
-of turns mid-review with no final report at all):
+failure mode (an unconstrained run can exhaust the budget before it writes a report, and a
+budget-unaware run can run out of turns mid-review with no final report at all):
 
-1. **Minimize output tokens.** A tool `Read`/`codegraph_explore`/`rg` call is enough — don't
+1. **Minimize output tokens.** A tool `Read`/`search_graph`/`rg` call is enough — don't
    also restate or re-print what it returned. Progress updates are a single short line ("reading
-   Task 4...") never a paragraph. Prefer targeted reads (line ranges, `codegraph_explore`
+   Task 4...") never a paragraph. Prefer targeted reads (line ranges, `search_graph`
    queries, `rg` matches) over reading whole files when only one section is needed.
 2. **Print each finding the moment you're confident in it**, in the exact one-line format it
    will have in the final report, then keep reviewing — don't hold findings back "for the
@@ -221,7 +243,7 @@ Your dispatch prompt carries these two named lines when the orchestrator resolve
 
 - `SHARED_TOOLING_PATH = <path>` — `Read` it once before your first search/listing/edit-adjacent
   tool call. It names this repo's confirmed modern tool replacements (`rg`/`fd`/`bat`/`sd`/`eza`)
-  and, separately, when `codegraph_explore` is preferred over broad reads. Apply it to your OWN
+  and, separately, when codebase-memory-mcp's `search_graph` and `trace_path` are preferred over broad reads. Apply it to your OWN
   grounding work during this review, the same way you already apply `FRAMEWORK_PROFILE_PATH` —
   this is a `Read`-and-apply reference, never inlined prose repeated here. (An
   `AGENTS_TOOLING_PATH = <path>` line may appear alongside it for machine-level preferences;
@@ -259,8 +281,10 @@ Per issue: `- **<title>** — Location: <section/lines>. Required: <verifiable o
 ### Status: Approved
 ```
 
-Optionally one `### Non-blocking notes` (≤3 bullets). No empty severity headings, no
-fixed-issue history.
+Optionally one `### Non-blocking notes` block (≤3 bullets) just above the Status line. Write
+each note as a plain `- <text>` bullet, never the finding shape (`- **<title>** — Location: …`):
+the orchestrator parses a finding-shaped bullet as an issue and turns a merged report into
+Issues Found. No empty severity headings, no fixed-issue history.
 
 ### Issues Found
 
@@ -268,15 +292,28 @@ fixed-issue history.
 ## Review: <file(s)>
 ### Document Type
 <framework> · <archetype(s)>
+### Files Read
+- <path> (N lines)
 ### CRITICAL
 - ...
 ### HIGH
 - ...
-### MEDIUM            (optional)
-### Cross-Document Consistency   (if 2+ files)
+### MEDIUM
+- ...
+### LOW
+- ...
+### Cross-Document Consistency
 - ...
 ### Status: Issues Found — fix and re-invoke
 ```
+
+Every heading line is bare, with nothing after the heading text: the orchestrator merges
+reports by these exact headings. Keep only the severity headings that hold a finding;
+`### Cross-Document Consistency` appears only when two or more files were reviewed. `### LOW`
+holds Plan-checklist tooling-catchable findings and appears only beside a CRITICAL, HIGH,
+MEDIUM or Cross-Document Consistency finding. A review whose only findings are LOW keeps the
+Approved shape and lists them under `### Non-blocking notes`. With more than three, keep the
+three most useful.
 
 On re-review, evaluate current state fresh; if blocking issues are resolved, switch to the
 Approved shape — don't carry "previously flagged, now fixed" forward.
@@ -294,3 +331,7 @@ Approved shape — don't carry "previously flagged, now fixed" forward.
 | Confirming a referenced file exists without reading it | Read its content. Wrong claim → CRITICAL. |
 | Reviewing a `constitution`/`state` doc as if it were a spec | Those are context — read, don't review. |
 | Reviewing in the same context that wrote the doc | Stop. Clean-context reviewer only; dispatch via `/ai-kit-spec-review`. |
+
+## Evidence
+
+- An unconstrained review run produced about 8000 lines and still hit a provider usage-limit wall before it wrote a report; a budget-unaware run separately ran out of turns mid-review with no final report.

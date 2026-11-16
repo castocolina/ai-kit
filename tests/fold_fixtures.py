@@ -21,12 +21,13 @@ HOST_CONFIG_VARS = ("CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "CURSOR_CONFIG_DIR",
 def git_env(home):
     """A copy of os.environ for fixture git calls: no global or system config, fixed identity.
 
-    The codegraph and graphify fakes sit first on PATH, so no flow test reaches a real index tool.
+    The codebase-memory-mcp and graphify fakes sit first on PATH, so no flow test reaches a real
+    index tool.
     """
     dropped = _SCRUBBED + HOST_CONFIG_VARS
     env = {key: value for key, value in os.environ.items() if key not in dropped}
     fakes = index_fakes.fakes_dir(home)
-    if not (fakes / "bin" / "codegraph").exists():
+    if not (fakes / "bin" / "codebase-memory-mcp").exists():
         index_fakes.write_index_fakes(fakes / "bin", fakes / "state.json", fakes / "calls.log")
     env["PATH"] = str(fakes / "bin") + os.pathsep + env.get("PATH", "")
     env.update({

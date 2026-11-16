@@ -148,6 +148,19 @@ class TestDoctorScreen(unittest.IsolatedAsyncioTestCase):
             detail = host.screen.query_one("#detail")
             self.assertEqual(detail.styles.border_top[0], "solid")
 
+    async def test_long_current_value_is_capped_in_table_and_full_in_detail(self):
+        app_mod = load_app()
+        long_value = "claude: not registered; opencode: not registered; cursor: unknown"
+        ctx = app_mod.ConfigDoctorContext(
+            catalog=_catalog(_row("cbm-registration", current_display=long_value)))
+        app = app_mod.ConfigDoctorApp(ctx)
+        async with app.run_test():
+            table = _table(app)
+            cell = str(table.get_cell("cbm-registration", table.ordered_columns[2].key))
+            self.assertEqual(cell, long_value[: app_mod.CURRENT_CELL_MAX - 1] + "…")
+            self.assertLessEqual(len(cell), app_mod.CURRENT_CELL_MAX)
+            self.assertIn(f"Current: {long_value}", _detail_text(app))
+
     def test_screen_bindings_are_apply_row_and_close_only(self):
         app_mod = load_app()
         actions = [binding[1] for binding in app_mod.ConfigDoctorScreen.BINDINGS]

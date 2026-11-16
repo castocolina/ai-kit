@@ -31,6 +31,17 @@ CYAN = "#39c5cf"
 KEYCAP = "#21262d"
 
 EMPTY_CATALOG_TEXT = "no rows: no config check applies to the AI CLIs found here."
+# The table's Current cell is capped so Recommended and Confidence stay on a 120-column screen;
+# the detail pane shows the full value.
+CURRENT_CELL_MAX = 16
+
+
+def _cell_text(value) -> str:
+    """A Current cell's text: at most CURRENT_CELL_MAX characters, the last one an ellipsis."""
+    text = str(value)
+    if len(text) <= CURRENT_CELL_MAX:
+        return text
+    return text[: CURRENT_CELL_MAX - 1] + "…"
 
 
 class ConfigDoctorContext(NamedTuple):
@@ -187,7 +198,7 @@ class ConfigDoctorScreen(Screen):
                 table.add_row(
                     escape(runtime),
                     escape(str(row.get("check", ""))),
-                    escape(str(row.get("current_display", ""))),
+                    escape(_cell_text(row.get("current_display", ""))),
                     escape(str(row.get("recommended_display", ""))),
                     escape(str(row.get("confidence", ""))),
                     key=row_id,
@@ -199,9 +210,10 @@ class ConfigDoctorScreen(Screen):
         row = self._rows_by_id.get(row_id)
         if row is None:
             return
+        current = escape(str(row.get("current_display", "")))
         why = escape(str(row.get("why", "")))
         source = escape(str(row.get("source", "")))
-        self.query_one("#detail", Static).update(f"{why}\n\n{source}")
+        self.query_one("#detail", Static).update(f"Current: {current}\n\n{why}\n\n{source}")
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         key = event.row_key
@@ -255,7 +267,7 @@ class ConfigDoctorScreen(Screen):
             display = result.get("after")
         if display is None:
             return
-        display_s = escape(str(display))
+        display_s = escape(_cell_text(display))
         table = self.query_one("#catalog-table", DataTable)
         current_col = table.ordered_columns[2].key
         table.update_cell(row_id, current_col, display_s)

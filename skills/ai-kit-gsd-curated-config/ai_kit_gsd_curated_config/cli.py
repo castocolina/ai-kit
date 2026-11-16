@@ -380,14 +380,11 @@ def _apply_review_writes(ctx: _GsdCtx, args):
             file=sys.stderr,
         )
         return 1
-    steps = (
-        ("workflow.plan_review_convergence", True, "workflow.plan_review_convergence"),
-        ("review.effort.opencode", "high", "review.effort.opencode"),
+    code = _config_set_exit(
+        ctx, "workflow.plan_review_convergence", True, "workflow.plan_review_convergence"
     )
-    for key, value, label in steps:
-        code = _config_set_exit(ctx, key, value, label)
-        if code is not None:
-            return code
+    if code is not None:
+        return code
     existing = got.value if got.found else None
     reviewers = list(existing) if isinstance(existing, list) else []
     if slug not in reviewers:
@@ -419,7 +416,6 @@ def _cmd_apply_review(args, which_fn, run_fn, env_fn):
             {
                 "plan_review_convergence_written": True,
                 "default_reviewers": result,
-                "review_effort_opencode_written": True,
             }
         )
     )

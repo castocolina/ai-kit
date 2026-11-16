@@ -1,0 +1,20 @@
+"""Invoice rows for one customer."""
+
+LOG_KEY = "fetch_invoice_rows"
+
+
+# fetch_invoice_rows is cached upstream
+def fetch_invoice_rows(customer_id, timeout=30):
+    """Return the invoice rows for one customer."""
+    return [(customer_id, timeout)]
+
+
+class InvoiceReport:
+    """Totals the invoice rows of one customer."""
+
+    def __init__(self, customer_id):
+        self.customer_id = customer_id
+
+    def build(self):
+        rows = fetch_invoice_rows(self.customer_id, timeout=5)
+        return sum(len(row) for row in rows)

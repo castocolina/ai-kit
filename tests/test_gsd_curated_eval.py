@@ -1818,7 +1818,7 @@ class TestFixture(unittest.TestCase):
 
         xdg = os.path.join(self._tmp, "xdg-config")
         os.makedirs(os.path.join(xdg, "ai-kit"))
-        with open(os.path.join(xdg, "ai-kit", "review-spec.toml"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(xdg, "ai-kit", "config.toml"), "w", encoding="utf-8") as fh:
             fh.write("[[[")
         env = {"XDG_CONFIG_HOME": xdg, "HOME": self._tmp, "PATH": os.environ.get("PATH", "")}
         args = argparse.Namespace(cwd=self._tmp, extra_candidate=[])
@@ -2896,6 +2896,26 @@ class TestScenarioPredicates(unittest.TestCase):
         )
 
 
+# One synthetic sample per shared key shape, built at run time from a prefix and filler (no whole
+# key literal in this file), in the shared table's order.
+KEY_SHAPE_SAMPLES = (
+    ("github_token", "ghp_" + "x" * 36),
+    ("github_pat", "github_pat_" + "x" * 40),
+    ("google_api_key", "AIza" + "x" * 35),
+    ("slack_token", "xoxb-" + "x" * 24),
+    ("pem_private_key", "-----BEGIN " + "RSA PRIVATE KEY" + "-----"),
+    ("aws_access_key_id", "AKIA" + "X" * 16),
+    ("gitlab_token", "glpat-" + "x" * 20),
+    ("xai_api_key", "xai-" + "x" * 32),
+    ("jwt", "eyJ" + "x" * 12 + ".eyJ" + "x" * 12 + "." + "x" * 12),
+    ("stripe_key", "sk_live_" + "x" * 24),
+    ("huggingface_token", "hf_" + "x" * 34),
+    ("npm_token", "npm_" + "x" * 36),
+    ("groq_key", "gsk_" + "x" * 52),
+    ("sk_rk_key", "sk-" + "x" * 24),
+)
+
+
 class TestSecretScan(unittest.TestCase):
     def setUp(self) -> None:
         self.scratch = tempfile.mkdtemp(prefix="xai-secret-")
@@ -2922,6 +2942,11 @@ class TestSecretScan(unittest.TestCase):
     def test_canary_self_check_fails_when_scanner_misses(self) -> None:
         with mock.patch.object(ev, "secret_scan", return_value=[]):
             self.assertFalse(ev.secret_scan_self_check())
+
+    def test_every_shared_key_shape_is_caught(self) -> None:
+        for name, sample in KEY_SHAPE_SAMPLES:
+            with self.subTest(shape=name):
+                self.assertTrue(ev.SECRET_RX.search(f"evidence {sample} end"))
 
     def test_missing_path_is_skipped(self) -> None:
         out = io.StringIO()
@@ -4796,6 +4821,48 @@ class TestReviewFixes(unittest.TestCase):
         ):
             code = ev.main(["run", "C", "--cell", "red-a", "--run-dir", run, "--snapshot", snap])
         self.assertEqual(code, 1)
+
+
+class TestRefusalFailsTheClass(unittest.TestCase):
+    """A refusal raised in class setup fails that class only; later classes still run
+    (unittest's class-setup handler catches only Exception, and a refusal is a SystemExit)."""
+
+    @staticmethod
+    def _suite(guarded: bool) -> unittest.TestSuite:
+        class Refused(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                guard = ev.refusal_fails_the_class() if guarded else contextlib.nullcontext()
+                with guard:
+                    raise ev._refusal(1, "poison not copied")
+
+            def test_never_runs(self):
+                self.fail("class setup was refused")
+
+        class Later(unittest.TestCase):
+            def test_runs(self):
+                pass
+
+        loader = unittest.TestLoader()
+        return unittest.TestSuite(
+            [loader.loadTestsFromTestCase(Refused), loader.loadTestsFromTestCase(Later)]
+        )
+
+    def test_the_refused_class_errors_and_the_next_class_runs(self):
+        result = unittest.TestResult()
+        self._suite(True).run(result)
+        self.assertEqual(result.testsRun, 1)
+        self.assertEqual(len(result.errors), 1)
+        self.assertIn("poison not copied", result.errors[0][1])
+        self.assertEqual(result.failures, [])
+
+    def test_without_the_guard_the_refusal_ends_the_run(self):
+        with self.assertRaises(SystemExit):
+            self._suite(False).run(unittest.TestResult())
+
+    def test_other_exceptions_pass_through(self):
+        with self.assertRaises(unittest.SkipTest), ev.refusal_fails_the_class():
+            raise unittest.SkipTest("no cached pi package")
 
 
 if __name__ == "__main__":

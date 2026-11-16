@@ -28,11 +28,11 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`ai-kit-spec-review-checklist`](skills/ai-kit-spec-review-checklist/SKILL.md) | skill | Audit-only reviewer for design/plan documents. Framework-aware (EARS, RFC-2119, Given/When/Then, OpenSpec, Spec Kit, GSD, …). |
 | [`ai-kit-spec-review-fixer`](skills/ai-kit-spec-review-fixer/SKILL.md) | skill | Fixer that addresses each finding from a `ai-kit-spec-review-checklist` report, in place. |
 | [`cst-refactor`](skills/cst-refactor/SKILL.md) | skill | LibCST-based Python codemod helper — multi-file renames and signature changes that survive comments and formatting. |
-| [`markdown-to-pdf`](skills/markdown-to-pdf/SKILL.md) | skill | Convert a Markdown document with embedded mermaid diagrams into a **PDF** (or a **marp** slide deck) — every ` ```mermaid ` block is auto-rendered with `mmdc` and embedded; auto-selects the best installed backend (Typst/Pandoc, LaTeX, WeasyPrint, Chromium) and never auto-installs. |
+| [`markdown-to-pdf`](skills/markdown-to-pdf/SKILL.md) | skill | Convert a Markdown document with embedded mermaid diagrams into a **PDF** (or a **marp** slide deck) — every ` ```mermaid ` block is auto-rendered with `mmdc` and embedded; auto-selects the best installed backend (Pandoc+LaTeX > Typst > WeasyPrint > Chromium) and never auto-installs. |
 | [`ai-kit-cross-ai`](skills/ai-kit-cross-ai/SKILL.md) | skill | Canonical guide to calling, waiting for and chaining the cross-AI runner, with the caller-owned hard tier and never switching harness, provider or model. |
 | [`ai-kit-session-wake`](skills/ai-kit-session-wake/SKILL.md) | skill | Arms, checks and disarms a per-session systemd user-timer wake that resumes this exact session id after the orchestrating agent stalls on its own usage limit or its process dies. Not for cross-AI subprocess limits. |
 | [`ai-kit-spec-review`](skills/ai-kit-spec-review/SKILL.md) | skill | Review-and-fix loop over (runtime, model) pairs: native when the host can select the model, otherwise the supervised runner (`claude` is review-only). Loops until approved. |
-| [`ai-kit-spec-config`](skills/ai-kit-spec-config/SKILL.md) | skill | Wizard for the reviewer config: picks (runtime, model) pairs, writes `review-spec.toml`; a runtime outside the runner table is a trust-gated custom command. |
+| [`ai-kit-spec-config`](skills/ai-kit-spec-config/SKILL.md) | skill | Wizard for the cross-AI lanes: picks (runtime, model) pairs and writes the `[lanes]` roster of ai-kit's `config.toml`; a runtime outside the runner table is a trust-gated custom command. |
 | [`ai-kit-spec-execute`](skills/ai-kit-spec-execute/SKILL.md) | skill | Router: detects which framework (GSD, superpowers, …) generated a plan/phase, then hands a GSD phase to GSD's own `/gsd-execute-phase` and a superpowers plan to `ai-kit-spec-execute-superpowers`. |
 | [`ai-kit-spec-execute-superpowers`](skills/ai-kit-spec-execute-superpowers/SKILL.md) | skill | Resolves a live-quota-checked (runtime, model) pair for each task of a superpowers implementation plan and injects it at `superpowers:subagent-driven-development`'s implementer-dispatch point, leaving that harness's TDD enforcement, review and fix-loop intact and, after the final review, folds the finished plan into one commit per logical feature through `ai-kit-commit-fold` (push and PR stay with ai-kit's unit flow). Not for `superpowers:executing-plans`. |
 | [`ai-kit-project-rules-agents`](skills/ai-kit-project-rules-agents/SKILL.md) | skill | Checks an AGENTS.md/CLAUDE.md file against ai-kit's own 19-rule house ruleset, then wraps `/agent-md-refactor` to remediate gaps. |
@@ -44,11 +44,27 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`ai-kit-project-rules-all`](skills/ai-kit-project-rules-all/SKILL.md) | skill | Runs all 6 `ai-kit-project-rules-*` checkers (agents, makefile, precommit, arch, docker, cicd) against a target repo and merges their findings into one cross-domain, criticality-ordered report, preserving the AGENTS.md-only `/agent-md-refactor` hand-off. Detects and reports only. |
 | [`ai-kit-commit-fold`](skills/ai-kit-commit-fold/SKILL.md) | skill | Folds a finished GSD or superpowers plan into one commit per logical feature by one written policy: a tree proof, a local backup tag, a compare-and-swap ref move and a five-line report. A GSD wave-end capability command and a read-only status backstop; the `jev-fast-decision` skill proposes the grouping when installed. The unit flow (`fold.py start`, `checkpoint`, `ready`, restack, hotfix, merge-chain) folds and pushes a unit's branch and opens its PR, only with push consent. |
 | [`ai-kit-gsd-curated-config`](skills/ai-kit-gsd-curated-config/SKILL.md) | skill | v2-primary GSD config pipeline: inventory, recommend, plan-set/unset, apply (dry-run + backup), the template-8 cross-ai.mjs runner (`ensure-runner`, one CLI per call with a configurable soft ladder, no automatic fallback), skill wiring, and grouped follow-ups; kept v1 one-question `model_profile` path that writes the runner command; pi not live-validated; cursor validated headless (interactive confirmation pending); config keys written only through gsd-tools (a failed apply restores the backup bytes directly). |
-| [`ai-kit-gsd-spec-discuss`](skills/ai-kit-gsd-spec-discuss/SKILL.md) | skill | Chains GSD `/gsd-spec-phase` then `/gsd-discuss-phase` over a phase range in one of two run modes, auto (spec `--auto`, assumptions-mode discuss) or interactive (discuss with `--analyze --all --batch`, the user answering), settling gray areas through an optional local → consented-remote → own-reasoning decision ladder, asked of the shared `jev-fast-decision` skill (advisory; it owns the backends and the consent ask), with decision logs, a deferred ledger, engine-checked Edge Coverage and a best-over-easy (or `mvp_mode`) design rule. Works with no decision backend. |
-| [`ai-kit-spec-goal-prompt`](skills/ai-kit-spec-goal-prompt/SKILL.md) | skill | Builds a ready-to-paste `/goal`, `/loop` or `/gsd-autonomous` prompt file (one-shot goal, autonomous run) for GSD phases or superpowers plans, with rails, quota directives and e2e-based done. Detects host primitives (labelled verified or unverified), picks one to three strategies, writes a committable file. Never runs the prompt. |
+| [`ai-kit-gsd-spec-discuss`](skills/ai-kit-gsd-spec-discuss/SKILL.md) | skill | Chains GSD `/gsd-spec-phase` then `/gsd-discuss-phase` over a phase range in one of two run modes, auto (spec `--auto`, assumptions-mode discuss) or interactive (discuss with `--analyze --all --batch`, the user answering), settling gray areas through an optional local → consented-remote → own-reasoning decision ladder, asked of the shared `jev-fast-decision` skill (advisory; it owns the backends and the consent ask), with decision logs, a deferred ledger, engine-checked Edge Coverage and a best-over-easy (or `mvp_mode`) design rule. In auto mode it shows a pre-run summary and waits for the owner's go-ahead, then ends by handing the discussed range to `ai-kit-spec-goal-prompt`; on the interactive path a phase may run in its own subagent, its questions relayed in batches. Works with no decision backend. |
+| [`ai-kit-spec-goal-prompt`](skills/ai-kit-spec-goal-prompt/SKILL.md) | skill | Builds a ready-to-paste `/goal`, `/loop` or `/gsd-autonomous` prompt file (one-shot goal, autonomous run) for GSD phases or superpowers plans, with rails, quota directives and e2e-based done. Detects host primitives (labelled verified or unverified), picks one to three strategies, writes a committable file. Optional answers fields carry an owner's run rules (push after fold, turn cap, model split, review lens, per-phase end steps, report language), a calling skill's answers replace the questions, and long lists and commands wrap instead of being refused for length. Never runs the prompt. |
 | [`ai-kit-usage-metrics`](skills/ai-kit-usage-metrics/SKILL.md) | skill | Runs the local capture-refine-dashboard pipeline over Claude Code, opencode, Codex and Cursor session logs, plus previously stored CLI command history, then opens a static, filterable HTML usage-metrics dashboard. Does not export or import data. |
-| [`jev-fast-decision`](skills/jev-fast-decision/SKILL.md) | skill | Shared System One client: one backend table (local Laya, TypeSafe, OpenCode Zen), `--probe`, one escalation ladder with a per-item trail, a consent record, an answer log, a dated capability matrix, one entry point for every caller (`ladder`, `detect`, `consent`) and the installed-skill lookup callers copy — advisory only. Linked for claude/opencode and pi; codex is a documented gap (`~/.agents/skills` is shared by other hosts) and cursor is reached through its `~/.claude/skills` compatibility read (cited in `reference.md`, not live-verified). |
-| [`ai-kit-judge`](agents/ai-kit-judge.md) | agent | Read-only native judge lane for Claude Code (Opus; Read, Grep and Glob only): follows the given prompt and replies only with what it asks, such as verdict JSON lines. Linked to `~/.claude/agents/ai-kit-judge.md`. |
+| [`jev-fast-decision`](skills/jev-fast-decision/SKILL.md) | skill | Shared System One client: one backend table (local Laya, TypeSafe), `--probe`, one escalation ladder with a per-item trail, a consent record, an answer log, a `[jev]` settings table with a first-run `config set`, version-keyed Laya and TypeSafe learning records with `--check-updates`, a dated capability matrix, one entry point for every caller (`ladder`, `detect`, `consent`) and the installed-skill lookup callers copy — advisory only. Linked for claude/opencode and pi; codex is a documented gap (`~/.agents/skills` is shared by other hosts) and cursor is reached through its `~/.claude/skills` compatibility read (cited in `reference.md`, not live-verified). |
+| [`ai-kit-judge`](agents/ai-kit-judge.md) | agent | Read-only native judge lane for Claude Code (Opus at xhigh effort, set in its frontmatter; Read, Grep and Glob only): follows the given prompt and replies only with what it asks, such as verdict JSON lines. Linked to `~/.claude/agents/ai-kit-judge.md`. |
+
+## ai-kit configuration
+
+ai-kit keeps its settings in one `config.toml` per layer: the project file `.aikit/config.toml` (per checkout) over the user file `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml`. Each key takes the project value when the project file sets it, then the user value, then the built-in default.
+
+- `[lanes]` holds the cross-AI lanes: `[[lanes.review]]` and `[[lanes.execute]]` entries, each routed by its `purpose` (`review`, `execute` or `both`); `strategy` and `[lanes.policy]` sit beside them.
+- `[runner.retry]` holds the cross-AI runner's retry tuning; `[runner.retry.scopes."<scope>"]` overrides it for one GSD scope.
+- `[models]` and `[hooks]` are reserved for later features and are not read yet; `[jev]` holds jev-fast-decision's `laya_url`, `laya_version` and `enabled` (the skill's `reference.md`, `## Settings`).
+
+Every write keeps your comments, unknown tables and key order, and publishes through a temporary file, so a reader never sees a half-written file. ai-kit never writes a key that is outside another tool's own schema, and it runs in a repository without `.planning/`.
+
+An old `review-spec.toml` migrates into `[lanes]` on the first command that reads the roster, and the runner migrates a GSD `workflow.cross_ai_retry` block and the old `cross-ai.json` once. The old roster stays recoverable as `review-spec.toml.migrated` and the old `cross-ai.json` as `cross-ai.json.migrated`; a GSD block's values move into `config.toml` (a key the file already sets keeps the file's value, and the block's value is dropped) and the block is removed from the GSD file, with no copy kept.
+
+Trust covers the project file's command-bearing lane entries; every other table is ordinary settings, so editing `[runner.retry]` keeps trust, and editing a command entry needs `trust-local` again. Trust records, consent records, `secrets.env`, the model catalog cache, the unit flow's `.aikit/flow.json` and the status-line files stay in their own files, each with a reason in the design record.
+
+The full inventory and decision record is [docs/config/design.md](docs/config/design.md).
 
 ## How the installer works
 
@@ -623,7 +639,7 @@ explicitly requested:
   | Id | What it does | Hosts | Default |
   |---|---|---|---|
   | `session-briefing` | Installed-tool briefing to user/model | Claude Code, Cursor | on |
-  | `tool-advisor` | Advice for grep/cat/sed/find, large reads, and code searches (Bash, Grep, Glob) in a codegraph-indexed checkout | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
+  | `tool-advisor` | Advice for grep/cat/sed/find, large reads, and code searches (Bash, Grep, Glob) in a checkout with a codebase-memory-mcp index | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
   | `tool-reminder` | Output-size reminder with a better installed tool | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
   | `decision-probe` | Reports usable decision backends | Claude Code | off |
   | `precompact` | Decision-system pre-summary before compaction | Claude Code, pi, experimental opencode | Per recorded host verdict |
@@ -633,13 +649,15 @@ explicitly requested:
   ids (comma-separated, with optional `:host` selectors). Claude Code settings
   are wired per event; pi extensions and opencode plugins use symlinks. Absent
   hosts are skipped. The pre-summary fails open without blocking compaction.
-- `--with-global-rules` — rewrites codegraph's "indexing is the user's decision"
-  sentence inside its `<!-- CODEGRAPH_START -->` block in the four global
-  instruction files (Claude `CLAUDE.md`, Codex `AGENTS.md`, Gemini `GEMINI.md`,
-  opencode `AGENTS.md`). Only that sentence changes; each file is backed up first
+- `--with-global-rules` — replaces a leftover codegraph block (`<!-- CODEGRAPH_START -->`, from before codebase-memory-mcp replaced codegraph)
+  with ai-kit's codebase-memory-mcp block in the four global instruction files (Claude `CLAUDE.md`,
+  Codex `AGENTS.md`, Gemini `GEMINI.md`, opencode `AGENTS.md`). A file that already holds a
+  codebase-memory-mcp block keeps it and every other byte; a leftover codegraph block beside it is
+  removed (the codebase-memory-mcp block stays). Each file is backed up first
   to `${XDG_STATE_HOME:-~/.local/state}/ai-kit/backups/global-rules/`. A bare
   `--headless` never touches these files, and `--dry-run` only previews the change.
-  The config doctor row `codegraph-global-sentence` reports which wording each file holds.
+  The config doctor row `cbm-global-block` reports which block each file holds; the rows
+  `cbm-binary` and `cbm-registration` report the binary and its MCP registration per host.
 - `--examples=all|none|<ids>` — the same pre-existing flag `install.sh` and
   the interactive wizard use for bundled example segments; it works
   identically here, with or without `--headless`.
@@ -727,7 +745,7 @@ Every runtime-config apply (Claude `settings.json`, `opencode.jsonc`, Codex
 `~/.local/state/ai-kit/backups/<runtime>/<file name>.<UTC timestamp>.bak` (the
 newest 10 per file are kept). This is a different name from the skill backups'
 `<name>.bak-<timestamp>/` described above. A missing target and a dry run take no backup.
-The global-rules applier (`codegraph-global-sentence`) keeps its own backups
+The global-rules applier (`cbm-global-block`) keeps its own backups
 under `~/.local/state/ai-kit/backups/global-rules/`.
 
 The row `claude-playwright-mcp-browser` is shown only when the Playwright plugin
@@ -758,11 +776,11 @@ user's own `python3` with no dependencies. The lint/type toolchain below is
 
 ```bash
 make dev        # uv sync + install pre-commit hooks (sets up the dev env)
-make setup-dev  # uv sync, the missing flow tools (pre-commit, gh, gh-stack, codegraph, graphify) and the hooks, each guarded; never upgrades, always exits 0 (dev and setup-env stay strict)
+make setup-dev  # uv sync, the missing flow tools (pre-commit, gh, gh-stack, graphify; codebase-memory-mcp is checked and its install command printed) and the hooks, each guarded; never upgrades, always exits 0 (dev and setup-env stay strict)
 make test       # full suite in parallel, one subprocess per module, through tools/run_unittest_parallel.py (system python3 for the unit group)
 make lint       # shellcheck + py-compile hooks (pre-commit, all files)
 make validate   # the full quality gate (see below)
-make check-dogfood    # live-project check: dogfood runner copy and curated-config guards (also a pre-push hook)
+make check-dogfood    # live-project check: dogfood runner copy, curated-config guards, JDG-04 citations and judge records (also a pre-push hook)
 make test-env-matrix  # six-environment proof, about six make test runs; not part of make test or validate
 ```
 
@@ -789,11 +807,15 @@ push of the checked-out branch from its own checkout with no other unpushed loca
 branch or worktree HEAD outside it; every over-budget one otherwise. The 60 s
 target covers the two test hooks alone (their subtotal, measured with
 `python3 tools/time_prepush.py`): before this phase they took 183.9 s (2026-11-03),
-after it 55.4 s, and 30.7 s after the test-time cuts (2026-11-04). pyright (9.7 s),
-vulture (1.9 s), check-dogfood (0.5 s) and deferred-e2e (0.0 s, no push range; no
-e2e module is over the commit budget) are recorded beside that subtotal, and the
-worst-case whole push (`push-worst`, every pre-push hook timed alone) is 42.7 s.
+after it 55.4 s, 30.7 s after the test-time cuts (2026-11-04), and 45.4 s after the
+four slowest hook modules were split and started first (2026-11-13). pyright
+(11.2 s), vulture (2.2 s), check-dogfood (8.1 s) and deferred-e2e (0.0 s, no push
+range; no e2e module is over the commit budget) are recorded beside that subtotal,
+and the worst-case whole push (`push-worst`, every pre-push hook timed alone) is
+67.0 s.
 Tests never call a real host CLI or read `.planning/`.
+
+**Skill judging.** `tools/judge_loop.py` builds skill-judge prompts that embed the installed judge's rubric and spec files (`prompt`, `prompt --probe`), picks the judge pool from probe lanes (`pool`), decides one or two judges per skill from recorded signals plus an advisory jev score (`count`), records each lane's verdict with its status line (`ingest`), and generates and checks the re-judge report in `.planning/judge/` (`report`, `check`; `--gate` also fails an unmet bar or a loop over three rounds, `--require-current` a stale digest). From a skill's second loop on, `count` takes its recorded signals from the skill's previous loop (its lowest valid percent and its worst verdict's critical and high counts) instead of `inputs.json`, and `report` and `check --gate` also fail the bar when a round's lowest percent is more than 7.0 points under the previous loop's lowest percent.
 
 ## Compatibility notes
 

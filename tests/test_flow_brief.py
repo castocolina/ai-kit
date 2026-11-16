@@ -1,9 +1,10 @@
-"""The unit brief (plan 30-04 Task 2): explore names, capped whole-word mentions, worktree seeding.
+"""The unit brief (plan 30-04 Task 2): index names, capped whole-word mentions, worktree seeding.
 
-Explore output is canned through a recording `run`, so no codegraph process runs; the repositories
-are temporary git checkouts built with the git CLI.
+Index answers are canned through a recording `run`, so no codebase-memory-mcp process runs; the
+repositories are temporary git checkouts built with the git CLI.
 """
 
+import json
 import os
 import pathlib
 import shutil
@@ -49,8 +50,37 @@ def _runner(rc, out):
     return run
 
 
+def _tool_runner(answers):
+    """Answer each call by its tool (argv[2]): one (rc, out) pair, or a list in call order."""
+    calls = []
+    queues = {tool: list(answer) if isinstance(answer, list) else [answer]
+              for tool, answer in answers.items()}
+
+    def run(argv, cwd, timeout=900):  # pylint: disable=unused-argument
+        calls.append(argv)
+        queue = queues.get(argv[2], [(2, "")])
+        rc, out = queue.pop(0) if len(queue) > 1 else queue[0]
+        return rc, out, ""
+
+    run.calls = calls
+    return run
+
+
+def _projects(*rows, has_more=False):
+    return json.dumps({"projects": [{"name": name, "root_path": root, "branch": "main"}
+                                    for name, root in rows],
+                       "total": len(rows), "offset": 0, "limit": 500, "returned": len(rows),
+                       "has_more": has_more})
+
+
+def _query(rows, has_more=False):
+    return json.dumps({"columns": ["f.file_path", "f.name"], "rows": rows, "returned": len(rows),
+                       "total": len(rows), "total_relation": "eq", "has_more": has_more,
+                       "truncated": False})
+
+
 def _found(_name):
-    return "/usr/bin/codegraph"
+    return "/usr/bin/codebase-memory-mcp"
 
 
 def _missing(_name):
@@ -62,40 +92,134 @@ def _facts(**fields):
                                  written="now", **fields)
 
 
-class ExploreNamesTests(unittest.TestCase):
-    def test_parses_names_in_any_kind_and_labels_the_dropped_tail(self):
-        out = ("**Exploration: pkg/alpha.py**\n"
-               "**`pkg/alpha.py`** — alpha_one(function), Gamma(class), helper(method), "
-               "x(calls), y(instantiates), z(function), +2 more\n")
-        run = _runner(0, out)
-        names, label = flow_brief.explore_names("/repo", ["pkg/alpha.py"], run, _found)
-        self.assertEqual(names, ["Gamma", "alpha_one", "helper", "x", "y", "z"])
-        self.assertIn("partial: 2 more not listed by codegraph", label)
-        self.assertEqual(run.calls, [["codegraph", "explore", "pkg/alpha.py"]])
+CBM = flow_index.CBM
+_NO_INDEX = "file names only: no codebase-memory-mcp index for this checkout"
+_ALPHA_QUERY = ("MATCH (f) WHERE f.file_path IN ['pkg/alpha.py'] AND "
+                "(f:Function OR f:Method OR f:Class) RETURN f.file_path, f.name")
 
-    def test_no_codegraph_cli_makes_no_call(self):
-        run = _runner(0, "")
-        names, label = flow_brief.explore_names("/repo", ["pkg/alpha.py"], run, _missing)
-        self.assertEqual(names, [])
-        self.assertEqual(label, "file names only: the codegraph CLI is not installed")
+
+class IndexNamesTests(unittest.TestCase):
+    def test_names_come_from_the_checkouts_project_in_two_calls(self):
+        run = _tool_runner({
+            "list_projects": (0, _projects(("p-repo", "/repo"))),
+            "query_graph": (0, _query([["pkg/alpha.py", "alpha_one"],
+                                       ["pkg/alpha.py", "Gamma"], ["pkg/alpha.py", "helper"]])),
+        })
+        names, label = flow_brief.explore_names("/repo", ["pkg/alpha.py"], run, _found)
+        self.assertEqual(names, ["Gamma", "alpha_one", "helper"])
+        self.assertEqual(label, "symbol names from codebase-memory-mcp plus file names")
+        self.assertEqual(run.calls, [
+            [CBM, "cli", "list_projects", "--format", "json", "--limit", "500", "--offset", "0"],
+            [CBM, "cli", "query_graph", "--project", "p-repo", "--format", "json",
+             "--max-rows", "2000", "--offset", "0", "--query", _ALPHA_QUERY],
+        ])
+
+    def test_checkout_on_the_second_page_of_projects_is_found(self):
+        page_one = _projects(*[(f"other-{i}", f"/nonexistent/p{i}") for i in range(500)],
+                             has_more=True)
+        run = _tool_runner({
+            "list_projects": [(0, page_one), (0, _projects(("p-repo", "/repo")))],
+            "query_graph": (0, _query([["pkg/alpha.py", "alpha_one"]])),
+        })
+        names, _label = flow_brief.explore_names("/repo", ["pkg/alpha.py"], run, _found)
+        self.assertEqual(names, ["alpha_one"])
+        self.assertEqual(run.calls[1][-4:], ["--limit", "500", "--offset", "500"])
+        self.assertEqual(len(run.calls), 3)
+
+    def test_a_page_with_more_and_no_rows_stops_the_search(self):
+        run = _tool_runner({"list_projects": (0, _projects(has_more=True))})
+        self.assertEqual(flow_brief.explore_names("/repo", ["a.py"], run, _found),
+                         ([], _NO_INDEX))
+        self.assertEqual(len(run.calls), 1)
+
+    def test_query_pages_follow_next_offset_until_no_more(self):
+        def page(names, **extra):
+            data = json.loads(_query([["pkg/alpha.py", name] for name in names]))
+            data.update(extra)
+            return json.dumps(data)
+
+        run = _tool_runner({
+            "list_projects": (0, _projects(("p-repo", "/repo"))),
+            "query_graph": [
+                (0, page(["a1", "a2"], has_more=True, truncated=True, next_offset=2, total=3)),
+                (0, page(["a3"], total=3)),
+            ],
+        })
+        names, label = flow_brief.explore_names("/repo", ["pkg/alpha.py"], run, _found)
+        self.assertEqual(names, ["a1", "a2", "a3"])
+        self.assertEqual(label, "symbol names from codebase-memory-mcp plus file names")
+        offsets = [call[call.index("--offset") + 1] for call in run.calls[1:]]
+        self.assertEqual(offsets, ["0", "2"])
+
+    def test_rows_past_the_cap_are_labeled_with_the_real_counts(self):
+        rows = [["pkg/alpha.py", f"n{index}"] for index in range(flow_brief.MAX_QUERY_ROWS)]
+        data = json.loads(_query(rows, has_more=True))
+        data.update(total=5103, next_offset=len(rows))
+        run = _tool_runner({
+            "list_projects": (0, _projects(("p-repo", "/repo"))),
+            "query_graph": (0, json.dumps(data)),
+        })
+        _names, label = flow_brief.explore_names("/repo", ["pkg/alpha.py"], run, _found)
+        self.assertEqual(label, "symbol names from codebase-memory-mcp, partial: 2000 of "
+                                "5103 rows; plus file names")
+        self.assertEqual(len(run.calls), 2)
+
+    def test_no_cli_makes_no_call(self):
+        run = _tool_runner({})
+        self.assertEqual(flow_brief.explore_names("/repo", ["pkg/alpha.py"], run, _missing),
+                         ([], "file names only: the codebase-memory-mcp CLI is not installed"))
         self.assertEqual(run.calls, [])
 
-    def test_zero_names_from_a_zero_exit_is_labeled(self):
-        names, label = flow_brief.explore_names("/repo", ["a.py"], _runner(0, "no headers here"),
-                                                _found)
-        self.assertEqual(names, [])
-        self.assertEqual(label, "file names only: codegraph explore listed no names")
+    def test_no_project_for_this_checkout_is_one_list_call(self):
+        run = _tool_runner({"list_projects": (0, _projects(("other", "/elsewhere")))})
+        self.assertEqual(flow_brief.explore_names("/repo", ["a.py"], run, _found),
+                         ([], _NO_INDEX))
+        self.assertEqual(len(run.calls), 1)
 
-    def test_exploration_line_alone_is_never_a_file_header(self):
-        names, label = flow_brief.explore_names("/repo", ["a.py"],
-                                                _runner(0, "**Exploration: alpha_one**\n"), _found)
-        self.assertEqual(names, [])
-        self.assertEqual(label, "file names only: codegraph explore listed no names")
+    def test_list_projects_failure_or_unreadable_output_is_no_index(self):
+        for answer in ((1, ""), (0, "not json"), (0, "[]")):
+            run = _tool_runner({"list_projects": answer})
+            self.assertEqual(flow_brief.explore_names("/repo", ["a.py"], run, _found),
+                             ([], _NO_INDEX), answer)
+            self.assertEqual(len(run.calls), 1, answer)
 
-    def test_failed_call_is_labeled_with_its_exit(self):
-        names, label = flow_brief.explore_names("/repo", ["a.py"], _runner(3, ""), _found)
-        self.assertEqual(names, [])
-        self.assertEqual(label, "file names only: codegraph explore failed, exit 3")
+    def test_query_failure_is_labeled_with_its_exit(self):
+        run = _tool_runner({
+            "list_projects": (0, _projects(("p-repo", "/repo"))),
+            "query_graph": (3, ""),
+        })
+        self.assertEqual(flow_brief.explore_names("/repo", ["a.py"], run, _found),
+                         ([], "file names only: codebase-memory-mcp query_graph failed, exit 3"))
+
+    def test_query_output_that_is_not_json_is_labeled(self):
+        run = _tool_runner({
+            "list_projects": (0, _projects(("p-repo", "/repo"))),
+            "query_graph": (0, "not json"),
+        })
+        self.assertEqual(flow_brief.explore_names("/repo", ["a.py"], run, _found),
+                         ([], "file names only: codebase-memory-mcp query_graph output unreadable"))
+
+    def test_zero_rows_and_null_rows_both_list_no_names(self):
+        for rows_text in (_query([]), json.dumps({"rows": None})):
+            run = _tool_runner({
+                "list_projects": (0, _projects(("p-repo", "/repo"))),
+                "query_graph": (0, rows_text),
+            })
+            self.assertEqual(flow_brief.explore_names("/repo", ["a.py"], run, _found),
+                             ([], "file names only: codebase-memory-mcp listed no names"))
+
+    def test_cypher_quote_escapes_quotes_and_backslashes(self):
+        self.assertEqual(flow_brief.cypher_quote("pkg/it's.py"), "'pkg/it\\'s.py'")
+        self.assertEqual(flow_brief.cypher_quote("a\\b.py"), "'a\\\\b.py'")
+
+    def test_a_path_with_a_quote_and_a_backslash_is_quoted_in_the_query(self):
+        run = _tool_runner({
+            "list_projects": (0, _projects(("p-repo", "/repo"))),
+            "query_graph": (0, _query([])),
+        })
+        flow_brief.explore_names("/repo", ["pkg/it's\\x.py"], run, _found)
+        query = run.calls[1][run.calls[1].index("--query") + 1]
+        self.assertIn("IN ['pkg/it\\'s\\\\x.py']", query)
 
 
 class RepoBriefTests(unittest.TestCase):
@@ -227,8 +351,8 @@ class RepoBriefTests(unittest.TestCase):
         self.assertEqual(without_written(first), without_written(second))
 
 
-class FakeExploreTests(unittest.TestCase):
-    """Explore output from the codegraph fake (tests/index_fakes.py), not canned text."""
+class FakeIndexTests(unittest.TestCase):
+    """Index answers from the codebase-memory-mcp fake (tests/index_fakes.py), not canned text."""
 
     def setUp(self):
         self.root = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p30-"))
@@ -250,18 +374,53 @@ class FakeExploreTests(unittest.TestCase):
     def which(self, name):
         return os.path.join(self.bin, name)
 
-    def test_file_with_eight_functions_lists_six_names_and_labels_the_tail(self):
-        names, label = flow_brief.explore_names(str(self.repo), ["pkg/many.py"],
-                                                flow_index._run_tool, self.which)
-        self.assertEqual(names, [f"func_{index}" for index in range(6)])
-        self.assertIn("partial: 2 more not listed by codegraph", label)
+    def names(self, paths):
+        return flow_brief.explore_names(str(self.repo), paths, flow_index._run_tool, self.which)
 
-    def test_explore_text_without_names_is_labeled_as_file_names_only(self):
-        index_fakes.set_state(self.state, explore_raw="no headers here")
-        names, label = flow_brief.explore_names(str(self.repo), ["pkg/many.py"],
-                                                flow_index._run_tool, self.which)
+    def test_file_with_eight_functions_lists_all_eight_names(self):
+        names, label = self.names(["pkg/many.py"])
+        self.assertEqual(names, [f"func_{index}" for index in range(8)])
+        self.assertEqual(label, "symbol names from codebase-memory-mcp plus file names")
+
+    def test_quoted_and_accented_file_name_is_found_literally(self):
+        _write(self.repo, "pkg/it's é.py", "def quoted_one():\n    return 1\n")
+        names, _label = self.names(["pkg/it's é.py"])
+        self.assertEqual(names, ["quoted_one"])
+
+    def test_output_budget_cut_is_paged_to_all_names(self):
+        index_fakes.set_state(self.state, cbm_query_budget=3)
+        names, label = self.names(["pkg/many.py"])
+        self.assertEqual(names, [f"func_{index}" for index in range(8)])
+        self.assertEqual(label, "symbol names from codebase-memory-mcp plus file names")
+
+    def test_output_budget_cut_past_the_cap_is_labeled_partial(self):
+        index_fakes.set_state(self.state, cbm_query_budget=3)
+        with mock.patch.object(flow_brief, "MAX_QUERY_ROWS", 6):
+            names, label = self.names(["pkg/many.py"])
+        self.assertEqual(len(names), 6)
+        self.assertEqual(label, "symbol names from codebase-memory-mcp, partial: 6 of 8 rows; "
+                                "plus file names")
+
+    def test_query_output_that_is_not_json_is_labeled(self):
+        index_fakes.set_state(self.state, cbm_query_raw="not json")
+        names, label = self.names(["pkg/many.py"])
         self.assertEqual(names, [])
-        self.assertEqual(label, "file names only: codegraph explore listed no names")
+        self.assertEqual(label,
+                         "file names only: codebase-memory-mcp query_graph output unreadable")
+
+    def test_no_project_is_labeled_as_no_index(self):
+        index_fakes.set_state(self.state, cbm_projects=[])
+        names, label = self.names(["pkg/many.py"])
+        self.assertEqual(names, [])
+        self.assertEqual(label, _NO_INDEX)
+
+    def test_checkout_on_the_second_page_is_found_end_to_end(self):
+        roots = [f"/nonexistent/p{index}" for index in range(501)]
+        roots.append(os.path.realpath(self.repo))
+        index_fakes.set_state(self.state, cbm_projects=roots)
+        names, label = self.names(["pkg/many.py"])
+        self.assertEqual(names, [f"func_{index}" for index in range(8)])
+        self.assertEqual(label, "symbol names from codebase-memory-mcp plus file names")
 
 
 class DetachWithoutDrainTests(unittest.TestCase):

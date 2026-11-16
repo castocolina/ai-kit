@@ -273,13 +273,14 @@ def _view(repo, phase):
 def gsd_checkpoint(repo, phase, unit):
     """The checkpoint for one GSD plan's unfolded commits, or None when it has none to fold.
 
-    The plan's run runs from its first owned commit to its last; a commit of another plan (or a
-    merge-back naming no single plan) inside that run refuses plan_not_contiguous.
+    The plan's run runs from its first unfolded commit to its last, so a late commit never
+    re-folds the plan's folded ones; a commit of another plan (or a merge-back naming no single
+    plan) inside that run refuses plan_not_contiguous.
     """
     run = _view(repo, phase)
     mine = {unit, f"folded:{unit}"}
-    owned = [index for index, owner in enumerate(run.owners) if owner in mine]
-    if not any(run.owners[index] == unit for index in owned):
+    owned = [index for index, owner in enumerate(run.owners) if owner == unit]
+    if not owned:
         return None
     first, last = owned[0], owned[-1]
     if any(owner is not None and owner not in mine for owner in run.owners[first:last + 1]):

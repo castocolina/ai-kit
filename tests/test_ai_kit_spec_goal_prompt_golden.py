@@ -34,6 +34,7 @@ import goal_prompt
 import gp_common
 import gp_host
 import gp_render
+import gp_sections
 from ai_kit_project_rules_agents import rules as agent_rules
 from ai_kit_rules_common.classification import check_rules
 
@@ -505,6 +506,47 @@ class TestReadinessWarnings(unittest.TestCase):
         self.assertTrue(all(w.startswith("cross-AI readiness failed: ")
                             for w in outcome.payload["warnings"]))
         self.assertNotIn("cross-AI readiness failed", outcome.text)
+
+
+class TestFlow09Rails(unittest.TestCase):
+    """Each FLOW-09 rail is a rule line in every family's rails and in every strategy block that
+    carries rails (SPEC R2): the inline autonomous blocks and the shared Rails section."""
+
+    @classmethod
+    def setUpClass(cls):
+        temp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(temp.cleanup)
+        cls.texts: dict[str, str] = {}
+        for index, scn in enumerate(SCENARIOS):
+            root = Path(temp.name, f"s{index:02d}")
+            root.mkdir()
+            outcome, *_ = run_scenario(scn, root)
+            cls.texts[scn.name] = outcome.text
+
+    def _carriers(self, text: str) -> list[list[str]]:
+        carriers = [block for block in _blocks(text)
+                    if block and block[0].startswith("/gsd-autonomous")]
+        rails = _rails(text)
+        if rails:
+            carriers.append(rails)
+        return carriers
+
+    def _assert_rail_everywhere(self, rail: str) -> None:
+        for name, text in self.texts.items():
+            with self.subTest(scenario=name):
+                carriers = self._carriers(text)
+                self.assertTrue(carriers, "no rails carrier in the render")
+                for carrier in carriers:
+                    self.assertIn("- " + rail, carrier)
+
+    def test_ask_the_owner_rail_in_every_family(self):
+        self._assert_rail_everywhere(gp_sections.RAIL_ASK)
+
+    def test_no_waiting_message_rail_in_every_family(self):
+        self._assert_rail_everywhere(gp_sections.RAIL_WAIT)
+
+    def test_progress_ping_rail_in_every_family(self):
+        self._assert_rail_everywhere(gp_sections.RAIL_PING)
 
 
 if __name__ == "__main__":

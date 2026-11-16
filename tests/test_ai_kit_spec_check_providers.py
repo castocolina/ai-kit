@@ -18,9 +18,12 @@ from unittest import mock
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import cli, config_io, trust
+from ai_kit_spec import cli, config_io, config_migrate
 
 SKILL_MD = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-config", "SKILL.md")
+CLI_MODEL_SELECTION_MD = os.path.join(
+    _REPO_ROOT, "skills", "ai-kit-spec-config", "references", "cli-model-selection.md"
+)
 CHECK_ONLY_MD = os.path.join(
     _REPO_ROOT, "skills", "ai-kit-spec-config", "references", "check-only.md"
 )
@@ -48,8 +51,8 @@ class _Scratch(unittest.TestCase):
             "XDG_CACHE_HOME": os.path.join(self.root, "cache"),
             "XDG_DATA_HOME": os.path.join(self.root, "data"),
         }
-        self.local = os.path.join(self.proj, ".aikit", "review-spec.toml")
-        self.global_path = os.path.join(self.env["XDG_CONFIG_HOME"], "ai-kit", "review-spec.toml")
+        self.local = os.path.join(self.proj, ".aikit", "config.toml")
+        self.global_path = os.path.join(self.env["XDG_CONFIG_HOME"], "ai-kit", "config.toml")
         self.catalog = os.path.join(
             self.env["XDG_CACHE_HOME"], "ai-kit", "spec", "model-catalog.json"
         )
@@ -58,9 +61,8 @@ class _Scratch(unittest.TestCase):
         self.binary = True
 
     def _trust(self, path):
-        with open(path, "rb") as handle:
-            raw = handle.read()
-        trust.record_trust(config_io.cfg_trust_store_dir(self.env), os.path.realpath(path), raw)
+        self.assertEqual(path, self.local)
+        config_io.cfg_trust_project(self.proj, self.env)
 
     def _deps(self):
         def which_fn(name, *_args, **_kwargs):
@@ -80,11 +82,11 @@ class _Scratch(unittest.TestCase):
 
     @staticmethod
     def _opencode_reviewer(key, model):
-        return f'[[reviewers]]\nkey = "{key}"\nruntime = "opencode"\nmodel = "{model}"\n'
+        return f'[[lanes.review]]\nkey = "{key}"\nruntime = "opencode"\nmodel = "{model}"\n'
 
     def _local_reviewers(self, *reviewers):
         text = "".join(
-            f'[[reviewers]]\nkey = "{key}"\nruntime = "{runtime}"\nmodel = "{model}"\n'
+            f'[[lanes.review]]\nkey = "{key}"\nruntime = "{runtime}"\nmodel = "{model}"\n'
             for key, runtime, model in reviewers
         )
         _write(self.local, text)
@@ -128,22 +130,24 @@ class TestCheckProvidersTracer(_Scratch):
 
 class TestCheckProvidersSources(_Scratch):
     def test_trusted_local_only_marks_global_inactive(self):
-        _write(self.local, 'strategy = "local-only"\n')
+        _write(self.local, '[lanes]\nstrategy = "local-only"\n')
         self._trust(self.local)
         _write(self.global_path, self._opencode_reviewer("g", "gone/m"))
         lines = self._report()
         self.assertIn(f"cross-reference: {self.global_path} scanned-inactive", lines)
         self.assertIn(
             f'warning: "gone" is referenced in {self.global_path}: g model=gone/m'
-            ' (not active: local review-spec sets strategy = "local-only")',
+            ' (not active: project config.toml sets strategy = "local-only")',
             lines,
         )
 
     def test_untrusted_local_does_not_deactivate_global(self):
+        # The lane carries a command, so it is command-bearing and needs trust (D-11); the
+        # command-free case is test_command_free_local_only_deactivates_global below.
         _write(
             self.local,
-            'strategy = "local-only"\n[[reviewers]]\nkey = "l"\nruntime = "opencode"\n'
-            'model = "gone2/m"\n',
+            '[lanes]\nstrategy = "local-only"\n[[lanes.review]]\nkey = "l"\nruntime = "opencode"\n'
+            'model = "gone2/m"\ncommand = "codex exec -m {model}"\n',
         )
         _write(self.global_path, self._opencode_reviewer("g", "gone/m"))
         lines = self._report()
@@ -151,10 +155,40 @@ class TestCheckProvidersSources(_Scratch):
         self.assertIn(f"cross-reference: {self.global_path} scanned", lines)
         self.assertIn(
             f'warning: "gone2" is referenced in {self.local}: l model=gone2/m'
-            " (not active: local review-spec is not trusted)",
+            " (not active: project config.toml is not trusted)",
             lines,
         )
         self.assertIn(f'warning: "gone" is referenced in {self.global_path}: g model=gone/m', lines)
+
+    def test_command_free_local_only_deactivates_global_without_trust(self):
+        # D-11: a project [lanes] with no command-bearing entry needs no trust, so its
+        # local-only strategy applies at once and the user layer is inactive.
+        _write(
+            self.local,
+            '[lanes]\nstrategy = "local-only"\n[[lanes.review]]\nkey = "l"\nruntime = "opencode"\n'
+            'model = "gone2/m"\n',
+        )
+        _write(self.global_path, self._opencode_reviewer("g", "gone/m"))
+        lines = self._report()
+        self.assertIn(f"cross-reference: {self.local} scanned", lines)
+        self.assertIn(f"cross-reference: {self.global_path} scanned-inactive", lines)
+        self.assertIn(f'warning: "gone2" is referenced in {self.local}: l model=gone2/m', lines)
+        self.assertIn(
+            f'warning: "gone" is referenced in {self.global_path}: g model=gone/m'
+            ' (not active: project config.toml sets strategy = "local-only")',
+            lines,
+        )
+
+    def test_pending_legacy_roster_is_reported_and_nothing_is_written(self):
+        # check-providers reads a pending old roster read-only: it is reported, never migrated.
+        legacy = os.path.join(self.proj, ".aikit", "review-spec.toml")
+        _write(legacy, '[[reviewers]]\nkey = "p"\nruntime = "opencode"\nmodel = "gone/m"\n')
+        lines = self._report()
+        self.assertIn(f"cross-reference: {self.local} scanned (migration pending: {legacy})",
+                      lines)
+        self.assertIn(f'warning: "gone" is referenced in {legacy}: p model=gone/m', lines)
+        self.assertFalse(os.path.exists(self.local))
+        self.assertTrue(os.path.exists(legacy))
 
     def test_invalid_local_toml_is_unreadable_not_fatal(self):
         _write(self.local, "not = [valid\n")
@@ -319,10 +353,107 @@ class TestSpecConfigStep(unittest.TestCase):
         for index in auth_lines:
             self.assertTrue(never < index < section_end, lines[index])
 
-    def test_skill_evals_have_six_cases(self):
+    def test_skill_evals_have_the_eight_cases(self):
         with open(EVALS_JSON, encoding="utf-8") as handle:
             data = json.load(handle)
-        self.assertEqual(len(data["evals"]), 6)
+        self.assertEqual(
+            [item["id"] for item in data["evals"]],
+            [
+                "casual-set-up-reviewers",
+                "casual-check-only",
+                "precise-global-write",
+                "precise-stale-opencode-provider-warning",
+                "edge-opencode-not-installed-config-fallback",
+                "edge-existing-local-config-replace",
+                "edge-old-roster-migration-pending",
+                "edge-unconfirmed-read-only-asks-before-test",
+            ],
+        )
+
+    def test_write_risk_ask_comes_before_the_live_test(self):
+        # Judge loop 33 finding D6: the read_only: unconfirmed ask must precede check-reviewer.
+        with open(SKILL_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        step = text[text.index("#### Step 2.5"):text.index("#### Step 2.6")]
+        self.assertLess(step.index("read_only: unconfirmed"), step.index("check-reviewer --key"))
+
+    def test_check_only_asks_write_risk_before_the_probe(self):
+        # Judge loop 33 finding D8-1: --check-only asks the same question before probe-quota.
+        with open(CHECK_ONLY_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        probe = text.index("probe-quota --cwd")
+        self.assertLess(text.index("read_only: unconfirmed"), probe)
+        self.assertLess(text.index("AskUserQuestion"), probe)
+        self.assertIn("write-risk probe was declined", text)
+
+    def test_cli_model_selection_keeps_no_shell_state_across_blocks(self):
+        # Judge loop 33 r3 finding D8-2: every Bash call is a fresh shell, so no block assigns a
+        # variable a later block reads; the two paths are literal values.
+        with open(CLI_MODEL_SELECTION_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertNotIn('CATALOG_JSON="', text)
+        self.assertNotIn('FILTERED_RUNTIMES_JSON="', text)
+        self.assertIn("Record the printed line as the literal absolute path `$CATALOG_JSON`", text)
+        self.assertIn("`$FILTERED_RUNTIMES_JSON` is the literal path", text)
+
+    def test_global_write_eval_and_near_miss_negatives(self):
+        # Judge loop 33 r3 findings D7-1 and D7-2.
+        with open(EVALS_JSON, encoding="utf-8") as handle:
+            case = {c["id"]: c for c in json.load(handle)["evals"]}["precise-global-write"]
+        self.assertIn("already has a [lanes] table", case["prompt"])
+        self.assertIn("replacement consent", case["assertions"][0])
+        queries = os.path.join(os.path.dirname(EVALS_JSON), "trigger-queries.json")
+        with open(queries, encoding="utf-8") as handle:
+            negatives = [q["query"] for q in json.load(handle) if not q["should_trigger"]]
+        for word in ("cross-AI review", "[runner]", "secrets.env", "opencode.jsonc"):
+            self.assertTrue(any(word in q for q in negatives), word)
+
+    def test_session_default_purpose_matches_the_writer(self):
+        # Judge loop 33 r3 finding D8-3: an absent purpose is filed under review only.
+        with open(SKILL_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertNotIn("matches both review and execute", text)
+        self.assertIn("under `[[lanes.review]]` only (`split_by_purpose`)", text)
+        review, execute = config_migrate.split_by_purpose([{"key": "s"}])
+        self.assertEqual((len(review), len(execute)), (1, 0))
+
+
+class TestCheckOnlyProbeSet(_Scratch):
+    """Judge loop 33 r3 finding D8-1: the write-risk ask covers exactly the probed keys."""
+
+    def _snippet(self):
+        with open(CHECK_ONLY_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        opener = 'python3 -c "\n'
+        start = text.rindex(opener, 0, text.index("probe_keys")) + len(opener)
+        body = text[start : text.index('\n"\n', start)]
+        review_dir = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review")
+        return body.replace('$(dirname "$TOOLS_PY")', review_dir).replace("$(pwd)", self.proj)
+
+    def test_snippet_lists_the_merged_probe_set(self):
+        # a user-layer key reached only through the merge is listed; an uninstalled one is not
+        _write(self.global_path, self._opencode_reviewer("g-one", "anthropic/claude-x"))
+        _write(
+            self.local,
+            self._opencode_reviewer("l-one", "opencode/free-y")
+            + '[[lanes.review]]\nkey = "cx"\nruntime = "codex"\nmodel = "gpt-x"\n'
+            + '[lanes.policy]\nladder = ["g-one", "l-one", "cx"]\n',
+        )
+        deps = self._deps()
+        out = io.StringIO()
+        with mock.patch.object(cli, "CliDeps", lambda: deps), redirect_stdout(out):
+            exec(compile(self._snippet(), "check-only-snippet", "exec"), {})
+        listed = json.loads(out.getvalue())
+        self.assertEqual([row["key"] for row in listed], ["g-one", "l-one"])
+        self.assertEqual({row["runtime"] for row in listed}, {"opencode"})
+        self.assertFalse(any(row["custom"] for row in listed))
+
+    def test_ask_reads_the_probe_set_not_the_raw_read(self):
+        with open(CHECK_ONLY_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertNotIn("For each listed entry with a `runtime`", text)
+        self.assertLess(text.index("probe_keys"), text.index("read_only: unconfirmed"))
+        self.assertIn("(from the merged view)", text)
 
 
 if __name__ == "__main__":

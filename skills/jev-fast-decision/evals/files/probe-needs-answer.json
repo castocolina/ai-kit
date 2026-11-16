@@ -1,0 +1,57 @@
+{
+ "backends": [
+  {
+   "batch": false,
+   "fingerprint": null,
+   "host": "127.0.0.1",
+   "key_source": null,
+   "name": "laya",
+   "reason": "unreachable",
+   "record": "unknown",
+   "remote": false,
+   "url_source": "default",
+   "usable": false,
+   "version": null,
+   "version_source": "unreachable"
+  },
+  {
+   "batch": true,
+   "consent": null,
+   "host": "api.typesafe.ai",
+   "key_check": "documented",
+   "key_expected": [
+    "env:TYPESAFE_API_KEY",
+    "env:JEV_API_KEY",
+    "file:secrets.env",
+    "state",
+    "file:.mycreds"
+   ],
+   "key_hint": "the key is not in this process's environment: a terminal multiplexer server keeps the environment it started with, so export TYPESAFE_API_KEY in a fresh shell and restart the multiplexer server, or keep the key in a 0600 key file",
+   "key_source": "missing_file",
+   "model_id": null,
+   "model_record": "none",
+   "name": "typesafe",
+   "reason": "missing_api_key",
+   "remote": true,
+   "usable": false
+  }
+ ],
+ "candidates": [],
+ "leftover": [],
+ "needs_answer": [
+  "enabled",
+  "laya_url"
+ ],
+ "reason": "no_backend_available",
+ "selected": null,
+ "settings": {
+  "enabled": true,
+  "enabled_source": "default",
+  "notice": "jev is on by default; ask the user once, then save the answer with: jev_review.py config set enabled true|false"
+ },
+ "status": "unavailable",
+ "unavailable": {
+  "laya": "unreachable",
+  "typesafe": "missing_api_key"
+ }
+}

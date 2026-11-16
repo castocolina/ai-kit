@@ -1,0 +1,6 @@
+from a import old_fn
+import m
+
+print(old_fn(2))
+m.old_fn(3)
+m.call(old_fn=4)

@@ -1,0 +1,175 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=41s out=101845 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"cst-refactor\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":15,\"D2\":13,\"D3\":13,\"D4\":14,\"D5\":13,\"D6\":13,\"D7\":11,\"D8\":11},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":103,\"max_total\":125,\"percent\":82.4,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":8,\"evidence\":\"LibCST parses source into a Concrete Syntax Tree, matches syntax nodes (not raw text), transforms them, and serializes back — comments, whitespace, and style preserved.\",\"fix\":\"Delete the Overview definition of a CST. Keep the decision table and the name-only matching limits, which the model will not derive.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":10,\"evidence\":\"The skill is a ~300-line-class tool pattern (decision table, exact commands, low freedom) compressed into 125 lines, and Notes restates rules already given.\",\"fix\":\"Drop the Notes bullets that repeat NEVER and the validation loop. Keep the decision table, subcommand contract, and examples as the tool pattern.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":29,\"evidence\":\"NEVER covers dirty trees, preview, single-line edits, dynamic refs, and name-only matching, but there is no Gotchas section for environment facts such as missing tests/ or a parse abort after earlier files were rewritten.\",\"fix\":\"Add a short Gotchas list: --include-tests raises Path does not exist: tests when that directory is absent; a parse error aborts after earlier files in the walk were already rewritten.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":3,\"evidence\":\"Description names LibCST, renames, signatures, and the sed/string near-miss, but not the single-file Edit/IDE boundary or non-Python refactors.\",\"fix\":\"Use when refactoring Python with LibCST codemods — multi-file renames of classes, methods, constants, or function parameters, or signature changes, where comments and formatting must survive and naive sed/search-replace would also hit strings and comments (codemods match by name, not by scope or type). Includes a bundled codemod_template.py.txt (copy into the project as tools/codemod_template.py) with subcommands rename-symbol, rename-parameter, add-parameter, remove-parameter, rewrite-docstring. Not for a one-line or single-file edit (use Edit or the IDE), and not for TypeScript, database, or folder renames.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":59,\"evidence\":\"The body says to copy codemod_template.py.txt but never says to read it, while What each subcommand changes restates the template's behavior in the always-loaded body.\",\"fix\":\"Gate the template: read codemod_template.py.txt only when writing a custom transformer or when a subcommand's edge case is not in the summary. Keep the summary for ordinary runs.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":122,\"evidence\":\"For a name another library also defines, restrict --paths and audit the diff (the default); write a custom codemod with QualifiedNameProvider only when narrowing cannot separate the two names.\",\"fix\":\"Pick one default: narrow --paths, read the whole diff, and git restore any collateral match. Mention QualifiedNameProvider only as the escape hatch, without telling the agent to invent a transformer the template does not contain.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/evals/evals.json\",\"line\":6,\"evidence\":\"Six evals have realistic prompts and verifiable assertions, but only casual-rename-across-modules supplies an input file; the other five have \\\"files\\\": [] and no expected diff. Trigger queries are 10/10 with near-misses. No scripts/ directory, so the 8/7 split applies; tests/test_cst_refactor.py is context only.\",\"fix\":\"Add one fixture per remaining eval under evals/files/ (a connect method beside sqlite3.connect, a deploy_release call with a positional dry_run, a mid-run unparseable file) and assert the expected diff, not only agent behavior.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":42,\"evidence\":\"add-parameter adds <param> = <default> to each def named --function, before any *args (which changes positional binding); a parameter with no --default after a defaulted one fails validation and leaves that file untouched. The template appends to params and does not validate defaults or star position (_add_param_to_params).\",\"fix\":\"State the template's real behavior: the new parameter is appended to the regular parameter list, so a non-defaulted parameter after a defaulted one, or a parameter inserted before *args, is not what this script does. Tell the agent to inspect the diff for a syntax error and git restore that file.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/cst-refactor/SKILL.md\",\"line\":41,\"evidence\":\"rename-parameter renames the name only inside the target def's body (nested defs included, unless one declares its own parameter of that name). The template's leave_Name still rewrites the nested def's own parameter name; only its body is skipped.\",\"fix\":\"Say that a nested def which declares the same parameter name keeps the old name in its body, but its parameter declaration is still renamed, so the nested signature and body can disagree. Require a diff check for nested defs.\"}]}"
+  }
+ ],
+ "digest": "f5389696d29feaa01d6c1ef7c70057986f5d4b4e87c2acc434c5cbf4a371e99a",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "32.1",
+ "modules": [
+  "tests/test_cst_refactor.py",
+  "tests/test_gate_scope.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_app_1.py"
+ ],
+ "prompt_sha256": "03bb7ccbe662ca237c11ca8451ce2fc12f2dfa33184d34039d40b389681fd11a",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "cst-refactor",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "LibCST parses source into a Concrete Syntax Tree, matches syntax nodes (not raw text), transforms them, and serializes back — comments, whitespace, and style preserved.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Delete the Overview definition of a CST. Keep the decision table and the name-only matching limits, which the model will not derive.",
+    "id": "D1-1",
+    "line": 8,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "The skill is a ~300-line-class tool pattern (decision table, exact commands, low freedom) compressed into 125 lines, and Notes restates rules already given.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Drop the Notes bullets that repeat NEVER and the validation loop. Keep the decision table, subcommand contract, and examples as the tool pattern.",
+    "id": "D2-1",
+    "line": 10,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "NEVER covers dirty trees, preview, single-line edits, dynamic refs, and name-only matching, but there is no Gotchas section for environment facts such as missing tests/ or a parse abort after earlier files were rewritten.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Add a short Gotchas list: --include-tests raises Path does not exist: tests when that directory is absent; a parse error aborts after earlier files in the walk were already rewritten.",
+    "id": "D3-1",
+    "line": 29,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "Description names LibCST, renames, signatures, and the sed/string near-miss, but not the single-file Edit/IDE boundary or non-Python refactors.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Use when refactoring Python with LibCST codemods — multi-file renames of classes, methods, constants, or function parameters, or signature changes, where comments and formatting must survive and naive sed/search-replace would also hit strings and comments (codemods match by name, not by scope or type). Includes a bundled codemod_template.py.txt (copy into the project as tools/codemod_template.py) with subcommands rename-symbol, rename-parameter, add-parameter, remove-parameter, rewrite-docstring. Not for a one-line or single-file edit (use Edit or the IDE), and not for TypeScript, database, or folder renames.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "The body says to copy codemod_template.py.txt but never says to read it, while What each subcommand changes restates the template's behavior in the always-loaded body.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Gate the template: read codemod_template.py.txt only when writing a custom transformer or when a subcommand's edge case is not in the summary. Keep the summary for ordinary runs.",
+    "id": "D5-1",
+    "line": 59,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "For a name another library also defines, restrict --paths and audit the diff (the default); write a custom codemod with QualifiedNameProvider only when narrowing cannot separate the two names.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Pick one default: narrow --paths, read the whole diff, and git restore any collateral match. Mention QualifiedNameProvider only as the escape hatch, without telling the agent to invent a transformer the template does not contain.",
+    "id": "D6-1",
+    "line": 122,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "Six evals have realistic prompts and verifiable assertions, but only casual-rename-across-modules supplies an input file; the other five have \"files\": [] and no expected diff. Trigger queries are 10/10 with near-misses. No scripts/ directory, so the 8/7 split applies; tests/test_cst_refactor.py is context only.",
+    "file": "skills/cst-refactor/evals/evals.json",
+    "fix": "Add one fixture per remaining eval under evals/files/ (a connect method beside sqlite3.connect, a deploy_release call with a positional dry_run, a mid-run unparseable file) and assert the expected diff, not only agent behavior.",
+    "id": "D7-1",
+    "line": 6,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "add-parameter adds <param> = <default> to each def named --function, before any *args (which changes positional binding); a parameter with no --default after a defaulted one fails validation and leaves that file untouched. The template appends to params and does not validate defaults or star position (_add_param_to_params).",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "State the template's real behavior: the new parameter is appended to the regular parameter list, so a non-defaulted parameter after a defaulted one, or a parameter inserted before *args, is not what this script does. Tell the agent to inspect the diff for a syntax error and git restore that file.",
+    "id": "D8-1",
+    "line": 42,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "rename-parameter renames the name only inside the target def's body (nested defs included, unless one declares its own parameter of that name). The template's leave_Name still rewrites the nested def's own parameter name; only its body is skipped.",
+    "file": "skills/cst-refactor/SKILL.md",
+    "fix": "Say that a nested def which declares the same parameter name keeps the old name in its body, but its parameter declaration is still renamed, so the nested signature and body can disagree. Require a diff check for nested defs.",
+    "id": "D8-2",
+    "line": 41,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 82.4,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 15,
+   "D2": 13,
+   "D3": 13,
+   "D4": 14,
+   "D5": 13,
+   "D6": 13,
+   "D7": 11,
+   "D8": 11
+  },
+  "skill": "cst-refactor",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 103
+ }
+}

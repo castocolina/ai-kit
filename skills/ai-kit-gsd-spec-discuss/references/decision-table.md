@@ -29,8 +29,11 @@ you use that answer as evidence, never as the decision.
 4. **jev gave no confident answer** (`needs_fallback`, an error or no answer) → own reasoning
    against the evidence. Log the low answer as `low 0.NN`, or the error as `error: <code>`. The
    answer is one input, not the decision.
+   - A forced answer (`forced` true: the item or its request passed jev's size guard, so the answer is no real judgment) → own reasoning, logged `forced`; next time, shorten the item or split the request.
 5. **jev is not installed or was not asked** → own reasoning against the evidence; ledger it
    when it blocks nothing.
+   - jev reports `no_client` (no jev client found) → this row; log `not installed`.
+   - jev reports `incompatible_client` (the client found is too old for jev's ladder) → this row; log `error: incompatible_client`, and tell the user to re-run the ai-kit installer.
 
 Own reasoning is not a fallback of last resort in quality terms: it is the step that reads the
 actual code and docs. When jev's first answer and its second opinion split, the evidence decides,
@@ -61,10 +64,10 @@ the log why it is deferred.
 
 ```
 | Phase | Item | jev | Provisional decision | Blocks |
-| 23 | D-24 wizard preview | low 0.35 | synthetic fresh cache in a temp XDG_CACHE_HOME; static samples cannot show gauge colors | nothing |
+| 23 | D-<n> wizard preview | low 0.35 | synthetic fresh cache in a temp XDG_CACHE_HOME; static samples cannot show gauge colors | nothing |
 ```
 
 The `jev` column holds the answer in the cell format of `log-formats.md` (`choice 0.NN`,
 `low 0.NN`, `error: <code>`), or `not installed`.
 
-The committed DISCUSSION-LOG marks the same row "**Own reasoning:** … (D-24, ledger)".
+The committed DISCUSSION-LOG marks the same row "**Own reasoning:** … (D-<n>, ledger)".

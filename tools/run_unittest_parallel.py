@@ -90,8 +90,12 @@ TESTS_DIR = REPO_ROOT / "tests"
 
 # arch-test tier: the AST architecture-fitness module.
 ARCH_MODULES = frozenset({"tests.test_arch"})
-# Needs PyYAML, which only the uv env provides.
-UNIT_UV_MODULES = frozenset({"tests.test_framework_profiles"})
+# Needs PyYAML or LibCST, which only the uv env provides.
+UNIT_UV_MODULES = frozenset({
+    "tests.test_cst_refactor_codemods",  # needs LibCST from the uv dev group (32.1)
+    "tests.test_framework_profiles",
+    "tests.test_skill_frontmatter_pyyaml",
+})
 # Textual app and PTY-driven suites; they run under uv (the wizard hook).
 INTEGRATION_MODULES = frozenset({
     "tests.test_config_doctor",
@@ -101,7 +105,9 @@ INTEGRATION_MODULES = frozenset({
     "tests.test_wizard_app_1",
     "tests.test_wizard_app_2",
     "tests.test_wizard_app_3",
+    # the host pane tests, split in two so they run in parallel
     "tests.test_wizard_hostpane",
+    "tests.test_wizard_hostpane_2",
     "tests.test_wizard_pty",
 })
 # Real git worktrees, memory checks, and real `node` runs against the checkout-local
@@ -159,10 +165,10 @@ E2E_RECORDED_SECS = {
     "tests.test_ai_kit_spec_e2e": 1,
     "tests.test_ai_kit_spec_goal_prompt_e2e": 1,
     "tests.test_cross_ai_runner_e2e": 17,
-    "tests.test_cross_ai_selftest_logic_1_e2e": 22,
-    "tests.test_cross_ai_selftest_logic_2_e2e": 22,
-    "tests.test_cross_ai_selftest_logic_3_e2e": 22,
-    "tests.test_cross_ai_selftest_logic_4_e2e": 22,
+    "tests.test_cross_ai_selftest_logic_1_e2e": 24,
+    "tests.test_cross_ai_selftest_logic_2_e2e": 24,
+    "tests.test_cross_ai_selftest_logic_3_e2e": 24,
+    "tests.test_cross_ai_selftest_logic_4_e2e": 24,
     "tests.test_cross_ai_selftest_runtime_1_e2e": 24,
     "tests.test_cross_ai_selftest_runtime_2_e2e": 24,
     "tests.test_cross_ai_selftest_runtime_3_e2e": 24,
@@ -176,6 +182,34 @@ E2E_RECORDED_SECS = {
     "tests.test_staged_commit_e2e": 4,
     "tests.test_system_memory_e2e": 1,
     "tests.test_worktree_e2e": 1,
+}
+# Whole seconds per unit, arch, unit-uv or integration module of 5 s or more, rounded up from the
+# `=== <module>: ok in <s>` lines of one run of the two test hooks' groups (2026-11-13, 24 CPUs,
+# one-minute load 3.00 at start). Only the start order reads them: the slowest modules start
+# first, so a long one never starts last. Refresh after splitting or slowing a module.
+HOOK_RECORDED_SECS = {
+    "tests.test_ai_kit_session_wake_fire": 10,
+    "tests.test_ai_kit_spec_runner_dispatch": 8,
+    "tests.test_arch": 7,
+    "tests.test_claude_precompact": 10,
+    "tests.test_cursor_quota": 6,
+    "tests.test_flow_checkpoint": 8,
+    "tests.test_flow_checkpoint_2": 11,
+    "tests.test_flow_contract": 8,
+    "tests.test_flow_contract_2": 10,
+    "tests.test_flow_contract_3": 11,
+    "tests.test_flow_stack": 15,
+    "tests.test_flow_stack_2": 8,
+    "tests.test_flow_stack_3": 12,
+    "tests.test_jev_fast_decision": 18,
+    "tests.test_precompact_core": 7,
+    "tests.test_run_unittest_parallel": 8,
+    "tests.test_wizard_app_1": 13,
+    "tests.test_wizard_app_2": 18,
+    "tests.test_wizard_app_3": 13,
+    "tests.test_wizard_hostpane": 11,
+    "tests.test_wizard_hostpane_2": 12,
+    "tests.test_wizard_pty": 18,
 }
 # Files whose change can alter how any module runs or is selected: staging one runs the full
 # unit and arch groups. A tests/ helper or fixture covering two or more modules counts too, but
@@ -196,6 +230,9 @@ EXPLICIT_GROUPS = {
 HOST_CLI_NAMES = frozenset({
     "agent", "claude", "codex", "copilot", "cursor-agent", "grok", "opencode", "pi",
 })
+# Non-host tools a test may reach only through a fake (tests/index_fakes.py); kept apart from
+# HOST_CLI_NAMES, which a drift test pins to the RUNTIMES binaries.
+TOOL_STUB_NAMES = frozenset({"codebase-memory-mcp"})
 TRIPWIRE_MAX_LINES = 20
 # Copied from detection.HOST_SIGNAL_ENV_VARS (pinned by a drift test): a caller's host marker
 # must not make a module believe it runs inside a host.
@@ -215,9 +252,12 @@ HOME_OVERRIDE_VARS = frozenset({
     "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR", "ZCODE_CONFIG_DIR",
     "AGENTS_TOOLING_PATH", "SHARED_TOOLING_PATH", "AI_KIT_DIR", "CLAUDE_JOB_DIR",
     "CLAUDE_PLUGIN_ROOT", "RUNTIME_DIR", "JEV_API_KEY_FILE",
+    # CBM_CACHE_DIR: the code index tool's cache; OPENCODE_CONFIG: one more opencode config
+    # file (no _FILE suffix, so the drift scan misses it; listed by hand).
+    "CBM_CACHE_DIR", "OPENCODE_CONFIG",
 })
-# API keys and backend URLs product code reads: no test makes a credentialed call through the
-# caller's key.
+# API keys and backend URLs product code reads or used to read: no test makes a credentialed
+# call through the caller's key.
 CREDENTIAL_ENV_VARS = frozenset({
     "JEV_API_KEY", "JEV_API_URL", "TYPESAFE_API_KEY", "LAYA_API_KEY", "OPENCODE_ZEN_API_KEY",
     "ARTIFICIAL_ANALYSIS_API_KEY", "JEV_LAYA_URL", "JEV_OPENCODE_URL", "JEV_TYPESAFE_URL",
@@ -310,22 +350,27 @@ def worker_count(n_modules: int, cpus: int | None, share_env: str | None = None)
 
 _STUB = """#!/bin/sh
 printf '%s %s\\n' {name} "$*" >> {log}
-echo 'ai-kit tripwire: real host CLI {name} called from a test; use tests/host_fakes.py' >&2
+echo 'ai-kit tripwire: real {kind} {name} called from a test; use {fakes}' >&2
 exit 127
 """
 
 
 def write_tripwire(directory: Path) -> Path:
-    """Create `directory/bin/<host>` stubs (log, message, exit 127) and an empty
-    `directory/calls.log`; return the log path. The log path is baked into each stub."""
+    """Create `directory/bin/<name>` stubs (log, message, exit 127) for every host CLI and tool
+    name and an empty `directory/calls.log`; return the log path. The log path is baked into
+    each stub."""
     bin_dir = directory / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     log = directory / "calls.log"
     log.write_text("", encoding="utf-8")
-    for name in sorted(HOST_CLI_NAMES):
+    for name in sorted(HOST_CLI_NAMES | TOOL_STUB_NAMES):
+        kind, fakes = (("tool", "tests/index_fakes.py") if name in TOOL_STUB_NAMES
+                       else ("host CLI", "tests/host_fakes.py"))
         stub = bin_dir / name
         stub.write_text(
-            _STUB.format(name=shlex.quote(name), log=shlex.quote(str(log))), encoding="utf-8"
+            _STUB.format(name=shlex.quote(name), log=shlex.quote(str(log)), kind=kind,
+                         fakes=fakes),
+            encoding="utf-8",
         )
         stub.chmod(0o755)
     return log
@@ -336,7 +381,8 @@ def _tripwire_report(log_path: Path) -> str:
     calls = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     if not calls:
         return ""
-    lines = ["tripwire: real host CLI calls (fakes only, tests/host_fakes.py):"]
+    lines = ["tripwire: real host CLI or tool calls (fakes only, tests/host_fakes.py "
+             "or tests/index_fakes.py):"]
     lines += calls[:TRIPWIRE_MAX_LINES]
     if len(calls) > TRIPWIRE_MAX_LINES:
         lines.append(f"... and {len(calls) - TRIPWIRE_MAX_LINES} more calls")
@@ -870,8 +916,10 @@ def _run_all(modules: list[str], cwd: Path = REPO_ROOT) -> list[str]:
     workers = worker_count(len(modules), available_cpus(), os.environ.get(CPU_SHARE_ENV))
     failed: list[str] = []
     _STOPPING.clear()
-    # Longest recorded e2e module first, so a slow one never starts last (a stable sort).
-    ordered = sorted(modules, key=lambda m: -E2E_RECORDED_SECS.get(m, 0))
+    # Longest recorded module first (e2e or hook table), so a slow one never starts last (a stable
+    # sort).
+    ordered = sorted(
+        modules, key=lambda m: -(E2E_RECORDED_SECS.get(m) or HOOK_RECORDED_SECS.get(m, 0)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(run_module, m, cwd) for m in ordered]
         try:

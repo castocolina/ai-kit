@@ -260,9 +260,20 @@ def cfg_default_config(spec: ConfigSpec) -> "Config":
     )
 
 
+def cfg_ai_kit_dir(env: Env) -> str:
+    """${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit by ai-kit's one user-dir rule (a copy of
+    config_io.cfg_config_base, pinned by tests/test_config_dir_parity.py). "" when no absolute
+    home exists, which every reader treats as no user file. HOME comes from env only."""
+    xdg = env.get("XDG_CONFIG_HOME", "").strip()
+    if os.path.isabs(xdg):
+        return os.path.join(xdg, "ai-kit")
+    home = env.get("HOME", "")
+    return os.path.join(home, ".config", "ai-kit") if os.path.isabs(home) else ""
+
+
 def cfg_config_path(env: Env, spec: ConfigSpec) -> str:
     """Resolved TOML path: the host's CONFIG_FILE override, else
-    ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/<host's TOML>.
+    <cfg_ai_kit_dir>/<host's TOML>, or "" when there is no absolute home (defaults apply).
 
     FR-1.7: this is the bootstrap exception — it reads env directly before any
     TOML is loaded (chicken-and-egg), so it is the one explicit hardcoded env read
@@ -270,8 +281,8 @@ def cfg_config_path(env: Env, spec: ConfigSpec) -> str:
     explicit = env.get(spec.env_prefix + "CONFIG_FILE")
     if explicit:
         return os.path.expanduser(explicit)
-    base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
-    return os.path.join(base, "ai-kit", spec.config_filename)
+    base = cfg_ai_kit_dir(env)
+    return os.path.join(base, spec.config_filename) if base else ""
 
 
 def cfg_load_toml(path: str) -> dict[str, Any]:
@@ -503,8 +514,8 @@ def cfg_segments_dir(file_external: Any, env: Env, provider_dir: str) -> str:
     d: str | None = ext_block.get("dir")
     if d:
         return os.path.expanduser(d)
-    base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
-    return os.path.join(base, "ai-kit", provider_dir)
+    base = cfg_ai_kit_dir(env)
+    return os.path.join(base, provider_dir) if base else ""
 
 
 # ═══ 6. core_ — render machinery: Context, Theme, registry, packer, render ════

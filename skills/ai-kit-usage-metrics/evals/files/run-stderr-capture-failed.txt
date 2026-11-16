@@ -1,0 +1,4 @@
+capture[opencode] failed: database is locked
+capture[claude] ok
+capture[codex] ok
+exit status: 0

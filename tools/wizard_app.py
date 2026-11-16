@@ -113,8 +113,8 @@ KINDS = ("skills", "agents", "commands", "hooks")
 GLOBAL_RULES_CAT = "global rules"
 NOTHING_TO_INSTALL = ("nothing to install: no skill, agent, command or hook is installable "
                       "from this checkout. Enter continues to the status-line panes.")
-GLOBAL_RULES_NOTHING = ("global rules: nothing to change (no global instruction file holds "
-                        "codegraph's installer sentence)")
+GLOBAL_RULES_NOTHING = ("global rules: nothing to change (no global instruction file holds a "
+                        "leftover codegraph block for codebase-memory-mcp to replace)")
 # Renderer output is untrusted: keep SGR colour, drop OSC, other CSI, C0 and C1 controls.
 _OSC_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 _CSI_NON_SGR_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-ln-~]")
@@ -1327,8 +1327,13 @@ class WizardApp(App):
         if not rules or not on:
             return []
         count = len(rules["changes"])
-        lines = [f"[{DIM}]•[/] Rewrite codegraph's sentence in {count} global "
-                 "instruction files (backup first)"]
+        lines = [f"[{DIM}]•[/] Replace the codegraph block with the codebase-memory-mcp block in "
+                 f"{count} global instruction files (backup first)"
+                 + ("; where a file already has the codebase-memory-mcp block, the codegraph "
+                    "block is removed"
+                    if any(": remove the leftover codegraph block (the codebase-memory-mcp"
+                           in line for line in rules["preview"])
+                    else "")]
         lines.extend(f"[{DIM}]{escape(line)}[/]" for line in rules["preview"])
         return lines
 

@@ -302,6 +302,37 @@ class TestMain(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             self.assertEqual(self.t.main(["--fast"]), 2)
 
+    def run_recording_envs(self, environ: dict[str, str]) -> dict[str, dict[str, str]]:
+        envs: dict[str, dict[str, str]] = {}
+        fake_runs = self.fake_runs()
+
+        def fake(name, argv, env, expected=None):
+            envs[name] = dict(env)
+            return fake_runs(name, argv, env, expected)
+
+        out = io.StringIO()
+        with unittest.mock.patch.object(self.t, "run_hook", side_effect=fake), \
+                unittest.mock.patch.dict(os.environ, environ, clear=True), \
+                contextlib.redirect_stdout(out):
+            self.t.main([])
+        return envs
+
+    def test_check_dogfood_alone_gets_the_caller_home_as_gsd_home(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="caller-") as caller:
+            envs = self.run_recording_envs({"HOME": caller, "PATH": os.environ.get("PATH", "")})
+        self.assertEqual(envs["check-dogfood"]["GSD_HOME"], caller)
+        self.assertNotEqual(envs["check-dogfood"]["HOME"], caller)
+        for name in ("unittest", "unittest-wizard", "pyright", "vulture", "deferred-e2e"):
+            self.assertNotIn("GSD_HOME", envs[name])
+
+    def test_an_inherited_gsd_home_reaches_check_dogfood_alone(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="caller-") as caller:
+            gsd = os.path.join(caller, "gsd")
+            envs = self.run_recording_envs({"HOME": caller, "PATH": os.environ.get("PATH", ""),
+                                            "GSD_HOME": gsd})
+        self.assertEqual(envs["check-dogfood"]["GSD_HOME"], gsd)
+        self.assertNotIn("GSD_HOME", envs["unittest"])
+
 
 if __name__ == "__main__":
     unittest.main()

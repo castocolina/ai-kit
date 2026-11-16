@@ -1,0 +1,3 @@
+# codebase-memory-mcp: keep planning history out of the code and doc index (owner, 2026-11-14);
+# graphify covers planning documents. Gitignore-style patterns; only this root file is read.
+.planning/

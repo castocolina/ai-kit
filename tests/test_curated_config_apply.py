@@ -2608,12 +2608,12 @@ class TestSkillDocCommands(unittest.TestCase):
     def test_cursor_label_lifted_with_evidence_pointer(self) -> None:
         """21-05 LIFT branch: the combined cursor/pi row is gone, the pi row keeps the
         label, the cursor row cites the headless evidence and names the pending
-        interactive confirmation (SPEC R3 as amended; never a bare lift)."""
+        interactive confirmation (SPEC R3 as amended; never a bare lift; the phase file
+        names left in 32 D-19)."""
         text = _skill_md_text()
         self.assertNotIn("cursor / pi hosts", text)
         self.assertIn("| pi hosts | **not live-validated** (", text)
-        self.assertIn("21-SMOKE-CURSOR.md", text)
-        self.assertIn("21-INTERACTIVE-CURSOR.md", text)
+        self.assertIn("validated headless from a cursor-agent session", text)
         row = text.split("| cursor host |", 1)[1].split("\n", 1)[0]
         self.assertIn("pending", row)
         readme_path = os.path.join(os.path.dirname(__file__), "..", "README.md")
@@ -2626,7 +2626,7 @@ class TestSkillDocCommands(unittest.TestCase):
         row = next(line for line in text.splitlines() if line.startswith("| pi hosts |"))
         for phrase in (
             "**not live-validated**",
-            "22-INTERACTIVE-PI.md",
+            "the interactive run is pending",
             "session-steer (static + mock evidence)",
             "model_profile_overrides.pi.sonnet",
             "pi.opus",

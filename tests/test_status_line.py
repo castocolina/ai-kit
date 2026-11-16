@@ -2930,8 +2930,10 @@ class TestMainUsesConfig(unittest.TestCase):
         }
         # PATH is preserved: build_data shells out to `git` (unguarded), and
         # clear=True would otherwise strip it and crash main().
+        # A temporary HOME: main() writes its git probe cache under $HOME/.cache/ai-kit.
+        home = self.enterContext(tempfile.TemporaryDirectory())
         env = {
-            "HOME": "/tmp",
+            "HOME": home,
             "STATUSLINE_COLS": "200",
             "STATUSLINE_LINES": "50",
             "PATH": os.environ.get("PATH", ""),
@@ -2941,6 +2943,7 @@ class TestMainUsesConfig(unittest.TestCase):
         out = strip(self._run_main(raw, env))
         self.assertNotIn("⏰", out)
         self.assertIn("Opus", out)
+        self.assertTrue(os.path.isdir(os.path.join(home, ".cache", "ai-kit", "git")))
 
 
 class TestResolveLayout(unittest.TestCase):
@@ -3007,8 +3010,9 @@ class TestPaletteFromConfig(unittest.TestCase):
             "model": {"display_name": "Opus"},
             "context_window": {"used_percentage": 10},
         }
+        home = self.enterContext(tempfile.TemporaryDirectory())  # main() caches under $HOME
         env = {
-            "HOME": "/tmp",
+            "HOME": home,
             "STATUSLINE_COLS": "200",
             "STATUSLINE_LINES": "50",
             "PATH": os.environ.get("PATH", ""),  # keep PATH so git in build_data resolves
@@ -3024,6 +3028,7 @@ class TestPaletteFromConfig(unittest.TestCase):
             common_render.main(claude_host.HOST)
         # path segment is BLUE; overridden blue (1;34) must appear in the raw output.
         self.assertIn("\033[1;34m", buf.getvalue())
+        self.assertTrue(os.path.isdir(os.path.join(home, ".cache", "ai-kit", "git")))
 
 
 class TestSampleRecipe(unittest.TestCase):

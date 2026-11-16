@@ -26,7 +26,7 @@ python3 tools/setup.py install --headless --skills ai-kit-spec-goal-prompt
 
 ## Usage
 
-Ask your agent, for example: "build a goal prompt for phases 16 to 18". The skill asks four questions in one batch (work set, target host, native execution, mockups), runs `detect`, then `render`, and hands you the file path.
+Ask your agent, for example: "build a goal prompt for phases 16 to 18". The skill asks four questions in one batch (work set, target host, native execution, mockups), or none when a calling skill such as `ai-kit-gsd-spec-discuss` supplies the answers, runs `detect`, then `render`, and hands you the file path.
 
 The scripts run without prompts, print JSON on stdout, and exit 0 (ok) or 2 (bad input, with a JSON error on stderr):
 
@@ -36,6 +36,8 @@ python3 skills/ai-kit-spec-goal-prompt/scripts/goal_prompt.py render --repo . --
 ```
 
 `tmp/answers.json` holds `{"work_set": {"kind": "phases", "numbers": ["16", "17", "18"]}, "target_host": "claude", "native_execution": false, "mockups": [], "strategy": null, "objective": "one plain sentence", "goal_style": "auto", "output_dir": null}`.
+
+The answers file may also carry six optional owner run-rule fields: `push_after_fold`, `turn_cap`, `models`, `review_lens`, `phase_end` and `report_language` (SKILL.md §3). Each one set changes its rails lines; an absent one leaves the default wording. Long lists and commands wrap onto continuation lines instead of being refused for length; the 60-line and 7,000-character caps still apply.
 
 A `/goal` condition over 1,000 characters does not go on the `/goal` line. The first block line is then a short pointer (`/goal read document <this file> at section Full goal ...`) and the file ends with a `## Full goal` section that holds the condition. `goal_style` is `auto` (default), `inline` or `pointer`; `render` prints the chosen `goal_form`. That the host follows the pointer is unverified. An objective longer than one rule line is cut there and kept whole in a `## Full objective` section (`full_objective` in the render output).
 

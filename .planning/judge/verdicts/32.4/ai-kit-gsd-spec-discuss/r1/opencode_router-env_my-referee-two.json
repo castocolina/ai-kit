@@ -1,0 +1,118 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=178s out=156923 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"ai-kit-gsd-spec-discuss\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":19,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":14,\"D8\":15},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":123,\"max_total\":125,\"percent\":98.4,\"grade\":\"A\",\"findings\":[{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-gsd-spec-discuss/evals/evals.json\",\"line\":77,\"evidence\":\"\\\"Spec and discuss phase 12. ... its fold.py start --phase 12 refuses, and its report ends with refused.\\\" — the eval names no refusal reason, yet asserts the run stops; SKILL.md's refusal matrix (lines 106-117) continues past `refused no_trunk` (after fetch and re-run), `refused no_remote` and `bad_checkpoint`, stopping only on any other refusal, so the expected behavior is ambiguous and the assertions contradict the skill for the continue rows.\",\"fix\":\"Name a stopping reason in the prompt (e.g. \\\"refuses with dirty_tree\\\") or split into two evals asserting the reason-dependent branches (no_trunk → fetch, re-run, then ledger and continue; dirty_tree → stop before any write).\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":12,\"evidence\":\"The intro recap of the two run modes (\\\"**auto** (spec `--auto`, discuss assumptions-mode) and **interactive** (spec without `--auto`, discuss in standard mode with `--analyze --all --batch`...\\\") repeats the description already loaded at trigger time and restates definitions §0 step 7 and §2 own.\",\"fix\":\"Keep the mindset paragraph; drop the parenthetical mode recap and leave the mode definitions to §0 step 7 and §2.\"}]}"
+  }
+ ],
+ "digest": "b95aef1b39c97681e0e1380f5ca59c4e9b22964011fd711623a7229ce0d245d4",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "32.4",
+ "modules": [
+  "tests/test_ai_kit_caller_text.py",
+  "tests/test_ai_kit_gsd_spec_discuss.py",
+  "tests/test_ai_kit_gsd_spec_discuss_e2e.py",
+  "tests/test_ai_kit_spec_goal_prompt_common.py",
+  "tests/test_ai_kit_spec_goal_prompt_golden.py",
+  "tests/test_ai_kit_spec_gsd_tools.py",
+  "tests/test_check_dogfood.py",
+  "tests/test_flow_docs.py",
+  "tests/test_gate_scope.py",
+  "tests/test_jev_fast_decision.py"
+ ],
+ "prompt_sha256": "a9191761a7d0eb8ac1deede22c66383a1ace00257d2f935ecc447a6ab19ee25a",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "ai-kit-gsd-spec-discuss",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D7",
+    "evidence": "\"Spec and discuss phase 12. ... its fold.py start --phase 12 refuses, and its report ends with refused.\" — the eval names no refusal reason, yet asserts the run stops; SKILL.md's refusal matrix (lines 106-117) continues past `refused no_trunk` (after fetch and re-run), `refused no_remote` and `bad_checkpoint`, stopping only on any other refusal, so the expected behavior is ambiguous and the assertions contradict the skill for the continue rows.",
+    "file": "skills/ai-kit-gsd-spec-discuss/evals/evals.json",
+    "fix": "Name a stopping reason in the prompt (e.g. \"refuses with dirty_tree\") or split into two evals asserting the reason-dependent branches (no_trunk → fetch, re-run, then ledger and continue; dirty_tree → stop before any write).",
+    "id": "D7-1",
+    "line": 77,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "The intro recap of the two run modes (\"**auto** (spec `--auto`, discuss assumptions-mode) and **interactive** (spec without `--auto`, discuss in standard mode with `--analyze --all --batch`...\") repeats the description already loaded at trigger time and restates definitions §0 step 7 and §2 own.",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "Keep the mindset paragraph; drop the parenthetical mode recap and leave the mode definitions to §0 step 7 and §2.",
+    "id": "D1-1",
+    "line": 12,
+    "severity": "low"
+   }
+  ],
+  "grade": "A",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 98.4,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 19,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 14,
+   "D8": 15
+  },
+  "skill": "ai-kit-gsd-spec-discuss",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 123
+ }
+}

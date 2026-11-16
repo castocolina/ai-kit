@@ -1,0 +1,163 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=45s out=490842 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"jev-fast-decision\",\"judge\":\"opencode:router-env/my-referee-one\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":12,\"D8\":8},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":115,\"max_total\":125,\"percent\":92.0,\"grade\":\"A\",\"findings\":[{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/jev-fast-decision/SKILL.md\",\"line\":25,\"evidence\":\"The ladder example runs `python3 -B scripts/jev_review.py ladder` with a choice item that has no `context`.\",\"fix\":\"Use `<skill-dir>/scripts/jev_review.py` when running from the project root and include a non-empty summary in the item's `context`; the ladder rejects missing context as `empty_context`.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/jev-fast-decision/reference.md\",\"line\":37,\"evidence\":\"The screen example uses `scripts/jev_review.py` and the literal JSON string `\\\"reviewed_head\\\": \\\"<git rev-parse HEAD>\\\"`.\",\"fix\":\"Use the resolved skill-directory path from the project root and generate a real 40-character HEAD value in the JSON rather than placing a shell-command placeholder inside a quoted heredoc.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/jev-fast-decision/SKILL.md\",\"line\":13,\"evidence\":\"`typesafe: needs TYPESAFE_API_KEY in the environment` conflicts with the documented alternate key sources in `reference.md` and `backends/typesafe.md`.\",\"fix\":\"Say that TypeSafe needs a usable key, normally `TYPESAFE_API_KEY` in the environment, and point to the backend document for the supported file sources.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/jev-fast-decision/evals/evals.json\",\"line\":22,\"evidence\":\"The choice eval requires an item with criteria and instructions but does not require `context`, while the ladder rejects an item without non-empty context; its script-caller eval also requires separate ladder calls for each item.\",\"fix\":\"Require non-empty, summary-only context in ladder eval items and align the script-caller assertions with the documented single ladder call carrying multiple items.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/jev-fast-decision/scripts/eval_cases.py\",\"line\":257,\"evidence\":\"`main()` checks `--calibrate` and `--record` but has no `--help` branch; an invocation with `--help` proceeds to load cases and call `screen()`.\",\"fix\":\"Add a non-interactive `--help` path that prints usage and exits before loading the client or sending requests, and cover it with a smoke test.\"}]}"
+  }
+ ],
+ "digest": "d89cd646430b17289a3d22e164df369a1b52f3176237840e7323ce0bb828a162",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-one",
+ "loop": "34",
+ "modules": [
+  "tests/test_ai_kit_caller_text.py",
+  "tests/test_ai_kit_commit_fold.py",
+  "tests/test_ai_kit_commit_fold_adapters.py",
+  "tests/test_ai_kit_commit_fold_e2e.py",
+  "tests/test_ai_kit_gsd_spec_discuss.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_golden.py",
+  "tests/test_ai_kit_spec_goal_prompt_host.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_goal_prompt_variants.py",
+  "tests/test_arch.py",
+  "tests/test_check_dogfood.py",
+  "tests/test_config_design_record.py",
+  "tests/test_config_dir_parity.py",
+  "tests/test_curated_config_skills.py",
+  "tests/test_decision_probe.py",
+  "tests/test_jev_config.py",
+  "tests/test_jev_config_parity.py",
+  "tests/test_jev_fast_decision.py",
+  "tests/test_jev_fast_decision_guard.py",
+  "tests/test_jev_learn.py",
+  "tests/test_jev_skill_install_e2e.py",
+  "tests/test_jev_typesafe_models.py",
+  "tests/test_judge_loop.py",
+  "tests/test_precompact_core.py",
+  "tests/test_secret_shapes_copy_install.py",
+  "tests/test_setup.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "e5a4d13188b6a0ee08911e9d05b535aac178fb9449568c7158163e74bb7f8d90",
+ "round": 3,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "jev-fast-decision",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D8",
+    "evidence": "The ladder example runs `python3 -B scripts/jev_review.py ladder` with a choice item that has no `context`.",
+    "file": "skills/jev-fast-decision/SKILL.md",
+    "fix": "Use `<skill-dir>/scripts/jev_review.py` when running from the project root and include a non-empty summary in the item's `context`; the ladder rejects missing context as `empty_context`.",
+    "id": "D8-1",
+    "line": 25,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The screen example uses `scripts/jev_review.py` and the literal JSON string `\"reviewed_head\": \"<git rev-parse HEAD>\"`.",
+    "file": "skills/jev-fast-decision/reference.md",
+    "fix": "Use the resolved skill-directory path from the project root and generate a real 40-character HEAD value in the JSON rather than placing a shell-command placeholder inside a quoted heredoc.",
+    "id": "D8-2",
+    "line": 37,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "`typesafe: needs TYPESAFE_API_KEY in the environment` conflicts with the documented alternate key sources in `reference.md` and `backends/typesafe.md`.",
+    "file": "skills/jev-fast-decision/SKILL.md",
+    "fix": "Say that TypeSafe needs a usable key, normally `TYPESAFE_API_KEY` in the environment, and point to the backend document for the supported file sources.",
+    "id": "D8-3",
+    "line": 13,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The choice eval requires an item with criteria and instructions but does not require `context`, while the ladder rejects an item without non-empty context; its script-caller eval also requires separate ladder calls for each item.",
+    "file": "skills/jev-fast-decision/evals/evals.json",
+    "fix": "Require non-empty, summary-only context in ladder eval items and align the script-caller assertions with the documented single ladder call carrying multiple items.",
+    "id": "D7-1",
+    "line": 22,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "`main()` checks `--calibrate` and `--record` but has no `--help` branch; an invocation with `--help` proceeds to load cases and call `screen()`.",
+    "file": "skills/jev-fast-decision/scripts/eval_cases.py",
+    "fix": "Add a non-interactive `--help` path that prints usage and exits before loading the client or sending requests, and cover it with a smoke test.",
+    "id": "D7-2",
+    "line": 257,
+    "severity": "medium"
+   }
+  ],
+  "grade": "A",
+  "judge": "opencode:router-env/my-referee-one",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 92.0,
+  "rubric_version": 4,
+  "scores": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 12,
+   "D8": 8
+  },
+  "skill": "jev-fast-decision",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 115
+ }
+}

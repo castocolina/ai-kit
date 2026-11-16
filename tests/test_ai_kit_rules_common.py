@@ -143,21 +143,24 @@ class TestToolPresence(unittest.TestCase):
             result = check_tool_presence(search_path="", repo_root=repo)
         self.assertEqual(
             set(result) - {f"modern-cli:{tool}" for tool in MODERN_CLI_TOOLS},
-            {"modern-cli", "codegraph", "graphify", "gsd"},
+            {"modern-cli", "codebase-memory-mcp", "graphify", "gsd"},
         )
         self.assertFalse(result["modern-cli"])
-        self.assertFalse(result["codegraph"])
+        self.assertFalse(result["codebase-memory-mcp"])
         self.assertFalse(result["graphify"])
         self.assertFalse(result["gsd"])
         for tool in MODERN_CLI_TOOLS:
             self.assertFalse(result[f"modern-cli:{tool}"])
 
-    def test_codegraph_and_gsd_dirs_detected(self):
-        with tempfile.TemporaryDirectory() as repo:
-            os.makedirs(os.path.join(repo, ".codegraph"))
+    def test_binary_on_search_path_and_gsd_dir_detected(self):
+        with tempfile.TemporaryDirectory() as bin_dir, tempfile.TemporaryDirectory() as repo:
+            binary = os.path.join(bin_dir, "codebase-memory-mcp")
+            with open(binary, "w", encoding="utf-8") as handle:
+                handle.write("#!/bin/sh\nexit 0\n")
+            os.chmod(binary, 0o755)
             os.makedirs(os.path.join(repo, ".planning"))
-            result = check_tool_presence(search_path="", repo_root=repo)
-        self.assertTrue(result["codegraph"])
+            result = check_tool_presence(search_path=bin_dir, repo_root=repo)
+        self.assertTrue(result["codebase-memory-mcp"])
         self.assertTrue(result["gsd"])
 
 

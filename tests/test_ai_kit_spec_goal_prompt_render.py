@@ -4,6 +4,7 @@ SPEC R3; D-12..D-15, D-25..D-28. Everything is pure text or a temporary director
 no network, no real HOME. `render` writes only inside a TemporaryDirectory git repository.
 """
 
+import json
 import os
 import re
 import sys
@@ -16,12 +17,15 @@ REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "skills" / "ai-kit-spec-goal-prompt" / "scripts"
 ASSET = REPO / "skills" / "ai-kit-spec-goal-prompt" / "assets" / "prompt-template.md"
 sys.path.insert(0, str(SCRIPTS))
+import goal_prompt
+import gp_host
 import gp_render
 import gp_sections
 from gp_common import GuardError
 from gp_render import RenderContext
 
 from tests import goal_prompt_fixtures as fx
+from tests.test_ai_kit_spec_goal_prompt_cli import MATRIX_ROWS, FakeRun, host_routes
 
 WRAPPER = (
     "This project is OpenGSD, so the run uses /gsd-autonomous with convergence. Paste the block "
@@ -262,7 +266,7 @@ class TestTemplateAndSections(unittest.TestCase):
 
     def test_decision_safety_cleanup_lines_are_the_fixed_text(self):
         decisions = gp_sections.decision_lines()
-        self.assertEqual(len(decisions), 4)
+        self.assertEqual(len(decisions), 5)
         self.assertEqual(
             decisions[0], "Verifiable questions: check and fix them directly; do not ask."
         )
@@ -462,9 +466,7 @@ class TestGuards(unittest.TestCase):
         self.assertTrue(any("DONE WHEN or STOP IF" in problem for problem in problems))
 
     def test_done_when_without_the_unit_test_sentence_flagged(self):
-        doc = clean_document().replace(
-            "- Unit tests alone never count as done.", "- Tests pass.", 1
-        )
+        doc = clean_document().replace(" Unit tests alone never count as done.", "", 1)
         problems = self._problems(doc)
         self.assertTrue(any("DONE WHEN lacks" in problem for problem in problems))
 
@@ -550,17 +552,15 @@ class TestGuards(unittest.TestCase):
 
 DONE_WHEN_DEFAULT = [
     "Print each command with its exact exit code, its count line and the last 20 lines of output, "
-    "ANSI codes stripped.",
+    "ANSI codes stripped, and the paths of the screenshots or TUI text snapshots the e2e run "
+    "produced.",
     "Gates first: make lint, make test-unit.",
-    "E2E: `make e2e-test` exits 0 and prints a test count above zero. Exit 0 with a zero count is "
-    "not green.",
+    "E2E, each exits 0 and prints a test count above zero (zero is not green): `make e2e-test`.",
     "Zero-count markers: read the count line yourself.",
-    "Print the paths of the screenshots or TUI text snapshots the e2e run produced.",
     "Start each long-lived e2e process in its own process group and record its group id in tmp/. "
     "After the run kill those groups and print a process listing (ps) that shows none remain.",
     "Phase status: VERIFICATION shows passed for every phase in scope, or the item is listed as "
-    "human verification with its reason.",
-    "Unit tests alone never count as done.",
+    "human verification with its reason. Unit tests alone never count as done.",
 ]
 
 
@@ -572,7 +572,7 @@ class TestDoneLines(unittest.TestCase):
         e2e = {"commands": [E2E_UNITTEST], "gates": [], "none": False}
         lines = gp_sections.done_lines(e2e, [])
         self.assertTrue(
-            lines[2].endswith("(inferred: confirm it runs the real app)"), lines[2]
+            lines[2].endswith("(inferred: confirm it runs the real app)."), lines[2]
         )
         self.assertIn("Zero-count markers: 'NO TESTS RAN' for unittest.", lines)
         self.assertIn(
@@ -812,6 +812,286 @@ class TestRenderOpenGsd(unittest.TestCase):
         with self.assertRaisesRegex(GuardError, "superpowers plans"):
             gp_render.render(make_detect(), answers, self._ctx())
         self.assertFalse(Path(self.repo, ".planning").exists())
+
+
+def goal_detect():
+    """A detect whose only strategy is a `/goal` line, so the turn cap reaches the condition."""
+    strategy = {"id": "goal", "rank": 1, "recommended": True, "reason": "x", "primitive": "/goal"}
+    return make_detect(strategies=[strategy])
+
+
+class TestOwnerRunRules(unittest.TestCase):
+    """Each optional owner run-rule answer changes only its own lines; an absent one keeps today's
+    text (SPEC R3)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.repo = self._tmp.name
+        fx.git_init(Path(self.repo))
+
+    def _ctx(self):
+        return RenderContext(
+            repo=self.repo,
+            today="2026-11-13",
+            home=fx.FAKE_HOME,
+            secrets=(fx.SENTINEL_KEY,),
+            out_dir=None,
+        )
+
+    def _text(self, detect=None, **answers):
+        result = gp_render.render(detect or make_detect(), make_answers(**answers), self._ctx())
+        return Path(self.repo, result["path"]).read_text(encoding="utf-8")
+
+    def test_push_after_fold_set_and_absent(self):
+        text = self._text(push_after_fold=True)
+        self.assertIn(
+            "- Never print secrets. Never stage everything blindly. Push only after the fold.", text
+        )
+        self.assertIn(
+            "- Fold the commits, push the working branch, then merge it into the main checkout "
+            "and push that.",
+            text,
+        )
+        self.assertIn("- The ledger of your decisions, the commits made, the pushes.", text)
+        self.assertNotIn("never push", text.lower())
+        self.assertNotIn("nothing pushed", text.lower())
+        plain = self._text()
+        self.assertIn("- Never print secrets. Never push. Never stage everything blindly.", plain)
+        self.assertIn("- Merge the working branch into the main checkout; never push.", plain)
+        self.assertIn("- The ledger of your decisions, the commits made, nothing pushed.", plain)
+
+    def test_turn_cap_given_null_and_absent(self):
+        goal = goal_detect()
+        text = self._text(goal, turn_cap=7)
+        self.assertIn("- Stop after 7 turns and report.", text)
+        self.assertIn("stop and report after 7 turns.", text)
+        text = self._text(goal, turn_cap=None)
+        self.assertNotIn("turns and report", text)
+        self.assertIn("If it does not hold, stop and report.", text)
+        self.assertIn("- Stop after 120 turns and report.", self._text(goal))
+
+    def test_models_set_and_absent(self):
+        models = {
+            "planner": {"model": "opus", "effort": "xhigh"},
+            "executor": {"model": "haiku", "effort": "high"},
+        }
+        self.assertIn(
+            "- Models: the planner runs on opus at xhigh effort, the executor on haiku at high "
+            "effort.",
+            self._text(models=models),
+        )
+        self.assertNotIn("\n- Models:", self._text())
+
+    def test_review_lens_with_and_without_questions_and_absent(self):
+        questions = (
+            "is each change needed, over-engineered, reusing what exists, missing callers or tests?"
+        )
+        lens = {"name": "ponytail", "skill": "ponytail:ponytail-review", "questions": questions}
+        self.assertIn(
+            "- Give the planner and each reviewer the ponytail lens: "
+            + questions
+            + " Run ponytail:ponytail-review beside the code review.",
+            self._text(review_lens=lens),
+        )
+        text = self._text(review_lens={"name": "security", "skill": "security-review"})
+        self.assertIn(
+            "- Give the planner and each reviewer the security lens. Run security-review beside "
+            "the code review.",
+            text,
+        )
+        rules = dict(built_sections(answers=make_answers()))["RULES FOR EVERY PLAN"]
+        self.assertFalse(any("lens" in line for line in rules))
+
+    def test_phase_end_lead_by_family_and_absent(self):
+        self.assertEqual(
+            gp_sections.phase_end_lines(["x"], "superpowers")[0],
+            "Each plan ends with, in order:",
+        )
+        self.assertEqual(
+            gp_sections.phase_end_lines(["x"], "none")[0], "The work ends with, in order:"
+        )
+        self.assertIn(
+            "- Each phase ends with, in order:\n   1. b step\n   2. a step",
+            self._text(phase_end=["b step", "a step"]),
+        )
+        self.assertNotIn("ends with, in order:", self._text())
+        free = gp_sections.Work("none", "tidy")
+        with_order = gp_sections.rail_sections(make_detect(), {"phase_end": ["x"]}, free)
+        self.assertIn("ORDER", [heading for heading, _ in with_order])
+        without = gp_sections.rail_sections(make_detect(), {}, free)
+        self.assertNotIn("ORDER", [heading for heading, _ in without])
+
+    def test_report_language_set_and_absent(self):
+        self.assertIn(
+            "- Per item: status, verification, the evidence printed, the cross-AI CLI used.\n"
+            "- Write the report in Spanish; files stay in the project's language.\n",
+            self._text(report_language="Spanish"),
+        )
+        self.assertNotIn("Write the report in", self._text())
+
+    def test_flag_like_token_in_a_field_is_refused_naming_its_section(self):
+        with self.assertRaises(GuardError) as caught:
+            self._text(phase_end=["run make test --verbose"])
+        self.assertIn("flag-like token after line 1 of the block, in ORDER", str(caught.exception))
+
+    def test_answers_key_order_changes_nothing(self):
+        fields = {
+            "push_after_fold": True,
+            "models": {
+                "planner": {"model": "opus", "effort": "xhigh"},
+                "executor": {"model": "haiku", "effort": "high"},
+            },
+            "phase_end": ["a step", "b step"],
+        }
+        forward = make_answers(**fields)
+        backward = dict(reversed(list(make_answers(**fields).items())))
+        self.assertEqual(built_sections(answers=forward), built_sections(answers=backward))
+
+    def test_long_free_text_wraps_under_the_line_cap(self):
+        words = [f"language{i:02d}" for i in range(25)]
+        text = self._text(report_language=" ".join(words))
+        self.assertEqual(re.findall(r"language\d{2}", text), words)
+        report = text.split("\nREPORT\n", 1)[1].split("\n\n", 1)[0].split("\n")
+        self.assertTrue(all(len(line) <= 200 for line in report), report)
+
+
+R4_DETECT = REPO / "tests" / "fixtures" / "goal_prompt" / "r4-detect.json"
+R4_ANSWERS = {
+    "work_set": {"kind": "phases", "numbers": ["32", "32.1", "32.2", "32.3", "32.4", "33", "34"]},
+    "target_host": "claude",
+    "native_execution": True,
+    "mockups": [],
+    "strategy": None,
+    "objective": "",
+    "skills": [],
+    "goal_style": "auto",
+    "output_dir": None,
+}
+R4_FIELDS = {
+    "push_after_fold": True,
+    "turn_cap": None,
+    "models": {
+        "planner": {"model": "opus", "effort": "xhigh"},
+        "executor": {"model": "haiku", "effort": "high"},
+    },
+    "review_lens": {
+        "name": "ponytail",
+        "skill": "ponytail:ponytail-review",
+        "questions": "is each change needed, over-engineered, reusing what exists, missing callers "
+        "or tests?",
+    },
+    "phase_end": [
+        "Code review and fix (gsd-code-review and ponytail-review), security, validation.",
+        "Skill-judge each SKILL.md the phase changes, never one a later phase removes.",
+        "Verification passed, or human items resolved by push and herdr.",
+        "A reporting subagent compacts the history into logical commits; push the unit branch.",
+        "Ship to the machine: gates green, installer dry run in a scratch HOME, install, live "
+        "re-check.",
+    ],
+    "report_language": "Spanish",
+}
+
+
+class TestCapsWithEveryField(unittest.TestCase):
+    """The 2026-11-07 work set (phases 32-34, native execution) fits the unchanged caps with every
+    owner field set and with none set (SPEC R4)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def _render(self, **overrides):
+        tmp = self._tmp.name
+        repo = Path(tmp, "repo")
+        fx.git_init(repo)
+        detect_path = Path(tmp, "detect.json")
+        detect_path.write_text(R4_DETECT.read_text(encoding="utf-8"), encoding="utf-8")
+        answers_path = Path(tmp, "answers.json")
+        answers_path.write_text(json.dumps({**R4_ANSWERS, **overrides}), encoding="utf-8")
+        args = goal_prompt.build_parser().parse_args(
+            ["render", "--repo", str(repo), "--detect", str(detect_path), "--answers",
+             str(answers_path)]
+        )
+        host = gp_host.HostSeams(
+            run=FakeRun(host_routes(MATRIX_ROWS)),
+            which=lambda name: f"fake-bin/{name}",
+            environ={},
+        )
+        seams = goal_prompt.CliSeams(
+            host=host,
+            today="2026-11-07",
+            home=fx.FAKE_HOME,
+            secrets=(fx.SENTINEL_KEY,),
+            skills_dir="",
+        )
+        result = goal_prompt.run_render(args, seams)
+        return Path(repo, result["path"]).read_text(encoding="utf-8")
+
+    def _counts(self, text):
+        """(most rule lines, longest rule line, most characters in one inline block)."""
+        blocks, _unclosed = gp_render._fenced_blocks(text.split("\n"))
+        inline = [block for block in blocks if block and block[0].startswith("/gsd-autonomous")]
+        rule_sets = [gp_render._rule_lines(block[1:]) for block in inline]
+        shared = gp_render._shared_rails(text)
+        if shared:
+            rule_sets.append(gp_render._rule_lines(shared))
+        rules = max((len(lines) for lines in rule_sets), default=0)
+        longest = max((len(line) for lines in rule_sets for line in lines), default=0)
+        chars = max((len("\n".join(block)) for block in inline), default=0)
+        return rules, longest, chars
+
+    def _assert_caps(self, text):
+        rules, longest, chars = self._counts(text)
+        message = f"rule lines {rules}, longest line {longest}, block characters {chars}"
+        self.assertLessEqual(rules, 60, message)
+        self.assertLessEqual(longest, 200, message)
+        self.assertLessEqual(chars, 7000, message)
+
+    def test_every_field_set_fits_the_three_caps(self):
+        text = self._render(**R4_FIELDS)
+        self._assert_caps(text)
+        for needle in (
+            gp_sections.RAIL_ASK,
+            gp_sections.RAIL_WAIT,
+            gp_sections.RAIL_PING,
+            "Push only after the fold.",
+            "Fold the commits, push the working branch, then merge it into the main checkout and "
+            "push that.",
+            "the commits made, the pushes.",
+            "Models: the planner runs on opus at xhigh effort, the executor on haiku at high "
+            "effort.",
+            "Run ponytail:ponytail-review beside the code review.",
+            "Each phase ends with, in order:",
+            "   1. Code review and fix",
+            "   5. Ship to the machine",
+            "Write the report in Spanish; files stay in the project's language.",
+        ):
+            self.assertIn(needle, text)
+        lowered = text.lower()
+        self.assertNotIn("never push", lowered)
+        self.assertNotIn("nothing pushed", lowered)
+        self.assertNotIn("turns and report", text)
+        for phrase in (
+            "fix a real failure at its root",
+            "every test tier always run",
+            "anything older or not owned by this run is reported, never removed",
+            "the paths of the screenshots or TUI text snapshots",
+            "Unit tests alone never count as done.",
+            "or a decision blocks other work and nothing resolves it",
+        ):
+            self.assertIn(phrase, text)
+
+    def test_no_field_set_fits_the_three_caps(self):
+        text = self._render()
+        self._assert_caps(text)
+        for rail in (gp_sections.RAIL_ASK, gp_sections.RAIL_WAIT, gp_sections.RAIL_PING):
+            self.assertIn(rail, text)
+
+    def test_a_cross_ai_render_with_every_field_set_names_the_line_cap(self):
+        with self.assertRaises(GuardError) as caught:
+            self._render(native_execution=False, **R4_FIELDS)
+        self.assertIn("more than 60 rule lines", str(caught.exception))
 
 
 class TestLongTitles(unittest.TestCase):

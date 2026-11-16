@@ -130,10 +130,9 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
     (spec Section 7: "falls back to the unfiltered ladder with a one-time
     warning") since an execute-only-curated config silently reviewing with
     the wrong ladder is a real misconfiguration worth surfacing. No warning
-    when nothing was excluded (a ladder with no purpose-tagged entries at
-    all, including today's every pre-migration review-spec.toml, behaves
-    identically to before this change -- no fallback ever triggers for it,
-    so nothing to warn about).
+    when nothing was excluded (a ladder with no purpose-tagged lane entries at
+    all behaves identically to before this change -- no fallback ever triggers
+    for it, so nothing to warn about).
 
     single: one reviewer, preferring a vendor different from source_vendor
     (independent perspective on the document), quota-aware, tier-aware via
@@ -174,7 +173,7 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
     if fell_back:
         warn_fn("ai-kit-spec-review: no reviewer entry matches purpose='review' in the "
                 "configured ladder -- falling back to the full, unfiltered ladder. Curate "
-                "`purpose` on your review-spec.toml reviewer entries to fix this.")
+                "`purpose` on your config.toml lane entries to fix this.")
     if mode == "double":
         primary = resolve_ladder_pick(reviewers, ladder, skip_vendor="", quota=quota)
         if primary is None:

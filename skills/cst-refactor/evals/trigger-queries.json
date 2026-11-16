@@ -1,0 +1,22 @@
+[
+  {"query": "Rename the class OrderLedger to SalesLedger across src and tests, and keep the comments that mention it readable.", "should_trigger": true},
+  {"query": "The constant DEFAULT_TIMEOUT is used in many modules, so rename it to DEFAULT_REQUEST_TIMEOUT everywhere in the package.", "should_trigger": true},
+  {"query": "Rename the function parameter timeout to request_timeout and update every keyword call that passes it by name.", "should_trigger": true},
+  {"query": "Add a defaulted retries parameter to fetch_page, which is called from many modules, and keep every call working.", "should_trigger": true},
+  {"query": "Remove the obsolete legacy_mode parameter from build_report across the whole project and its callers.", "should_trigger": true},
+  {"query": "Rewrite the docstrings of each Person method so the word name becomes nickname, touching only the class I point at.", "should_trigger": true},
+  {"query": "I want a LibCST codemod that renames the method fetch to load across these Python packages without touching strings.", "should_trigger": true},
+  {"query": "A plain sed would also hit strings and comments in this Python code, so please change the callers structurally instead.", "should_trigger": true},
+  {"query": "Rename the method sync_state across src and tests in this Python project so that every call site follows the new name.", "should_trigger": true},
+  {"query": "This Python codebase needs a bulk signature change: add a context argument to every handler function and its call sites.", "should_trigger": true},
+  {"query": "Edit the body of one function in a single file so it returns early when the input list is empty.", "should_trigger": false},
+  {"query": "Use sed to replace the unique constant MAX_RETRY_BUDGET with a new value in config.py only.", "should_trigger": false},
+  {"query": "Rename the exported function parseConfig to loadConfig across this TypeScript project and its imports.", "should_trigger": false},
+  {"query": "Run ruff with the autofix flag to clean up the lint warnings in this Python package.", "should_trigger": false},
+  {"query": "Rename the database column customer_id to account_id and write the migration for the orders table.", "should_trigger": false},
+  {"query": "Rename the folder reports to exports and move the files inside it into the new location.", "should_trigger": false},
+  {"query": "Run black and isort over the whole Python repository so the import order and line wrapping match the style guide.", "should_trigger": false},
+  {"query": "Refactor the parser module by hand in the editor, reshaping its two helper functions into one class.", "should_trigger": false},
+  {"query": "Convert this Python command line script to async so the network calls run concurrently with asyncio.", "should_trigger": false},
+  {"query": "Write unit tests for the CSV parser module, covering empty files, quoted fields and a missing header row.", "should_trigger": false}
+]

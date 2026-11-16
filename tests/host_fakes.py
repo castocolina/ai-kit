@@ -76,3 +76,51 @@ def fake_calls(log_path: str | Path) -> list[dict]:
     if not path.is_file():
         return []
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def write_cbm_registration(home, hosts, unreadable=(), disabled=()) -> dict[str, str]:
+    """Synthetic codebase-memory-mcp registration files in a scratch HOME (for an env that holds
+    only HOME and PATH), never a real home. A host in `disabled` gets its entry switched off:
+    opencode `"enabled": false`, codex `enabled = false`, the others `"disabled": true`; pi has no
+    entry to disable. A host in `unreadable` gets a file that does not parse instead. Returns
+    host -> the path written."""
+    root = Path(home)
+    written: dict[str, str] = {}
+    for host in hosts:
+        path, text = _cbm_registration_file(root, host, host in disabled, host in unreadable)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        written[host] = str(path)
+    return written
+
+
+def _cbm_registration_file(
+    root: Path, host: str, disabled: bool, unreadable: bool,
+) -> tuple[Path, str]:
+    server = "codebase-memory-mcp"
+    if host == "pi":
+        return (root / ".pi" / "agent" / "extensions" / "cbmem.ts",
+                "{not json\n" if unreadable else "// synthetic extension\n")
+    if host == "codex":
+        path = root / ".codex" / "config.toml"
+        if unreadable:
+            return path, "[[[\n"
+        text = f'[mcp_servers.{server}]\ncommand = "{server}"\n'
+        return path, text + ("enabled = false\n" if disabled else "")
+    if host == "opencode":
+        path = root / ".config" / "opencode" / "opencode.jsonc"
+        if unreadable:
+            return path, "{not json\n"
+        entry: dict = {"type": "local", "command": [server]}
+        if disabled:
+            entry["enabled"] = False
+        return path, '{\n  // synthetic\n  "mcp": ' + json.dumps({server: entry}) + ",\n}\n"
+    path = {"claude": root / ".claude.json",
+            "cursor": root / ".cursor" / "mcp.json",
+            "copilot": root / ".copilot" / "mcp-config.json"}[host]
+    if unreadable:
+        return path, "{not json\n"
+    claude_entry: dict = {"command": server}
+    if disabled:
+        claude_entry["disabled"] = True
+    return path, json.dumps({"mcpServers": {server: claude_entry}}) + "\n"

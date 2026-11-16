@@ -17,7 +17,7 @@ from ai_kit_spec.config_io import (
     cfg_combine,
     cfg_load_toml,
     cfg_local_path,
-    cfg_render_toml,
+    cfg_render_lanes,
     cfg_resolve,
     cfg_trust_store_dir,
     infer_legacy_native,
@@ -34,18 +34,18 @@ class TestLegacyTracer(unittest.TestCase):
             "-c model_reasoning_effort='\"high\"'"
         )
         text = (
-            '[[reviewers]]\nkey = "cx"\ncli = "codex"\nmodel = "gpt-5.6-sol"\n'
+            '[[lanes.review]]\nkey = "cx"\ncli = "codex"\nmodel = "gpt-5.6-sol"\n'
             f"command = {json.dumps(command)}\n\n"
-            '[[reviewers]]\nkey = "nc"\nnative_runtime = "claude"\nmodel = "opus"\n\n'
-            '[[reviewers]]\nkey = "ss"\nmodel = "sonnet"\n'
+            '[[lanes.review]]\nkey = "nc"\nnative_runtime = "claude"\nmodel = "opus"\n\n'
+            '[[lanes.review]]\nkey = "ss"\nmodel = "sonnet"\n'
         )
         with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "review-spec.toml")
+            path = os.path.join(directory, "config.toml")
             with open(path, "w", encoding="utf-8") as stream:
                 stream.write(text)
             with open(path, "rb") as stream:
                 before = stream.read()
-            reviewers = cfg_load_toml(path)["reviewers"]
+            reviewers = cfg_load_toml(path)["lanes"]["review"]
             migrated, notes = normalize_legacy_reviewers(reviewers)
             inferred, inferred_notes = infer_legacy_native(migrated)
             lines = []
@@ -79,6 +79,7 @@ class TestLegacyLoad(unittest.TestCase):
             stream.write(text)
 
     def test_tracer(self):
+        # legacy roster on purpose: migration
         command = ("codex exec --sandbox read-only --skip-git-repo-check -m {model} "
                    "-c model_reasoning_effort='\"high\"'")
         with tempfile.TemporaryDirectory() as root:
@@ -118,22 +119,28 @@ class TestLegacyLoad(unittest.TestCase):
             self.assertEqual(err.getvalue().count("legacy reviewer fields loaded"), 1)
             # The migrated file exists, so a bare `render-toml --out` would be refused.
             self.assertIn("--replace", err.getvalue())
-            with open(path, "rb") as stream:
+            # The read migrated the old user file (Plan 33-07): its lanes are in config.toml and
+            # its bytes are kept under the .migrated name.
+            self.assertFalse(os.path.exists(path))
+            with open(path + ".migrated", "rb") as stream:
                 self.assertEqual(stream.read(), before)
+            self.assertTrue(os.path.exists(os.path.join(xdg, "ai-kit", "config.toml")))
+            self.assertIn(f"migrated {path} to", err.getvalue())
 
     def test_local_only_never_reads_the_global_file(self):
         # B-WR-01/B-IN-04: a malformed or legacy global file is not in effect under local-only.
         with tempfile.TemporaryDirectory() as root:
             env, xdg = self._env(root)
-            self._write(os.path.join(xdg, "ai-kit", "review-spec.toml"), "this = is = broken\n")
+            self._write(os.path.join(xdg, "ai-kit", "config.toml"), "this = is = broken\n")
             local = {"strategy": "local-only",
-                     "reviewers": [{"key": "c", "runtime": "codex", "model": "m"}]}
+                     "review": [{"key": "c", "runtime": "codex", "model": "m"}]}
             warnings = []
             config = cfg_combine(local, env, warn_fn=warnings.append)
             self.assertEqual([r["key"] for r in config["reviewers"]], ["c"])
             self.assertEqual(warnings, [])
 
     def test_one_note_per_file(self):
+        # legacy roster on purpose: migration
         with tempfile.TemporaryDirectory() as root:
             env, xdg = self._env(root)
             path = os.path.join(xdg, "ai-kit", "review-spec.toml")
@@ -141,12 +148,15 @@ class TestLegacyLoad(unittest.TestCase):
             warnings = []
             for _ in range(2):
                 cfg_resolve(root, env, warn_fn=warnings.append)
-            self.assertEqual(len(warnings), 1)
-            self.assertIn(path, warnings[0])
-            self.assertIn("old", warnings[0])
-            self.assertIn("re-save", warnings[0])
+            # the first read migrates the old user file (one notice), then its legacy note
+            self.assertEqual(len(warnings), 2)
+            self.assertIn(f"migrated {path} to", warnings[0])
+            self.assertIn(os.path.join(xdg, "ai-kit", "config.toml"), warnings[1])
+            self.assertIn("old", warnings[1])
+            self.assertIn("re-save", warnings[1])
 
     def test_mixed_file_names_only_old_entries(self):
+        # legacy roster on purpose: migration
         with tempfile.TemporaryDirectory() as root:
             env, xdg = self._env(root)
             path = os.path.join(xdg, "ai-kit", "review-spec.toml")
@@ -155,9 +165,10 @@ class TestLegacyLoad(unittest.TestCase):
             warnings = []
             result = cfg_resolve(root, env, warn_fn=warnings.append)
             self.assertEqual([r["key"] for r in result["reviewers"]], ["old", "new"])
-            self.assertEqual(len(warnings), 1)
-            self.assertIn("old", warnings[0])
-            self.assertNotIn("new", warnings[0])
+            self.assertEqual(len(warnings), 2)
+            self.assertIn(f"migrated {path} to", warnings[0])
+            self.assertIn("old", warnings[1])
+            self.assertNotIn("new", warnings[1])
 
     def test_load_never_writes(self):
         from ai_kit_spec.trust import is_trusted, record_trust
@@ -165,7 +176,7 @@ class TestLegacyLoad(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             env, _ = self._env(root)
             path = cfg_local_path(root)
-            self._write(path, '[[reviewers]]\nkey="old"\ncli="codex"\nmodel="m"\n')
+            self._write(path, '[[lanes.review]]\nkey="old"\ncli="codex"\nmodel="m"\n')
             with open(path, "rb") as stream:
                 before = stream.read()
             stat_before = os.stat(path)
@@ -180,6 +191,7 @@ class TestLegacyLoad(unittest.TestCase):
                              trusted_before)
 
     def test_partial_override(self):
+        # legacy roster on purpose: migration
         with tempfile.TemporaryDirectory() as root:
             env, xdg = self._env(root)
             command = ('codex exec --sandbox read-only --skip-git-repo-check -m {model} '
@@ -187,7 +199,7 @@ class TestLegacyLoad(unittest.TestCase):
             self._write(os.path.join(xdg, "ai-kit", "review-spec.toml"),
                         '[[reviewers]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
                         f"command={json.dumps(command)}\n[policy]\nladder=[\"k\"]\n")
-            local = {"reviewers": [{"key": "k", "model": "opus"}]}
+            local = {"review": [{"key": "k", "model": "opus"}]}
             merged = cfg_combine(local, env, warn_fn=lambda _: None, local_path="local.toml")
             entry = merged["reviewers"][0]
             self.assertEqual(entry["runtime"], "codex")
@@ -198,20 +210,20 @@ class TestLegacyLoad(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             env, xdg = self._env(root)
             factory = "codex exec --sandbox read-only --skip-git-repo-check -m {model}"
-            self._write(os.path.join(xdg, "ai-kit", "review-spec.toml"),
-                        '[[reviewers]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
+            self._write(os.path.join(xdg, "ai-kit", "config.toml"),
+                        '[[lanes.review]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
                         f"command={json.dumps(factory)}\n")
             custom = "mycli --fast {model}"
-            merged = cfg_combine({"reviewers": [{"key": "k", "command": custom}]}, env,
+            merged = cfg_combine({"review": [{"key": "k", "command": custom}]}, env,
                                 warn_fn=lambda _: None, local_path="local.toml")
             self.assertNotIn("runtime", merged["reviewers"][0])
             self.assertEqual(merged["reviewers"][0]["command"], custom)
 
-            self._write(os.path.join(xdg, "ai-kit", "review-spec.toml"),
-                        '[[reviewers]]\nkey="g"\ncli="mycli"\nmodel="m"\n'
+            self._write(os.path.join(xdg, "ai-kit", "config.toml"),
+                        '[[lanes.review]]\nkey="g"\ncli="mycli"\nmodel="m"\n'
                         'command="mycli {model}"\n')
-            merged = cfg_combine({"reviewers": [{"key": "g", "runtime": "codex",
-                                                "model": "gpt-5.6-sol"}]}, env,
+            merged = cfg_combine({"review": [{"key": "g", "runtime": "codex",
+                                             "model": "gpt-5.6-sol"}]}, env,
                                 warn_fn=lambda _: None, local_path="local.toml")
             self.assertEqual(merged["reviewers"][0]["runtime"], "codex")
             self.assertNotIn("command", merged["reviewers"][0])
@@ -219,10 +231,10 @@ class TestLegacyLoad(unittest.TestCase):
     def test_order(self):
         with tempfile.TemporaryDirectory() as root:
             env, xdg = self._env(root)
-            path = os.path.join(xdg, "ai-kit", "review-spec.toml")
-            self._write(path, '[policy]\nladder=["b", "a"]\n'
-                              '[[reviewers]]\nkey="b"\ncli="codex"\nmodel="m"\n'
-                              '[[reviewers]]\nkey="a"\nruntime="pi"\nmodel="m"\n')
+            path = os.path.join(xdg, "ai-kit", "config.toml")
+            self._write(path, '[lanes.policy]\nladder=["b", "a"]\n'
+                              '[[lanes.review]]\nkey="b"\ncli="codex"\nmodel="m"\n'
+                              '[[lanes.review]]\nkey="a"\nruntime="pi"\nmodel="m"\n')
             resolved = cfg_resolve(root, env, warn_fn=lambda _: None)
             self.assertEqual([r["key"] for r in resolved["reviewers"]], ["b", "a"])
             self.assertEqual(resolved["policy"]["ladder"], ["b", "a"])
@@ -473,8 +485,8 @@ class TestSaveSide(unittest.TestCase):
     def test_canonical_round_trip(self):
         canonical, _ = self._normalized(self._raw_entries())
         with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "review-spec.toml")
-            code, err = self._render_out({"reviewers": canonical}, path)
+            path = os.path.join(directory, "config.toml")
+            code, err = self._render_out({"lanes": canonical}, path)
             self.assertEqual(code, 0)
             self.assertNotIn("migrated legacy fields", err)
             with open(path, encoding="utf-8") as stream:
@@ -482,20 +494,20 @@ class TestSaveSide(unittest.TestCase):
             self.assertNotIn("cli =", written)
             self.assertNotIn("native_runtime", written)
             self.assertNotRegex(written, r'runtime = "[^"]+"\ncommand =')
-            reloaded, notes = self._normalized(cfg_load_toml(path)["reviewers"])
+            reloaded, notes = self._normalized(cfg_load_toml(path)["lanes"]["review"])
             self.assertEqual(self._pairs(reloaded), self._pairs(canonical))
             self.assertEqual(notes, [])
 
     def test_raw_legacy_json_migrates_on_save(self):
         canonical, _ = self._normalized(self._raw_entries())
         with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "review-spec.toml")
-            code, err = self._render_out({"reviewers": self._raw_entries()}, path)
+            path = os.path.join(directory, "config.toml")
+            code, err = self._render_out({"lanes": self._raw_entries()}, path)
             self.assertEqual(code, 0)
             self.assertEqual(err.count("migrated legacy fields before writing"), 1)
             for key in ("factory", "tuned", "native", "alias", "custom"):
                 self.assertIn(key, err)
-            reloaded, _ = self._normalized(cfg_load_toml(path)["reviewers"])
+            reloaded, _ = self._normalized(cfg_load_toml(path)["lanes"]["review"])
             self.assertEqual(self._pairs(reloaded), self._pairs(canonical))
 
     def test_variant_merge_saves(self):
@@ -504,26 +516,26 @@ class TestSaveSide(unittest.TestCase):
             xdg = os.path.join(root, "xdg")
             os.makedirs(os.path.join(xdg, "ai-kit"))
             env = {"HOME": home, "XDG_CONFIG_HOME": xdg}
-            global_path = os.path.join(xdg, "ai-kit", "review-spec.toml")
+            global_path = os.path.join(xdg, "ai-kit", "config.toml")
             with open(global_path, "w", encoding="utf-8") as stream:
-                stream.write('[[reviewers]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
+                stream.write('[[lanes.review]]\nkey="k"\ncli="codex"\nmodel="gpt-5.6-sol"\n'
                              f"command={json.dumps(self._FACTORY)}\n")
-            merged = cfg_combine({"reviewers": [{"key": "k", "command": self._CUSTOM}]},
+            merged = cfg_combine({"review": [{"key": "k", "command": self._CUSTOM}]},
                                  env, warn_fn=lambda _: None, local_path="local.toml")
             with open(global_path, "w", encoding="utf-8") as stream:
-                stream.write('[[reviewers]]\nkey="g"\ncli="mycli"\nmodel="m"\n'
+                stream.write('[[lanes.review]]\nkey="g"\ncli="mycli"\nmodel="m"\n'
                              'command="mycli {model}"\n')
-            second = cfg_combine({"reviewers": [{"key": "g", "runtime": "codex",
-                                                  "model": "gpt-5.6-sol"}]},
+            second = cfg_combine({"review": [{"key": "g", "runtime": "codex",
+                                              "model": "gpt-5.6-sol"}]},
                                  env, warn_fn=lambda _: None, local_path="local.toml")
-            config = {"reviewers": merged["reviewers"] + second["reviewers"]}
-            rendered = cfg_render_toml(config)
+            config = {"lanes": merged["reviewers"] + second["reviewers"]}
+            rendered = cfg_render_lanes(config)
             self.assertNotIn("WARNING", rendered)
             with tempfile.TemporaryDirectory() as directory:
-                path = os.path.join(directory, "review-spec.toml")
+                path = os.path.join(directory, "config.toml")
                 with open(path, "w", encoding="utf-8") as stream:
                     stream.write(rendered)
-                reloaded, notes = self._normalized(cfg_load_toml(path)["reviewers"])
+                reloaded, notes = self._normalized(cfg_load_toml(path)["lanes"]["review"])
             self.assertEqual(notes, [])
             self.assertEqual(reloaded[0]["command"], self._CUSTOM)
             self.assertNotIn("runtime", reloaded[0])
@@ -538,8 +550,8 @@ class TestSaveSide(unittest.TestCase):
         ]
         err = io.StringIO()
         with redirect_stderr(err):
-            rendered = cfg_render_toml(
-                {"policy": {"ladder": [c["key"] for c in cases]}, "reviewers": cases}
+            rendered = cfg_render_lanes(
+                {"policy": {"ladder": [c["key"] for c in cases]}, "lanes": cases}
             )
         warning = err.getvalue()
         self.assertIn("WARNING", warning)
@@ -559,12 +571,12 @@ class TestSaveSide(unittest.TestCase):
             {"key": "d", "model": ""},
             {"key": "c", "runtime": "claude", "model": "opus"},
         ]
-        rendered = cfg_render_toml({"reviewers": entries})
+        rendered = cfg_render_lanes({"lanes": entries})
         with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "review-spec.toml")
+            path = os.path.join(directory, "config.toml")
             with open(path, "w", encoding="utf-8") as stream:
                 stream.write(rendered)
-            reloaded, notes = self._normalized(cfg_load_toml(path)["reviewers"])
+            reloaded, notes = self._normalized(cfg_load_toml(path)["lanes"]["review"])
         self.assertEqual(notes, [])
         self.assertEqual(len(reloaded), 2)
         self.assertEqual(reloaded[0]["key"], "d")

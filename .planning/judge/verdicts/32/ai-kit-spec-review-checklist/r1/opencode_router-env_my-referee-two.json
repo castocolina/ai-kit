@@ -1,0 +1,61 @@
+{
+ "attempts": [
+  {
+   "error": "finding D5-1 line 156 is beyond the file's 150 lines",
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=43s out=204525 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+   "verdict_line": "{\"skill\":\"ai-kit-spec-review-checklist\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":4,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":16,\"D2\":13,\"D3\":13,\"D4\":14,\"D5\":13,\"D6\":14,\"D7\":5,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":101,\"max_total\":125,\"percent\":80.8,\"grade\":\"B\",\"findings\":[{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-review-checklist/evals/test-scenarios.md\",\"line\":1,\"evidence\":\"Narrative TDD record of five scenarios and two re-runs; no evals/evals.json with prompts, expected outputs and assertions, and no evals/trigger-queries.json.\",\"fix\":\"Add evals/evals.json with at least three prompts (casual, precise, one edge case such as an inline document or a fused Spec Kit spec.md), expected report shape, fixture paths and verifiable assertions, plus evals/trigger-queries.json with about 10 should-trigger and 10 should-not-trigger queries including near-misses (generic code review, writing a spec, reviewing a constitution).\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":201,\"evidence\":\"A tool Read/codegraph_explore/rg call is enough — don't also restate or re-print what it returned. Progress updates are a single short line.\",\"fix\":\"Keep the two failure modes (8000-line run, no Status line) and the print-findings-immediately rule; delete the restatement of native tool use, targeted reads and one-line progress.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/references/frameworks/SCHEMA.md\",\"line\":156,\"evidence\":\"Adding or updating a framework profile itself is author-only work, not part of a live review — see references/frameworks/SCHEMA.md.\",\"fix\":\"Delete this pointer from the reviewer body. SCHEMA.md already says a reviewer never loads it; keep it as an author document only.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":42,\"evidence\":\"Fallback says classify from the profile's doc_types glob, or by content shape, and if nothing resolves, ask the user. The later rule is if no profile is available, review with the generic checklists.\",\"fix\":\"Pick one fallback and state it once: if no profile matches, classify by the content-shape table and review with the generic checklists, naming that choice on Document Type; ask only when the document matches no archetype.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":120,\"evidence\":\"A plan must be executable by an engineer with zero project context: exact files, exact code, exact commands.\",\"fix\":\"Leave the severity lists; the superpowers profile already repeats this. Do not restate the same plan bar in both the checklist and the profile prose.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":283,\"evidence\":\"Common Mistakes has nine rows with reasons, but there is no Gotchas section for environment facts that defy assumptions beyond the path and budget rules.\",\"fix\":\"Add a short Gotchas list: Spec Kit plan.md is design, GSD plan filenames are uppercase, Kiro paths are best-available and closed-source, BMAD v4/v6 filenames drift.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":3,\"evidence\":\"Description names frameworks, archetypes and the orchestrator handoff, but not the document extensions or path markers an agent matches before loading.\",\"fix\":\"Framework-aware checklist reviewer for spec-driven-development documents. Classifies each file as intent, requirements, design or plan and reviews it against that checklist plus the source framework's conventions (EARS, RFC-2119 SHALL, Given/When/Then, OpenSpec ADDED/MODIFIED/REMOVED, Spec Kit [NEEDS CLARIFICATION] and [P], constitutional gates). Use when a requirements.md, design.md, spec.md, plan.md, tasks.md, proposal.md or prd.md under .kiro/, .specify/, openspec/, docs/superpowers/, .planning/ or docs/ needs review before the next step, even if the user only says \\\"check this spec\\\" or \\\"is this plan ready\\\". Not for writing or editing the document (ai-kit-spec-review-fixer) and not for reviewing source code.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":46,\"evidence\":\"If nothing resolves, ask the user, while the profile-missing path later says to review generically.\",\"fix\":\"Default to the generic archetype checklists when detection fails, and ask only when the content matches none of the four archetypes.\"}]}"
+  }
+ ],
+ "digest": "badfd951f94006e616816b372e831cd4825866a6be60368541f37ec354bc9e62",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "a2f942ac03a502a02e73a93e70ab0bf6ff84101dece54550b065c57dea01791f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "3f523461620dd101f1b70516aa7dac41538b5c66f9b443e9bffa012c30f13d66"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "32",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_framework_profiles.py"
+ ],
+ "prompt_sha256": "cd3e5e73b1676f9b7f4eefc9b5d40b5ac6d54164c2a1e1f4d6575d3b243d604e",
+ "round": 1,
+ "rubric_version": 4,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-spec-review-checklist",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": null
+}

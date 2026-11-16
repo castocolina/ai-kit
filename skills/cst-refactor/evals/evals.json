@@ -1,0 +1,71 @@
+{
+  "skill_name": "cst-refactor",
+  "evals": [
+    {
+      "id": "casual-rename-across-modules",
+      "prompt": "hey can you rename fetch_invoice_rows to load_invoice_rows everywhere in my project? it lives in invoice_service.py (copy of evals/files/invoice_service.py.txt) and a few places call it. the tests need to keep passing.",
+      "expected_output": "The agent checks for a clean working tree, copies the template if it is missing, runs rename-symbol on a narrow --paths, reads git diff, runs the tests, notes that the comment and the LOG_KEY string keep the old name, and runs rg -n for the old name.",
+      "files": ["evals/files/invoice_service.py.txt"],
+      "assertions": [
+        "The agent checks that the working tree is clean before it runs the codemod.",
+        "The agent runs rename-symbol with a narrow --paths and then reads git diff.",
+        "The agent notes that the comment and the LOG_KEY string keep the old name and runs rg -n for the old name."
+      ]
+    },
+    {
+      "id": "precise-add-parameter-at-call-sites",
+      "prompt": "Add a keyword parameter debug with default False to run_migration in src/, and pass debug=False at every existing call site so nothing else changes.",
+      "expected_output": "The agent runs add-parameter with --default False and --call-value False on a narrow --paths, reads git diff and runs the tests. It says that without --call-value the call sites stay unchanged.",
+      "files": [],
+      "assertions": [
+        "The agent passes --call-value False so that every call site gains the keyword argument.",
+        "The agent states that add-parameter without --call-value leaves the call sites unchanged.",
+        "The agent reads git diff after the run and runs the tests before it finishes."
+      ]
+    },
+    {
+      "id": "precise-remove-parameter-positional",
+      "prompt": "Remove the dry_run parameter from deploy_release everywhere in src/. Make sure nothing in the project still passes it.",
+      "expected_output": "The agent runs remove-parameter, warns that positional arguments at call sites are not removed, and audits each call in the diff.",
+      "files": [],
+      "assertions": [
+        "The agent warns that remove-parameter keeps positional call arguments, so each call needs a check.",
+        "The agent audits each call site in git diff for a leftover positional argument before it finishes.",
+        "The agent does not claim that remove-parameter cleaned up every call site without reading the diff."
+      ]
+    },
+    {
+      "id": "edge-shared-library-name",
+      "prompt": "Rename our connect method on SessionPool to open_session across src/ and tests/. We also use sqlite3 in a few of those files.",
+      "expected_output": "The agent warns that rename-symbol would also rename sqlite3.connect, narrows --paths to the files that define or use SessionPool, and restores any collateral match with git restore.",
+      "files": [],
+      "assertions": [
+        "The agent warns that rename-symbol renames sqlite3.connect too, because matching is by name only.",
+        "The agent narrows --paths to the files that define or use SessionPool before it runs the codemod.",
+        "The agent runs git restore on any file whose diff holds a collateral match and narrows --paths again."
+      ]
+    },
+    {
+      "id": "edge-parse-failure-midway",
+      "prompt": "The codemod stopped with a LibCST parser error after it rewrote two files. What do I do now?",
+      "expected_output": "The agent runs git restore on the touched paths, fixes or leaves out the file that failed to parse, and reruns the codemod on the remaining paths.",
+      "files": [],
+      "assertions": [
+        "The agent runs git restore <paths> on the touched paths before it does anything else.",
+        "The agent fixes or leaves out the file that failed to parse, then reruns the codemod on the remaining paths.",
+        "The agent does not treat the two rewritten files as safe to keep without reading git diff."
+      ]
+    },
+    {
+      "id": "edge-single-line-edit",
+      "prompt": "Rename the local variable tmp to buffer inside the parse function in parser.py. Nothing outside that function uses it.",
+      "expected_output": "The agent uses the Edit tool on that one function instead of a codemod, because the change is one function in one file.",
+      "files": [],
+      "assertions": [
+        "The agent uses the Edit tool for this change instead of running codemod_template.py.",
+        "The agent explains that a codemod adds overhead for a single-file, single-function rename.",
+        "The agent runs the tests for parser.py after the edit."
+      ]
+    }
+  ]
+}

@@ -1,12 +1,13 @@
 """E2E for the index step (30-01): real `node` and the checkout's project-local gsd-tools.
 
 `fold.py index` runs against a GSD fixture (a temp repo with `.planning/`), with the fakes
-from `tests/index_fakes.py` standing in for codegraph and graphify. Then the real
+from `tests/index_fakes.py` standing in for codebase-memory-mcp and graphify. Then the real
 `gsd-tools graphify status` must read the copy as built at HEAD and not stale.
 """
 
 import importlib.util
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -141,7 +142,12 @@ class TestWorktreeHook(unittest.TestCase):
         self.settle()
         for name in ("wt-a", "wt-b"):
             path = self.tmp / name
-            self.assertTrue((path / ".codegraph").is_dir(), name)
+            indexed = [call for call in index_fakes.index_calls(
+                index_fakes.fakes_dir(self.home) / "calls.log")
+                if call["name"] == "codebase-memory-mcp"]
+            self.assertTrue(any(call["argv"][:2] == ["cli", "index_repository"]
+                                and os.path.realpath(call["cwd"]) == os.path.realpath(path)
+                                for call in indexed), name)
             self.assertTrue((path / "graphify-out" / "graph.json").is_file(), name)
         queued = [line.split(" queued ", 1)[1] for line in self.log_lines() if " queued " in line]
         starts = [line.split(" start ", 1)[1] for line in self.log_lines() if " start " in line]

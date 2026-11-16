@@ -24,11 +24,12 @@ from typing import Any, NamedTuple, TextIO
 from ai_kit_spec.cache import cache_read_json, cache_write_json
 from ai_kit_spec.config_io import ConfigError
 from ai_kit_spec.detection import (
+    CBM_NAME,
     LOOPBACK_URLOPEN,
+    check_cbm_registered,
     detect_tool_availability,
-    probe_codegraph,
     resolve_agents_tooling_path,
-    run_codegraph_index,
+    run_cbm_index,
     runtime_id,
 )
 from ai_kit_spec.execute_selection import ExecuteSelectionError
@@ -80,8 +81,8 @@ class CliDeps(NamedTuple):
     refresh_quota_cache_fn: Callable[..., dict] = refresh_quota_cache
     detect_tool_availability_fn: Callable[[], dict] = detect_tool_availability
     resolve_agents_tooling_path_fn: Callable[[], str | None] = resolve_agents_tooling_path
-    probe_codegraph_fn: Callable[..., Any] = probe_codegraph
-    run_codegraph_index_fn: Callable[[str], bool] = run_codegraph_index
+    cbm_registered_fn: Callable[[str], bool] = check_cbm_registered
+    run_cbm_index_fn: Callable[[str], bool] = run_cbm_index
     write_resumable_state_fn: Callable[..., None] = cache_write_json
     route_all_fn: Callable[..., dict] = route_all
     which_fn: Callable[..., Any] = shutil.which
@@ -289,20 +290,19 @@ def _write_report_fallback(args: argparse.Namespace, fallback_content: str) -> N
             f.write(fallback_content)
 
 
-def _codegraph_registered_for_cli(cli_name: str, target_dir: str, deps: CliDeps) -> bool:
-    probe = deps.probe_codegraph_fn(cli_name)
-    if probe.install_command:
-        print(f"ai-kit-spec-execute-superpowers: codegraph MCP is not registered or not "
-              f"healthy for {cli_name}; install it with: {probe.install_command}",
-              file=sys.stderr)
-    # D-20 (amended RUN-34): index when codegraph is registered and not known unhealthy;
-    # codex exposes no health, so it is indexed with its health reported as unknown.
-    if probe.registered is not True or probe.healthy is False:
+def _code_index_registered_for_cli(cli_name: str, target_dir: str, deps: CliDeps) -> bool:
+    """D-20 (amended RUN-34, Phase 32.5): when the lane's host config registers
+    codebase-memory-mcp, index the target with one index_repository call; return the
+    registration. A failed index is reported on stderr and never reads as missing registration;
+    with no binary on PATH there is nothing to run, so no index and no stderr line."""
+    if not deps.cbm_registered_fn(cli_name):
         return False
-    if probe.healthy is None:
-        print(f"ai-kit-spec-execute-superpowers: codegraph MCP health for {cli_name} is unknown "
-              f"({probe.detail}); indexing anyway", file=sys.stderr)
-    return deps.run_codegraph_index_fn(target_dir)
+    if deps.which_fn(CBM_NAME) is None:
+        return True
+    if not deps.run_cbm_index_fn(target_dir):
+        print(f"codebase-memory-mcp: pre-dispatch index_repository failed in {target_dir}; "
+              "the lane may find a missing or stale index", file=sys.stderr)
+    return True
 
 
 def _load_dispatch_task_files(args: argparse.Namespace) -> tuple[dict, str, str]:
@@ -328,7 +328,7 @@ def _dispatch_guidance_for_cli(
         format_block=format_block,
         tool_availability=deps.detect_tool_availability_fn(),
         agents_tooling_path=deps.resolve_agents_tooling_path_fn(),
-        codegraph_registered=_codegraph_registered_for_cli(
+        code_index_registered=_code_index_registered_for_cli(
             injection["runtime"], args.target_dir, deps),
     )
 

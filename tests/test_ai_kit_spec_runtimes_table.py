@@ -22,6 +22,8 @@ from ai_kit_spec.detection import normalize_runtime_keys, runtime_id
 from ai_kit_spec.error_classifier import REASONS, STATUS_TO_REASON, reason_for_status
 from ai_kit_spec.model_catalog import split_catalog_meta
 
+from tests import host_fakes
+
 _SCRUB_NAMES = {
     "AI_AGENT",
     "CLAUDECODE",
@@ -106,7 +108,7 @@ class TestRuntimeTable(unittest.TestCase):
         self.assertEqual(set(labels), {"CURSOR_AGENT"})
         label = labels["CURSOR_AGENT"]
         self.assertTrue(label.startswith("live-verified (Phase 21)"), label)
-        self.assertIn("21-SMOKE-CURSOR.md", label)
+        self.assertIn("names only", label)
         self.assertIn("TUI confirmation pending", label)
         self.assertNotIn("source-inspected-only", label)
         doc = " ".join((detection.detect_current_runtime.__doc__ or "").split())
@@ -381,24 +383,25 @@ class TestGuardedAgentBinary(unittest.TestCase):
 
 
 class TestLegacyEntryPoints(unittest.TestCase):
-    def test_install_hint_and_mcp_list_use_the_cursor_id(self):
-        for name in ("cursor", "cursor-agent"):
-            command = detection.codegraph_install_command(name)
-            self.assertIn("--target=cursor", command)
-            self.assertNotIn("--target=cursor-agent", command)
-        self.assertEqual(
-            detection._MCP_LIST_COMMANDS["cursor"],
-            ("cursor-agent", "mcp", "list"),
-        )
+    def test_registration_reads_the_legacy_cursor_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"HOME": tmp}
+            self.assertEqual(
+                detection.cbm_registration("cursor-agent", env),
+                detection.cbm_registration("cursor", env),
+            )
 
     def test_find_alternative_reads_a_legacy_snapshot_key(self):
         snapshot = {
             "clis": {"cursor-agent": {"installed": True, "models": ["grok-4.6"]}},
         }
-        self.assertEqual(
-            detection.find_codegraph_alternative("grok", "grok-4.6", snapshot),
-            "cursor",
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            host_fakes.write_cbm_registration(tmp, ["cursor"])
+            self.assertEqual(
+                detection.find_code_index_alternative(
+                    "grok", "grok-4.6", snapshot, {"HOME": tmp}),
+                "cursor",
+            )
 
     def test_legacy_name_matches_the_runtime_id(self):
         self.assertIsNone(commands.execute_cli_error("cursor"))
@@ -450,13 +453,12 @@ class TestLegacyEntryPoints(unittest.TestCase):
 
 
 class TestRegistryIdsInTable(unittest.TestCase):
-    def test_command_and_codegraph_registries_use_table_ids(self):
+    def test_command_and_code_index_registries_use_table_ids(self):
         ids = set(detection.RUNTIMES)
         self.assertTrue(set(commands.SUPPORTED_EXECUTE_CLIS) <= ids)
         self.assertTrue(set(execute_dispatch.OS_SANDBOXED_EXEC) <= ids)
-        self.assertTrue(set(detection._SUPPORTED_CODEGRAPH_CLIENTS) <= ids)
-        self.assertTrue(set(detection._MCP_LIST_COMMANDS) <= ids)
-        self.assertTrue(set(detection._CODEGRAPH_CAPABLE_MULTI_PROVIDER_CLIS) <= ids)
+        self.assertTrue(set(detection._MULTI_PROVIDER_CLIS) <= ids)
+        self.assertTrue(set(detection.CBM_REGISTRATION_KEYS) <= ids)
 
     def test_curated_config_registries_use_table_ids(self):
         curated_path = os.path.join(

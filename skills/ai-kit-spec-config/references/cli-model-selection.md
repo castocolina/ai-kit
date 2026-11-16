@@ -5,7 +5,10 @@ session-default-only run skips this file. Each candidate registered from here is
 (runtime, model) pair: Step 2.4 stores `runtime` and `model` (plus that runtime's knobs),
 and the runner builds the argv. Only a runtime outside the runner table, grok today,
 stores a `command` instead. `$TOOLS_PY`, `$RUNTIMES_JSON` and `$SCRATCH` are the literal
-paths SKILL.md's Step 0 printed; every temporary file here goes under `$SCRATCH`.
+paths SKILL.md's Step 0 printed; every temporary file here goes under `$SCRATCH`. Every `Bash`
+call starts a fresh shell, so no value set in one block survives into the next: `$CATALOG_JSON`
+(item 1) and `$FILTERED_RUNTIMES_JSON` are literal paths too, substituted directly into every
+later block, never shell variables.
 
 For every CLI the user wants to consider (from Step 1's detection), build the ranked
 candidate list via the model-discovery catalog rather than guessing or searching per model.
@@ -17,8 +20,9 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
    path-string surgery — a dedicated `--kind` exists precisely so this skill never has to
    derive one cache filename from another):
     ```bash
-    CATALOG_JSON="$(python3 "$TOOLS_PY" cache-path --kind catalog)"
+    python3 "$TOOLS_PY" cache-path --kind catalog
     ```
+    Record the printed line as the literal absolute path `$CATALOG_JSON` stands for below.
     **The CLIs to consider were already chosen in SKILL.md's Step 2.2 stub** — do not re-ask.
     Group each kept multi-provider CLI's raw model list BEFORE any of it is
     discovered/matched/ranked. Two separate properties matter here: whether a CLI is
@@ -51,9 +55,8 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
    multi-provider CLI's `models` narrowed to the ids chosen above (every other kept CLI passes
    through unchanged, its `models` array included when it has one) — and use that filtered
    file, not the raw `$RUNTIMES_JSON`, as `--runtimes-json` in item 3's `fetch-model-catalog`
-   call below:
+   call below. `$FILTERED_RUNTIMES_JSON` is the literal path `<$SCRATCH>/filtered-runtimes.json`:
    ```bash
-   FILTERED_RUNTIMES_JSON="$SCRATCH/filtered-runtimes.json"
    python3 -c "
 import json
 snap = json.load(open('$RUNTIMES_JSON'))
@@ -70,7 +73,7 @@ json.dump(snap, open('$FILTERED_RUNTIMES_JSON', 'w'))
    rather than duplicating the family-grouping judgment call this step already makes with the
    user.
 2. **For any kept CLI with no `models` array (grok always; codex or pi when its listing
-   failed) that has NO existing `review-spec.toml` entry yet** (first-time setup): ask the
+   failed) that has NO existing lane entry in `config.toml` yet** (first-time setup): ask the
    user for a candidate model id now (never guess or trust training knowledge — WebSearch it for
    recency first, per this skill's `NEVER` list; confirmed live 2026-08-28 that guessing here,
    `gpt-5.6-sol-high` instead of the real `gpt-5.6-sol`, produces a candidate that fails
@@ -79,7 +82,7 @@ json.dump(snap, open('$FILTERED_RUNTIMES_JSON', 'w'))
    single-provider-CLI candidate flow through the SAME matching/enrichment/ranking path as
    everything else, instead of being registered blind.
 3. Refresh the catalog (this also picks up, automatically, every model already registered in
-   `review-spec.toml` for a kept CLI with no `models` array — a pair's `runtime`, or a custom
+   the `config.toml` roster for a kept CLI with no `models` array — a pair's `runtime`, or a custom
    grok entry, recognized by the binary its `{model}` command launches). **Capture its printed JSON to a
    file** — `fetch-model-catalog` prints the FULL reconciled `discovered` candidate list
    (runtimes snapshot + registered single-provider-CLI models + `--extra-candidate`, exactly
@@ -298,24 +301,24 @@ for purpose in ('review', 'execute'):
    `purpose` value (`"review"`, `"execute"`, or `"both"`) carried forward into Step 2.4's
    pair and Step 3's write below. **A candidate that comes through this ranked flow
    always gets an explicit `purpose` written — never left absent.** Absent `purpose` is reserved
-   strictly for a pre-migration `review-spec.toml` entry that predates this design; every NEW
+   strictly for an entry migrated from an old roster that predates this design; every NEW
    entry this wizard writes, from this step or from Step 2.7's session-default flow below, states
    its `purpose` explicitly (an absent `purpose` reads as "matches both roles" on the consumer
    side, which must never be an accident of a newly-written entry, only the documented
    legacy-compat default). This IS the answer to what used to be a separate `purpose`
    question — see Step 2.6 below.
-7. **Before finalizing a CLI outside codegraph support (today: `grok`), check for a
-   codegraph-capable alternative.** For each model confirmed onto such a CLI in the previous
-   item, run:
+7. **Before finalizing a CLI where ai-kit cannot read a codebase-memory-mcp registration
+   (today: `grok`), check for an alternative whose registration it can read.** For each model
+   confirmed onto such a CLI in the previous item, run:
    ```bash
-   python3 "$TOOLS_PY" check-codegraph-alternative --runtime <id> --model <model-id> \
+   python3 "$TOOLS_PY" check-code-index-alternative --runtime <id> --model <model-id> \
      --runtimes-json "$RUNTIMES_JSON"
    ```
    When `alternative_cli` is non-null, tell the user in one line before they finalize: `"<model>
-   is also reachable via <alternative_cli>, which supports codegraph_explore (grok CLI does
-   not) — consider registering it through <alternative_cli> instead for grounding-heavy
-   review/execute work."` This is informational only (best-effort substring match, per
-   `find_codegraph_alternative`'s own docstring) — the user still makes the final call; never
+   is also reachable via <alternative_cli>, which can carry the codebase-memory-mcp MCP tools
+   (grok gets only its CLI form) — consider registering it through <alternative_cli> instead
+   for grounding-heavy review/execute work."` This is informational only (best-effort substring
+   match, per `find_code_index_alternative`'s own docstring) — the user still makes the final call; never
    silently substitute the CLI or drop the original option.
 8. Confirm `is_router`/`batch_mode`/`fallback_quota` for any candidate where the catalog set them
    via naming heuristic (never an external source, per the design) — **but skip any field

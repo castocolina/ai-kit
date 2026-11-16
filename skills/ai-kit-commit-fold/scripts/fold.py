@@ -8,7 +8,7 @@ Usage:
   fold.py status --phase N [--repo DIR]
   fold.py start|guard|checkpoint|ready|show <unit selector> [--repo DIR]   (unit flow, plan 29.1-01)
   fold.py hotfix | restack | merge-chain | consent | settings | gsd-health   (unit flow)
-  fold.py index [--repo DIR]   (refresh the codegraph index and graphify graph; exit 0)
+  fold.py index [--repo DIR]   (refresh the codebase-memory-mcp index and graphify graph; exit 0)
 
 Exit 0 when folded or nothing to fold, 1 when refused, 2 for an unreadable or invalid checkpoint.
 The status subcommand is read-only and always exits 0.
@@ -78,7 +78,7 @@ def build_parser():
     status = sub.add_parser("status", help="list each plan of a phase as folded or not")
     status.add_argument("--phase", required=True, type=_phase)
     _add_common(status)
-    index = sub.add_parser("index", help="refresh the codegraph index and graphify graph")
+    index = sub.add_parser("index", help="refresh the codebase-memory-mcp index and graphify graph")
     index.add_argument("--repo", default=".", help="repository (default: current directory)")
     mode = index.add_mutually_exclusive_group()
     mode.add_argument("--detach", action="store_true",

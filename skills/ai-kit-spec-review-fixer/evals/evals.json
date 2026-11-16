@@ -1,0 +1,82 @@
+{
+  "skill_name": "ai-kit-spec-review-fixer",
+  "evals": [
+    {
+      "id": "casual-apply-plan-findings",
+      "prompt": "Fix the plan at evals/files/plan-bad.md using the review report in evals/files/plan-bad-review.md. Address every finding and end with the Fix Summary.",
+      "expected_output": "The HIGH finding is addressed in the Task 1 Files block only, the MEDIUM finding is addressed or deferred with a reason, and the Fix Summary ends with Status Edits Applied.",
+      "files": ["evals/files/plan-bad.md", "evals/files/plan-bad-review.md"],
+      "assertions": [
+        "The Task 1 Files block names skills/commit-message/SKILL.md in place of the TBD placeholder.",
+        "The MEDIUM finding about the Goal line is addressed, or deferred under its own heading with a reason.",
+        "The Fix Summary ends with a line starting ### Status: Edits Applied."
+      ]
+    },
+    {
+      "id": "precise-disagree-with-high",
+      "prompt": "The author believes the HIGH finding about Task 1 Files in evals/files/plan-bad-review.md is wrong. Fix evals/files/plan-bad.md from that review anyway and end with the Fix Summary.",
+      "expected_output": "The HIGH finding is addressed with the disagreement noted on its Findings addressed line, and it never appears under Findings skipped.",
+      "files": ["evals/files/plan-bad.md", "evals/files/plan-bad-review.md"],
+      "assertions": [
+        "The HIGH finding appears under the Findings addressed heading with the disagreement noted on that line.",
+        "The HIGH finding does not appear under the Findings skipped heading in the Fix Summary.",
+        "The Task 1 Files block is still edited, because a CRITICAL or HIGH finding is always addressed."
+      ]
+    },
+    {
+      "id": "edge-reevaluate-escalates",
+      "prompt": "Fix evals/files/design-good.md from the report in evals/files/sample-review-report.md and end with the Fix Summary.",
+      "expected_output": "The CRITICAL finding asks to re-evaluate whether the --draft flag is still warranted, so it is escalated whole with no edit and the Status line reads Escalation Required.",
+      "files": ["evals/files/design-good.md", "evals/files/sample-review-report.md"],
+      "assertions": [
+        "The CRITICAL finding is listed under Findings escalated with a reason and the decision the caller must make.",
+        "The design document is not edited for the escalated finding, so its Context section is unchanged.",
+        "The Status line reads Escalation Required, because a finding was escalated."
+      ]
+    },
+    {
+      "id": "precise-cross-document-both-present",
+      "prompt": "Fix evals/files/design-good.md and evals/files/plan-bad.md together from the cross-document report in evals/files/cross-doc-review.md. Edit every named document in one pass.",
+      "expected_output": "Both documents call the flag --draft with the same one-sentence behaviour, both are edited in one pass, and the Fix Summary reports Edits Applied.",
+      "files": ["evals/files/design-good.md", "evals/files/plan-bad.md", "evals/files/cross-doc-review.md"],
+      "assertions": [
+        "The design Context section and the plan Goal line describe --draft with the same one-sentence behaviour.",
+        "Both documents are edited in the same pass, and neither is left inconsistent with the other.",
+        "The Status line reads Edits Applied, because the finding was edited and nothing was escalated."
+      ]
+    },
+    {
+      "id": "edge-cross-document-one-missing",
+      "prompt": "Fix evals/files/design-good.md from the cross-document report in evals/files/cross-doc-review.md. The plan document is not available to you in this run.",
+      "expected_output": "The cross-document finding is escalated whole because one named document was not given, the design is left unedited, and the Status line reads Escalation Required.",
+      "files": ["evals/files/design-good.md", "evals/files/cross-doc-review.md"],
+      "assertions": [
+        "The cross-document finding is listed under Findings escalated, and the entry names the missing plan document.",
+        "The design document is left unedited for that finding, so no partial fix leaves the two documents inconsistent.",
+        "The Status line reads Escalation Required, because the whole finding was escalated."
+      ]
+    },
+    {
+      "id": "edge-inline-document",
+      "prompt": "The caller pastes the full text of a design document inline in the prompt, with no file path, and asks for a fix from a review report with one HIGH finding.",
+      "expected_output": "The run stops with the Failure status for a document that is not on disk, and no edit is made.",
+      "files": [],
+      "assertions": [
+        "The Fix Summary uses the line ### Status: Failure — document not on disk, with the reason.",
+        "No document is edited, because inline text would vanish when the run ends.",
+        "The caller is told to persist the document to disk and re-invoke with its path."
+      ]
+    },
+    {
+      "id": "edge-medium-only-skipped",
+      "prompt": "The review report holds one MEDIUM finding that the author rejects as a matter of style. Fix the plan from that report and end with the Fix Summary.",
+      "expected_output": "The MEDIUM finding is listed under Findings skipped with a stated reason, and the Status line reads No Edits.",
+      "files": [],
+      "assertions": [
+        "The MEDIUM finding appears under Findings skipped with the author's disagreement in one sentence.",
+        "No document is edited when the only finding is skipped.",
+        "The Status line reads No Edits, because nothing was edited and nothing was escalated."
+      ]
+    }
+  ]
+}
