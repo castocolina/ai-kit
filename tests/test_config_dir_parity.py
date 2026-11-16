@@ -4,9 +4,9 @@ gives <xdg>/ai-kit; otherwise an absolute HOME gives <home>/.config/ai-kit; othe
 no user dir. HOME comes from the environment only: every copy runs with the ambient home lookups
 patched to fail, so no test reads a real config.
 
-Copies: config_io.cfg_config_base, local_secrets.secrets_env_path, jev_review._config_dir, the
-runner's aiKitConfigDir (node) and, in Task 2, tools/common_config.cfg_ai_kit_dir and
-setup.resolve_paths."""
+Copies: config_io.cfg_config_base, local_secrets.secrets_env_path, jev_review._config_dir,
+jev_config.cfg_config_base (the jev-fast-decision copy, plan 34-01), the runner's aiKitConfigDir
+(node) and, in Task 2, tools/common_config.cfg_ai_kit_dir and setup.resolve_paths."""
 import importlib.util
 import json
 import os
@@ -20,6 +20,7 @@ from unittest import mock
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPEC_DIR = os.path.join(REPO, "skills", "ai-kit-spec-review")
 JEV_SCRIPT = os.path.join(REPO, "skills", "jev-fast-decision", "scripts", "jev_review.py")
+JEV_CONFIG = os.path.join(REPO, "skills", "jev-fast-decision", "scripts", "jev_config.py")
 RUNNER_TEMPLATE = os.path.join(REPO, "skills", "ai-kit-spec-review", "references", "cross-ai.mjs")
 ERROR = "ERROR"
 
@@ -57,6 +58,7 @@ def _load_file(name, path):
 
 
 jev_review = _load_file("jev_review_parity", JEV_SCRIPT)
+jev_config = _load_file("jev_config_parity", JEV_CONFIG)
 
 
 def _outcome(fn):
@@ -124,6 +126,17 @@ class TestConfigDirParity(unittest.TestCase):
         with mock.patch("os.path.expanduser", side_effect=AssertionError("ambient home lookup")):
             outcomes = [_outcome(lambda env=env: _jev_dir(env)) for env, _ in CASES]
         self._assert_table("jev_review._config_dir", outcomes)
+
+    def test_jev_config_copy(self):
+        def user_dir(env):  # the copy has its own ConfigError class, so map it here
+            try:
+                return jev_config.cfg_config_base(env)
+            except jev_config.ConfigError:
+                return ERROR
+
+        with mock.patch("os.path.expanduser", side_effect=AssertionError("ambient home lookup")):
+            outcomes = [user_dir(env) for env, _ in CASES]
+        self._assert_table("jev_config.cfg_config_base", outcomes)
 
     def test_common_config_copy(self):
         with mock.patch("os.path.expanduser", side_effect=AssertionError("ambient home lookup")):
