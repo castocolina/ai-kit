@@ -2521,6 +2521,22 @@ class TestDocs(unittest.TestCase):
                                     r"with your own reasoning")
         self.assertRegex(self.body, r"consent_required_for_remote[\s\S]*ask the user")
 
+    def test_doc_result_tells_screen_from_ladder(self):
+        # loop 34 judge finding D8-1: a ladder result is read per item (`decided_by` and each
+        # backend column's `fallback`/`error`), not as a screen call's `answers`/`needs_fallback`.
+        section = _section(self.body, "## Read the result")
+        screen = next(line for line in section.splitlines() if line.startswith("- Screen call"))
+        ladder = next(line for line in section.splitlines() if line.startswith("- `ladder`"))
+        for needle in ("`answers`", "`errors`", "`needs_fallback: true`"):
+            self.assertIn(needle, screen)
+        for needle in ("`items[<id>]`", "`decided_by`", "`own_reasoning`", "`fallback: true`",
+                       "`error`"):
+            self.assertIn(needle, ladder)
+        column = jev_ladder.typed_answer({"top": 0.9, "needs_fallback": False, "choice": "a",
+                                          "model": "jev-1.14.0"},
+                                         {"type": "choice", "criteria": {"a": "x"}})
+        self.assertIn("fallback", column)
+
     def test_doc_matrix_matches_table(self):
         # Every matrix cell is non-empty, one of the four statuses, carries a source and an
         # ISO date, and equals the status of that row's `cells` entry in the client table.

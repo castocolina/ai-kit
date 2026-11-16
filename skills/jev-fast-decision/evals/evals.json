@@ -9,7 +9,7 @@
       "assertions": [
         "The agent runs scripts/jev_review.py with exactly one item of type noul that has an id, instructions and context.",
         "The item's evidence names the test and its pass history, not the CSV contents, log lines or any runner secret.",
-        "When the item has needs_fallback true or an error, the agent states its own decision and does not present the ladder result as a verdict.",
+        "When the answer has needs_fallback true or an error (on a ladder call: decided_by is own_reasoning), the agent states its own decision and does not present the result as a verdict.",
         "The final answer calls the jev answer advisory and does not treat it as a gate."
       ]
     },
@@ -22,7 +22,7 @@
         "The request is one item with type choice, a criteria map of exactly three options, and instructions that end with a question mark.",
         "Each criteria description states what the option changes, with no word such as best, easy, recommended or simplest.",
         "The agent makes one ladder call and reads decided_by and top before it reports the choice.",
-        "When needs_fallback is true for the item, the agent picks the option itself and says that it did."
+        "When the item's decided_by is own_reasoning (no backend column answered with fallback false), the agent picks the option itself and says that it did."
       ]
     },
     {

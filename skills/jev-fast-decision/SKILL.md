@@ -5,13 +5,11 @@ description: "Use when a fast, cheap typed judgment beats a full reasoning pass:
 
 # Jev fast-decision (shared System One client)
 
-Advisory typed judgments from local Laya or a consented remote (TypeSafe).
-
 ## Pick the backend
 
 From this skill's directory, run `python3 -B scripts/jev_review.py --probe` once per session (`disabled` means jev is off: decide yourself); read `backends/<selected>.md` before that backend's first call.
 
-- `laya`: at `[jev] laya_url` (default local), probed first; one call per item (state-bleed measured); consent only off loopback.
+- `laya`: at `[jev] laya_url` (default local), probed first; one call per item; consent only off loopback.
 - `typesafe`: needs `TYPESAFE_API_KEY` in the environment; one batch; consent always.
 
 `JEV_BACKEND=<name>` overrides auto, never falls back. Without consent, auto uses a loopback laya only.
@@ -29,7 +27,7 @@ python3 -B scripts/jev_review.py ladder <<'JSON'
 JSON
 ```
 
-An installed copy without `ladder` exits 2 with `invalid choice`: treat it as no backend and re-run the ai-kit installer.
+A copy without `ladder` exits 2 with `invalid choice`: treat it as no backend and re-run the ai-kit installer.
 
 ## Call it
 
@@ -37,8 +35,9 @@ Screen calls: request shape in `reference.md` (`## Request shape`). Read `refere
 
 ## Read the result
 
-- `ok` → match ids to `answers` or `errors`. `needs_fallback: true` → **you decide that item with your own reasoning**; otherwise advisory.
-- A confident Laya answer is not proven accurate: the latest calibration (32 cases, dated in `## Evidence`) found 50% of its confident answers right (`backends/laya.md`).
+- Screen call: match ids to `answers` or `errors`; `needs_fallback: true` → **you decide that item with your own reasoning**.
+- `ladder`: read `items[<id>]`: `decided_by` names the advisory rung, `own_reasoning` → you decide it too; a column with `fallback: true` or `error` did not decide.
+- A confident Laya answer is not proven accurate: the latest calibration (32 cases) found 50% of confident answers right (`backends/laya.md`).
 - `consent_required_for_remote` → ask the user (Consent below).
 - otherwise → the status table in `reference.md`.
 
@@ -56,7 +55,7 @@ A remote row at `consent_required_for_remote` (a Laya off loopback too) needs th
 
 ## When the docs matter
 
-When you design a new item shape, meet a new TypeSafe feature or model id, or a capability fact looks stale: follow the `typesafe:typesafe-ai` skill's live-docs flow if installed (also as `typesafe-ai`); else `https://docs.typesafe.ai/llms.txt`, then `changelog.md`, then `models.md` (`reference.md`, `## Docs flow`). Never install or copy that skill.
+When you design a new item shape, meet a new TypeSafe feature or model id, or a capability fact looks stale: follow the `typesafe:typesafe-ai` skill's live-docs flow if installed (also as `typesafe-ai`); else `https://docs.typesafe.ai/llms.txt`, then `changelog.md`, then `models.md`. Never install or copy that skill.
 
 ## Evidence
 
