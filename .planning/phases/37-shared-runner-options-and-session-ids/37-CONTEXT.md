@@ -299,6 +299,11 @@ choosing effort by task (42).
   this group. *(amended 2026-11-16, 38.1 D-21: the status line gets no new key from 38.1; the report line gains `check=`; the
   runner's `--describe` gains a `classes` list; 38.1 adds the class `bad_request`, apart from this phase's setting reasons.)*
 - **Phase 39**: the capability block reads the final argv from `--print-argv`; the window check is unrelated to `--context`.
+  *(amended 2026-11-16, 39 D-02, D-11: Phase 39's plan, which runs after this one, adds to the planner a `capabilities` result
+  (write, shell, skills, mcp, each with a label) printed as one more `--print-argv` line and listed by `--describe`, and one more
+  setting `--skill-path`; this phase's planner must stay open to a row field per setting so that addition is a row field and a
+  function, not a rewrite. A context form applied by this phase's rows makes the lane's window `unknown` for 39's size check
+  unless the user stated one.)*
 - **Phase 40**: reads `escalate=` for lane switching, passes session ids between review rounds where it wants continuity, and
   routes custom lanes through `--argv-file` (so they get the status line and tree check).
 - **Phase 41**: executors resume fix rounds with the printed `session=`; the `no_formula` route is already gone.
