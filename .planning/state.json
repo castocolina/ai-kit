@@ -76,7 +76,7 @@
     {
       "number": "34",
       "name": "jev backends by host and Laya calibration",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "35",
@@ -196,8 +196,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step",
-    "reason": "Phase 15 of 38 · 37% · executing"
+    "label": "Advance to the next step (plan phase 35)",
+    "reason": "Phase 16 of 38 — needs a plan"
   },
-  "updated_at": "2026-11-15T21:14:34.167Z"
+  "updated_at": "2026-11-16T03:09:24.998Z"
 }

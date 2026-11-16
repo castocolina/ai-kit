@@ -120,7 +120,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 32.4: Batch 4, planning skills and the closing report** - goal-prompt, spec-discuss and curated-config keep their bar with their fixes; the closing report shows all 15 judged skills *(amended 2026-11-07, 32.1 D-01)* (completed 2026-11-13)
 - [x] **Phase 32.5: codebase-memory-mcp replaces codegraph** - every live index, check, rule, lane guidance and doc uses codebase-memory-mcp; history unchanged; `.planning/` kept out of the index *(inserted 2026-11-14, owner decision; run with Phases 33-34 through `/gsd-autonomous`)* (completed 2026-11-14)
 - [x] **Phase 33: One config design** - One neutral config.toml per layer with role-keyed lanes; review-spec.toml and the retry block migrate on their own; no foreign keys, runs without GSD *(rewritten 2026-11-14, owner decisions)* (completed 2026-11-15)
-- [ ] **Phase 34: jev backends by host and Laya calibration** - jev picks its backend per host from ai-kit's config; Laya measured against its floor
+- [x] **Phase 34: jev backends by host and Laya calibration** - jev picks its backend per host from ai-kit's config; Laya measured against its floor (completed 2026-11-16)
 - [ ] **Phase 35: Model discovery and catalog** - spec-config lists every model on every host with honest source, usability and tier labels
 - [ ] **Phase 36: spec-config as the hub** - Every spec skill chains spec-config; reviewers and executors kept apart with opt-in escalation
 - [ ] **Phase 37: Shared runner options and session ids** - One runner for GSD cross-AI and ai-kit lanes, with per-call settings and resumable sessions
@@ -644,7 +644,7 @@ Plans:
   8. A new TypeSafe model id or unknown feature triggers one fetch of the official skill's doc flow and a record of what changed and which jev features it could serve (JEV-12). *(added 2026-11-14)*
   9. A guard test keeps Zen out of the skill and fails on any step that delegates Laya's or the official skill's install or upgrade to another repository (JEV-13). *(added 2026-11-14)*
 
-**Plans**: 10/10 plans executed in 8 waves *(revised 2026-11-15 per cross-AI review cycle 2: 34-08 waits for 34-07, whose skill text its guard scans and may reword)*
+**Plans**: 10/10 plans complete in 8 waves *(revised 2026-11-15 per cross-AI review cycle 2: 34-08 waits for 34-07, whose skill text its guard scans and may reword)*
 
 Plans:
 **Wave 1**
@@ -1061,7 +1061,7 @@ Plans:
 | 32.4. Batch 4, planning skills and the closing report | 9/9 | Complete    | 2026-11-13 |
 | 32.5. codebase-memory-mcp replaces codegraph | 10/10 | Complete    | 2026-11-14 |
 | 33. One config design | 12/12 | Complete    | 2026-11-15 |
-| 34. jev backends by host and Laya calibration | 10/10 | In Progress | - |
+| 34. jev backends by host and Laya calibration | 10/10 | Complete    | 2026-11-16 |
 | 35. Model discovery and catalog | 0/TBD | Not started | - |
 | 36. spec-config as the hub | 0/TBD | Not started | - |
 | 37. Shared runner options and session ids | 0/TBD | Not started | - |

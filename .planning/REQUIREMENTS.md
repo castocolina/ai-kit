@@ -631,14 +631,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### jev
 
-- [ ] **JEV-01**: jev picks its backend per host (Laya first with a configurable URL and a first-run question,
+- [x] **JEV-01**: jev picks its backend per host (Laya first with a configurable URL and a first-run question,
   TypeSafe from the environment), and the home-file key fallback is strictly last. The probe names a missing key
   source and the terminal-multiplexer hint (a long-lived multiplexer server keeps the environment it started with)
   without printing any value; the skill gives credential guidance for non-interactive shells; and the home-file
   fallback is removed once a test shows agent shells inherit the key from the environment, or kept with a recorded
   reason. *(amended 2026-11-15, Phase 34 plans: the Laya URL comes from `[jev] laya_url` at any address, project over user, with `JEV_LAYA_URL`/`AI_KIT_LAYA_URL` as session overrides; a Laya host off loopback needs the same host-bound consent as a remote backend; the probe asks `needs_answer: laya_url` once; the home-file key fallback is kept with a recorded reason)*
 - [x] **JEV-02**: OpenCode Zen is gone from the jev-fast-decision skill.
-- [ ] **JEV-03**: Laya is calibrated against its accuracy floor, the opencode judge lane is re-judged, and the
+- [x] **JEV-03**: Laya is calibrated against its accuracy floor, the opencode judge lane is re-judged, and the
   calibration script is documented. *(amended 2026-11-07, owner decision from the jev and typesafe-ai research:
   before calibrating, Laya is upgraded from 0.4.2 to 0.4.27 or the reason to stay is recorded; the calibration
   records how accurate confident Laya answers are, tied to the Laya version and checkpoint revision; and the skill
@@ -656,7 +656,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [x] **JEV-06**: The jev ladder client has a shared home that every classifying skill uses, outside spec-discuss;
   skill text treats jev as a black box: it says only to ask that skill and follow its SKILL.md, carries no backend,
   consent or probe detail, and treats `needs_fallback` or no answer as the rule-based default deciding.
-- [ ] **JEV-07**: A knob in ai-kit's config turns jev classification on or off for every skill; it is asked once
+- [x] **JEV-07**: A knob in ai-kit's config turns jev classification on or off for every skill; it is asked once
   when absent, and with it off every skill behaves exactly as if jev were not installed, shown by tests in a scratch
   home. *(amended 2026-11-15, Phase 34 plans: the knob is `[jev] enabled`, project over user; `GSD_PATH_JEV` is a session override both ways (`1` on, any other value off) and callers no longer force it; absent, jev stays on and the probe asks `needs_answer: enabled` once; hooks see only the project layer)*
 - [x] **JEV-08**: jev-fast-decision's SKILL.md replaces "Required reading" with "read X when Y" pointers: when
@@ -671,7 +671,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   arithmetic, counting, dates or durations, or with double negatives; re-ask a close choice with the options
   reordered; give a choice a no-match option; run a cheap yes/no screen before an expensive step. A doc-contract test
   pins each rule. *(added 2026-11-07, owner decision from the jev and typesafe-ai research)*
-- [ ] **JEV-10**: jev's probe reads Laya's `/health` body and `/openapi.json`, caches them for 24 hours or until a
+- [x] **JEV-10**: jev's probe reads Laya's `/health` body and `/openapi.json`, caches them for 24 hours or until a
   checkpoint revision changes, compares them with a recorded known-features list and warns on each difference,
   without ever upgrading a capability cell to verified; the package version is labelled not exposed. An on-demand
   `--check-updates`, cached for 7 days and never run on a normal call, follows the official skill's doc flow and
@@ -681,16 +681,16 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   "not exposed" with a server fingerprint — and when that version's capabilities are unknown it fetches Laya's
   published notes (PyPI, README) once and records them; a record stays valid until the version or fingerprint
   changes, replacing the fixed 24-hour and 7-day caches; `--check-updates` stays as the on-demand refresh)* *(amended 2026-11-15, Phase 34 plans: when Laya has unloaded its checkpoints the probe reuses the last recorded fingerprint with the same OpenAPI part; a probe under a deadline (hooks, detect) never fetches)*
-- [ ] **JEV-11**: Two decision-path records: Laya's official MCP server stays outside jev's decision path, because it
+- [x] **JEV-11**: Two decision-path records: Laya's official MCP server stays outside jev's decision path, because it
   would bypass the one-item-per-call rule, the size guard, the thresholds, the receipts and the answer log; and a
   spike records whether several questions over one shared state answer better on TypeSafe than the merged contexts
   jev sends today. *(added 2026-11-07, owner decision from the jev and typesafe-ai research)*
-- [ ] **JEV-12**: When the remote TypeSafe backend answers with a model id the skill has not recorded, or a
+- [x] **JEV-12**: When the remote TypeSafe backend answers with a model id the skill has not recorded, or a
   primitive or option it does not know, the skill follows the official skill's doc flow once (`llms.txt`,
   `changelog.md`, `models.md`) and records what changed and which of its features it could serve; public
   requests only, never on the answer path. *(added 2026-11-14, owner decision: learn from `typesafe-ai`'s remote
   usage)*
-- [ ] **JEV-13**: A guard test keeps Zen and any other removed backend out of jev-fast-decision and fails on a
+- [x] **JEV-13**: A guard test keeps Zen and any other removed backend out of jev-fast-decision and fails on a
   step that hands Laya's or the official skill's install or upgrade to tools-installer or another repository.
   *(added 2026-11-14, owner decision)*
 
@@ -998,19 +998,19 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | DIST-09 | Phase 52 | Pending |
 | ARCH-01 | Phase 52 | Pending |
 | ARCH-02 | Phase 52 | Pending |
-| JEV-01 | Phase 34 | Pending |
+| JEV-01 | Phase 34 | Complete |
 | JEV-02 | Phase 32.1 | Complete |
-| JEV-03 | Phase 34 | Pending |
+| JEV-03 | Phase 34 | Complete |
 | JEV-04 | Phase 54 | Pending |
 | JEV-05 | Phase 54 | Pending |
 | JEV-06 | Phase 29 | Complete |
-| JEV-07 | Phase 34 | Pending |
+| JEV-07 | Phase 34 | Complete |
 | JEV-08 | Phase 32.1 | Complete |
 | JEV-09 | Phase 32.1 | Complete |
-| JEV-10 | Phase 34 | Pending |
-| JEV-11 | Phase 34 | Pending |
-| JEV-12 | Phase 34 | Pending |
-| JEV-13 | Phase 34 | Pending |
+| JEV-10 | Phase 34 | Complete |
+| JEV-11 | Phase 34 | Complete |
+| JEV-12 | Phase 34 | Complete |
+| JEV-13 | Phase 34 | Complete |
 | FEAT-01 | Phase 30.1 | Complete |
 | FEAT-02 | Phase 54 | Pending |
 | FEAT-03 | Phase 54 | Pending |
