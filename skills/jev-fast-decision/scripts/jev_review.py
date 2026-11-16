@@ -711,6 +711,8 @@ def _public_get(url):
         raise OSError("deadline") from None
     except urllib.error.HTTPError as answered:
         answered.close()
+        if answered.code == 404:  # an answer ("no such page"), not an outage: jev_learn settles it
+            raise FileNotFoundError("http_404") from None
         raise OSError(f"http_{answered.code}") from None
     except http.client.HTTPException as broken:
         raise OSError(type(broken).__name__) from broken
@@ -737,7 +739,15 @@ def _laya_learn(row, entry, force=False, fetch_allowed=True):
         fields.update(version=None, version_source="unreachable", fingerprint=None,
                       record="unknown")
         return fields
+    if not fetch_allowed:  # a probe under a run deadline reads nothing upstream or from Laya
+        fields.update(version=None, version_source="not_read", fingerprint=None,
+                      record="skipped_deadline")
+        return fields
     endpoint = row["url"]()[0]
+    if endpoint is None:  # the address changed after the probe resolved it: learn nothing (WR-101)
+        fields.update(version=None, version_source="unreachable", fingerprint=None,
+                      record="unknown")
+        return fields
     health = _get_json(_origin(endpoint, "/health"), _PROBE_TIMEOUT, row["remote"]) or {}
     openapi = _get_json(_origin(endpoint, "/openapi.json"), _PROBE_TIMEOUT, row["remote"])
     verified = frozenset(feature for feature, cell in row["cells"].items()
@@ -745,7 +755,10 @@ def _laya_learn(row, entry, force=False, fetch_allowed=True):
     server = {"health": health, "openapi": openapi,
               "configured_version": _laya_configured_version()}
     options = {"force": force, "fetch_allowed": fetch_allowed, "verified": verified}
-    fields.update(_LEARN.learn_laya(server, _state_dir(), _public_get, options))
+    try:
+        fields.update(_LEARN.learn_laya(server, _state_dir(), _public_get, options))
+    except OSError:  # no absolute home to hold the record (WR-501)
+        fields["record"] = "write_failed"
     return fields
 
 
@@ -837,13 +850,18 @@ def _env_key(name):
     return (value, "env") if value else (None, None)
 
 
-def _remote_url(raw):
+def _remote_url(raw, malformed="invalid_url"):
     """(url, None) or (None, "insecure_url"): a remote row's key travels only over https.
+    An address urlsplit cannot parse gives `malformed` as the reason.
 
     Plain http is allowed for a loopback host alone (the in-process test stubs); any other
     scheme or a non-loopback http host is refused before a socket opens (T-21.1-07)."""
-    parts = urllib.parse.urlsplit(raw)
-    if parts.scheme == "https" or (parts.scheme == "http" and _is_loopback(parts.hostname)):
+    try:
+        parts = urllib.parse.urlsplit(raw)
+        host = parts.hostname
+    except ValueError:  # e.g. an unclosed IPv6 bracket: a probe error naming the key, no traceback
+        return None, malformed
+    if parts.scheme == "https" or (parts.scheme == "http" and _is_loopback(host)):
         return raw, None
     return None, "insecure_url"
 
@@ -896,9 +914,10 @@ def _mycreds_value(path, names):
     never `source`d, and the value never enters any child process env; the same 0600 rule as
     `secrets.env` applies (group/other bits → refuse before the value is read).
 
-    Transitional D-07 fallback: the key normally comes from the environment (`TYPESAFE_API_KEY`,
-    which the owner's shell gets by sourcing this file); running agents only fall back to the
-    file until they inherit the env. Remove once the env is the only path again."""
+    D-07 fallback, kept with a recorded reason: the key normally comes from the environment
+    (`TYPESAFE_API_KEY`, which the owner's shell gets by sourcing this file), but no test can show
+    that every agent shell inherits it, since a multiplexer server or a host started before the
+    export keeps its old environment."""
     try:
         if os.stat(path).st_mode & _WORLD_READABLE:
             return None, "world_readable"
@@ -935,18 +954,23 @@ def _typesafe_url():
     (docs.typesafe.ai/api.md, checked 2026-10-23).
     """
     default = "https://api.typesafe.ai/v1/systemone"  # the row's own endpoint (D-06)
-    return _remote_url(os.environ.get("JEV_TYPESAFE_URL", default).strip())
+    return _remote_url(os.environ.get("JEV_TYPESAFE_URL", default).strip(),
+                       "invalid_url:jev_typesafe_url")
 
 
 def _typesafe_key():
     """D-07's order: `TYPESAFE_API_KEY`, `JEV_API_KEY`, `JEV_API_KEY_FILE`,
     `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, the
     `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` state file, and last
-    `~/.mycreds` — a transitional fallback (shortcut: remove once running agents inherit
-    `TYPESAFE_API_KEY` from their shell; the env stays the documented path). Every file is
-    0600; `~/.mycreds` is parsed, never sourced."""
+    `~/.mycreds`. Kept, with a recorded reason: no test can show that every agent shell inherits
+    `TYPESAFE_API_KEY` (a multiplexer server or host started before the export keeps its old
+    environment); the env stays the documented path. Every file is 0600; `~/.mycreds` is
+    parsed, never sourced."""
     key_file = os.path.expanduser(os.environ.get("JEV_API_KEY_FILE", "").strip())
-    state = os.environ.get("XDG_STATE_HOME", "").strip() or os.path.expanduser("~/.local/state")
+    try:
+        state_key = os.path.join(_state_base(), "typesafe", "api_key")
+    except OSError:
+        state_key = ""  # no absolute home: an empty path reads as missing_file
     try:
         secrets = os.path.join(_config_dir(), "secrets.env")
     except OSError:
@@ -957,7 +981,7 @@ def _typesafe_key():
          lambda: _read_key(key_file) if key_file else (None, "missing_file")),
         ("file:secrets.env", lambda: _secrets_env_value(secrets, "TYPESAFE_API_KEY")),
         ("file:secrets.env", lambda: _secrets_env_value(secrets, "JEV_API_KEY")),
-        ("state", lambda: _read_key(os.path.join(state, "typesafe", "api_key"))),
+        ("state", lambda: _read_key(state_key)),
         ("file:~/.mycreds", lambda: _mycreds_value(mycreds, ("TYPESAFE_API_KEY",
                                                              "JEV_API_KEY"))),
     ])
@@ -995,20 +1019,29 @@ def _typesafe_classify(error):
 
 def _typesafe_note_model(model_id):
     """D-09: a new versioned model id an answer named becomes a local pending note. No network."""
-    return _LEARN.note_model(_state_dir(), model_id)
+    try:
+        return _LEARN.note_model(_state_dir(), model_id)
+    except OSError:  # no absolute home to hold the note (WR-501)
+        return False
 
 
 def _typesafe_note_unknown(model_id, names):
     """Primitive or option names this skill does not know, noted under a model id (review C1-10).
     `model_id` None means the latest recorded id. No network."""
-    return _LEARN.note_unknown(_state_dir(), model_id, names)
+    try:
+        return _LEARN.note_unknown(_state_dir(), model_id, names)
+    except OSError:  # no absolute home to hold the note (WR-501)
+        return False
 
 
 def _typesafe_learn(_row, _entry, force=False, fetch_allowed=True):
     """Read the official TypeSafe doc flow once per pending model id (D-09, SPEC R4). Only the
     probe and `--check-updates` call this; the answer path never does."""
-    return _LEARN.learn_models(_state_dir(), _public_get,
-                               {"force": force, "fetch_allowed": fetch_allowed})
+    try:
+        return _LEARN.learn_models(_state_dir(), _public_get,
+                                   {"force": force, "fetch_allowed": fetch_allowed})
+    except OSError:  # no absolute home to hold the record (WR-501)
+        return {"model_record": "write_failed"}
 
 
 Row = dict[str, Any]
@@ -1269,7 +1302,9 @@ def allowed_remotes():
 def _remote_allowed(row):
     """Whether this row may touch the network at all: a row that needs no consent always may.
     `_send` checks this before any socket opens (SPEC R6 ordering edge, T-21.1-02)."""
-    return not _needs_consent(row) or row["name"] in allowed_remotes()
+    if not _needs_consent(row):
+        return True
+    return (row["remote"] and _gate_open(row["name"])) or bool(record_consent(row))
 
 
 def _keyed_remotes():
@@ -1308,7 +1343,7 @@ def consent_command(action, backend):
             return _leftover_consent(action, backend)
         return {"ok": False, "reason": "unknown_backend"}
     if not _needs_consent(row):
-        return {"ok": False, "reason": "not_remote"}  # on loopback: no record to give
+        return _stored_consent(action, backend, row)
     host = _row_host(row)
     if host is None:
         return {"ok": False, "reason": "no_endpoint_configured"}
@@ -1324,6 +1359,25 @@ def consent_command(action, backend):
     if action == "grant":
         result["note"] = (f"questions go to {host}; retention terms unverified; revoke with: "
                           f"jev_review.py consent revoke {backend}")
+    if action == "show":
+        result["leftover"] = leftover_entries()
+    return result
+
+
+def _stored_consent(action, backend, row):
+    """`consent <action> <backend>` while the row's address needs no consent (loopback, declined,
+    malformed). A stored record can still be shown and revoked, its host taken from the record;
+    otherwise the answer is the URL's own reason, or not_remote (WR-102)."""
+    data = read_consent()
+    if action not in ("show", "revoke") or not isinstance(data.get(backend), dict):
+        return {"ok": False, "reason": row["url"]()[1] or "not_remote"}
+    host = data[backend].get("host")
+    if action == "revoke":
+        del data[backend]
+        write_consent(data)
+    result = {"ok": True, "backend": backend, "host": host,
+              "consent": None if action == "revoke" else data[backend].get("granted"),
+              "file": consent_path()}
     if action == "show":
         result["leftover"] = leftover_entries()
     return result
@@ -1463,12 +1517,23 @@ def _backend_entry(row, reason):
     return entry
 
 
-def _probe_fields(entries, fetch_allowed=True):
+def _pinned_table():
+    """TABLE with each row's address read once (WR-101): the probe, the consent check and the
+    learn fetch of one run all see that one read, so a config change in between cannot send a
+    keyless GET to an address nobody checked."""
+    rows = []
+    for row in TABLE:
+        resolved = row["url"]()
+        rows.append({**row, "url": lambda resolved=resolved: resolved})
+    return rows
+
+
+def _probe_fields(rows, entries, fetch_allowed=True):
     """Merge each row's probe-only fields into its entry (a row with a `learn` adapter, in table
     order) and return the questions they ask: the agent asks the user, then saves the answer.
     `fetch_allowed` False (a hook or detect probe under a deadline) lets no public fetch run."""
     questions = []
-    for row, entry in zip(TABLE, entries, strict=True):
+    for row, entry in zip(rows, entries, strict=True):
         if "learn" in row:
             fields = row["learn"](row, entry, False, fetch_allowed)
             questions += fields.pop("needs_answer", [])
@@ -1485,10 +1550,11 @@ def probe_report():
     if not knob["on"]:
         return {"status": "disabled", "settings": _settings(knob), "needs_answer": []}
     choice = _backend_choice()
-    usable, unavailable, entries = _probe_reasons(TABLE)
+    rows = _pinned_table()
+    usable, unavailable, entries = _probe_reasons(rows)
     # Pitfall 3: a probe under a run deadline (a hook, detect) never fetches upstream.
     fetch_allowed = not os.environ.get("GSD_PATH_JEV_DEADLINE_SECONDS", "").strip()
-    questions = _probe_fields(entries, fetch_allowed)
+    questions = _probe_fields(rows, entries, fetch_allowed)
     names = {row["name"] for row in usable}
     candidates = [row["name"] for row in rows_in_order()
                   if row["name"] in names and choice in ("auto", row["name"])]
@@ -1521,9 +1587,10 @@ def check_updates():
     knob = _knob()
     if not knob["on"]:
         return {"status": "disabled", "settings": _settings(knob)}
-    _usable, _unavailable, entries = _probe_reasons(TABLE)
+    rows = _pinned_table()
+    _usable, _unavailable, entries = _probe_reasons(rows)
     updates = {row["name"]: row["learn"](row, entry, True, True)
-               for row, entry in zip(TABLE, entries, strict=True) if "learn" in row}
+               for row, entry in zip(rows, entries, strict=True) if "learn" in row}
     return {"status": "ok", "updates": updates}
 
 
@@ -1659,9 +1726,12 @@ def _send(row, body, timeout, deadline=None):
     """
     if not _knob()["on"]:
         raise PermissionError("disabled")
+    # One read of the address for the consent check and the request (WR-101): a config change
+    # between two reads must not send to a host nobody consented to.
+    url, reason = row["url"]()
+    row = {**row, "url": lambda: (url, reason)}
     if not _remote_allowed(row):
         raise PermissionError("consent_required_for_remote")
-    url, reason = row["url"]()
     if reason:
         raise PermissionError(reason)
     if deadline is not None and deadline.left() <= 0:
@@ -1845,12 +1915,23 @@ def _rung(row, items, timeout, run):
 
 # ─── answer log (D-19) ────────────────────────────────────────────────────────
 
-def _state_dir():
-    """`$XDG_STATE_HOME` (or ~/.local/state) + /ai-kit — same convention as the consent dir."""
+def _state_base():
+    """`$XDG_STATE_HOME`, or ~/.local/state. A relative value is ignored, as the XDG spec says and
+    as the config reader does for `XDG_CONFIG_HOME` (WR-205). An empty or relative HOME is no home
+    either: it raises OSError, so no state lands under the cwd (WR-501); each writer already treats
+    OSError as "no state dir"."""
     base = os.environ.get("XDG_STATE_HOME", "").strip()
-    if not base:
-        base = os.path.join(os.environ.get("HOME", "~"), ".local", "state")
-    return os.path.join(os.path.expanduser(base), "ai-kit")
+    if os.path.isabs(base):
+        return base
+    home = os.environ.get("HOME", "")
+    if not os.path.isabs(home):
+        raise OSError("no absolute home directory to hold ai-kit's state")
+    return os.path.join(home, ".local", "state")
+
+
+def _state_dir():
+    """`_state_base()` + /ai-kit — same convention as the consent dir."""
+    return os.path.join(_state_base(), "ai-kit")
 
 
 def answer_log_path():
@@ -2097,8 +2178,6 @@ _ANSWER_KEYS = {
     NOUL: frozenset({"type", "noul"}),
     SCORE: frozenset({"type", "score", "confidence", "legend", "probabilities"}),
 }
-_KNOWN_ITEM_KEYS = frozenset({"id", "type", "instructions", "criteria", "context", "images",
-                              "assets"}) | _LEGACY_KEYS
 
 
 def _unknown_response_names(response):
@@ -2121,17 +2200,16 @@ def _unknown_response_names(response):
 
 
 def _unknown_item_names(payload):
-    """Sorted, unique `primitive:<type>` and `option:<key>` names of the caller's items that this
-    skill does not know. A refused item made no call, so its names are noted at the refusal."""
+    """Sorted, unique `primitive:<type>` names of the caller's items whose type this skill does not
+    know. A refused item made no call, so its names are noted at the refusal. A caller's extra item
+    key is never noted: it is as likely a typo as a new option, and a note makes the next probe
+    read the docs (IN-201)."""
     items = payload.get("items") if isinstance(payload, dict) else None
     names = set()
     for item in items if isinstance(items, list) else ():
-        if not isinstance(item, dict):
-            continue
-        kind = item.get("type")
+        kind = item.get("type") if isinstance(item, dict) else None
         if isinstance(kind, str) and kind not in VALID_TYPES | {BOX}:
             names.add(f"primitive:{kind}")
-        names.update(f"option:{key}" for key in item if key not in _KNOWN_ITEM_KEYS)
     return sorted(names)
 
 
@@ -2328,7 +2406,7 @@ def main(argv=None):
         import jev_ladder  # pylint: disable=import-outside-toplevel
         return jev_ladder.main(args)
     if args.command == "config":
-        out = _CONFIG.config_set(args.key, args.value, os.environ)
+        out = _CONFIG.config_set(args.key, args.value, os.environ, _cwd())
         print(json.dumps(out, sort_keys=True))
         return 0 if out["ok"] else 2
     if args.command == "consent":

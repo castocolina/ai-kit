@@ -1671,7 +1671,8 @@ class TestCount(unittest.TestCase):
                                                                   encoding="utf-8")
         env = {"HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config"),
                "XDG_STATE_HOME": str(home / ".local" / "state"),
-               "JEV_LAYA_URL": closed_port_url(), "PATH": os.environ.get("PATH", "")}
+               "JEV_LAYA_URL": closed_port_url(), "PATH": os.environ.get("PATH", ""),
+               "AI_KIT_REFUSE_REAL_HOME": "1"}
         client = REPO_ROOT / "skills" / "jev-fast-decision" / "scripts" / "jev_review.py"
         # A score item needs a non-empty context: without one the ladder refuses it before any call.
         item = {"id": "judge-count", "type": "score",

@@ -1709,6 +1709,24 @@ class TestConsent(_ClientCase):
         self.assertEqual(code, 0)
         self.assertEqual(out, {"ok": False, "reason": "not_remote"})
 
+    def test_consent_record_is_shown_and_revoked_whatever_the_laya_address(self):
+        """WR-102: a stored Laya record never gets stuck behind a loopback or broken address."""
+        for url in (closed_port_url(), "http://[bad"):
+            with self.subTest(url=url):
+                os.environ["JEV_LAYA_URL"] = url
+                JR.write_consent({"laya": {"host": REMOTE_HOST, "granted": "2026-11-15"}})
+                _code, shown = self.run_cli(["consent", "show", "laya"])
+                self.assertEqual((shown["ok"], shown["host"], shown["consent"]),
+                                 (True, REMOTE_HOST, "2026-11-15"))
+                _code, revoked = self.run_cli(["consent", "revoke", "laya"])
+                self.assertTrue(revoked["ok"])
+                self.assertIsNone(revoked["consent"])
+                self.assertNotIn("laya", JR.read_consent())
+                _code, again = self.run_cli(["consent", "show", "laya"])
+                self.assertFalse(again["ok"])
+        _code, grant = self.run_cli(["consent", "grant", "laya"])  # the URL's own reason
+        self.assertEqual(grant, {"ok": False, "reason": "invalid_url:jev_laya_url"})
+
     def test_consent_without_an_absolute_home_is_a_clear_error_not_a_traceback(self):
         for action in ("grant", "revoke", "show"):
             with mock.patch.dict(os.environ, {"HOME": "", "XDG_CONFIG_HOME": ""}):
@@ -2612,11 +2630,13 @@ class TestDocs(unittest.TestCase):
         data = json.loads((evals_dir / "evals.json").read_text(encoding="utf-8"))
         by_id = {item["id"]: item for item in data["evals"]}
         self.assertEqual(len(data["evals"]), 8)
-        for name, fixture in (("edge-first-run-question", "probe-needs-answer.json"),
-                              ("edge-laya-notes-new", "probe-record-new.json")):
+        for name, fixtures in (("edge-first-run-question", ["probe-needs-answer.json"]),
+                               ("edge-laya-notes-new", ["probe-record-new.json",
+                                                        "laya-capabilities-record.json"])):
             self.assertIn(name, by_id)
-            self.assertEqual(by_id[name]["files"], [f"evals/files/{fixture}"])
-            json.loads((evals_dir / "files" / fixture).read_text(encoding="utf-8"))
+            self.assertEqual(by_id[name]["files"], [f"evals/files/{f}" for f in fixtures])
+            for fixture in fixtures:
+                json.loads((evals_dir / "files" / fixture).read_text(encoding="utf-8"))
 
 
 def parse_lookup_table(reference_text):
@@ -2841,13 +2861,35 @@ class TestEval(_ClientCase):
             code, _report = self.run_eval("--record", str(target))
         self.assertEqual(code, 0)
         saved = json.loads(target.read_text(encoding="utf-8"))
-        self.assertEqual(set(saved["server"]),
+        self.assertEqual(set(saved), {"results"})  # WR-206: nothing at the top level
+        laya = next(entry for entry in saved["results"] if entry["backend"] == "laya")
+        self.assertEqual(set(laya["server"]),
                          {"host", "url_source", "version", "version_source", "fingerprint",
                           "revisions"})
-        self.assertEqual(saved["server"]["host"], "127.0.0.1")
-        self.assertEqual(saved["summary"]["n"], 32)
-        self.assertEqual(saved["min_confidence"], 0.7)
-        self.assertRegex(saved["recorded_at"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertEqual(laya["server"]["host"], "127.0.0.1")
+        self.assertEqual(laya["summary"]["n"], 32)
+        self.assertEqual(laya["min_confidence"], 0.7)
+        self.assertRegex(laya["recorded_at"], r"^\d{4}-\d{2}-\d{2}$")
+
+    def test_eval_record_keeps_each_backends_identity(self):
+        """WR-206: a second backend's merge leaves the first one's server and summary alone."""
+        module = _eval()
+        laya = {"server": {"version": "0.4.27"}, "summary": {"n": 20}, "min_confidence": 0.7,
+                "recorded_at": "2026-11-15"}
+        typesafe = {"server": {"version": "jev-1.14.0"}, "summary": {"n": 12},
+                    "min_confidence": 0.8, "recorded_at": "2026-11-16"}
+        merged = module.merge_results({"results": []}, "laya", [{"id": "a"}], laya)
+        merged = module.merge_results(merged, "typesafe", [{"id": "b"}], typesafe)
+        by_name = {entry["backend"]: entry for entry in merged["results"]}
+        self.assertEqual(by_name["laya"]["server"], {"version": "0.4.27"})
+        self.assertEqual(by_name["typesafe"]["summary"], {"n": 12})
+        old = {"server": {"version": "old"}, "summary": {"n": 1}, "min_confidence": 0.5,
+               "recorded_at": "2025-01-01", "results": [{"backend": "laya", "cases": []}]}
+        rerecorded = module.merge_results(old, "typesafe", [], typesafe)
+        for key in ("server", "summary", "min_confidence", "recorded_at"):
+            self.assertNotIn(key, rerecorded)  # IN-503: no second, mixed identity at the top
+        self.assertEqual([entry["backend"] for entry in rerecorded["results"]],
+                         ["laya", "typesafe"])
 
     def test_eval_calibrate_none(self):
         self.assertIsNone(_eval().calibrate([{"top": 0.4, "correct": True}] * 30))
@@ -2926,7 +2968,8 @@ class TestLadderEntryPoint(unittest.TestCase):
                "XDG_CONFIG_HOME": str(self.home / ".config"), "JEV_LAYA_URL": self.laya,
                "AI_KIT_REFUSE_REAL_HOME": "1"}
         return subprocess.run([sys.executable, "-B", str(SCRIPT), *args], input=stdin,
-                              capture_output=True, text=True, env=env, check=False, timeout=60)
+                              capture_output=True, text=True, env=env, check=False, timeout=60,
+                              cwd=self.home)  # never the repo root: it holds a .aikit/
 
     def test_ladder_one_item_answers_own_reasoning(self):
         proc = self.run_entry("ladder", stdin=json.dumps({"items": [noul_item("a")]}))
@@ -3147,9 +3190,15 @@ class _TmpHome(unittest.TestCase):
                     "PATH": os.environ.get("PATH", ""),
                     "JEV_LAYA_URL": closed_port_url()}
 
+    def run_in_tmp(self, *args, **kwargs):
+        """subprocess.run with the scratch dir as cwd: the client reads its [jev] project layer
+        from its cwd, which must never be the repo root (it may hold a .aikit/)."""
+        kwargs.setdefault("cwd", str(self.tmp))
+        return subprocess.run(*args, **kwargs)
+
     def seams(self, **extra):
         env = {**self.env, **extra}
-        return jev_ladder.Seams(env=env, run=subprocess.run)
+        return jev_ladder.Seams(env=env, run=self.run_in_tmp)
 
 # ─── ladder caller: unit layer ────────────────────────────────────────────────────
 
@@ -3221,6 +3270,21 @@ class TestItemError(unittest.TestCase):
             noul_item_ladder("n", "blob " + "Ab1/" * 12)))
         short = noul_item_ladder("n", "blob " + "Ab1/" * 11 + "Ab1")
         self.assertIsNone(jev_ladder.item_error(short))
+
+
+class TestKeySourceLabels(unittest.TestCase):
+    def test_detect_shows_the_clients_real_key_source_labels(self):
+        """IN-105: the labels the client reports pass; a credential-shaped value does not."""
+        def shown(label):
+            rows = [{"name": "typesafe", "remote": True, "usable": True, "key_source": label}]
+            return jev_ladder.public_backends(rows)["typesafe"].get("key_source")
+
+        for label in ("env:TYPESAFE_API_KEY", "env:JEV_API_KEY", "file:secrets.env", "state",
+                      "file:~/.mycreds", "file:JEV_API_KEY_FILE", "missing_file"):
+            self.assertEqual(shown(label), label)
+        for bad in ("env:lowercase", "file:has space", "sk-" + "a" * 40, "env"):
+            self.assertNotEqual(shown(bad), "sk-" + "a" * 40)
+        self.assertIsNone(shown("file:has space"))
 
 
 class TestPartitionIds(unittest.TestCase):
@@ -3474,7 +3538,7 @@ class TestLadderCli(_TmpHome):
 
         def record(*args, **kwargs):
             calls.append((args, kwargs))
-            return subprocess.run(*args, **kwargs)
+            return self.run_in_tmp(*args, **kwargs)
 
         result = jev_ladder.run_ladder(jev_ladder.Seams(env=parent_env, run=record),
                                    str(SCRIPT), items)
@@ -3507,7 +3571,7 @@ class TestLadderCli(_TmpHome):
 
             def record(*args, **kwargs):
                 calls.append((args, kwargs))
-                return subprocess.run(*args, **kwargs)
+                return self.run_in_tmp(*args, **kwargs)
 
             seams = jev_ladder.Seams(env={**self.env, "JEV_LAYA_URL": laya.url}, run=record)
             result = jev_ladder.run_ladder(seams, str(SCRIPT),
@@ -3515,6 +3579,19 @@ class TestLadderCli(_TmpHome):
         self.assertEqual(len(self._client_calls(calls)), 1)
         self.assertEqual(result["items"]["a1"]["decided_by"], "laya")
         self.assertEqual(result["items"]["a2"]["decided_by"], "laya")
+
+    def test_ladder_ignores_process_cwd_project_layer(self):
+        """WR-105: a [jev] enabled = false in the process cwd never reaches the client."""
+        decoy = self.tmp / "decoy"
+        (decoy / ".aikit").mkdir(parents=True)
+        (decoy / ".aikit" / "config.toml").write_text("[jev]\nenabled = false\n", encoding="utf-8")
+        previous = os.getcwd()
+        os.chdir(decoy)
+        self.addCleanup(os.chdir, previous)
+        with JevStub() as laya:
+            seams = self.seams(JEV_LAYA_URL=laya.url)
+            result = jev_ladder.run_ladder(seams, str(SCRIPT), [choice_item_ladder("a1")])
+        self.assertEqual(result["items"]["a1"]["decided_by"], "laya")
 
     def test_ladder_no_client(self):
         scripts = _isolated_ladder(self.tmp)

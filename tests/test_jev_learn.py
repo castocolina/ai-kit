@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest import mock
 
@@ -291,6 +292,72 @@ class TestLayaRecords(unittest.TestCase):
         self.assertEqual(reuse["record"], "known")
         self.assertEqual(again.calls, [])
 
+    def test_idle_never_borrows_another_versions_fingerprint(self):
+        """WR-201: an idle Laya on version B must not take version A's fingerprint."""
+        moved = copy.deepcopy(FIX["health_loaded"])
+        moved["revisions"] = {"laya-english": "rev-b2"}
+        loaded_b = self._server("0.4.27")
+        loaded_a = {"health": moved, "openapi": FIX["openapi"], "configured_version": "0.4.99"}
+        idle_b = {"health": FIX["health_idle"], "openapi": FIX["openapi"],
+                  "configured_version": "0.4.27"}
+        self._learn(loaded_b, FakeFetch(_version_pages("0.4.27")))
+        self._learn(loaded_a, FakeFetch(_version_pages("0.4.99")))
+        before = self._bytes_on_disk()
+        idle = FakeFetch({})
+        out = self._learn(idle_b, idle)
+        self.assertEqual(out["record"], "known")
+        self.assertEqual(idle.calls, [])
+        self.assertEqual(self._bytes_on_disk(), before)
+        back = FakeFetch({})
+        self.assertEqual(self._learn(loaded_b, back)["record"], "known")
+        self.assertEqual(back.calls, [])
+
+    def test_a_missing_first_fingerprint_is_filled_in_without_a_refetch(self):
+        """IN-203: no /openapi.json on the first probe stores no fingerprint; the next good probe
+        fills it in, reports known and fetches nothing."""
+        blind = {"health": FIX["health_loaded"], "openapi": None, "configured_version": "0.4.27"}
+        first = self._learn(blind, FakeFetch(_version_pages("0.4.27")))
+        self.assertEqual(first["record"], "new")
+        self.assertIsNone(self._stored()["0.4.27"]["fingerprint"])
+        again = FakeFetch({})
+        out = self._learn(self._server("0.4.27"), again)
+        self.assertEqual(out["record"], "known")
+        self.assertEqual(again.calls, [])
+        full = jev_learn.fingerprint(FIX["health_loaded"], FIX["openapi"], {})
+        self.assertEqual(self._stored()["0.4.27"]["fingerprint"], full["fingerprint"])
+        moved = copy.deepcopy(FIX["health_loaded"])
+        moved["revisions"] = {"laya-english": "rev-b2"}
+        later = {"health": moved, "openapi": FIX["openapi"], "configured_version": "0.4.27"}
+        changed = self._learn(later, FakeFetch(_version_pages("0.4.27")))
+        self.assertEqual(changed["record"], "changed")
+
+    def test_image_needs_image_input_wording(self):
+        """IN-402: a Docker image is not an image feature; image input is."""
+        self.assertEqual(jev_learn.features_in("The Docker image is smaller now."), [])
+        self.assertEqual(jev_learn.features_in("Now accepts images in a request."), ["image"])
+        self.assertEqual(jev_learn.features_in("Added image input support."), ["image"])
+        linked = "[Images](https://docs.typesafe.ai/images.md) can go in the `state`."
+        self.assertEqual(jev_learn.features_in(linked), ["image"])
+
+    def test_a_version_never_reads_a_longer_versions_section(self):
+        """IN-401: 0.4.2 must not match the heading of 0.4.2.1."""
+        text = (
+            "## What's new in 0.4.2.1\n\nlonger version note\n\n"
+            "## What's new in 0.4.2 (2026-01-01)\n\nshort version note\n"
+        )
+        self.assertEqual(
+            jev_learn.section(text, "0.4.2"),
+            "## What's new in 0.4.2 (2026-01-01)\n\nshort version note",
+        )
+        self.assertEqual(jev_learn.section("## What's new in 0.4.2.1\n\nx\n", "0.4.2"), "")
+
+    def test_idle_without_a_version_borrows_only_from_fp_records(self):
+        self._learn(self._server("0.4.27"), FakeFetch(_version_pages("0.4.27")))
+        idle = {"health": FIX["health_idle"], "openapi": FIX["openapi"], "configured_version": None}
+        out = self._learn(idle, FakeFetch({}))
+        self.assertEqual(out["record"], "pending_idle")
+        self.assertIsNone(out["fingerprint"])
+
     def test_failed_fetch_keeps_records_and_says_so(self):
         jev_learn.write_records(self.records, {"0.4.20": {"status": "ok", "notes": "kept"}})
         before = self._bytes_on_disk()
@@ -314,6 +381,24 @@ class TestLayaRecords(unittest.TestCase):
         entry = self._stored()["0.4.99"]
         self.assertEqual(entry["status"], "no_published_notes")
         self.assertEqual(entry["notes"], "")
+
+    def test_a_404_version_page_settles_as_no_published_notes(self):
+        """WR-202: PyPI answering 404 for the version is an answer, so the key is recorded once."""
+        readme = _bytes(FIX["readme"])
+        pages = {PYPI_0_4_99: FileNotFoundError("http_404"), jev_learn.README_URL: readme}
+        out = self._learn(self._server("0.4.99"), FakeFetch(pages))
+        self.assertEqual(out["record"], "new")
+        self.assertEqual(self._stored()["0.4.99"]["status"], "no_published_notes")
+        self.assertNotIn("notice", out)
+        again = FakeFetch({})
+        self.assertEqual(self._learn(self._server("0.4.99"), again)["record"], "known")
+        self.assertEqual(again.calls, [])
+
+    def test_a_404_plus_an_outage_still_records_nothing(self):
+        pages = {PYPI_0_4_99: FileNotFoundError("http_404"), jev_learn.README_URL: OSError("down")}
+        out = self._learn(self._server("0.4.99"), FakeFetch(pages))
+        self.assertEqual(out["record"], "fetch_failed")
+        self.assertFalse(os.path.exists(self.records))
 
     def test_invalid_utf8_is_replaced_and_stored_as_text(self):
         description = "## What's new in 0.4.27\n\n* Note BAD here.\n\n## Where to go next\n"
@@ -430,6 +515,14 @@ def _lowered(headers):
     return {name.lower(): value for name, value in headers.items()}
 
 
+def _loopback_only_get(url, *args, **kwargs):
+    """The real keyless fetcher for a 127.0.0.1 URL; any other host (the TypeSafe docs included)
+    fails like a down network, so no test in this class can reach the internet."""
+    if urllib.parse.urlsplit(url).hostname != "127.0.0.1":
+        raise OSError(f"test blocks a fetch off loopback: {url}")
+    return _REAL_PUBLIC_GET(url, *args, **kwargs)
+
+
 class TestProbeLearning(_ClientCase):
     """The probe learns from a local Laya and from upstream, end to end against in-process stubs:
     the upstream URL constants point at a 127.0.0.1 stub, and the real keyless fetcher runs."""
@@ -437,10 +530,17 @@ class TestProbeLearning(_ClientCase):
     def setUp(self):
         super().setUp()
         # The real keyless fetcher, wrapped so each test can count its calls.
-        self.fetch = mock.Mock(wraps=_REAL_PUBLIC_GET)
+        self.fetch = mock.Mock(wraps=_loopback_only_get)
         patcher = mock.patch.object(JR, "_public_get", self.fetch)
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def test_fetch_off_loopback_is_blocked(self):
+        """IN-205: the wrapped fetcher refuses the TypeSafe docs URLs like any off-loopback host."""
+        for url in (jev_learn.DOCS_INDEX_URL, jev_learn.DOCS_CHANGELOG_URL,
+                    jev_learn.DOCS_MODELS_URL, jev_learn.README_URL):
+            with self.assertRaises(OSError):
+                self.fetch(url)
 
     def run_argv(self, argv):
         """main(argv): (exit code, the parsed stdout JSON)."""
@@ -552,8 +652,12 @@ class TestProbeLearning(_ClientCase):
             self.point_at(laya)
             code, report = self.run_probe()
         self.assertEqual(code, 0)
-        self.assertEqual(self.backend_entry(report, "laya")["record"], "skipped_deadline")
+        entry = self.backend_entry(report, "laya")
+        self.assertEqual(entry["record"], "skipped_deadline")
+        self.assertEqual(entry["version_source"], "not_read")
         self.fetch.assert_not_called()
+        # IN-403: the probe's own /health check is the only request Laya sees; no identity reads.
+        self.assertEqual([record["path"] for record in laya.requests], ["/health"])
 
     def test_unreachable_laya_reports_no_version(self):
         self.write_user_config('[jev]\nlaya_version = "0.4.27"\n')
@@ -612,6 +716,73 @@ class TestProbeLearning(_ClientCase):
             headers = _lowered(record["headers"])
             self.assertNotIn("authorization", headers)
             self.assertNotIn(sentinel, " ".join(headers.values()))
+
+    def test_learn_survives_an_address_that_vanished_after_the_probe(self):
+        """WR-101 follow-up: a usable probe whose address reads as None learns nothing, no crash."""
+        row = {**JR.row_named("laya"), "url": lambda: (None, "invalid_url:jev_laya_url")}
+        fields = JR._laya_learn(row, {"usable": True})
+        self.assertEqual(fields["record"], "unknown")
+        self.assertEqual(fields["version_source"], "unreachable")
+        self.fetch.assert_not_called()
+
+    def test_relative_xdg_state_home_is_ignored(self):
+        """WR-205: a relative XDG_STATE_HOME falls back to ~/.local/state, like the XDG spec."""
+        home = os.environ["HOME"]
+        fallback = os.path.join(home, ".local", "state", "ai-kit")
+        for value in ("relative-state", "./x", " "):
+            with self.subTest(value=value), mock.patch.dict(os.environ, {"XDG_STATE_HOME": value}):
+                self.assertEqual(JR._state_dir(), fallback)
+                self.assertEqual(JR.answer_log_path(), os.path.join(fallback, "jev-answers.jsonl"))
+        absolute = os.path.join(home, "abs-state")
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": absolute}):
+            self.assertEqual(JR._state_dir(), os.path.join(absolute, "ai-kit"))
+
+    def test_probe_reads_the_laya_address_once(self):
+        """WR-101: an address that changes after the probe's first read is not dialed by the
+        learn step: the identity GETs go where the probe went."""
+        with JevStub(health_body=FIX["health_loaded"]) as laya:
+            self.point_at(laya)
+            row = JR.row_named("laya")
+            original = row["url"]
+
+            def flip():
+                found = original()
+                os.environ["JEV_LAYA_URL"] = closed_port_url()  # the config changes after this read
+                return found
+
+            with mock.patch.dict(row, {"url": flip}):
+                code, report = self.run_probe()
+        self.assertEqual(code, 0)
+        self.assertTrue(self.backend_entry(report, "laya")["usable"])
+        paths = [record["path"] for record in laya.requests]
+        self.assertIn("/openapi.json", paths)
+
+    def test_unusable_home_writes_no_state_under_the_cwd(self):
+        """WR-501: no absolute XDG_STATE_HOME and an empty or relative HOME is no state dir."""
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        previous = os.getcwd()
+        os.chdir(scratch)
+        self.addCleanup(os.chdir, previous)
+        for home in ("", "rel-home"):
+            env = {"HOME": home, "XDG_STATE_HOME": "relative-state", "TYPESAFE_API_KEY": "",
+                   "JEV_API_KEY": "", "JEV_API_KEY_FILE": ""}
+            with self.subTest(home=home), mock.patch.dict(os.environ, env):
+                with self.assertRaises(OSError):
+                    JR._state_dir()
+                JR.append_answer_log(["{}\n"])
+                self.assertFalse(JR._typesafe_note_model("vendor/model-2026-01-01"))
+                self.assertFalse(JR._typesafe_note_unknown("vendor/model-2026-01-01", ["x"]))
+                self.assertEqual(JR._typesafe_learn(None, None), {"model_record": "write_failed"})
+                self.assertIsNone(JR._typesafe_key()[0])
+                self.assertEqual(os.listdir(scratch), [])
+
+    def test_public_fetch_maps_404_to_file_not_found_and_5xx_to_oserror(self):
+        with JevStub(health=404) as missing, self.assertRaises(FileNotFoundError):
+            _REAL_PUBLIC_GET(f"http://127.0.0.1:{missing.port}/x")
+        with JevStub(health=503) as down, self.assertRaises(OSError) as raised:
+            _REAL_PUBLIC_GET(f"http://127.0.0.1:{down.port}/x")
+        self.assertNotIsInstance(raised.exception, FileNotFoundError)
 
     def test_public_fetch_stops_at_its_deadline(self):
         drip = {"drip": 0.05, "body": "x" * 400, "headers": {"Content-Length": "400"}}

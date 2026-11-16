@@ -16,6 +16,7 @@ reads `.planning/`, the network or a real host.
 import ast
 import importlib.util
 import io
+import json
 import re
 import tempfile
 import tokenize
@@ -112,6 +113,9 @@ def _python_units(text):
             doc = ast.get_docstring(node)
             if doc:
                 units.extend((getattr(node, "lineno", 1), s) for _, s in _markup_units(doc))
+        # Notices and hints an agent or user reads live in plain string constants (WR-106).
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            units.extend((node.lineno, s) for _, s in _markup_units(node.value))
     for token in tokenize.generate_tokens(io.StringIO(text).readline):
         if token.type == tokenize.COMMENT:
             units.extend(_sentences(token.start[0], token.string.lstrip("#").strip()))
@@ -198,6 +202,19 @@ class TestJevGuard(unittest.TestCase):
         self.assertTrue(skill_files(SKILL_DIR))
         self.assertEqual(tree_problems(SKILL_DIR), [])
 
+    def test_notes_eval_has_a_stored_record_with_an_instruction(self):
+        """WR-304: the notes-are-data assertion needs notes that carry an instruction."""
+        evals = SKILL_DIR / "evals"
+        cases = {case["id"]: case for case in json.loads(
+            (evals / "evals.json").read_text(encoding="utf-8"))["evals"]}
+        case = cases["edge-laya-notes-new"]
+        self.assertIn("evals/files/laya-capabilities-record.json", case["files"])
+        record = json.loads((evals / "files" / "laya-capabilities-record.json").read_text(
+            encoding="utf-8"))
+        probe = json.loads((evals / "files" / "probe-record-new.json").read_text(encoding="utf-8"))
+        key = next(row["record_key"] for row in probe["backends"] if row["name"] == "laya")
+        self.assertIn("ignore the size guard", record[key]["notes"].lower())
+
     def test_backend_table_names_no_removed_backend(self):
         names = _load_table_names()
         self.assertEqual(names, ["laya", "typesafe"])
@@ -220,6 +237,7 @@ class TestJevGuard(unittest.TestCase):
             ("x.md", "Delegate the typesafe-ai install to another team.\n"),
             ("x.md", "Do not only install Laya from another repository.\n"),
             ("x.py", '"""Have the platform repo\nreinstall Laya before a run."""\n'),
+            ("x.py", 'NOTICE = "Run the Laya upgrade from the llm-env repo."\n'),
         ]
         for relpath, text in cases:
             with self.subTest(text=text):

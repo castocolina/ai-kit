@@ -25,7 +25,13 @@ VERSION_FIELDS = ("version", "package_version", "laya_version")
 HTTP_METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
 FEATURE_PATTERNS = {
     "box": re.compile(r"\bbounding[- ]box|\bbox\b", re.IGNORECASE),
-    "image": re.compile(r"\bimages?\b", re.IGNORECASE),
+    # Image-input wording only: a bare "image" ("Docker image") is not a feature (IN-402).
+    "image": re.compile(
+        r"\bimage[- ](?:inputs?|understanding|support)\b"
+        r"|\b(?:accepts?|supports?|takes?|reads?|sends?|sending) (?:an? |the )?images?\b"
+        r"|\bimages?\]?(?:\([^)]*\))? (?:can|may) (?:go in|be sent|be passed)\b",
+        re.IGNORECASE,
+    ),
     "images_compared": re.compile(
         r"\bcompar\w* (?:two )?images\b|\bimage comparison\b", re.IGNORECASE
     ),
@@ -45,9 +51,10 @@ SERVES = ("box", "image", "long_context", "batch")
 KNOWN_PRIMITIVES = ("choice", "noul", "score", "box")
 _VERSIONED_ID = re.compile(r"jev-\d+(?:\.\d+)+(?:-[A-Za-z0-9.]+)?")
 _LINK = re.compile(r"\[[^\]]*\]\((https://[^)\s]+)\)")
-_HEADING = ("**", "#")
 _UNKNOWN_NAME = re.compile(r"(?:primitive|option):[A-Za-z][A-Za-z0-9_.-]{0,63}")
 _UNKNOWN_LIMIT = 16
+_UNKNOWN_SEEN_MAX = 64  # the most names one record keeps in total, across calls
+_PRIMITIVE = re.compile(r"[a-z][a-z0-9_-]{0,31}")
 
 
 def now_iso():
@@ -126,16 +133,20 @@ def canonical_sha(doc):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _idle_fingerprint(openapi_sha, records):
-    """The fingerprint an idle server reuses: the newest record whose OpenAPI part matches.
+def _idle_fingerprint(openapi_sha, records, version):
+    """The fingerprint an idle server reuses (Resolved Open Question 3), or None.
 
-    An idle server reports no loaded models, so its own fingerprint cannot be computed. Its routes
-    are the same as before the unload, so the last recorded fingerprint with the same OpenAPI part
-    stands in (Resolved Open Question 3). None when no record matches.
+    An idle server reports no loaded models, so its own fingerprint cannot be computed. With a
+    known version only that version's own record stands in; a record of another version never does
+    (WR-201). With no version the newest `fp:` record whose OpenAPI part matches stands in.
     """
+    if version:
+        candidates = [records.get(version)]
+    else:
+        candidates = [entry for key, entry in records.items() if key.startswith("fp:")]
     matches = [
         entry
-        for entry in records.values()
+        for entry in candidates
         if isinstance(entry, dict)
         and entry.get("openapi_sha256") == openapi_sha
         and isinstance(entry.get("fingerprint"), str)
@@ -145,7 +156,7 @@ def _idle_fingerprint(openapi_sha, records):
     return max(matches, key=lambda entry: str(entry.get("checked_at", "")))["fingerprint"]
 
 
-def fingerprint(health, openapi, records):
+def fingerprint(health, openapi, records, version=None):
     """The route and checkpoint fingerprint of the running Laya (D-04).
 
     Hashes the OpenAPI part plus the loaded models and their revisions. idle_seconds and every
@@ -164,7 +175,7 @@ def fingerprint(health, openapi, records):
             "openapi_sha256": openapi_sha,
         }
     return {
-        "fingerprint": _idle_fingerprint(openapi_sha, records),
+        "fingerprint": _idle_fingerprint(openapi_sha, records, version),
         "idle": True,
         "openapi_sha256": openapi_sha,
     }
@@ -177,7 +188,6 @@ def laya_identity(server, records):
     is the version when one is known, else `fp:<fingerprint>`, else None.
     """
     health = server.get("health")
-    fp = fingerprint(health, server.get("openapi"), records)
     version = server_version(health)
     configured = server.get("configured_version")
     if version:
@@ -186,6 +196,7 @@ def laya_identity(server, records):
         version, source = configured.strip(), "config"
     else:
         source = "not_exposed"
+    fp = fingerprint(health, server.get("openapi"), records, version)
     key = version or (f"fp:{fp['fingerprint']}" if fp["fingerprint"] else None)
     return {"version": version, "version_source": source, **fp, "key": key}
 
@@ -194,7 +205,7 @@ def section(text, version):
     """The `## What's new in <version>` section of text, stripped and cut to NOTES_MAX_CHARS."""
     if not version:
         return ""
-    heading = re.compile(rf"## What's new in {re.escape(version)}\b")
+    heading = re.compile(rf"## What's new in {re.escape(version)}(?=\s|$)")
     lines = text.splitlines()
     start = next((index for index, line in enumerate(lines) if heading.match(line)), None)
     if start is None:
@@ -229,6 +240,8 @@ def _read_source(url, fetch, is_pypi, version):
     no version is exposed, and the error that stopped it (None when it answered)."""
     try:
         raw = fetch(url)
+    except FileNotFoundError:  # an HTTP 404 answers "no such page": a settled source, no text
+        return "", None, None
     except (OSError, ValueError) as error:
         return None, None, f"{url}: {type(error).__name__}"
     text = raw.decode("utf-8", errors="replace")
@@ -298,12 +311,29 @@ def _short(hex_digest):
 
 
 def _is_stale(old, identity):
-    """True when a stored entry's fingerprint differs from the loaded one (SPEC R2 adjacency)."""
+    """True when a stored entry's fingerprint differs from the loaded one (SPEC R2 adjacency).
+
+    An entry stored with no fingerprint (the first probe could not read /openapi.json) is not
+    stale: `_fill_fingerprint` fills it in without a refetch (IN-203)."""
     return (
         old is not None
+        and old.get("fingerprint") is not None
         and identity["fingerprint"] is not None
-        and old.get("fingerprint") != identity["fingerprint"]
+        and old["fingerprint"] != identity["fingerprint"]
     )
+
+
+def _fill_fingerprint(path, identity, old):
+    """Store the now-known fingerprint on an entry that was recorded without one. Best effort."""
+    if old.get("fingerprint") is not None or identity["fingerprint"] is None:
+        return
+    filled = {
+        **old,
+        "fingerprint": identity["fingerprint"],
+        "openapi_sha256": identity["openapi_sha256"],
+    }
+    with contextlib.suppress(OSError):
+        _store(path, identity["key"], filled)
 
 
 def _laya_decision(identity, old, opts):
@@ -369,6 +399,8 @@ def learn_laya(server, state_dir, fetch, options):
     out = _laya_summary(server, identity)
     early = _laya_decision(identity, old, opts)
     if early is not None:
+        if early == "known":
+            _fill_fingerprint(path, identity, old)
         out["record"] = early
         if key and early != "pending_idle":
             out["record_key"] = key
@@ -467,6 +499,9 @@ def _get_page(url, fetch, sources, errors):
     """The decoded text of one doc page, or None. The URL joins sources or errors."""
     try:
         raw = fetch(url)
+    except FileNotFoundError:  # an HTTP 404 settles the page as empty; an outage keeps it pending
+        sources.append(url)
+        return ""
     except (OSError, ValueError) as error:
         errors.append(f"{url}: {type(error).__name__}")
         return None
@@ -498,17 +533,25 @@ def fetch_model_docs(fetch):
 
 
 def model_notes(changelog, model_id):
-    """The changelog block that names model_id: from the nearest heading at or before its line up to
-    the next heading, stripped and cut to NOTES_MAX_CHARS. "" when the id is absent."""
+    """The changelog block of model_id: from the nearest heading at or before its line up to the
+    next heading, stripped and cut to NOTES_MAX_CHARS. Its own `Model ID` line wins over a later
+    release that merely mentions the id (IN-202). "" when the id is absent."""
     lines = changelog.splitlines()
-    at = next((i for i, line in enumerate(lines) if f"`{model_id}`" in line), None)
+    token = f"`{model_id}`"
+    at = next((i for i, line in enumerate(lines) if f"Model ID {token}" in line), None)
+    if at is None:
+        at = next((i for i, line in enumerate(lines) if token in line), None)
     if at is None:
         return ""
-    start = max((i for i in range(at + 1) if lines[i].startswith(_HEADING)), default=at)
-    end = next(
-        (i for i in range(at + 1, len(lines)) if lines[i].startswith(_HEADING)), len(lines)
-    )
+    start = max((i for i in range(at + 1) if _is_heading(lines[i])), default=at)
+    end = next((i for i in range(at + 1, len(lines)) if _is_heading(lines[i])), len(lines))
     return "\n".join(lines[start:end]).strip()[:NOTES_MAX_CHARS]
+
+
+def _is_heading(line):
+    """A Markdown heading, or a whole-line `**bold**` release title; `**Note:** text` is body."""
+    text = line.strip()
+    return text.startswith("#") or (len(text) > 4 and text.startswith("**") and text.endswith("**"))
 
 
 def _row_cells(line):
@@ -519,20 +562,32 @@ def _row_cells(line):
 def model_primitives(models_text, model_id):
     """The sorted, lowercased question types the models table documents for model_id.
 
-    [] when the id's row or the question-types row is missing.
+    Only short identifier names are kept, at most 16 of them: the cells are remote text (WR-204).
+    [] when the id's row or the question-types row is missing from the id's own table.
     """
-    rows = [_row_cells(line) for line in models_text.splitlines() if line.startswith("|")]
+    tables, current = [], []
+    for line in models_text.splitlines():
+        if line.startswith("|"):
+            current.append(_row_cells(line))
+        elif current:
+            tables.append(current)
+            current = []
+    if current:
+        tables.append(current)
     token = f"`{model_id}`"
-    id_row = next((cells for cells in rows if token in cells), None)
-    types_row = next(
-        (cells for cells in rows if cells and cells[0].lower() == "question types"), None
-    )
-    if id_row is None or types_row is None:
-        return []
-    column = id_row.index(token)
-    if column >= len(types_row):
-        return []
-    return sorted({p.strip().lower() for p in types_row[column].split(",") if p.strip()})
+    for rows in tables:
+        id_row = next((cells for cells in rows if token in cells), None)
+        if id_row is None:
+            continue
+        types_row = next(
+            (cells for cells in rows if cells and cells[0].lower() == "question types"), None
+        )
+        column = id_row.index(token)
+        if types_row is None or column >= len(types_row):
+            return []
+        names = {p.strip().lower() for p in types_row[column].split(",")}
+        return sorted(n for n in names if _PRIMITIVE.fullmatch(n))[:_UNKNOWN_LIMIT]
+    return []
 
 
 def model_entry(model_id, texts, sources):
@@ -700,10 +755,16 @@ def note_unknown(state_dir, model_id, names, now=None):
     if not isinstance(entry, dict):
         entry = {"status": "pending", "first_seen": now or now_iso()}
     seen = _unknown_seen(entry)
-    fresh = [name for name in fresh_names if name not in seen]
+    room = max(0, _UNKNOWN_SEEN_MAX - len(seen))  # a record already over the cap has no room
+    fresh = [name for name in fresh_names if name not in seen][:room]
     if not fresh:
+        if len(seen) > _UNKNOWN_SEEN_MAX and isinstance(records.get(target), dict):
+            records[target] = {**entry, "unknown_seen": sorted(seen)[:_UNKNOWN_SEEN_MAX]}
+            with contextlib.suppress(OSError):
+                write_records(path, records)  # trim an over-cap record; the id's status stays
         return False
-    records[target] = {**entry, "status": "pending", "unknown_seen": sorted([*seen, *fresh])}
+    records[target] = {**entry, "status": "pending",
+                       "unknown_seen": sorted([*seen, *fresh])[:_UNKNOWN_SEEN_MAX]}
     try:
         write_records(path, records)
     except OSError:

@@ -11,7 +11,9 @@ results file, proposes each backend's threshold, and rewrites that backend's own
 assignment, so another row's threshold can never change; a row that is not a dict literal, or
 that lacks or repeats the key, exits non-zero before anything is written. `--record` also saves
 the answering row's server identity (version or fingerprint, checkpoint revisions), the metrics,
-the row's `min_confidence` and the date, which a calibration record needs (D-10).
+the row's `min_confidence` and the date inside that backend's own `results` entry, which a
+calibration record needs (D-10); a run of another backend never overwrites them. A record from
+before that change keeps these fields at the top level and is still read.
 
 Every saved case carries the client's own `needs_fallback` flag and the answering `backend`
 beside `id`, `top`, `correct` and `ambiguous`, so a recorded `fallback_rate` can be re-derived
@@ -89,11 +91,18 @@ def summarize(records: list[dict]) -> dict:
             "fallback_rate": flagged / n, "accuracy_when_not_fallback": kept}
 
 
-def merge_results(existing: dict, backend: str, cases: list[dict]) -> dict:
+def merge_results(existing: dict, backend: str, cases: list[dict],
+                  identity: dict | None = None) -> dict:
+    """`existing` with this backend's entry replaced. `identity` (server, summary, min_confidence,
+    recorded_at) lives inside the entry, so another backend's run never overwrites it (WR-206).
+    An older file's top-level copies of those four fields are dropped: they may name a mixed
+    backend, and nothing reads them (IN-503)."""
     kept = [entry for entry in existing.get("results", []) if entry.get("backend") != backend]
-    kept.append({"backend": backend, "cases": cases})
+    kept.append({"backend": backend, "cases": cases, **(identity or {})})
     kept.sort(key=lambda entry: entry["backend"])
-    return {**existing, "results": kept}
+    legacy = {"server", "summary", "min_confidence", "recorded_at"}
+    return {**{key: value for key, value in existing.items() if key not in legacy},
+            "results": kept}
 
 
 def calibrate(cases: list[dict]) -> float | None:
@@ -203,6 +212,16 @@ def _server_fields(review, backend: str) -> dict:
     return {}
 
 
+def _merge_backend(review, existing: dict, backend: str, records: list[dict]) -> dict:
+    """`existing` with the cases this backend answered and its own identity merged in (WR-206)."""
+    mine = [record for record in records if record["backend"] == backend]
+    identity = {"server": _server_fields(review, backend),
+                "summary": summarize(mine),
+                "min_confidence": review.row_named(backend)["min_confidence"],
+                "recorded_at": datetime.date.today().isoformat()}
+    return merge_results(existing, backend, mine, identity)
+
+
 def _flag_value(name: str) -> str | None:
     if name in sys.argv:
         index = sys.argv.index(name)
@@ -270,12 +289,7 @@ def main() -> int:
                           if path.exists() else {"results": []})
         path.parent.mkdir(parents=True, exist_ok=True)
         for backend in sorted({record["backend"] for record in records}):
-            existing = merge_results(existing, backend, [record for record in records
-                                                         if record["backend"] == backend])
-        existing["server"] = _server_fields(review, report["backend"])
-        existing["summary"] = report
-        existing["min_confidence"] = review.row_named(report["backend"])["min_confidence"]
-        existing["recorded_at"] = datetime.date.today().isoformat()
+            existing = _merge_backend(review, existing, backend, records)
         _atomic_write(path, json.dumps(existing, sort_keys=True, indent=2) + "\n")
     return 0
 

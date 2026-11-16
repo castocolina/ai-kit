@@ -18,7 +18,8 @@ leaves the machine.
 - Key sources, in order: `TYPESAFE_API_KEY`, `JEV_API_KEY`, the first line of the file
   `JEV_API_KEY_FILE` names, a `TYPESAFE_API_KEY=` or `JEV_API_KEY=` line in
   `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, then the first line of
-  `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key`. Every file must be 0600 — a group- or
+  `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key`, and last a `TYPESAFE_API_KEY` or
+  `JEV_API_KEY` line in `~/.mycreds` (parsed line by line, never `source`d). Every file must be 0600 — a group- or
   world-readable one is refused. Non-interactive agent shells do not inherit login-shell
   exports, so the file sources are the ones that work there; export a variable only for the
   session, after the user consented.

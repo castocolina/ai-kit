@@ -88,7 +88,9 @@ _STATUS_CODES = frozenset({"ok", "unavailable", "disabled", "no_consent", "unusa
                            "client_timeout", "client_not_runnable", "client_bad_output"})
 # The client's own label for "this row reads its key from here" (jev_review._first_key).
 _KEY_SOURCES = frozenset({"env", "file", "missing_file", "world_readable", "empty_file",
-                          "missing_api_key", "insecure_url"})
+                          "missing_api_key", "insecure_url", "state"})
+# The labels the client really reports: env:<NAME>, file:<name or ~/path>, or state (IN-105).
+_KEY_LABEL_RE = re.compile(r"^(env:[A-Z][A-Z0-9_]{0,63}|file:[A-Za-z0-9_.~/-]{1,64})$")
 # How a probe row's certainty about its key was obtained (jev_review CELL_STATUSES).
 _KEY_CHECKS = frozenset({"verified-live", "documented", "unsupported", "unverified"})
 # A status, reason or item-error code: lowercase snake tokens, up to four colon-qualified.
@@ -373,7 +375,8 @@ def public_backends(probe_list: Any) -> dict[str, dict[str, Any]]:
                 row[key] = bool(entry[key])
         for key, guard in (("host", lambda v: _shape(v, _HOST_RE)),
                            ("reason", _code),
-                           ("key_source", lambda v: _closed(v, _KEY_SOURCES)),
+                           ("key_source", lambda v: _closed(v, _KEY_SOURCES)
+                            or _shape(v, _KEY_LABEL_RE)),
                            ("key_check", lambda v: _closed(v, _KEY_CHECKS)),
                            ("consent", lambda v: _shape(v, _DATE_RE))):
             if key in entry:

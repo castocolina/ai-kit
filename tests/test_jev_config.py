@@ -7,6 +7,7 @@ import io
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -86,6 +87,7 @@ class TestConfigSet(unittest.TestCase):
             ("laya_url", "http://h:99999", "invalid_value:laya_url"),
             ("laya_url", "http://h:1/?token=abc", "invalid_value:laya_url"),
             ("laya_url", "http://h:1/#frag", "invalid_value:laya_url"),
+            ("laya_url", "http://exa mple.com:8010", "invalid_value:laya_url"),
             ("laya_version", "0.4 beta", "invalid_value:laya_version"),
             ("enabled", "yes", "invalid_value:enabled"),
             ("other", "x", "unknown_key"),
@@ -160,6 +162,10 @@ class TestKnobAndUrl(unittest.TestCase):
         )
         self.assertEqual(jev_config.knob(self.cwd, off_env)["on"], False)
         self.assertEqual(jev_config.knob(self.cwd, no_env)["source"], "env:GSD_PATH_JEV")
+        for odd in ("true", "no"):  # IN-101: still off, but the value is reported as not understood
+            result = jev_config.knob(self.cwd, {**self.env, "GSD_PATH_JEV": odd})
+            self.assertEqual((result["on"], result["problem"]),
+                             (False, "invalid_value:GSD_PATH_JEV"))
         self._write(self.user_file, "[jev]\nenabled = false\n")
         self.assertEqual(jev_config.knob(self.cwd, on_env)["on"], True)
         self._write(self.user_file, "[jev\n")
@@ -245,6 +251,24 @@ class TestClientSettings(_ClientCase):
     def setUp(self):
         super().setUp()
         os.environ.pop("JEV_LAYA_URL", None)  # each test sets the address it needs
+        # WR-104: a test with no address of its own falls back to a closed port, never the owner's
+        # real Laya at 127.0.0.1:8010, and a connect to 8010 fails the test at its end.
+        default = mock.patch.object(JR, "LAYA_DEFAULT_URL", closed_port_url())
+        default.start()
+        self.addCleanup(default.stop)
+        self.dialed_default_port = []
+        real_connect = socket.socket.connect
+
+        def guarded_connect(sock, address, *args, **kwargs):
+            if isinstance(address, tuple) and address[1:2] == (8010,):
+                self.dialed_default_port.append(address)
+                raise ConnectionRefusedError("the test guard refuses port 8010")
+            return real_connect(sock, address, *args, **kwargs)
+
+        guard = mock.patch.object(socket.socket, "connect", guarded_connect)
+        guard.start()
+        self.addCleanup(guard.stop)
+        self.addCleanup(lambda: self.assertEqual(self.dialed_default_port, []))
 
     def write_user_config(self, text):
         path = Path(os.environ["XDG_CONFIG_HOME"]) / "ai-kit" / "config.toml"
@@ -257,6 +281,42 @@ class TestClientSettings(_ClientCase):
         with mock.patch.object(sys, "stdout", out):
             code = JR.main(argv)
         return code, json.loads(out.getvalue())
+
+    def test_config_set_reports_a_project_override(self):
+        """WR-103: the user value is saved, and the project file that wins is named."""
+        _code, plain = self.run_cli(["config", "set", "enabled", "false"])
+        self.assertTrue(plain["ok"])
+        self.assertNotIn("overridden_by", plain)
+        project = self.tmp / "proj" / ".aikit" / "config.toml"
+        project.parent.mkdir()
+        project.write_text("[jev]\nenabled = true\n", encoding="utf-8")
+        code, out = self.run_cli(["config", "set", "enabled", "false"])
+        self.assertEqual(code, 0)
+        self.assertEqual(out["overridden_by"], str(project))
+        self.assertIn("wins", out["notice"])
+        _code, same = self.run_cli(["config", "set", "enabled", "true"])
+        self.assertNotIn("overridden_by", same)
+
+    def test_config_set_reports_a_broken_project_file_and_a_session_override(self):
+        """IN-504: a project file that cannot be parsed, or a session variable, is named."""
+        project = self.tmp / "proj" / ".aikit" / "config.toml"
+        project.parent.mkdir()
+        project.write_text("[jev\nbroken", encoding="utf-8")
+        code, out = self.run_cli(["config", "set", "enabled", "true"])
+        self.assertEqual(code, 0)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["overridden_by"], str(project))
+        self.assertIn("cannot be read", out["notice"])
+        project.unlink()
+        for key, value, name in (("enabled", "true", "GSD_PATH_JEV"),
+                                 ("laya_url", "http://127.0.0.1:9", "JEV_LAYA_URL"),
+                                 ("laya_url", "http://127.0.0.1:9", "AI_KIT_LAYA_URL")):
+            with self.subTest(name=name), mock.patch.dict(os.environ, {name: "0"}):
+                _code, out = self.run_cli(["config", "set", key, value])
+                self.assertEqual(out["overridden_by"], f"env:{name}")
+                self.assertIn(name, out["notice"])
+        _code, plain = self.run_cli(["config", "set", "laya_version", "0.4.27"])
+        self.assertNotIn("overridden_by", plain)
 
     def test_config_set_then_probe_finds_laya_there(self):
         with JevStub() as stub:
@@ -376,6 +436,30 @@ class TestClientSettings(_ClientCase):
             JR._send(JR.row_named(name), body, 1.0)
         return str(refused.exception)
 
+    def test_send_reads_the_laya_address_once(self):
+        """WR-101: the address changes to an unconsented host between two reads; the request
+        still goes only to the address the consent check saw."""
+        loopback = closed_port_url()
+        reads = iter([(loopback, None)])
+
+        def flipping():
+            return next(reads, (f"http://{REMOTE_HOST}:8010/v1/systemone", None))
+
+        row = {**JR.row_named("laya"), "url": flipping}
+        urls = []
+        real_request = JR.urllib.request.Request
+
+        def recording(url, *args, **kwargs):
+            urls.append(url)
+            return real_request(url, *args, **kwargs)
+
+        self.enable(None)
+        body = {"model": "x", "state": {}, "questions": {}}
+        with (mock.patch.object(JR.urllib.request, "Request", recording),
+              self.assertRaises(OSError)):  # the closed port refuses; nothing else is dialled
+            JR._send(row, body, 1.0)
+        self.assertEqual(urls, [loopback])
+
     def test_off_loopback_laya_needs_consent_and_sends_nothing(self):
         code, _saved = self.run_cli(["config", "set", "laya_url", f"http://{REMOTE_HOST}:8010"])
         self.assertEqual(code, 0)
@@ -441,6 +525,15 @@ class TestClientSettings(_ClientCase):
             self.point_remote("typesafe", stub)
             _code, report = self.run_probe()
         self.assertEqual(report["candidates"], ["typesafe"])
+
+    def test_malformed_typesafe_url_is_a_probe_error(self):
+        """IN-104: an unclosed bracket in JEV_TYPESAFE_URL is a probe error, not a traceback."""
+        os.environ["TYPESAFE_API_KEY"] = "sentinel-key-not-sent"
+        os.environ["JEV_TYPESAFE_URL"] = "http://[bad"
+        code, report = self.run_probe()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.backend_entry(report, "typesafe")["reason"],
+                         "invalid_url:jev_typesafe_url")
 
     def test_malformed_url_is_a_probe_error(self):
         self.write_user_config('[jev]\nlaya_url = "http://[bad"\n')

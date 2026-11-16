@@ -634,6 +634,7 @@ def valid_url(raw: str) -> bool:
     return (
         parts.scheme in ("http", "https")
         and bool(parts.hostname)
+        and re.fullmatch(r"\S+", parts.netloc) is not None
         and parts.username is None
         and parts.password is None
         and not parts.query
@@ -659,9 +660,10 @@ def parse_value(key: str, raw: str) -> bool | str:
     raise ValueError(f"invalid_value:{key}")
 
 
-def config_set(key: str, raw: str, env) -> dict:
+def config_set(key: str, raw: str, env, cwd: str | None = None) -> dict:
     """Save one [jev] key to the user config.toml (D-03). Other bytes of the file stay as they are;
-    a broken or unwritable file is refused with nothing written."""
+    a broken or unwritable file is refused with nothing written. With a `cwd`, a project
+    ./.aikit/config.toml that overrides the saved key is reported (`overridden_by`, `notice`)."""
     try:
         value = parse_value(key, raw)
     except ValueError as error:
@@ -681,7 +683,32 @@ def config_set(key: str, raw: str, env) -> dict:
             publish(path, new_text)
     except (ConfigError, SpliceError, OSError, UnicodeError) as error:
         return {"ok": False, "reason": "config_unwritable", "detail": str(error)}
-    return {"ok": True, "key": key, "value": value, "file": path}
+    result = {"ok": True, "key": key, "value": value, "file": path}
+    if cwd is not None:
+        shadow = _shadow(key, value, env, cwd)
+        if shadow:
+            result["overridden_by"], result["notice"] = shadow
+    return result
+
+
+def _shadow(key: str, value, env, cwd: str):
+    """(overridden_by, notice) when something beats the user value just saved, else None: a session
+    variable first, then a project file that cannot be read or that sets the key itself."""
+    names = {"enabled": (KNOB_ENV,), "laya_url": URL_ENV}.get(key, ())
+    name = next((name for name in names if (env.get(name) or "").strip()), None)
+    if name:
+        return f"env:{name}", f"saved, but {name} is set in this session and wins over the " \
+                              "files until it is unset"
+    project = cfg_local_path(cwd)
+    try:
+        effective = cfg_layered_table(cwd, env, "jev").get(key)
+    except ConfigError:
+        return project, (f"saved, but {project} cannot be read, so the saved {key} is not "
+                         "used there until it is fixed")
+    if effective != value and os.path.exists(project):
+        return project, (f"saved, but {project} sets {key} and wins over the user file "
+                         "until that line is removed")
+    return None
 
 
 def knob(cwd: str, env) -> dict:
@@ -689,8 +716,9 @@ def knob(cwd: str, env) -> dict:
     then on by default with needs_answer. A broken file or a bad value fails closed (off)."""
     raw = env.get(KNOB_ENV)
     if isinstance(raw, str) and raw.strip():
-        return {"on": raw.strip() == "1", "source": f"env:{KNOB_ENV}",
-                "needs_answer": False, "problem": None}
+        value = raw.strip()
+        return {"on": value == "1", "source": f"env:{KNOB_ENV}", "needs_answer": False,
+                "problem": None if value in ("0", "1") else f"invalid_value:{KNOB_ENV}"}
     try:
         table = jev_table(cwd, env)
     except ConfigError as error:
