@@ -294,7 +294,9 @@ runtime, RUN-15), recorded in the run's request notes; owner-directed, so decide
      `--print-argv` matrix (one call per runtime and role, plus an effort, a session and a custom-file case) and requires equal
      output, so a render that corrupts code is caught behaviorally too. A one-byte edit outside the config block fails it
      (non-vacuity). `check_dogfood.py` stays the live-copy check; the new test reads no `.planning/` path. Phase 38 later removes
-     the long self-test from rendered copies and relaxes the byte comparison to the part the render keeps.
+     the long self-test from rendered copies and relaxes the byte comparison to the part the render keeps. *(amended 2026-11-16,
+     38 D-19: the harness leaves the runner file for a sibling file the render does not carry, so a rendered copy stays the
+     template's bytes with the config block replaced and nothing is relaxed)*
    - Acceptance: the module passes on the shipped template, fails on a copy with one changed byte outside the config block, fails
      on a copy whose config block hides a code change, and passes after a config-only edit.
 
@@ -474,7 +476,8 @@ runtime, RUN-15), recorded in the run's request notes; owner-directed, so decide
 - The runner never calls jev, herdr, the network or the catalog; it learns only from the call, its seed data and the host.
   *(amended 2026-11-16, 37 D-22: the runner never calls jev, the network or the catalog, and calls the `herdr` CLI only through the
   optional hosting transport of R12, with `tab create`, `pane run` and `tab close` and nothing else; it learns only from the call,
-  its seed data, the host and, in a hosted lane, the lane's own files)*
+  its seed data, the host and, in a hosted lane, the lane's own files)* *(amended 2026-11-16, 38 D-27: Phase 38's sweep of a
+  killed run's directory also calls the read-only `tab list`; a live lane's screen, status and wait output are still never read)*
 - Every config write elsewhere stays atomic; this phase writes no config (the snapshot record in R9 goes through the existing
   atomic cache writer).
 - Tests run in a scratch HOME with `AI_KIT_REFUSE_REAL_HOME=1`, read no `.planning/` path and call no real host; fake CLIs only.
