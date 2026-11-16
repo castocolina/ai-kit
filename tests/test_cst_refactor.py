@@ -229,6 +229,10 @@ class TestNoRuntimeLibcst(unittest.TestCase):
     """LibCST is dev-only: no tracked runtime `.py` under skills/ or tools/ imports it."""
 
     def test_no_runtime_file_imports_libcst(self):
+        inside = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--is-inside-work-tree"],
+                                capture_output=True, text=True, check=False)
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            self.skipTest("not a git work tree: tracked files unknown")
         listed = subprocess.run(
             ["git", "-C", str(REPO), "ls-files", "-z", "--", "skills", "tools"],
             capture_output=True,

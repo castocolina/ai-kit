@@ -61,7 +61,18 @@ def scan_live_set(repo=_REPO):
     return hits, problems
 
 
+def in_work_tree(repo=_REPO):
+    """Whether the repo is a git work tree (the clean-room container copies it without .git)."""
+    proc = subprocess.run(["git", "-C", repo, "rev-parse", "--is-inside-work-tree"],
+                          capture_output=True, text=True, check=False)
+    return proc.returncode == 0 and proc.stdout.strip() == "true"
+
+
 class TestLiveSet(unittest.TestCase):
+    def setUp(self):
+        if not in_work_tree():
+            self.skipTest("not a git work tree: tracked files unknown")
+
     def test_every_legacy_line_names_codebase_memory_mcp(self):
         _hits, problems = scan_live_set()
         self.assertEqual([], problems, "lines lack codebase-memory-mcp:\n" + "\n".join(problems))
