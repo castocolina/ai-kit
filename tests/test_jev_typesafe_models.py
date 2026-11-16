@@ -14,7 +14,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.test_jev_fast_decision import JR, JevStub, _ClientCase, noul_item, payload
+from tests.test_jev_fast_decision import (
+    _REAL_PUBLIC_GET,
+    JR,
+    JevStub,
+    _ClientCase,
+    noul_item,
+    payload,
+)
 from tests.test_jev_learn import FakeFetch
 
 REPO = Path(__file__).resolve().parents[1]
@@ -364,6 +371,36 @@ class TestAnswerPathModels(_ClientCase):
             _code, second = self.run_probe()
         self.assertEqual(self.backend_entry(second, "typesafe")["model_record"], "known")
         self.assertEqual(again.calls, [])
+
+    def test_typesafe_docs_fetch_carries_no_key(self):
+        """SPEC prohibition: no key goes with a capability or doc fetch. The real keyless fetcher
+        runs against a loopback docs stub while TYPESAFE_API_KEY holds a sentinel."""
+        self.enable_remote("typesafe")
+        sentinel = "ts-sentinel-" + "9" * 20
+        os.environ["TYPESAFE_API_KEY"] = sentinel
+        pages = {"/llms.txt": DOCS["llms"], "/changelog.md": DOCS["changelog"],
+                 "/models.md": DOCS["models"]}
+        with JevStub(model="jev-1.15.0", places=2) as remote, JevStub(pages=pages) as docs:
+            self.point_remote("typesafe", remote)
+            self.run_screen(payload(noul_item("a")))
+            base = f"http://127.0.0.1:{docs.port}"
+            for name, path in (("DOCS_INDEX_URL", "/llms.txt"),
+                               ("DOCS_CHANGELOG_URL", "/changelog.md"),
+                               ("DOCS_MODELS_URL", "/models.md")):
+                patcher = mock.patch.object(JR._LEARN, name, base + path)
+                patcher.start()
+                self.addCleanup(patcher.stop)
+            real = mock.patch.object(JR, "_public_get", _REAL_PUBLIC_GET)
+            real.start()
+            self.addCleanup(real.stop)
+            _code, text = self.run_probe_text()
+        self.assertNotIn(sentinel, text)
+        self.assertEqual(self.backend_entry(json.loads(text), "typesafe")["model_record"], "new")
+        self.assertTrue(docs.requests, "the docs were never fetched")
+        for record in docs.requests:
+            headers = {name.lower(): value for name, value in record["headers"].items()}
+            self.assertNotIn("authorization", headers)
+            self.assertNotIn(sentinel, " ".join(headers.values()))
 
     def test_known_id_and_laya_answers_record_nothing(self):
         self.enable_remote("typesafe")

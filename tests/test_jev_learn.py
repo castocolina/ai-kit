@@ -669,6 +669,18 @@ class TestProbeLearning(_ClientCase):
         self.assertEqual(entry["record"], "unknown")
         self.fetch.assert_not_called()
 
+    def test_openapi_unreadable_while_health_answers_has_no_fingerprint(self):
+        """SPEC R2 edge (empty): /health answers but /openapi.json gives no readable OpenAPI
+        document, so the probe records no fingerprint and no server key is derived from one."""
+        self.write_user_config('[jev]\nlaya_version = "0.4.27"\n')
+        with JevStub(health_body=FIX["health_loaded"]) as laya:  # /openapi.json: {"status":"ok"}
+            self.point_at(laya)
+            code, report = self.run_probe()
+        self.assertEqual(code, 0)
+        self.assertIn("/openapi.json", [record["path"] for record in laya.requests])
+        entry = self.backend_entry(report, "laya")
+        self.assertIsNone(entry["fingerprint"])
+
     def test_new_upstream_feature_keeps_the_cell(self):
         self.write_user_config('[jev]\nlaya_version = "0.4.27"\n')
         pages = {
