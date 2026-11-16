@@ -1,6 +1,6 @@
 # Phase 37: Shared runner options and session ids - Context
 
-**Gathered:** 2026-11-16 (interactive path, no owner question needed, jev screening, after 37-SPEC.md); updated 2026-11-16 (re-run 2, herdr hosting, interactive path, jev screening, after the 37-SPEC.md R12 amendment)
+**Gathered:** 2026-11-16 (interactive path, no owner question needed, jev screening, after 37-SPEC.md); updated 2026-11-16 (re-run 2, herdr hosting, interactive path, jev screening, after the 37-SPEC.md R12 amendment); updated 2026-11-16 (Phase 38.1 amendment: per-host context forms and the all-host recorded-help fixtures, D-15 refined, D-30 added)
 **Status:** Ready for planning (after Phase 36 lands: this phase reads its per-lane `effort`, `lane_escalation` and `no_formula` route, and deletes the transitional Python pieces it left)
 
 <domain>
@@ -65,9 +65,19 @@ choosing effort by task (42).
 - **D-08: Escalation flags are carried, reported `recorded_only` and echoed as `escalate=`; the runner never acts on them.**
   jev carry_and_report choice 0.98. Phase 40 reads them for lane switching.
 - **D-15: `--context <label>`** (`^[a-z0-9][a-z0-9._-]{0,15}$`, for example `1m`) is a named setting, applied only where a form
-  exists: cursor's bracket `context=` key (cursor's own help example). Every other runtime reports `ignored` with `no_form`
-  (claude's `[1m]` model suffix and codex's window key are unverified forms: `unverified_form`, not fed). The window check of
+  exists: cursor's bracket `context=` key (cursor's own help example). ~~Every other runtime reports `ignored` with `no_form`
+  (claude's `[1m]` model suffix and codex's window key are unverified forms: `unverified_form`, not fed).~~ *(superseded
+  2026-11-16, 38.1 D-17: copilot has a verified form and codex a verified key; see the refinement and D-30)* The window check of
   Phase 39 is a prompt-size check, a different thing.
+  - **Refined 2026-11-16 (38.1 D-17):** the per-host context forms, checked live against each host's own help and one zero-token
+    config parse (claude 2.1.325, codex 0.169.0, copilot 1.0.112, cursor-agent 2026.11.13, opencode 2.3.0, pi 1.5.2, grok
+    1.0.52, 2026-11-16): copilot `--context <tier>` with the values `default` and `long_context` (verified from its help; the
+    earlier "copilot context form unknown" is stale); codex `-c model_context_window=<integer tokens>` (the key is real and typed:
+    `-c model_context_window=abc` is rejected as "expected i64" by the config parser, an unknown key is accepted silently; verified
+    key, the effect on a given model's window unverified); cursor the bracket `context=<label>` key (verified help example, its
+    meaning per model unverified); claude has no model-context flag in its help (`--autocompact <auto|tokens>` sets the
+    auto-compact window, a different thing, and the `[1m]` model suffix is not in the help, so it stays an `unverified_form`);
+    opencode, pi and grok show no context form (`no_form`).
 
 ### The report and the status line (SPEC R2)
 
@@ -83,7 +93,8 @@ choosing effort by task (42).
   The one-last-line rule is unchanged. **Own reasoning** (jev low: laya append_last 0.48, typesafe group_after_cycles 0.56):
   the group is always present like `attempts` and `cycles`, while `retry_after_s` and `upstream` are conditional tails. Ledger.
 - **D-14: The setting reasons are a closed list owned by the runner.** `no_form`, `id_carries`, `unverified_form`,
-  `mode_forbids`, `no_slot`, `recorded_only`, `no_provider_form`; `--describe` prints the list, and one locking test compares
+  `mode_forbids`, `no_slot`, `recorded_only`, `no_provider_form` *(amended 2026-11-16, 38.1 D-17, D-30: and `bad_value`, a
+  context label outside the form's value kind)*; `--describe` prints the list, and one locking test compares
   the runner source, `--describe` and the SKILL.md table. States: `applied`, `ignored`, `unknown`. **Own reasoning** (GSD's
   closed-list-with-lock idea, adopted by the owner's directive). The setting lines go to stderr before the spawn, redacted
   with the runner's existing `redactSecrets`.
@@ -251,6 +262,30 @@ choosing effort by task (42).
   a display field) is Phase 38.1's, the switch to the fallback lane Phase 40's (reading `lane_usage_limit` and `lane_fallback` of
   Phase 36). This phase records the captured wording as a fixture source for 38.1 (the body contains no key) and adds no class.
 
+### Added 2026-11-16 (Phase 38.1 amendment, owner directive HOST SETTINGS FORMS)
+
+- **D-30: Every host's setting forms are recorded help, labeled, and a test fails when a row names a flag the record lacks.**
+  How each host takes a model, an effort and a context size is fixed knowledge kept in the runner rows (one place, shared by
+  review and execute through `--print-argv` and `--describe`); it records HOW to pass a setting, never WHAT a model supports
+  (support stays live or from the catalog). Each row's `source` label says verified (the host's own help line or a live probe,
+  with host version and date) or unverified. **Executed by this phase's plan** (it adds the row fields and `--describe`; Phase
+  35's plan builds the opencode-only help-fixture test first, this plan extends it, and Phase 39 only reads the forms). The
+  plan: (1) records `tests/fixtures/cli_help/<host>.txt` (and the subcommand helps the formulas use: codex `exec`, `exec resume`,
+  opencode `run`) for every host that has a runner row or a recorded form (claude, codex, cursor-agent, copilot, opencode, pi,
+  grok), each with its version and date in a header, no account, key or path; (2) extends 35's flag test so every flag a row's
+  effort, session or context form uses must appear in that host's recorded help, a planted stale flag fails it, and a host with
+  no recorded help fails the test rather than passing silently; (3) adds the context form per host from the D-15 refinement:
+  the row names the flag or key, its value kind (`label`: cursor passes the label into the bracket; `enum`: copilot takes
+  `default` or `long_context`; `tokens`: codex takes integer tokens, accepting `<n>`, `<n>k` or `<n>m` and converting), and its
+  label (copilot: verified help; codex: key verified by the config parse, effect unverified; cursor: verified example, meaning
+  unverified); a label outside the form's value kind is reported `ignored` with the new reason `bad_value` (the eighth member of
+  the closed setting-reason list, covered by the locking test) and never fed, because a context label that the host rejects
+  would break the call instead of being reported. The phase's spike (D-17) refreshes the recorded helps and the codex key
+  probe (`-c model_context_window=<non-integer>` against a scratch `CODEX_HOME`, zero tokens). Phase 39's capability block prints
+  the forms actually applied from `--print-argv`. **Own reasoning** (owner directive; Phase 38.1 verified the forms live).
+  Ledger. **Needs owner awareness** (the closed setting-reason list grows by `bad_value`; a context label now reaches copilot and
+  codex).
+
 ### Handoffs to later phases
 
 - **Phase 36** (executes first): writes Python effort composition and the `exec_formula` mirror, `no_formula` route and drift
@@ -261,7 +296,8 @@ choosing effort by task (42).
   report lines stay the settings report and the watchdog and lock print their own notices; this phase adds the status line keys
   `coverage=` and `findings=` after the 37 group)*
 - **Phase 38.1**: its error classes use their own closed list; a `rejected` effort line adopts it; the status line grows after
-  this group.
+  this group. *(amended 2026-11-16, 38.1 D-21: the status line gets no new key from 38.1; the report line gains `check=`; the
+  runner's `--describe` gains a `classes` list; 38.1 adds the class `bad_request`, apart from this phase's setting reasons.)*
 - **Phase 39**: the capability block reads the final argv from `--print-argv`; the window check is unrelated to `--context`.
 - **Phase 40**: reads `escalate=` for lane switching, passes session ids between review rounds where it wants continuity, and
   routes custom lanes through `--argv-file` (so they get the status line and tree check).
@@ -284,6 +320,9 @@ choosing effort by task (42).
 - Which claude permission flag works under `-p` here, and does `-p` refuse `bypassPermissions` in any setting (a help fragment
   hints it can)?
 - Do cursor's bracket keys `effort` and `context` apply to every model it lists (only the help example shows them)?
+- *(added 2026-11-16, 38.1 D-20)* Which stream and format does claude's execute formula print a usage limit on (the review formula
+  uses `--output-format json`, where a limit is a JSON result on stdout; a text format would put it on stdout as plain text)?
+  Record it in the spike so Phase 38.1's stdout rows match the formula this phase chooses.
 - Which self-test cases take real time (the shard recorder decides their kind)?
 - Whether GSD's `run-with-timeout` keeps the one-last-line rule with the longer status line (line length, no truncation).
 - *Added 2026-11-16 (re-run 2):* whether `tab close` also ends a grandchild that detaches from the launcher's process tree (only an
