@@ -1694,6 +1694,7 @@ LOOKUP_COPIES = (
     "skills/ai-kit-commit-fold/gsd/ai-kit-commit-fold/ai-kit-fold.cjs",
     "skills/ai-kit-spec-execute-superpowers/references/fold-step.md",
     "skills/ai-kit-usage-metrics/SKILL.md",
+    "skills/ai-kit-spec-review/ai_kit_spec/jev_names.py",
 )
 _LOOKUP_NAMES = frozenset({"JEV_ENTRY_REL", "SKILLS_ROOTS"})
 _DOC_ROOT_BRACED = re.compile(r"^\$\{(\w+):-\$HOME/([^}]+)\}/(.+)$")
