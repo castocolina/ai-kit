@@ -13,7 +13,14 @@ from unittest import mock
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import catalog_build, catalog_facts, cli, model_catalog, optional_sources
+from ai_kit_spec import (
+    catalog_build,
+    catalog_cmds,
+    catalog_facts,
+    cli,
+    model_catalog,
+    optional_sources,
+)
 
 T = "2026-11-20T00:00:00Z"
 
@@ -336,6 +343,173 @@ class TestModelsConfigCommand(_Scratch):
         self.assertEqual(code, 2)
         self.assertIn("bad --context tokens: 64k", error)
         self.assertFalse(os.path.exists(os.path.join(self.cwd, ".aikit", "config.toml")))
+
+
+class TestOptionalSourceCommands(_Scratch):
+    def _read_store(self):
+        with open(optional_sources.store_path(self.env), encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def setUp(self):
+        super().setUp()
+        self.env.update({
+            "XDG_CACHE_HOME": os.path.join(self.root, "cache"),
+            "PATH": os.environ.get("PATH", ""),
+        })
+
+    def test_web_query(self):
+        code, output, error = self._call(["web-query", "--runtime", "copilot"])
+        self.assertEqual((code, error), (0, ""))
+        self.assertEqual(output, optional_sources.web_query("copilot") + "\n")
+
+    def test_record_web_names(self):
+        path = os.path.join(self.root, "web.json")
+        payload = {
+            "runtime": "copilot", "query": optional_sources.web_query("copilot"),
+            "url": "https://example.invalid/models", "date": "2026-11-19",
+            "names": ["placeholder-model-1", "placeholder-model-2"],
+        }
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        code, output, error = self._call(["record-web-names", "--file", path])
+        self.assertEqual((code, error), (0, ""))
+        self.assertEqual(json.loads(output), {
+            "runtime": "copilot", "recorded": 2, "label": "web, unverified"
+        })
+        store = self._read_store()
+        self.assertEqual(set(store["copilot"]), {"placeholder-model-1", "placeholder-model-2"})
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        code, _, error = self._call(["record-web-names", "--file", path])
+        self.assertEqual(code, 2)
+        self.assertIn("web file:", error)
+
+    def test_herdr_names_present_and_absent(self):
+        from tests.herdr_fakes import write_herdr_fake
+
+        pane = "pane-1"
+        answers = {
+            ("pane", "split", "--current", "--direction", "right", "--cwd", self.cwd,
+             "--no-focus"): (0, json.dumps({"result": {"pane": {"pane_id": pane}}})),
+            ("pane", "run", pane, "copilot --allow-all --no-auto-update"): (0, ""),
+            ("pane", "wait-output", pane, "--regex", "(?i)copilot", "--timeout", "30000"): (0, ""),
+            ("pane", "send-text", pane, "/model"): (0, ""),
+            ("pane", "send-keys", pane, "enter"): (0, ""),
+            ("pane", "wait-output", pane, "--regex", "(?i)model", "--timeout", "30000"): (0, ""),
+            ("pane", "read", pane, "--source", "recent-unwrapped", "--lines", "120"):
+                (0, "/model\nplaceholder-model-1\nplaceholder-model-2\n"),
+            ("pane", "send-keys", pane, "esc"): (0, ""),
+            ("pane", "close", pane): (0, ""),
+        }
+        bindir = os.path.join(self.root, "bin")
+        write_herdr_fake(bindir, answers, os.path.join(self.root, "herdr.log"))
+        self.env.update({"HERDR_ENV": "1", "PATH": bindir + os.pathsep + self.env["PATH"]})
+        code, output, error = self._call([
+            "herdr-names", "--runtime", "copilot", "--cwd", self.cwd
+        ])
+        self.assertEqual((code, error), (0, ""))
+        self.assertEqual(json.loads(output), {"status": "ok", "recorded": 2})
+        stored = self._read_store()
+        self.assertTrue(all(
+            rows[0]["label"] == "interactive view, unverified"
+            for rows in stored["copilot"].values()
+        ))
+        self.env.pop("HERDR_ENV")
+        code, output, error = self._call(["herdr-names", "--runtime", "copilot"])
+        self.assertEqual((code, error), (0, ""))
+        self.assertEqual(json.loads(output), {
+            "status": "herdr absent: HERDR_ENV is not 1", "recorded": 0
+        })
+
+
+class TestOptionalFetchCandidates(_Scratch):
+    def test_store_and_seed_candidates(self):
+        record = {"name": "placeholder-model-1", "source": "web", "label": "web, unverified",
+                  "url": "https://example.invalid/models", "date": "2026-11-19"}
+        store = {"copilot": {"placeholder-model-1": [record]}}
+        provider = "fake" + "-copilot"
+        sources = catalog_build.CatalogSources(
+            {provider: {"models": {"placeholder-model-2": {}}}}, True, [], False
+        )
+        found = catalog_cmds.optional_fetch_candidates(
+            {"clis": {"copilot": {"installed": True, "listing": "none"}}}, store, sources
+        )
+        self.assertEqual(found, [
+            {"runtime": "copilot", "model_id": "placeholder-model-1",
+             "listed_from": [record], "label": "web, unverified"},
+            {"runtime": "copilot", "model_id": "placeholder-model-2",
+             "listed_from": [{"name": "placeholder-model-2", "source": "seed",
+                              "label": "seed, unverified"}], "label": "seed, unverified"},
+        ])
+
+    def test_claude_store_names_included(self):
+        record = {"name": "placeholder-model-3", "source": "web", "label": "web, unverified"}
+        found = catalog_cmds.optional_fetch_candidates(
+            {"clis": {"claude": {"installed": True, "listing": "none"}}},
+            {"claude": {"placeholder-model-3": [record]}},
+            catalog_build.CatalogSources({}, True, [], False),
+        )
+        self.assertEqual([item["model_id"] for item in found], ["placeholder-model-3"])
+
+    def test_no_models_dev_only_store(self):
+        record = {"name": "placeholder-model-1", "source": "web", "label": "web, unverified"}
+        found = catalog_cmds.optional_fetch_candidates(
+            {"clis": {"copilot": {"installed": True, "listing": "none"}}},
+            {"copilot": {"placeholder-model-1": [record]}},
+            catalog_build.CatalogSources({}, False, [], False),
+        )
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["model_id"], "placeholder-model-1")
+
+    def test_only_unlisted_runtimes(self):
+        snapshot = {"clis": {
+            "copilot": {"installed": True, "listing": "none"},
+            "claude": {"installed": True, "listing": "ok"},
+            "cursor": {"installed": True, "listing": "failed"},
+            "grok": {"installed": True, "listing": "none"},
+        }}
+        record = {"name": "placeholder-model-1", "source": "web", "label": "web, unverified"}
+        found = catalog_cmds.optional_fetch_candidates(
+            snapshot, {"copilot": {"placeholder-model-1": [record]}},
+            catalog_build.CatalogSources({}, False, [], False),
+        )
+        self.assertEqual([item["runtime"] for item in found], ["copilot"])
+
+    def test_duplicate_pair_keeps_records(self):
+        key = "fake/placeholder-model-1"
+        entry = {"provider": "fake", "runtimes": {"claude": {"model_id": "placeholder-model-1"}},
+                 "source": {}, "confidence": "low", "last_verified": "2026-11-20"}
+        record = {"name": "placeholder-model-1", "source": "web", "label": "web, unverified",
+                  "url": "https://example.invalid/models", "date": "2026-11-19"}
+        optional = [{"runtime": "claude", "model_id": "placeholder-model-1",
+                     "listed_from": [record], "label": "web, unverified"}]
+        taken = {("claude", "placeholder-model-1")}
+        self.assertEqual(catalog_cmds.builder_candidates(optional, taken), [])
+        catalog, reasons = catalog_cmds.attach_listed_from({key: entry}, optional)
+        self.assertEqual(reasons, [])
+        self.assertEqual(catalog[key]["runtimes"]["claude"], {
+            "model_id": "placeholder-model-1", "listed_from": [record]
+        })
+
+    def test_fetch_command_keeps_labels(self):
+        provider = "fake" + "-copilot"
+        key = provider + "/placeholder-model-2"
+        sources = catalog_build.CatalogSources(
+            {provider: {"models": {"placeholder-model-2": {"cost": {}}}}},
+            True, [], False,
+            arena_data={"config": "text", "split": "latest", "categories": {}},
+            arena_ok=True,
+        )
+        discovered = catalog_cmds.optional_fetch_candidates(
+            {"clis": {"copilot": {"installed": True, "listing": "none"}}}, {}, sources
+        )
+        built = catalog_cmds.builder_candidates(discovered, set())
+        catalog, _, _ = catalog_build.build_model_catalog(built, sources, {})
+        catalog, reasons = catalog_cmds.attach_listed_from(catalog, discovered)
+        self.assertEqual(reasons, [])
+        self.assertEqual(catalog[key]["runtimes"]["copilot"]["listed_from"][0]["label"],
+                         "seed, unverified")
+        self.assertNotIn("placeholder-model-1", catalog)
 
 
 if __name__ == "__main__":

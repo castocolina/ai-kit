@@ -13,6 +13,7 @@ from ai_kit_spec import (
     catalog_fetch,
     config_migrate,
     jev_names,
+    optional_sources,
     provider_check,
     routing,
     secret_shapes,
@@ -571,6 +572,12 @@ def _fetch_catalog_external_sources(
                           raw.source_at, sidecar)
 
 
+def _claude_seed_provider() -> str:
+    row = next(row for row in optional_sources.SEED_ROWS if row.runtime == "claude")
+    assert row.models_dev_provider is not None
+    return row.models_dev_provider
+
+
 def _finalize_fetch_catalog_meta(
     catalog: dict,
     catalog_meta: dict,
@@ -581,8 +588,8 @@ def _finalize_fetch_catalog_meta(
         anthropic_ids = [
             i
             for i in anthropic_ids
-            if canonical_key("anthropic", i) in catalog
-            and "claude" in catalog[canonical_key("anthropic", i)].get("runtimes", {})
+            if canonical_key(_claude_seed_provider(), i) in catalog
+            and "claude" in catalog[canonical_key(_claude_seed_provider(), i)].get("runtimes", {})
         ]
     if anthropic_ids:
         catalog_meta["anthropic_model_ids"] = anthropic_ids
@@ -628,6 +635,17 @@ def _claude_catalog_candidates(
     ]
     return claude_candidates, True
 
+def _optional_candidates_for_fetch(inputs, deps, claude_candidates):
+    snapshot = inputs.facts_inputs.snapshot if inputs.facts_inputs is not None else {}
+    store = cache_read_json(optional_sources.store_path(deps.env_fn())) or {}
+    optional = catalog_cmds.optional_fetch_candidates(snapshot, store, inputs.sources)
+    taken = {
+        (candidate["runtime"], candidate["model_id"])
+        for candidate in inputs.discovered + claude_candidates
+    }
+    return optional, catalog_cmds.builder_candidates(optional, taken)
+
+
 def _run_fetch_catalog_build(
     inputs: FetchBuildInputs, deps: CliDeps
 ) -> FetchCatalogOutput:
@@ -639,13 +657,16 @@ def _run_fetch_catalog_build(
     claude_candidates, materialized = _claude_catalog_candidates(
         inputs.discovered, anthropic_ids, deps.which_fn
     )
+    optional, for_build = _optional_candidates_for_fetch(inputs, deps, claude_candidates)
     catalog, rejections, unmatched = build_model_catalog(
-        inputs.discovered + claude_candidates,
+        inputs.discovered + claude_candidates + for_build,
         inputs.sources,
         inputs.existing_catalog,
         runtime_meta=inputs.runtime_meta,
         facts_inputs=inputs.facts_inputs,
     )
+    catalog, extra_rejections = catalog_cmds.attach_listed_from(catalog, optional)
+    rejections.extend(extra_rejections)
     extra = {("claude", c["model_id"]) for c in claude_candidates}
     filtered = [
         record

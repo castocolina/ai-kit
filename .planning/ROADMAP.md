@@ -696,7 +696,7 @@ Plans:
   7. A test fails when code, a default, a rail, a skill, a doc or a test hardcodes a provider or model name other than `router-env/<x>` (tests for pi and opencode only; the bare-id hosts use invented placeholders); the guard has a committed baseline that can only shrink, marked examples pass and decision-making lists fail. *(added 2026-11-16, owner rule, HUB-09)*
   8. A host with no non-interactive model list shows seed, web-search and herdr-extracted candidates, each labeled by how sure it is, and none of them is ever required. *(added 2026-11-16, owner decision, 35 R3)*
 
-**Plans**: 25/28 plans executed
+**Plans**: 26/28 plans executed
 - [x] 35-01-PLAN.md
 - [x] 35-02-PLAN.md
 - [x] 35-03-PLAN.md
@@ -719,7 +719,7 @@ Plans:
 - [x] 35-20-PLAN.md
 - [x] 35-21-PLAN.md
 - [x] 35-22-PLAN.md
-- [ ] 35-23-PLAN.md
+- [x] 35-23-PLAN.md
 - [x] 35-24-PLAN.md
 - [ ] 35-25-PLAN.md
 - [ ] 35-26-PLAN.md
@@ -1144,7 +1144,7 @@ Plans:
 | 32.5. codebase-memory-mcp replaces codegraph | 10/10 | Complete    | 2026-11-14 |
 | 33. One config design | 12/12 | Complete    | 2026-11-15 |
 | 34. jev backends by host and Laya calibration | 10/10 | Complete    | 2026-11-16 |
-| 35. Model discovery and catalog | 25/28 | In Progress | - |
+| 35. Model discovery and catalog | 26/28 | In Progress | - |
 | 36. spec-config as the hub | 0/TBD | Not started | - |
 | 37. Shared runner options and session ids | 0/TBD | Not started | - |
 | 38. Runner hardening and run safety | 0/TBD | Not started | - |

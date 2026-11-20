@@ -12,6 +12,7 @@ from ai_kit_spec import (
     catalog_report,
     config_io,
     detection,
+    herdr_source,
     models_config,
     optional_sources,
 )
@@ -206,7 +207,108 @@ def cmd_catalog_report(args, deps) -> int:
     return 0
 
 
+def cmd_web_query(args, deps) -> int:
+    try:
+        print(optional_sources.web_query(args.runtime))
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    return 0
+
+
+def cmd_record_web_names(args, deps) -> int:
+    try:
+        runtime, records = optional_sources.ingest_web_file(args.file)
+        optional_sources.record_names(
+            optional_sources.store_path(deps.env_fn()), runtime, records
+        )
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    print(json.dumps({"runtime": runtime, "recorded": len(records),
+                      "label": "web, unverified"}))
+    return 0
+
+
+def cmd_herdr_names(args, deps) -> int:
+    records, status = herdr_source.read_interactive_names(
+        args.runtime, deps.env_fn(), deps.run_fn, deps.which_fn, args.cwd or os.getcwd()
+    )
+    if records:
+        optional_sources.record_names(
+            optional_sources.store_path(deps.env_fn()), args.runtime, records
+        )
+    print(json.dumps({"status": status, "recorded": len(records)}))
+    return 0
+
+
+def optional_fetch_candidates(snapshot: dict, store: dict, sources) -> list:
+    """Candidates from stored optional names and seed rows for installed no-list runtimes."""
+    result = []
+    for runtime, row in snapshot.get("clis", {}).items():
+        if not isinstance(row, dict) or not row.get("installed") or row.get("listing") != "none":
+            continue
+        seed = []
+        if sources.models_dev_ok and runtime != "claude":
+            seed = optional_sources.seed_candidates(runtime, sources.models_dev_data)
+        for candidate in optional_sources.optional_candidates(store, runtime, seed=seed):
+            result.append({
+                "runtime": runtime,
+                "model_id": candidate["name"],
+                "listed_from": candidate["sources"],
+                "label": candidate["label"],
+            })
+    return sorted(
+        {(item["runtime"], item["model_id"]): item for item in result}.values(),
+        key=lambda item: (item["runtime"], item["model_id"]),
+    )
+
+
+def builder_candidates(optional: list, taken: set) -> list:
+    """Project optional candidates to builder shape, omitting already discovered pairs."""
+    return [
+        {"runtime": item["runtime"], "model_id": item["model_id"]}
+        for item in optional
+        if (item["runtime"], item["model_id"]) not in taken
+    ]
+
+
+def attach_listed_from(catalog: dict, candidates: list) -> tuple:
+    """Attach optional-source records to matching runtime rows, retaining full provenance."""
+    reasons = []
+    for candidate in candidates:
+        runtime = candidate.get("runtime")
+        model_id = candidate.get("model_id")
+        if not isinstance(runtime, str) or not isinstance(model_id, str):
+            continue
+        key = next((entry_key for entry_key, entry in catalog.items()
+                    if isinstance(entry, dict)
+                    and isinstance(entry.get("runtimes"), dict)
+                    and isinstance(entry["runtimes"].get(runtime), dict)
+                    and entry["runtimes"][runtime].get("model_id") == model_id), None)
+        if key is None:
+            continue
+        entry = catalog[key]
+        updated, reason = merge_catalog_entry(
+            catalog, key, {**entry, "runtimes": {runtime: {
+                "model_id": model_id, "listed_from": candidate.get("listed_from", [])
+            }}}
+        )
+        catalog = updated
+        if reason:
+            reasons.append(reason)
+    return catalog, reasons
+
+
 def register_parsers(sub) -> None:
+    web_query = sub.add_parser("web-query")
+    web_query.add_argument("--runtime", required=True)
+    record_web = sub.add_parser("record-web-names")
+    record_web.add_argument("--file", required=True)
+    herdr = sub.add_parser("herdr-names")
+    herdr.add_argument("--runtime", required=True)
+    herdr.add_argument("--cwd", default=None)
+
     confirm = sub.add_parser("confirm-model")
     confirm.add_argument("--catalog-path", required=True)
     confirm.add_argument("--model-id", required=True)
@@ -232,6 +334,9 @@ def register_parsers(sub) -> None:
 
 
 COMMANDS = {
+    "web-query": cmd_web_query,
+    "record-web-names": cmd_record_web_names,
+    "herdr-names": cmd_herdr_names,
     "confirm-model": cmd_confirm_model,
     "models-config": cmd_models_config,
     "catalog-report": cmd_catalog_report,
