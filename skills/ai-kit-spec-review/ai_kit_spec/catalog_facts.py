@@ -5,7 +5,7 @@ applied after the build. catalog_build only calls this module (D-01).
 from collections.abc import Callable
 from typing import NamedTuple
 
-from ai_kit_spec import catalog_bands, model_names
+from ai_kit_spec import catalog_bands, catalog_tiers, model_names
 from ai_kit_spec.catalog_labels import fact
 from ai_kit_spec.model_catalog import canonical_key, merge_catalog_entry
 from ai_kit_spec.model_heuristics import infer_purpose_from_name
@@ -193,6 +193,46 @@ def _apply_entry(catalog: dict, item: _ApplyInput):
     return merge_catalog_entry(catalog, key, incoming)
 
 
+def _drop_disabled_facts(entry: dict, inputs: FactsInputs) -> dict:
+    facts = dict(entry.get("facts", {}))
+    settings = inputs.settings
+    if settings is None:
+        return facts
+    enabled = set(getattr(settings, "sources", ()))
+    disabled = {source for source in ("arena", "artificial-analysis") if source not in enabled}
+    return {
+        name: value
+        for name, value in facts.items()
+        if not (
+            isinstance(value, dict)
+            and (value.get("source") in disabled or bool(set(value.get("inputs", ())) & disabled))
+        )
+    }
+
+
+def _merge_derived(cleaned, derived, sources, inputs):
+    down = {
+        name
+        for name, enabled, ok in (
+            ("arena", catalog_tiers.source_enabled(inputs, "arena"), sources.arena_ok),
+            (
+                "artificial-analysis",
+                catalog_tiers.source_enabled(inputs, "artificial-analysis"),
+                sources.aa_ok,
+            ),
+        )
+        if enabled and not ok
+    }
+    for name, value in derived.items():
+        existing = cleaned.get(name)
+        depends_on_down = isinstance(existing, dict) and (
+            existing.get("source") in down or bool(set(existing.get("inputs", ())) & down)
+        )
+        if not depends_on_down:
+            cleaned[name] = value
+    return cleaned
+
+
 def apply_facts(catalog: dict, sources, inputs: FactsInputs) -> tuple:
     cuts = catalog_bands.cost_cuts(sources.models_dev_data) if sources.models_dev_ok else None
     known = (
@@ -205,6 +245,13 @@ def apply_facts(catalog: dict, sources, inputs: FactsInputs) -> tuple:
     for key, entry in catalog.items():
         item = _ApplyInput(key, entry, sources, inputs, cuts, known)
         updated, reason = _apply_entry(updated, item)
+        if reason:
+            rejections.append(reason)
+    tier_updates = catalog_tiers.tier_facts(updated, sources, inputs)
+    for key, entry in list(updated.items()):
+        cleaned = _drop_disabled_facts(entry, inputs)
+        cleaned = _merge_derived(cleaned, tier_updates.get(key, {}), sources, inputs)
+        updated, reason = merge_catalog_entry(updated, key, {**entry, "facts": cleaned})
         if reason:
             rejections.append(reason)
     return updated, rejections
