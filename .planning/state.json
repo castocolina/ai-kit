@@ -81,7 +81,7 @@
     {
       "number": "35",
       "name": "Model discovery and catalog",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "36",
@@ -201,8 +201,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (verify)",
-    "reason": "Phase 16 of 40 · 38% · ready to verify"
+    "label": "Advance to the next step (plan phase 36)",
+    "reason": "Phase 17 of 40 — needs a plan"
   },
-  "updated_at": "2026-11-20T21:19:19.431Z"
+  "updated_at": "2026-11-20T23:00:55.130Z"
 }
