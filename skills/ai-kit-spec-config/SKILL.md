@@ -64,7 +64,7 @@ installed."
 - **Never hand-write a `command` for a runtime the runner knows** — a table runtime stores `runtime` and `model` (plus its knobs); the runner builds the argv. Only a CLI outside the runner table gets a custom `command`.
 - **Never save a CLI reviewer entry without testing it via `check-reviewer` first** — catch auth/model/entitlement problems before persisting. The one exception: the user declined the test at Step 2.5's write-risk ask; that entry is saved untested and named so at Step 4.
 - **Never silently pre-filter model families based on your own judgment** — always let the user decide, informed by your research (user agency over paternalism).
-- **Never paste a multi-provider CLI's raw model list ungrouped** — always run `group-models` first (raw lists can be hundreds of ids; grouping makes them readable).
+- **Never paste a multi-provider CLI's raw model list** — show the sorted, labeled `catalog-report` rows and the ranked blocks of `references/cli-model-selection.md` instead (raw lists can be hundreds of ids; the report keeps them readable).
 - **Never write the global config without an explicit `--global` or a Step 2.1 "replace" answer, and never treat `--global` or `--local` as consent to replace an existing roster** (global changes affect all projects; default is local).
 - **Never skip asking about session-default reviewer entries** — the only
   zero-external-dependency reviewer option, worth having available as a fallback (placed last
@@ -179,14 +179,14 @@ catalog flow.
 or the user declined every installed CLI at the ask above. Session-default entries never go
 through this catalog/ranking flow — continue at Step 2.3/2.7.
 
-**MANDATORY — READ ENTIRE FILE:** when the user kept at least one CLI, before grouping
-models, calling `fetch-model-catalog`, ranking, or presenting candidates, read
+**MANDATORY — READ ENTIRE FILE:** when the user kept at least one CLI, before
+calling `fetch-model-catalog`, ranking, or presenting candidates, read
 [`references/cli-model-selection.md`](references/cli-model-selection.md) completely
 from start to finish. **NEVER set any range limits when reading this file.** It is the
 9-item procedure (snapshot and catalog path → extra-candidate → fetch → unmatched-confirm → catalog-report → rank → present → code-index-alternative → router-alias note) plus the exact command templates. Skipping
 it reproduces live landmines this wizard already hit: guessing a codex id
 (`placeholder-model-1-high` instead of `placeholder-model-1`), dumping a ~200-id cursor list
-ungrouped, ranking before unmatched confirmation, and silently dropping every
+raw instead of the catalog report, ranking before unmatched confirmation, and silently dropping every
 single-provider-CLI candidate by rebuilding `discovered` from `$RUNTIMES_JSON` alone.
 
 #### Step 2.3 — Resolve vendor attribution

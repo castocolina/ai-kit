@@ -30,7 +30,7 @@ Without herdr, say so and ask the owner for an id or `auto`.
 
 - Run: `fetch-model-catalog --runtimes-json <runtimes.json> --catalog-path <catalog> --if-stale --jev`
 
-The fetch reads `[models]`, caches each source by its own age, and prints a reason for every skipped source. Owner-defined router aliases are assumed router with fallback quota: no lookup and no heuristic question.
+The fetch reads `[models]`, caches each source by its own age, and prints a reason for every skipped source. Owner-defined router aliases are assumed router with fallback quota: no lookup and no heuristic question. A catalog file that is not valid JSON is replaced by the fresh build after its bytes are saved beside it as `<catalog>.corrupt`; a file that cannot be read at all is never replaced and the command stops with the reason.
 
 ## Labels
 
