@@ -691,25 +691,6 @@
    ]
   },
   {
-   "path": "skills/ai-kit-spec-review/references/cli-profiles/codex.md",
-   "cleaned_by": "35",
-   "hits": [
-    "keyval gpt-5.6-sol"
-   ]
-  },
-  {
-   "path": "skills/ai-kit-spec-review/references/cli-profiles/opencode.md",
-   "cleaned_by": "35",
-   "hits": [
-    "keyval opencode-go/kimi-k3",
-    "slash opencode-go/gpt-5.6-luna",
-    "slash opencode-go/grok-4.6",
-    "slash opencode-go/kimi-k3",
-    "slash opencode-go/kimi-k3",
-    "slash opencode-go/qwen3.8-max"
-   ]
-  },
-  {
    "path": "skills/ai-kit-spec-review/references/cross-ai.mjs",
    "cleaned_by": "37",
    "hits": [

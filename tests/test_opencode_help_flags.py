@@ -27,6 +27,38 @@ def recorded_flags() -> set:
     return flags
 
 
+def help_flags(name) -> set:
+    return extract_flags((HELP_DIR / name).read_text(encoding="utf-8"))
+
+
+def command_flags(text) -> dict:
+    result = {"run": set(), "models": set()}
+    for match in re.finditer(r"\[\s*'(run|models)'([^\]]*)\]", text):
+        result[match.group(1)].update(extract_flags(match.group(2)))
+    for match in re.finditer(r"opencode (run|models)\b([^\n\x60]*)", text):
+        result[match.group(1)].update(extract_flags(match.group(2)))
+    for line in text.splitlines():
+        if line.strip().startswith("resume:"):
+            result["run"].update(extract_flags(line))
+    return result
+
+
+def negative_claims(text) -> list:
+    claims = []
+    pattern = re.compile(
+        r"\b(run|models)\b[^.]*?\b(?:has|takes|accepts) no (?:such flag|(--[a-z][a-z0-9-]*))"
+    )
+    for match in pattern.finditer(text):
+        flag = match.group(2)
+        if flag is None:
+            prior = FLAG_RX.findall(text[: match.start()])
+            if not prior:
+                continue
+            flag = prior[-1]
+        claims.append((match.group(1), flag))
+    return claims
+
+
 def runner_opencode_text(template_text) -> str:
     lines = template_text.splitlines()
     for index, line in enumerate(lines):
@@ -89,6 +121,49 @@ class TestOpencodeHelpFlags(unittest.TestCase):
 
     def test_empty_profile_passes(self):
         self.assertEqual(missing_flags(extract_flags("no flags here"), recorded_flags()), [])
+
+    def test_run_flags_in_run_or_global_help(self):
+        text = runner_opencode_text(TEMPLATE.read_text(encoding="utf-8"))
+        profile = PROFILE.read_text(encoding="utf-8")
+        named = command_flags(text)["run"] | command_flags(profile)["run"]
+        allowed = help_flags("run-help.txt") | help_flags("help.txt")
+        self.assertEqual(missing_flags(named, allowed), [])
+
+    def test_models_flags_in_models_or_global_help(self):
+        text = runner_opencode_text(TEMPLATE.read_text(encoding="utf-8"))
+        profile = PROFILE.read_text(encoding="utf-8")
+        named = command_flags(text)["models"] | command_flags(profile)["models"]
+        allowed = help_flags("models-help.txt") | help_flags("help.txt")
+        self.assertEqual(missing_flags(named, allowed), [])
+
+    def test_no_false_negative_claim(self):
+        text = runner_opencode_text(TEMPLATE.read_text(encoding="utf-8"))
+        profile = PROFILE.read_text(encoding="utf-8")
+        allowed = {
+            "run": help_flags("run-help.txt") | help_flags("help.txt"),
+            "models": help_flags("models-help.txt") | help_flags("help.txt"),
+        }
+        invalid = [(command, flag) for command, flag in negative_claims(text + profile)
+                   if flag in allowed[command]]
+        self.assertEqual(invalid, [])
+
+    def test_semantic_checks_catch_planted_cases(self):
+        self.assertEqual(
+            negative_claims(
+                "--standalone is global. listModels (opencode models) has no such flag"
+            ),
+            [("models", "--standalone")],
+        )
+        self.assertEqual(command_flags("['run', '--qqflag']")["run"], {"--qqflag"})
+        self.assertNotIn("--qqflag", help_flags("run-help.txt") | help_flags("help.txt"))
+        self.assertEqual(
+            command_flags(
+                "    resume: (m, c, sid, mode) => [...RUNTIMES.opencode[mode](m, c), "
+                "'--qqresume', sid],"
+            )
+            ["run"],
+            {"--qqresume"},
+        )
 
 
 if __name__ == "__main__":

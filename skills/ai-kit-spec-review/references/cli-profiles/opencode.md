@@ -4,35 +4,22 @@ display_name: OpenCode CLI
 status: confirmed
 read_only: unconfirmed
 detect: "which opencode"
-last_verified: 2026-08-28
-source: live smoke test against a real installed opencode CLI + a real
-  local-provider model (local-llm-env/my-plan-review), piping a prompt
-  via stdin with no positional message argument
+last_verified: 2026-11-20
+source: recorded help of opencode 2.3.2 (tests/fixtures/cli_help/opencode/, refreshed by tools/record_cli_help.py)
 ---
 
 # opencode — reviewer profile
 
-**Multi-provider by design** — `opencode models` lists every model it routes
-to, under its own provider namespaces. Confirmed live output includes
-third-party models with no separate CLI needed: `opencode-go/kimi-k3`,
-`opencode-go/qwen3.8-max`, `opencode-go/grok-4.6`, `opencode-go/gpt-5.6-luna`,
-plus `ollama-cloud/*` and local-model entries. This is how Kimi/Qwen reviewers
-are reachable without a dedicated profile: store `runtime = "opencode"` and
-`model = "opencode-go/kimi-k3"` (or whichever listed id), with `vendor` set to
-the model's real maker (`moonshot`, `alibaba`, ...), not `"opencode"`.
+**Multi-provider by design** — `opencode models` lists every model it routes to as `provider/model` (for example `fake/placeholder-model-1`; model-example: invented id). Store `runtime = "opencode"` and the listed id as `model`.
 
-The runner formula (opencode 2.0.29 `run --help`) is:
+The runner formulas (opencode 2.3.2 `run --help`, recorded) are:
 
 ```text
-opencode run --model <model> --format json            # exec: adds --auto
-opencode run --model <model> --agent plan --format json   # review
+opencode run --model <model> --auto --format json --standalone            # exec
+opencode run --model <model> --agent plan --format json --standalone   # review
 ```
 
-ai-kit stores the pair, not this argv. A `#variant` suffix
-(`provider/model#variant`) is a model-id suffix the runner strips before the
-listing check: the listing has no variants, and the suffix itself is not
-validated. The prompt arrives on stdin; a table-runtime entry has no
-`{prompt}` placeholder.
+ai-kit stores the pair, not this argv. A `#variant` suffix (`provider/model#variant`) selects an effort level. `opencode models` prints ids without variants; the model API (`GET /api/model`, `variants[].id`) lists them, and ai-kit stores them as listed (seen 2026-11-19: none, minimal, low, medium, high, xhigh, max, thinking). `opencode models` accepts the global `--standalone` and `--server` flags; the runner's listing does not pass them, so it reads the shared service, read-only. The prompt arrives on stdin; a table-runtime entry has no `{prompt}` placeholder.
 
 Read-only is unconfirmed. Review passes `--agent plan`; that is the runner's
 review shape, not a confirmed guarantee that the CLI cannot write. The runner
