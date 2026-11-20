@@ -15,7 +15,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 
-from ai_kit_spec import jsonc_read
+from ai_kit_spec import jsonc_read, secret_shapes
 from ai_kit_spec.cache import cache_base
 from ai_kit_spec.vendor import _MODEL_TIER_SUFFIXES
 
@@ -38,7 +38,9 @@ RUNTIMES_TTL_SECONDS = 30 * 24 * 3600   # ~30 days: CLI/model presence is near-s
 # the exact RPC integers.
 # Version 7 (25.1) adds clis.copilot.
 # 18.1 D-04/D-13: clis keyed by runtime id, node recorded
-RUNTIMES_SCHEMA_VERSION = 7
+# Version 8 (35) adds clis.<id>.listing (ok, failed, none), listed_from {command, version, at},
+# listing_error, clis.opencode.model_records and clis.codex.context_window / max_context_window.
+RUNTIMES_SCHEMA_VERSION = 8
 
 # ── Runtime/CLI detection ───────────────────────────────────────────────
 
@@ -287,6 +289,55 @@ def _list_argv(rid: str) -> tuple[str, ...]:
     return argv
 
 
+class _RecordingRun:
+    """Capture the last subprocess result so a failed listing can be described safely."""
+
+    def __init__(self, run_fn):
+        self.run_fn = run_fn
+        self.last = None
+
+    def __call__(self, *args, **kwargs):
+        try:
+            self.last = self.run_fn(*args, **kwargs)
+        except Exception as exc:
+            self.last = exc
+            raise
+        return self.last
+
+    def describe(self) -> str:
+        if isinstance(self.last, BaseException):
+            if isinstance(self.last, subprocess.TimeoutExpired):
+                return "timeout"
+            return type(self.last).__name__
+        rc = getattr(self.last, "returncode", 0)
+        if rc:
+            stderr = getattr(self.last, "stderr", None)
+            first = stderr.splitlines()[0] if isinstance(stderr, str) and stderr.splitlines() \
+                else ""
+            first = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", first)
+            first = secret_shapes.redact(first, "[redacted]")
+            return f"exit {rc}: {first}"[:200]
+        return "unparsable output"
+
+
+def _host_version(binary: str, run_fn) -> str | None:
+    """Read a sanitized version line without allowing a host command to stall detection."""
+    try:
+        result = run_fn([binary, "--version"], capture_output=True, text=True,
+                        check=False, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    stdout = getattr(result, "stdout", None)
+    if getattr(result, "returncode", 1) != 0 or not isinstance(stdout, str):
+        return None
+    for line in stdout.splitlines():
+        line = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", line)
+        line = secret_shapes.redact(line, "[redacted]").strip()
+        if line:
+            return line[:80]
+    return None
+
+
 def _listing_stdout(result) -> str | None:
     """Stdout of an exit-0 listing. A missing or non-zero returncode is a failure."""
     if getattr(result, "returncode", 1) != 0:
@@ -387,7 +438,9 @@ def _parse_one_codex_debug_model(item, seen: set) -> dict | None:
     if slug in seen:
         return None
     seen.add(slug)
-    return {"id": slug, "reasoning_modes": _codex_reasoning_modes(item)}
+    return {"id": slug, "reasoning_modes": _codex_reasoning_modes(item),
+            "context_window": _exact_int(item.get("context_window")),
+            "max_context_window": _exact_int(item.get("max_context_window"))}
 
 
 def parse_codex_debug_models(stdout) -> list | None:
@@ -557,6 +610,11 @@ def _listing_fields(rid, binary, run_fn, env=None) -> dict | None:
     fields = {"models": [item["id"] for item in listed],
               "reasoning_modes": {item["id"]: item["reasoning_modes"]
                                   for item in listed if item["reasoning_modes"]}}
+    if rid == "codex":
+        for key in ("context_window", "max_context_window"):
+            values = {item["id"]: item[key] for item in listed if item[key] is not None}
+            if values:
+                fields[key] = values
     if rid == "pi":
         fields["image_input"] = {item["id"]: item["image_input"] for item in listed}
         fields["context_window"] = {item["id"]: item["context_window"] for item in listed
@@ -1124,6 +1182,19 @@ class OpencodeSeams(NamedTuple):
 
 
 _DEFAULT_OPENCODE_SEAMS = OpencodeSeams()
+_EXTRA_RUNTIME_RX = re.compile(r"[a-z][a-z0-9-]{0,30}")
+
+
+def detect_unlisted_runtimes(ids, which_fn=shutil.which) -> dict:
+    """Report valid user-named runtime ids outside RUNTIMES without executing them."""
+    result = {}
+    for rid in ids:
+        if not isinstance(rid, str) or not _EXTRA_RUNTIME_RX.fullmatch(rid) or rid in RUNTIMES:
+            continue
+        path = which_fn(rid)
+        result[rid] = ({"installed": True, "path": path, "listing": "none",
+                        "note": "installed, no listing"} if path else {"installed": False})
+    return result
 
 
 def _opencode_fields(binpath, run_fn, opencode) -> dict:
@@ -1174,7 +1245,25 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalo
             continue
         # Informational only; consumers rely on schema v6 fields.
         entry = {"installed": True, "path": binpath, "real_path": os.path.realpath(binpath)}
-        entry.update(_listing_fields(cli, binpath, run_fn, opencode.env) or {})
+        if cli in ("opencode", "cursor", "codex", "pi"):
+            rec = _RecordingRun(run_fn)
+            fields = _listing_fields(cli, binpath, rec, opencode.env)
+            command = " ".join([os.path.basename(binpath), *_list_argv(cli)])
+            if cli == "pi":
+                command += " (rpc get_available_models)"
+            entry["listed_from"] = {
+                "command": command,
+                "version": _host_version(binpath, run_fn),
+                "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            if fields is not None:
+                entry.update(fields)
+                entry["listing"] = "ok"
+            else:
+                entry["listing"] = "failed"
+                entry["listing_error"] = rec.describe()
+        else:
+            entry["listing"] = "none"
         if cli == "opencode":
             entry.update(_opencode_fields(binpath, run_fn, opencode))
         elif cli == "claude":

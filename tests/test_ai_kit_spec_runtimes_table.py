@@ -60,7 +60,7 @@ class TestRuntimeTracer(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         snapshot = json.loads(buf.getvalue())
-        self.assertEqual(snapshot["schema_version"], 7)
+        self.assertEqual(snapshot["schema_version"], 8)
         cursor = snapshot["clis"]["cursor"]
         self.assertTrue(cursor["installed"])
         self.assertEqual(cursor["models"], ["auto"])

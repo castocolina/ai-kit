@@ -1437,7 +1437,8 @@ class TestListerOutcomes(unittest.TestCase):
                 lambda: detection.detect_codex_models(
                     "/b", run_fn=lambda *_a, **_k: _listing(codex_one)
                 ),
-                [{"id": "m", "reasoning_modes": []}],
+                [{"id": "m", "reasoning_modes": [], "context_window": None,
+                  "max_context_window": None}],
             ),
             "codex-empty": (
                 lambda: detection.detect_codex_models(
@@ -1898,10 +1899,11 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
             raise OSError("codex debug models failed to launch")
 
         snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run_fn)
-        self.assertEqual(
-            snapshot["clis"]["codex"], {"installed": True, "path": "/fake/volta/bin/codex",
-                                           "real_path": "/fake/volta/bin/codex"}
-        )
+        entry = snapshot["clis"]["codex"]
+        self.assertEqual({key: entry[key] for key in ("installed", "path", "real_path")},
+                         {"installed": True, "path": "/fake/volta/bin/codex",
+                          "real_path": "/fake/volta/bin/codex"})
+        self.assertEqual(entry["listing"], "failed")
 
     def test_codex_nonzero_exit_omits_models_key(self):
         # A failing command that still prints stale or partial JSON must not populate
@@ -1915,10 +1917,11 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
             which_fn=fake_which,
             run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=1, stdout=fixture_text),
         )
-        self.assertEqual(
-            snapshot["clis"]["codex"], {"installed": True, "path": "/fake/volta/bin/codex",
-                                           "real_path": "/fake/volta/bin/codex"}
-        )
+        entry = snapshot["clis"]["codex"]
+        self.assertEqual({key: entry[key] for key in ("installed", "path", "real_path")},
+                         {"installed": True, "path": "/fake/volta/bin/codex",
+                          "real_path": "/fake/volta/bin/codex"})
+        self.assertEqual(entry["listing"], "failed")
 
     def test_failed_opencode_listing_omits_models_key(self):
         def fake_which(name, **_kwargs):
@@ -2168,7 +2171,9 @@ class TestParseCodexDebugModels(unittest.TestCase):
             }
         )
         self.assertEqual(
-            detection.parse_codex_debug_models(stdout), [{"id": "ok", "reasoning_modes": []}]
+            detection.parse_codex_debug_models(stdout),
+            [{"id": "ok", "reasoning_modes": [], "context_window": None,
+              "max_context_window": None}]
         )
 
     def test_missing_or_malformed_levels_degrade_to_empty_modes(self):
@@ -2192,10 +2197,12 @@ class TestParseCodexDebugModels(unittest.TestCase):
             self.assertEqual(
                 detection.parse_codex_debug_models(stdout),
                 [
-                    {"id": "m", "reasoning_modes": ["low"]}
+                    {"id": "m", "reasoning_modes": ["low"], "context_window": None,
+                     "max_context_window": None}
                     if "supported_reasoning_levels" in item
                     and isinstance(item["supported_reasoning_levels"], list)
-                    else {"id": "m", "reasoning_modes": []}
+                    else {"id": "m", "reasoning_modes": [], "context_window": None,
+                          "max_context_window": None}
                 ],
             )
 
@@ -2221,7 +2228,9 @@ class TestParseCodexDebugModels(unittest.TestCase):
             }
         )
         self.assertEqual(
-            detection.parse_codex_debug_models(stdout), [{"id": "m", "reasoning_modes": ["low"]}]
+            detection.parse_codex_debug_models(stdout),
+            [{"id": "m", "reasoning_modes": ["low"], "context_window": None,
+              "max_context_window": None}]
         )
 
 
@@ -2427,13 +2436,19 @@ class TestPiRpcModels(unittest.TestCase):
             return pi_path if name == "pi" else None
 
         def fake_run(argv, **kwargs):
+            if argv[-1:] == ["--version"]:
+                return subprocess.CompletedProcess(argv, 0, stdout="fake version", stderr="")
             recorded["argv"] = argv
             recorded["kwargs"] = kwargs
             return subprocess.CompletedProcess(argv, 0, stdout=fixture, stderr="")
 
         snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run)
+        entry = snapshot["clis"]["pi"]
+        self.assertEqual(entry["listing"], "ok")
         self.assertEqual(
-            snapshot["clis"]["pi"],
+            {key: entry[key] for key in ("installed", "path", "real_path", "models",
+                                         "reasoning_modes", "context_window", "max_tokens",
+                                         "image_input")},
             {
                 "installed": True,
                 "path": pi_path,
@@ -2540,7 +2555,9 @@ class TestPiRpcModels(unittest.TestCase):
 
         snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=bad_run)
         entry = snapshot["clis"]["pi"]
-        self.assertEqual(entry, {"installed": True, "path": pi_path, "real_path": pi_path})
+        self.assertEqual({key: entry[key] for key in ("installed", "path", "real_path")},
+                         {"installed": True, "path": pi_path, "real_path": pi_path})
+        self.assertEqual(entry["listing"], "failed")
         self.assertNotIn("models", entry)
 
     def test_snapshot_empty_valid_listing(self):
@@ -2556,18 +2573,14 @@ class TestPiRpcModels(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0, stdout=empty, stderr="")
 
         snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run)
+        entry = snapshot["clis"]["pi"]
+        self.assertEqual(entry["listing"], "ok")
         self.assertEqual(
-            snapshot["clis"]["pi"],
-            {
-                "installed": True,
-                "path": pi_path,
-                "real_path": pi_path,
-                "models": [],
-                "reasoning_modes": {},
-                "context_window": {},
-                "max_tokens": {},
-                "image_input": {},
-            },
+            {key: entry[key] for key in ("installed", "path", "real_path", "models",
+                                         "reasoning_modes", "context_window", "max_tokens",
+                                         "image_input")},
+            {"installed": True, "path": pi_path, "real_path": pi_path, "models": [],
+             "reasoning_modes": {}, "context_window": {}, "max_tokens": {}, "image_input": {}},
         )
 
     def test_snapshot_pi_not_installed(self):
@@ -2625,7 +2638,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
         snapshot = build_runtimes_snapshot(
             which_fn=lambda *_a, **_k: None, run_fn=lambda *a, **k: None)
         self.assertEqual(snapshot["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
-        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 7)
+        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 8)
 
     def test_fresh_but_unversioned_cache_redetects_and_stamps(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2697,7 +2710,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             self.assertTrue(recorded)
             cached = cache_read_json(path)
             assert cached is not None
-            self.assertEqual(cached["schema_version"], 7)
+            self.assertEqual(cached["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
 
     def test_fresh_version_2_cache_redetects_and_restamps(self):
         # 17 D-32: version 2 predates the opencode 2.x /api/model source, so even a
@@ -2813,7 +2826,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             {"schema_version": 6},
         ):
             self.assertFalse(f(bad))
-        for good in ({"schema_version": 7}, {"schema_version": 8}):
+        for good in ({"schema_version": 8}, {"schema_version": 9}):
             self.assertTrue(f(good))
 
     def test_cache_is_stale_stays_schema_agnostic(self):
@@ -9407,7 +9420,8 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
             second = cache_read_json(r)
             assert second is not None
             self.assertEqual(
-                second["clis"]["claude"],
+                {key: value for key, value in second["clis"]["claude"].items()
+                 if key != "listing"},
                 {
                     "installed": True,
                     "path": "/fake/bin/claude",
@@ -9475,11 +9489,13 @@ class TestClaudeFallback(unittest.TestCase):
 
     def test_no_catalog_uses_dated_fallback(self):
         claude = self._snapshot(catalog_fn=lambda: None)["clis"]["claude"]
-        self.assertEqual(claude, self._fallback_entry())
+        self.assertEqual({key: value for key, value in claude.items() if key != "listing"},
+                         self._fallback_entry())
 
     def test_missing_catalog_fn_uses_dated_fallback(self):
         claude = self._snapshot()["clis"]["claude"]
-        self.assertEqual(claude, self._fallback_entry())
+        self.assertEqual({key: value for key, value in claude.items() if key != "listing"},
+                         self._fallback_entry())
 
     def test_catalog_without_usable_anthropic_ids_uses_fallback(self):
         for raw in (
@@ -9490,7 +9506,8 @@ class TestClaudeFallback(unittest.TestCase):
         ):
             with self.subTest(raw=raw):
                 claude = self._snapshot(catalog_fn=lambda raw=raw: raw)["clis"]["claude"]
-                self.assertEqual(claude, self._fallback_entry())
+                self.assertEqual({key: value for key, value in claude.items() if key != "listing"},
+                                 self._fallback_entry())
 
     def test_junk_ids_are_filtered_and_labeled_catalog(self):
         raw = {"_meta": {"anthropic_model_ids": ["claude-x", None, 3, "", "claude-x"]}}

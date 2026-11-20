@@ -62,6 +62,7 @@ from ai_kit_spec.detection import (
     cache_runtimes_path,
     detect_current_runtime,
     detect_tool_availability,
+    detect_unlisted_runtimes,
     find_code_index_alternative,
     group_models_by_family,
     normalize_runtime_keys,
@@ -159,6 +160,10 @@ def _register_cache_detect_parsers(sub: argparse._SubParsersAction) -> None:
     sub.add_parser("detect-current-runtime")
 
     p_detect = sub.add_parser("detect-runtimes")
+    p_detect.add_argument(
+        "--runtime", dest="extra_runtime", action="append", default=[],
+        help="a runtime id missing from the table; shown as installed, no listing (35 R1)",
+    )
     p_detect.add_argument(
         "--save", default=None, help="write the snapshot to this path via cache_write_json"
     )
@@ -460,13 +465,15 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
     # 16 D-12: the skip requires a fresh mtime, the current schema_version and a claude
     # entry matching the current catalog. The test lives in routing so this caller and the
     # bounded refresh cannot drift.
-    if args.if_stale and routing.runtimes_cache_is_fresh(args.if_stale, deps.env_fn()):
+    if (args.if_stale and not args.extra_runtime
+            and routing.runtimes_cache_is_fresh(args.if_stale, deps.env_fn())):
         print(json.dumps({}))  # fresh — caller should treat this as "nothing to do"
         return 0
     snapshot = build_runtimes_snapshot(which_fn=deps.which_fn, run_fn=deps.run_fn,
                                         catalog_fn=_read_default_catalog,
                                         opencode=OpencodeSeams(deps.popen_fn, deps.urlopen_fn,
                                                                deps.env_fn()))
+    snapshot["clis"].update(detect_unlisted_runtimes(args.extra_runtime, deps.which_fn))
     save_path = args.if_stale or args.save
     if save_path:
         cache_write_json(save_path, snapshot)
