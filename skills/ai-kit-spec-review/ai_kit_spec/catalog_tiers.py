@@ -2,8 +2,6 @@
 
 Facts are labeled by the deciding source; matching goes through model_names and jev is optional.
 """
-# pylint: disable=protected-access
-# catalog_bands._num is the shared numeric check (plan 35-16 names it).
 
 from typing import NamedTuple
 
@@ -50,7 +48,7 @@ def arena_index(arena_data) -> dict:
             if not isinstance(name, str) or not isinstance(record, dict):
                 continue
             rating = record.get("rating")
-            if not catalog_bands._num(rating):
+            if not catalog_bands.is_num(rating):
                 continue
             parts = split_effort("arena", name)
             slot = index.setdefault(
@@ -90,11 +88,11 @@ def aa_cuts(aa_models) -> tuple:
         if not isinstance(model, dict):
             continue
         score, coding, tps = _aa_fields(model)
-        if catalog_bands._num(score):
+        if catalog_bands.is_num(score):
             intelligence.append(score)
-        if catalog_bands._num(score) and catalog_bands._num(coding):
+        if catalog_bands.is_num(score) and catalog_bands.is_num(coding):
             edges.append(coding - score)
-        if catalog_bands._num(tps):
+        if catalog_bands.is_num(tps):
             tps_values.append(tps)
     cuts, edge_cuts, tps_cuts = (
         catalog_bands.quartile_cuts(intelligence),
@@ -111,10 +109,10 @@ def _arena_overall_scores(index) -> list:
         for value in (
             (
                 [slot["ratings"]["overall"]]
-                if catalog_bands._num(slot["ratings"].get("overall"))
+                if catalog_bands.is_num(slot["ratings"].get("overall"))
                 else []
             )
-            + [rating for rating in slot["efforts"].values() if catalog_bands._num(rating)]
+            + [rating for rating in slot["efforts"].values() if catalog_bands.is_num(rating)]
         )
     ]
 
@@ -122,7 +120,7 @@ def _arena_overall_scores(index) -> list:
 def tier_fact(entry, slot, cuts, times) -> dict | None:
     scores = entry.get("scores", {}) if cuts.aa_on else {}
     score = scores.get("intelligence_index") if isinstance(scores, dict) else None
-    if catalog_bands._num(score) and cuts.aa is not None:
+    if catalog_bands.is_num(score) and cuts.aa is not None:
         result = fact(
             catalog_bands.tier_for(score, cuts.aa),
             "judged",
@@ -136,12 +134,12 @@ def tier_fact(entry, slot, cuts, times) -> dict | None:
         return None
     ratings, efforts = slot.get("ratings", {}), slot.get("efforts", {})
     overall = ratings.get("overall") if isinstance(ratings, dict) else None
-    if not catalog_bands._num(overall) and not efforts:
+    if not catalog_bands.is_num(overall) and not efforts:
         return None
     effort_tiers = {
         effort: catalog_bands.tier_for(value, cuts.arena) for effort, value in efforts.items()
     }
-    if catalog_bands._num(overall):
+    if catalog_bands.is_num(overall):
         value = catalog_bands.tier_for(overall, cuts.arena)
     elif effort_tiers:
         order = {name: pos for pos, name in enumerate(("light", "capable", "strong", "frontier"))}
@@ -201,7 +199,7 @@ def _aa_edge(entry) -> float | None:
     scores = entry.get("scores", {})
     coding = scores.get("coding_index") if isinstance(scores, dict) else None
     intelligence = scores.get("intelligence_index") if isinstance(scores, dict) else None
-    if catalog_bands._num(coding) and catalog_bands._num(intelligence):
+    if catalog_bands.is_num(coding) and catalog_bands.is_num(intelligence):
         return coding - intelligence
     return None
 
@@ -209,7 +207,7 @@ def _aa_edge(entry) -> float | None:
 def _edge(entry, slot, run):
     ratings = slot.get("ratings", {}) if isinstance(slot, dict) else {}
     coding, overall = ratings.get("coding"), ratings.get("overall")
-    if catalog_bands._num(coding) and catalog_bands._num(overall):
+    if catalog_bands.is_num(coding) and catalog_bands.is_num(overall):
         return coding - overall, run.cuts.arena_deltas.get("coding"), "arena"
     edge = _aa_edge(entry) if run.cuts.aa_on else None
     if edge is not None:
@@ -271,7 +269,7 @@ def _judge_unknown_classes(unknown, inputs) -> dict:
             isinstance(answer, tuple)
             and len(answer) == 3
             and answer[0] in catalog_bands.CLASSES
-            and catalog_bands._num(answer[1])
+            and catalog_bands.is_num(answer[1])
             and 0 <= answer[1] <= 1
         ):
             output[key] = fact(answer[0], "judged", "jev", inputs.now, confidence=answer[1])

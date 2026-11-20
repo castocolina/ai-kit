@@ -20,7 +20,7 @@ STRENGTH_CATEGORIES = (
 )
 
 
-def _num(value) -> TypeGuard[float]:
+def is_num(value) -> TypeGuard[float]:
     return (
         isinstance(value, (int, float))
         and not isinstance(value, bool)
@@ -30,7 +30,7 @@ def _num(value) -> TypeGuard[float]:
 
 def quartile_cuts(values) -> tuple | None:
     """Return refresh-local quartile cut points, or None with too few values."""
-    ordered = sorted(value for value in values if _num(value))
+    ordered = sorted(value for value in values if is_num(value))
     if len(ordered) < 4:
         return None
     return tuple(ordered[int(len(ordered) * point)] for point in (0.25, 0.5, 0.75))
@@ -47,7 +47,7 @@ def _band(value, cuts, names) -> str:
 
 
 def tier_for(score, cuts) -> str:
-    if not _num(score) or cuts is None:
+    if not is_num(score) or cuts is None:
         return "unknown"
     return _band(score, cuts, ("frontier", "strong", "capable", "light"))
 
@@ -57,7 +57,7 @@ def price_per_million(cost) -> tuple:
         return None, False
     input_price = cost.get("input")
     output_price = cost.get("output")
-    if not _num(input_price) or not _num(output_price):
+    if not is_num(input_price) or not is_num(output_price):
         return None, False
     if input_price < 0 or output_price < 0:
         return None, False
@@ -100,7 +100,7 @@ def cost_cuts(models_dev_data) -> tuple | None:
 def cost_band(price, free: bool, cuts) -> str:
     if free:
         return "free_or_local"
-    if not _num(price) or cuts is None:
+    if not is_num(price) or cuts is None:
         return "unknown"
     return _band(price, cuts, ("premium", "high", "medium", "low"))
 
@@ -183,7 +183,7 @@ def delta_cuts(categories: dict) -> dict:
         deltas = [
             rating - overall[name]
             for name, rating in ratings.items()
-            if name in overall and _num(rating) and _num(overall[name])
+            if name in overall and is_num(rating) and is_num(overall[name])
         ]
         cuts = quartile_cuts(deltas)
         if cuts is not None:
@@ -195,12 +195,12 @@ def strengths_for(ratings: dict, cuts: dict) -> list:
     if not isinstance(ratings, dict) or not isinstance(cuts, dict):
         return []
     overall = ratings.get("overall")
-    if not _num(overall):
+    if not is_num(overall):
         return []
     return sorted(
         category
         for category in STRENGTH_CATEGORIES
-        if _num(ratings.get(category))
-        and _num(cuts.get(category))
+        if is_num(ratings.get(category))
+        and is_num(cuts.get(category))
         and ratings[category] - overall >= cuts[category]
     )
