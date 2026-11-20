@@ -85,6 +85,8 @@ class Runtime(NamedTuple):
 
 
 # Insertion order is host precedence. grok is a row, never a detected host (D-03).
+# 35 R11: seed data labeled by its _LABEL_* source strings; the claude native selectors and
+# CLAUDE_FALLBACK_MODEL_IDS are deciding lists kept in the guard baseline for Phase 36.
 RUNTIMES: dict[str, Runtime] = {
     "pi": Runtime(
         ("pi",),
@@ -131,16 +133,14 @@ RUNTIMES: dict[str, Runtime] = {
 
 KNOWN_CLIS = tuple(RUNTIMES)
 
-# 16 D-04: what Claude Code's own `--model` flag resolves (real `claude --help`, version
-# 2.1.281, lists fable/opus/sonnet; haiku is the fourth Agent-tool alias documented in
-# ai-kit-spec-config SKILL.md). Hardcoded because Claude Code has no list-models command --
-# these aliases are the only stable short names the CLI itself documents.
+# 16 D-04: the host's own `--model` flag resolves these selectors (from its help and
+# documentation). Hardcoded because the host has no list-models command; these are its
+# documented short aliases.
 CLAUDE_MODEL_ALIASES = RUNTIMES["claude"].native_selectors
 
-# 16 D-04: DATED FALLBACK, not a live list -- these four ids were verified present in
-# models.dev's `anthropic` provider on 2026-09-23 (Phase 16 research), one per current family
-# (Fable 5.1, Opus 5.5, Sonnet 5, Haiku 4.5). Used only when model-catalog.json has no
-# recorded anthropic ids; refresh the ids and the date together when a new generation ships.
+# 16 D-04: DATED FALLBACK, not a live list -- these ids were verified present in the fixed
+# seed provider on 2026-09-23 (Phase 16 research), one per current family. Used only when
+# model-catalog.json has no recorded ids; refresh the ids and date together when needed.
 CLAUDE_FALLBACK_MODEL_IDS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5",
                              "claude-haiku-4-5-20251001")
 CLAUDE_FALLBACK_AS_OF = "2026-09-23"
@@ -672,10 +672,10 @@ def _opencode_verbose_record(obj: dict, header: str) -> bool | None:
 
 
 def parse_opencode_verbose_image_input(stdout) -> dict:
-    """Parses `opencode models --verbose` output into a dict mapping
+    """Parses a models command's verbose output into a dict mapping
     header-line (provider/id format) to a bool (whether image is in the
     input capabilities). The output format is a repeated pattern of:
-    header line (e.g., "openai/gpt-5.6-sol"), newline, 2-space-indented
+    header line (e.g., "fake/placeholder-model-1"), newline, 2-space-indented
     JSON object, newline.
 
     Records `result[header] = image` only when the decoded value has all of:
@@ -730,8 +730,8 @@ def parse_opencode_verbose_image_input(stdout) -> dict:
     return result
 
 
-# 17 D-24: opencode 2.x replaced `models --verbose` with a v2 HTTP API; the image source
-# is version-gated so 1.x installs keep the verbose path.
+# 17 D-24: a runtime 2.x release replaced `models --verbose` with a v2 HTTP API; the image
+# source is version-gated so older installs keep the verbose path.
 OPENCODE_API_MIN_MAJOR = 2
 OPENCODE_API_IMAGE_SOURCE = "opencode-api"
 _OPENCODE_PROBE_DEADLINE_S = 15
@@ -746,7 +746,7 @@ _OPENCODE_BANNER_MAX_LINES = 50
 _LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 # The default `urlopen_fn` for the loopback probe: never routed through http_proxy.
 LOOPBACK_URLOPEN = _LOOPBACK_OPENER.open
-# fullmatch on the stripped stdout, so a model listing (e.g. "openai/gpt-5.6-sol") can
+# fullmatch on stripped stdout, so a model listing (e.g. "fake/placeholder-model-1") can
 # never read as a version string.
 _OPENCODE_VERSION_RE = re.compile(r"(?:opencode\s+)?v?(\d+)\.\d+\.\d+\S*")
 
@@ -1087,11 +1087,11 @@ def detect_opencode_verbose_image_input(binary: str, run_fn=subprocess.run, env=
 
 def group_models_by_family(models: list) -> dict:
     """Collapses tier/effort/mode variants of the same base model into one
-    group, e.g. ["claude-opus-5-high", "claude-opus-5-high-fast",
-    "claude-opus-5-low"] -> {"claude-opus-5": [...three ids...]}. Strips
+    group, e.g. ["placeholder-model-5-high", "placeholder-model-5-high-fast",
+    "placeholder-model-5-low"] -> {"placeholder-model-5": [...three ids...]}. Strips
     only a TRAILING run of tokens from `_MODEL_TIER_SUFFIXES` (hyphen-
     joined) off the end of each id — an id with no such trailing run
-    becomes its own family unchanged (e.g. "auto", "composer-2.5"). This
+    becomes its own family unchanged (e.g. "auto", "placeholder-model-25"). This
     is a best-effort heuristic over a live-fetched, presumably-current
     catalog — it does not know which family is "newest" or "best" for
     any purpose; that judgment belongs to whoever (or whatever, e.g. a
@@ -1504,8 +1504,8 @@ def find_code_index_alternative(
     substring match suggests the SAME base model is reachable through a multi-provider CLI
     that has codebase-memory-mcp registered (read from its config), return that CLI's name --
     informational only, never a
-    hard filter. Model-id naming conventions differ across CLIs (e.g. "grok-4.6" vs.
-    "cursor-grok-4.6-high") so this is a substring heuristic, not a guarantee; a missed match
+    hard filter. Model-id naming conventions differ across CLIs (e.g. "placeholder-model-46" vs.
+    "placeholder-model-46-high") so this is a substring heuristic, not a guarantee; a missed match
     degrades silently to None, never a false claim."""
     cli = runtime_id(cli)
     clis = normalize_runtime_keys(

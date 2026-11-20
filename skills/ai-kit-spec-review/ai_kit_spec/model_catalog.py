@@ -124,8 +124,8 @@ def catalog_schema_is_current(meta) -> bool:
 
 def canonical_key(provider: str, bare_model_id: str) -> str:
     """The ONE place catalog identity is computed -- every writer of model-catalog.json goes
-    through this, so two CLIs naming the same real model differently (opencode's
-    "openai/gpt-5.6-sol" vs. codex's bare "gpt-5.6-sol") always collapse to one key."""
+    through this, so two CLIs naming the same model differently (opencode's
+    "fake/placeholder-model-1" vs. codex's bare "placeholder-model-1") collapse to one key."""
     return f"{provider}/{bare_model_id}"
 
 

@@ -3,7 +3,7 @@ import re
 import time
 from typing import NamedTuple
 
-from ai_kit_spec import catalog_facts
+from ai_kit_spec import catalog_facts, optional_sources
 from ai_kit_spec.detection import OPENCODE_API_IMAGE_SOURCE
 from ai_kit_spec.model_catalog import canonical_key, merge_catalog_entry
 from ai_kit_spec.model_heuristics import (
@@ -41,14 +41,14 @@ def _find_existing_key_for_runtime(
     existing_catalog: dict, cli_name: str, model_id: str
 ) -> str | None:
     """CRITICAL/HIGH fix (round-2 native-opus review): a bare CLI-native id (no "<vendor>/"
-    prefix, e.g. codex's "gpt-5.6-sol") carries no provider signal of its own. When BOTH
+    prefix, e.g. a bare "placeholder-model-1") carries no provider signal of its own. When BOTH
     external sources are unavailable this run -- most commonly `--if-stale` skipping the
     network fetch entirely, which is the wizard's own DEFAULT path, not an edge case -- the
     only way to recover this candidate's real vendor/model key is to look up which existing
     catalog entry already claims this exact (cli, model_id) runtime pairing. Without this
     lookup, build_model_catalog fell through to `provider = model_id`, minting an unstable
-    "gpt-5.6-sol/gpt-5.6-sol" key every such run: it never matched the real
-    "openai/gpt-5.6-sol" entry (permanently orphaning it and duplicating the catalog), AND it
+    "bare-id/bare-id" key every such run: it never matched the
+    "fake/placeholder-model-1" entry (permanently orphaning it and duplicating the catalog), AND it
     reclassified an already-known, already-enriched model as a brand-new `unmatched`
     candidate needing manual research + user confirmation on every single `--if-stale` run --
     exactly the per-model WebSearch pattern this design exists to eliminate."""
@@ -61,8 +61,8 @@ def _find_existing_key_for_runtime(
 
 def _slugify(name: str) -> str:
     """Best-effort vendor-name -> slug, used ONLY to derive a canonical `provider` when a bare
-    (no "<vendor>/" prefix) model id matched Artificial Analysis but NOT models.dev -- AA's own
-    `model_creator.name` ("OpenAI", "xAI") is free text, never a models.dev provider key, so it
+    (no "<vendor>/" prefix) model id matched one source but NOT models.dev -- its creator name
+    is free text, never a models.dev provider key, so it
     needs normalizing before it can become half of a canonical_key(). Lowercases and collapses
     every run of non-alphanumeric characters to a single hyphen."""
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -218,7 +218,7 @@ def _preserved_or_fresh_aa_fields(aa_match: dict | None, aa_ok: bool,
 
 def _runtime_meta_from_snapshot(runtimes: dict) -> dict:
     """Extracts per-model runtime metadata from a runtimes snapshot dict,
-    keyed by `(cli_name, model_id)` tuples. Today it carries each entry's
+    keyed by `(runtime, model_id)` tuples. Today it carries each entry's
     `reasoning_modes` value (a dict mapping model id -> effort list, which
     `build_runtimes_snapshot` populates for codex when `codex debug models`
     enumerates), `image_input`, and `image_input_source` (for opencode: the
@@ -283,18 +283,14 @@ def _apply_runtime_meta(entry: dict, runtime_meta: dict | None, cli_name: str,
         entry["image_input_source"] = meta.get("image_input_source", "opencode")
 
 
-# 16 D-04 (review cycle 2): claude only ever runs anthropic models, so its bare ids are
-# matched against models.dev with `anthropic` as the tie-break hint. On live models.dev
-# (2026-09-24) every anthropic id also appears under 9-21 reseller providers (e.g.
-# `claude-sonnet-5` under `opencode`, `github-copilot`, `azure` and more), and
-# match_models_dev returns no match for an unhinted multi-provider bare id -- the hint only
-# breaks ties (a single match still wins regardless of the hint). Every other CLI maps to
-# no hint, which is exactly the pre-16-04 call.
-_FIRST_PARTY_PROVIDER_BY_CLI = {"claude": "anthropic"}
+def _fixed_seed_provider(runtime: str) -> str | None:
+    """Return only a provider explicitly fixed by a runtime's labeled seed row."""
+    row = next((item for item in optional_sources.SEED_ROWS if item.runtime == runtime), None)
+    return row.models_dev_provider if row is not None else None
 
 
 def _anthropic_model_ids(models_dev_data) -> list:
-    """Sorted, de-duplicated model ids from models.dev's `anthropic` provider (16 D-04),
+    """Sorted, de-duplicated model ids from the fixed seed provider (16 D-04),
     keeping ONLY well-formed rows: a row must be a dict whose `limit` and `cost` values,
     for each of those two keys that is present, are dicts too. fetch_models_dev validates
     only the JSON transport, not the row shape -- match_models_dev spreads the matched row
@@ -302,11 +298,14 @@ def _anthropic_model_ids(models_dev_data) -> list:
     `cost`, so a `null`, string or list row (or one whose `limit`/`cost` is not an object)
     would otherwise raise inside fetch-model-catalog once its id became a materialization
     candidate (review cycle 3). A skipped row is neither recorded in `_meta` nor
-    materialized. Never raises: a non-dict payload, a missing/non-dict `anthropic` provider,
+    materialized. Never raises: a non-dict payload, a missing/non-dict provider,
     or a missing/non-dict `models` mapping yields []."""
     if not isinstance(models_dev_data, dict):
         return []
-    provider = models_dev_data.get("anthropic")
+    provider_name = _fixed_seed_provider("claude")
+    if provider_name is None:
+        return []
+    provider = models_dev_data.get(provider_name)
     if not isinstance(provider, dict):
         return []
     models = provider.get("models")
@@ -627,9 +626,11 @@ def _fetch_source_matches(
     models_dev_ok = sources.models_dev_ok
     aa_models = sources.aa_models
     aa_ok = sources.aa_ok
+    # 16 D-04: a runtime's seed row names its models.dev provider; the hint only breaks ties
+    # between resellers.
     md_match = (match_models_dev(
         match_name, models_dev_data,
-        provider_hint=_FIRST_PARTY_PROVIDER_BY_CLI.get(cli_name)) if models_dev_ok else None)
+        provider_hint=_fixed_seed_provider(cli_name)) if models_dev_ok else None)
     provider_hint = (md_match or {}).get("provider") or provider_hint
     aa_match = (match_artificial_analysis(match_name, aa_models, provider_hint=provider_hint)
                 if aa_ok else None)
@@ -701,7 +702,7 @@ def build_model_catalog(
     ONLY on first discovery (a value already present on `existing_entry` is a prior heuristic
     default or a user's own correction -- HIGH finding: every later rebuild must preserve it,
     never silently recompute over it), and merge into `existing_catalog` under a CANONICAL
-    vendor/model key (model_catalog.canonical_key) so two CLIs reporting the same real model
+    provider/model key (model_catalog.canonical_key) so two CLIs reporting the same model
     under different raw ids collapse into one entry with both runtimes merged in. A bare id
     (no "<vendor>/" prefix) with NEITHER source matched this run first tries
     `_find_existing_key_for_runtime` against `existing_catalog` before ever falling back to

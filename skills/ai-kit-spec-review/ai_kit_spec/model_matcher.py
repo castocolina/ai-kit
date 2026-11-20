@@ -1,5 +1,5 @@
-"""Matches a CLI-native model id (e.g. opencode's "openai/gpt-5.6-sol", codex's bare
-"gpt-5.6-sol") against models.dev's and Artificial Analysis's own naming -- neither source
+"""Matches a CLI-native model id (e.g. opencode's "fake/placeholder-model-1", codex's bare
+"placeholder-model-1") against models.dev's and Artificial Analysis's own naming -- neither source
 shares a clean id with how CLIs name their models (design spec 2026-09-02, Section 3), so
 this is a best-effort normalize-AND-FUZZY-MATCH lookup, not a guaranteed key lookup (spec
 Section 3/6: "matching against external sources' own slug/name/model_creator fields requires
@@ -54,9 +54,9 @@ def _fuzzy_candidate_indices(target: str, normalized_options: list) -> list:
 
 _EFFORT_TOKENS = {"minimal", "low", "medium", "high", "xhigh", "thinking"}
 # "max" is deliberately NOT a standalone effort token -- it collides with real base-model
-# names that end in "-max" (e.g. Alibaba's qwen-max / qwen3-max, a genuinely different,
-# smaller-catalog model). It is only ever stripped as part of the two-token compound
-# "thinking-max" (Anthropic's own reasoning-effort naming, e.g. "claude-opus-5-thinking-max"),
+# names that end in "-max" (e.g. "placeholder-model-3-max", a distinct model id). It is
+# only ever stripped as part of the two-token compound
+# "thinking-max" (a vendor's reasoning-effort naming, e.g. "placeholder-model-5-thinking-max"),
 # never as a bare trailing "-max".
 
 
@@ -73,9 +73,9 @@ def _strip_known_effort_suffix(bare: str) -> str | None:
     anything unrecognized is left exactly where it was, never stripped away.
 
     A single call strips down to the FULLY stripped form, not a ladder of intermediate
-    attempts -- e.g. for "claude-opus-5-thinking-high" it returns "claude-opus-5" directly,
-    popping "high" then "thinking" in the same call; a caller wanting to also try the
-    intermediate "claude-opus-5-thinking" form would need to call it differently."""
+    attempts -- e.g. for "placeholder-model-5-thinking-high" it returns "placeholder-model-5"
+    directly, popping "high" then "thinking" in the same call; a caller wanting to also try
+    the intermediate "placeholder-model-5-thinking" form would need to call it differently."""
     parts = bare.split("-")
     stripped_any = False
     while len(parts) > 1:
@@ -145,9 +145,9 @@ def match_models_dev(cli_model_id: str, models_dev_data: dict,
 def match_artificial_analysis(cli_model_id: str, aa_models: list,
                                provider_hint: str | None = None) -> dict | None:
     """Matches by normalized (lowercased, non-alnum-stripped) comparison against AA's own
-    `slug` and `name` fields -- AA's slugs (e.g. "gpt-5-6-sol") don't line up character-for-
-    character with a CLI's own id (e.g. "gpt-5.6-sol"), so exact string equality would miss
-    real matches. CRITICAL finding: when NO exact normalized match exists, a fuzzy fallback
+    `slug` and `name` fields -- source slugs (e.g. "placeholder-model-5-6") don't line up
+    character-for-character with a CLI's own id (e.g. "placeholder-model-56"), so equality misses
+    matches. CRITICAL finding: when NO exact normalized match exists, a fuzzy fallback
     (_fuzzy_candidate_indices, same conservative threshold/margin as match_models_dev's) runs
     against the same slug/name fields before giving up. COLLISION-SAFE at either stage: if
     matching (exact or fuzzy) yields more than one candidate, `provider_hint` (typically

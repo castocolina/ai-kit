@@ -7,7 +7,7 @@ import unittest
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import catalog_build, catalog_facts, models_config
+from ai_kit_spec import catalog_build, catalog_facts, models_config, optional_sources
 from ai_kit_spec.model_catalog import canonical_key
 
 T = "2026-11-19T00:00:00Z"
@@ -21,6 +21,29 @@ def _build(discovered, sources, existing=None, inputs=None):
     return catalog_build.build_model_catalog(
         discovered, sources, existing or {}, facts_inputs=inputs
     )
+
+
+class TestSeedHint(unittest.TestCase):
+    def test_provider_hint_unchanged(self):
+        seed_provider = optional_sources.SEED_ROWS[0].models_dev_provider
+        self.assertEqual(catalog_build._fixed_seed_provider("claude"), seed_provider)
+        self.assertIsNone(catalog_build._fixed_seed_provider("copilot"))
+        self.assertIsNone(catalog_build._fixed_seed_provider("pi"))
+        self.assertIsNotNone(seed_provider)
+        payload = {
+            seed_provider: {"models": {"placeholder-model-1": {"source_tag": "seed"}}},
+            "fake": {"models": {"placeholder-model-1": {"source_tag": "other"}}},
+        }
+        sources = catalog_build.CatalogSources(payload, True, [], False)
+        claude_matches, _ = catalog_build._fetch_source_matches(
+            {"runtime": "claude", "model_id": "placeholder-model-1"}, sources, None
+        )
+        copilot_matches, _ = catalog_build._fetch_source_matches(
+            {"runtime": "copilot", "model_id": "placeholder-model-1"}, sources, None
+        )
+        assert claude_matches.md_match is not None
+        self.assertEqual(claude_matches.md_match["provider"], seed_provider)
+        self.assertIsNone(copilot_matches.md_match)
 
 
 class TestFactsCore(unittest.TestCase):
