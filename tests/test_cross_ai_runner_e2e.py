@@ -33,6 +33,7 @@ from ai_kit_spec.execute_dispatch import (
     ExecuteSeams,
     dispatch_execute,
 )
+from ai_kit_spec.model_catalog import CATALOG_SCHEMA_VERSION
 from ai_kit_spec.reviewer_dispatch import (
     ReviewerDispatchSpec,
     ReviewerSeams,
@@ -852,7 +853,7 @@ def _route_catalog(cache_home: str) -> None:
     directory = os.path.join(cache_home, "ai-kit", "spec")
     os.makedirs(directory)
     raw = {
-        "_meta": {"schema_version": 3},
+        "_meta": {"schema_version": CATALOG_SCHEMA_VERSION},
         "vendor/fake": {
             "provider": "vendor",
             "runtimes": {"opencode": {"model_id": "fake/quota"}},

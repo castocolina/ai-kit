@@ -6633,7 +6633,7 @@ class TestRankerPurposeFloor(unittest.TestCase):
         with open(NULL_INDEX_CATALOG_PATH, encoding="utf-8") as handle:
             raw = json.load(handle)
         entries, meta = model_catalog.split_catalog_meta(raw)
-        self.assertEqual(meta.get("schema_version"), 3)
+        self.assertEqual(meta.get("schema_version"), model_catalog.CATALOG_SCHEMA_VERSION)
         return [{**entry, "key": key} for key, entry in entries.items()]
 
     def test_null_index_catalog_ranks_mechanical_by_price(self):
@@ -7154,6 +7154,7 @@ class TestMatchArtificialAnalysis(unittest.TestCase):
                 "slug": "gpt-5-6-sol",
                 "model_creator": {"name": "OpenAI"},
                 "evaluations": {
+                    # synthetic: Artificial Analysis shapes, invented values
                     "artificial_analysis_intelligence_index": 68.4,
                     "artificial_analysis_coding_index": 74.1,
                     "artificial_analysis_agentic_index": 61.2,
@@ -7183,6 +7184,7 @@ class TestMatchArtificialAnalysis(unittest.TestCase):
                 "name": "GPT-5.6 Sol V2",
                 "slug": "gpt-5-6-sol-v2",
                 "model_creator": {"name": "OpenAI"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_coding_index": 74.1},
             }
         ]
@@ -7200,6 +7202,7 @@ class TestMatchArtificialAnalysis(unittest.TestCase):
                 "name": "Sol",
                 "slug": "sol",
                 "model_creator": {"name": "Xai"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_coding_index": 10.0},
             },
             {
@@ -7207,6 +7210,7 @@ class TestMatchArtificialAnalysis(unittest.TestCase):
                 "name": "Sol",
                 "slug": "sol",
                 "model_creator": {"name": "OpenAI"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_coding_index": 90.0},
             },
         ]
@@ -7311,6 +7315,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "router-env-coding",
                 "name": "Router Env Coding",
                 "model_creator": {"name": "SomeVendor"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_coding_index": 89.0},
             }
         ]
@@ -7517,6 +7522,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "sol",
                 "name": "Sol",
                 "model_creator": {"name": "OpenAI"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 70.0},
             }
         ]
@@ -7564,6 +7570,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-high",
                 "name": "Claude Opus 5 High",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
             }
         ]
@@ -7601,6 +7608,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-high",
                 "name": "Claude Opus 5 High",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
             }
         ]
@@ -7662,6 +7670,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-high",
                 "name": "Claude Opus 5 High",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
             }
         ]
@@ -7944,6 +7953,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "gpt-5-6-sol",
                 "name": "GPT-5.6 Sol",
                 "model_creator": {"name": "OpenAI"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 91.0},
             }
         ]
@@ -7990,6 +8000,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "gpt-5-6-sol",
                 "name": "GPT-5.6 Sol",
                 "model_creator": {"name": "OpenAI"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 91.0},
             }
         ]
@@ -8135,6 +8146,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "gpt-5-6-sol",
                 "name": "GPT-5.6 Sol",
                 "model_creator": {},  # no "name" at all
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 91.0},
             }
         ]
@@ -8168,6 +8180,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "gpt-5-6-sol",
                 "name": "GPT-5.6 Sol",
                 "model_creator": {"name": "—"},  # non-empty, slugifies to ""
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 91.0},
             }
         ]
@@ -8210,6 +8223,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-thinking-xhigh",
                 "name": "Claude Opus 5 Thinking XHigh",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
             }
         ]
@@ -8260,6 +8274,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-high",
                 "name": "Claude Opus 5 High",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
                 "pricing": {"price_1m_input_tokens": 15.0, "price_1m_output_tokens": 75.0},
             }
@@ -8295,6 +8310,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "gpt-5-high",
                 "name": "GPT-5 High",
                 "model_creator": {"name": "OpenAI"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 70.0},
             }
         ]
@@ -8359,6 +8375,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-high",
                 "name": "Claude Opus 5 High",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
                 "pricing": {"price_1m_input_tokens": 15.0, "price_1m_output_tokens": 75.0},
             },
@@ -8367,6 +8384,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-high-fast",
                 "name": "Claude Opus 5 High Fast",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
                 "pricing": {"price_1m_input_tokens": 30.0, "price_1m_output_tokens": 150.0},
             },
@@ -8893,8 +8911,10 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             None,
         ):
             self.assertFalse(f(bad))
-        for good in ({"schema_version": 3}, {"schema_version": 4}):
+        for good in ({"schema_version": model_catalog.CATALOG_SCHEMA_VERSION},
+                     {"schema_version": model_catalog.CATALOG_SCHEMA_VERSION + 1}):
             self.assertTrue(f(good))
+        self.assertFalse(f({"schema_version": 3}))
 
     # ── merge_catalog_entry reserved-key guard ────────────────────────────
 
@@ -8961,7 +8981,9 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             self.assertEqual(result["entry_count"], 1)  # entries only, `_meta` not counted
             written = cache_read_json(catalog_path)
             assert written is not None
-            self.assertEqual(written["_meta"], {"schema_version": 3})
+            self.assertEqual(written["_meta"], {
+                "schema_version": model_catalog.CATALOG_SCHEMA_VERSION
+            })
             self.assertEqual(written["openai/gpt-5.6-sol"], self._legacy_entry())  # preserved
 
     def test_meta_with_older_version_is_refetched(self):
@@ -8999,7 +9021,9 @@ class TestCatalogSchemaVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
             with open(catalog_path, "w", encoding="utf-8") as f:
-                json.dump({"_meta": {"schema_version": 3, "note": "keep"}}, f)
+                json.dump({"_meta": {
+                    "schema_version": model_catalog.CATALOG_SCHEMA_VERSION, "note": "keep"
+                }}, f)
             self._write_fresh_fetch_meta(catalog_path)
             runtimes_path = os.path.join(d, "runtimes.json")
             with open(runtimes_path, "w", encoding="utf-8") as f:
@@ -9025,7 +9049,9 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             self.assertEqual(code, 0)
             written = cache_read_json(catalog_path)
             assert written is not None
-            self.assertEqual(written["_meta"], {"schema_version": 3, "note": "keep"})
+            self.assertEqual(written["_meta"], {
+                "schema_version": model_catalog.CATALOG_SCHEMA_VERSION, "note": "keep"
+            })
 
     def test_models_dev_down_aa_only_never_stamps_meta_so_next_run_refetches(self):
         with tempfile.TemporaryDirectory() as d:
@@ -9217,7 +9243,9 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             written = cache_read_json(catalog_path)
             assert written is not None
             self.assertIsInstance(written, dict)
-            self.assertEqual(written.get("_meta"), {"schema_version": 3})
+            self.assertEqual(written.get("_meta"), {
+                "schema_version": model_catalog.CATALOG_SCHEMA_VERSION
+            })
 
 
 class TestClaudeEnumerationEndToEnd(unittest.TestCase):
@@ -9351,7 +9379,7 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
                 meta["anthropic_model_ids"], sorted([*detection.CLAUDE_FALLBACK_MODEL_IDS, new])
             )
             self.assertEqual(meta["anthropic_model_ids_as_of"], time.strftime("%Y-%m-%d"))
-            self.assertEqual(meta["schema_version"], 3)
+            self.assertEqual(meta["schema_version"], model_catalog.CATALOG_SCHEMA_VERSION)
             for mid in [*detection.CLAUDE_FALLBACK_MODEL_IDS, new]:
                 key = f"anthropic/{mid}"
                 self.assertIn(key, entries)
@@ -9679,7 +9707,9 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 "image_input": True,
                 "image_input_source": "models_dev",
             }
-            cache_write_json(c, {"_meta": {"schema_version": 3}, "vendor/text-only": entry})
+            cache_write_json(c, {"_meta": {
+                "schema_version": model_catalog.CATALOG_SCHEMA_VERSION
+            }, "vendor/text-only": entry})
             cache_write_json(
                 r,
                 {
@@ -10349,7 +10379,7 @@ openai/gpt-5.6-sol
             cache_write_json(
                 c,
                 {
-                    "_meta": {"schema_version": 3},
+                    "_meta": {"schema_version": model_catalog.CATALOG_SCHEMA_VERSION},
                     "vendor/no-modalities": {
                         "provider": "vendor",
                         "runtimes": {"opencode": {"model_id": "vendor/no-modalities"}},

@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "schema_version": 3,
+    "schema_version": 4,
     "fixture_note": "synthetic: no Artificial Analysis data; every coding_index and agentic_index is null"
   },
   "example/alpha": {

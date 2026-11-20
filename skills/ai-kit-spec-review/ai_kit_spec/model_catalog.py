@@ -7,6 +7,7 @@ import os
 import re
 
 from ai_kit_spec.cache import cache_base, cache_read_json, cache_write_json
+from ai_kit_spec.catalog_labels import fact_problem
 from ai_kit_spec.detection import normalize_runtime_keys
 
 CATALOG_TTL_SECONDS = 30 * 24 * 3600  # ~30 days -- spec Section 8, same order as RUNTIMES_TTL
@@ -15,7 +16,9 @@ CATALOG_TTL_SECONDS = 30 * 24 * 3600  # ~30 days -- spec Section 8, same order a
 # other top-level key is a `provider/model` canonical key (canonical keys always contain `/`,
 # _meta never does); pre-Phase-16 catalogs have no `_meta` and count as version 1.
 # 18.1 D-04: entry runtimes keyed by runtime id.
-CATALOG_SCHEMA_VERSION = 3
+# 35 D-13: schema 4 adds facts, identity, confirmed_fields and per-runtime fields.
+# A v3 cache is stale and rebuilds, keeping confirmed fields and verified records.
+CATALOG_SCHEMA_VERSION = 4
 CATALOG_META_KEY = "_meta"
 
 _MANDATORY_CATALOG_FIELDS = {"provider", "runtimes", "source", "confidence", "last_verified"}
@@ -42,12 +45,17 @@ _FIELD_TYPES = {
     # value unchanged or corrected it -- so the wizard never re-asks about a field already
     # confirmed. Written exclusively by apply_heuristic_corrections below.
     "heuristic_confirmed": list,
+    "facts": dict, "identity": str, "confirmed_fields": dict,
 }
 _NUMERIC_SUBFIELD_TABLES = {
     "scores": {"intelligence_index", "coding_index", "agentic_index"},
     "pricing": {"input_per_1m", "output_per_1m"},
 }
-_RUNTIME_FIELD_TYPES = {"model_id": str, "ctx_window": (int, float)}
+_RUNTIME_FIELD_TYPES = {
+    "model_id": str, "ctx_window": (int, float), "usability": dict, "last_seen": str,
+    "efforts": list, "context": dict, "listed_from": list, "ctx_note": str, "match": dict,
+}
+USABILITY_STATES = ("verified", "rejected", "unverified", "listed disabled by host")
 _VALID_NAME_DECLARED_PURPOSE = {"review", "execute"}
 _VALID_IMAGE_INPUT_SOURCE = {"models_dev", "opencode", "opencode-api"}
 
@@ -196,6 +204,54 @@ def _validate_list_and_numeric_tables(model_id: str, entry: dict) -> str | None:
     return None
 
 
+def _validate_facts(model_id: str, entry: dict) -> str | None:
+    for name, value in entry.get("facts", {}).items():
+        problem = fact_problem(value)
+        if problem is not None:
+            return f"{model_id}: 'facts.{name}' {problem}"
+    for name, record in entry.get("confirmed_fields", {}).items():
+        if not isinstance(record, dict) or not all(
+            isinstance(record.get(key), str) for key in ("by", "at", "note")
+        ):
+            return f"{model_id}: 'confirmed_fields.{name}' needs by, at and note"
+    return None
+
+
+def _usability_problem(row: dict) -> bool:
+    record = row.get("usability")
+    return not (
+        isinstance(record, dict)
+        and record.get("state") in USABILITY_STATES
+        and isinstance(record.get("at"), str)
+        and isinstance(record.get("via"), str)
+        and (record.get("error") is None or isinstance(record.get("error"), str))
+    )
+
+
+def _context_problem(row: dict) -> bool:
+    context = row.get("context")
+    if fact_problem(context) is not None:
+        return True
+    assert isinstance(context, dict)
+    value = context["value"]
+    return value is not None and (
+        not isinstance(value, int) or isinstance(value, bool) or value <= 0
+    )
+
+
+def _validate_runtime_records(model_id: str, entry: dict) -> str | None:
+    for rid, row in entry.get("runtimes", {}).items():
+        if "usability" in row and _usability_problem(row):
+            return f"{model_id}: 'runtimes.{rid}.usability' is invalid"
+        if "context" in row and _context_problem(row):
+            return f"{model_id}: 'runtimes.{rid}.context' is invalid"
+        efforts = row.get("efforts")
+        if "efforts" in row and (not isinstance(efforts, list) or
+                                  not all(isinstance(item, str) for item in efforts)):
+            return f"{model_id}: 'runtimes.{rid}.efforts' must be a list of strings"
+    return None
+
+
 _CATALOG_ENTRY_VALIDATORS = (
     _validate_mandatory_fields,
     _validate_runtimes_shape,
@@ -203,6 +259,8 @@ _CATALOG_ENTRY_VALIDATORS = (
     _validate_typed_fields,
     _validate_declared_purpose_fields,
     _validate_list_and_numeric_tables,
+    _validate_facts,
+    _validate_runtime_records,
 )
 
 
