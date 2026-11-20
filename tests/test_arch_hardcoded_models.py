@@ -245,7 +245,6 @@ def baseline_problems(found: dict, baseline: dict, existing: set[str]) -> list[s
         if entry.get("hits", []) != sorted(entry.get("hits", [])):
             problems.append(f"hits not sorted for {path}")
     for path, hits in found.items():
-        actual = _hit_strings(hits)
         if path not in by_path:
             problems.append(f"new violation: {path}:{hits[0][0]} {hits[0][1]} {hits[0][2]}")
             continue

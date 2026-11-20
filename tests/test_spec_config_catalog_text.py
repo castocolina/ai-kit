@@ -26,7 +26,7 @@ def command_problems(text):
     problems = []
     lines = RUN_LINE.findall(text)
     for command in lines:
-        args = shlex.split(command.replace("<placeholder>", "x"))
+        args = shlex.split(command)
         if not args or args[0] not in ALLOWED:
             problems.append(f"unknown command: {command}")
             continue

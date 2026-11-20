@@ -241,7 +241,7 @@ class TestLockedCatalogUpdate(unittest.TestCase):
         self.assertEqual(result[key]["runtimes"]["pi"], {
             "model_id": "placeholder-model-1", "ctx_window": 2000, "usability": USABILITY
         })
-        self.assertEqual(result[key]["confirmed_fields"], confirm_fields := {
+        self.assertEqual(result[key]["confirmed_fields"], {
             "class": {"by": "confirm-model", "at": "2026-11-20T00:00:00Z", "note": ""}
         })
         self.assertEqual(result[key]["facts"]["class"], {
@@ -250,7 +250,6 @@ class TestLockedCatalogUpdate(unittest.TestCase):
         })
         self.assertEqual(result[second], original[second])
         self.assertEqual(result[third], built[third])
-        self.assertTrue(confirm_fields)
 
 
 if __name__ == "__main__":

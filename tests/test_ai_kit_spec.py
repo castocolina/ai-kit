@@ -2834,6 +2834,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             {"schema_version": 4},
             {"schema_version": 5},
             {"schema_version": 6},
+            {"schema_version": 7},
         ):
             self.assertFalse(f(bad))
         for good in ({"schema_version": 8}, {"schema_version": 9}):
