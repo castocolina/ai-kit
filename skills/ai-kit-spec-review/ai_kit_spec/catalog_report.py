@@ -42,8 +42,6 @@ def listing_state(cli_row: dict) -> str:
         return "listing failed: " + str(cli_row.get("listing_error") or "unknown error")
     if listing == "none":
         return "installed, no listing"
-    if listing is None and "listing" not in cli_row:
-        return "not checked"
     return "not checked"
 
 
@@ -169,15 +167,16 @@ def _runtime_row(inputs: _RowInputs) -> ReportRow:
     )
 
 
-def _extra_row(rid: str, model_id: str, cli_row: dict, *, optional=False) -> ReportRow:
-    records = cli_row
-    if optional:
-        records = {"listed_from": {}}
-    listed_from = listed_from_text(records, cli_row)
-    if optional:
-        listed_from = _source_records(cli_row.get("sources", []))
+def _optional_row(rid: str, candidate: dict) -> ReportRow:
     return ReportRow(
-        rid, model_id, "", "not listed" if optional else listing_state(cli_row), listed_from,
+        rid, candidate.get("name", ""), "", "not listed",
+        _source_records(candidate.get("sources", [])), "", "unmatched", "", "", "", "none", "",
+    )
+
+
+def _extra_row(rid: str, model_id: str, cli_row: dict) -> ReportRow:
+    return ReportRow(
+        rid, model_id, "", listing_state(cli_row), listed_from_text(cli_row, cli_row),
         "", "unmatched", "", "", "", "none", "",
     )
 
@@ -207,14 +206,16 @@ def _optional_rows(optional: dict | None, rows: list) -> list:
         for candidate in candidates if isinstance(candidates, list) else []:
             if not isinstance(candidate, dict) or candidate.get("name") in present:
                 continue
-            extra.append(_extra_row(rid, candidate.get("name", ""), candidate, optional=True))
+            extra.append(_optional_row(rid, candidate))
     return extra
 
 
 def _listed_rows(clis: dict, rows: list) -> list:
     extra = []
     for rid, cli_row in clis.items():
-        models = cli_row.get("models") if isinstance(cli_row, dict) else None
+        if not isinstance(cli_row, dict):
+            continue
+        models = cli_row.get("models")
         if cli_row.get("listing") == "ok" and isinstance(models, list):
             present = {row.model_id for row in rows if row.runtime == rid}
             for model_id in models:

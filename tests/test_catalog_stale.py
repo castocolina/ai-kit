@@ -9,7 +9,7 @@ _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
 from ai_kit_spec.catalog_build import CatalogSources, build_model_catalog
-from ai_kit_spec.catalog_report import context_line, report_rows
+from ai_kit_spec.catalog_report import context_line, listing_state, report_rows
 
 
 def _entry(model_id, runtime, **fields):
@@ -103,6 +103,12 @@ class TestStaleOnProof(unittest.TestCase):
 
 
 class TestReportStates(unittest.TestCase):
+    def test_non_dict_cli_row_is_skipped(self):
+        self.assertEqual(report_rows({}, {"clis": {"pi": "oops"}}), [])
+
+    def test_listing_state_without_listing_key_is_not_checked(self):
+        self.assertEqual(listing_state({"installed": True}), "not checked")
+
     def test_stale_provider(self):
         catalog = {
             "fake/placeholder-model-1": _entry("fake/placeholder-model-1", "opencode"),

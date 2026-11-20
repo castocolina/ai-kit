@@ -164,7 +164,7 @@ def cmd_models_config(args, deps) -> int:
     return 0
 
 
-def _optional_rows_input(env, entries) -> dict:
+def _optional_rows_input(env) -> dict:
     store = cache_read_json(optional_sources.store_path(env)) or {}
     if not isinstance(store, dict):
         return {}
@@ -191,7 +191,7 @@ def cmd_catalog_report(args, deps) -> int:
         snapshot = cache_read_json(args.runtimes_json) or {}
         fresh = False
     rows = catalog_report.report_rows(
-        entries, snapshot, _optional_rows_input(deps.env_fn(), entries), fresh=fresh
+        entries, snapshot, _optional_rows_input(deps.env_fn()), fresh=fresh
     )
     lines = attribution_lines(catalog_sources(entries))
     if args.json:

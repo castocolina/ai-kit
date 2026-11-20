@@ -466,7 +466,7 @@ class TestOptionalFetchCandidates(_Scratch):
             "copilot": {"installed": True, "listing": "none"},
             "claude": {"installed": True, "listing": "ok"},
             "cursor": {"installed": True, "listing": "failed"},
-            "grok": {"installed": True, "listing": "none"},
+            "placeholder-runtime": {"installed": True, "listing": "none"},
         }}
         record = {"name": "placeholder-model-1", "source": "web", "label": "web, unverified"}
         found = catalog_cmds.optional_fetch_candidates(
