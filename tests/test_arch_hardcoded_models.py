@@ -62,6 +62,14 @@ NAME_ASSIGN_KW = re.compile(r"""\b(native_selectors|models?|aliases)\s*=\s*[\(\[
 QSTR = re.compile(r"""[\"']([A-Za-z0-9][A-Za-z0-9._:/#-]*)[\"']""")
 SELECTORS_ASSIGN = re.compile(r"""\bnative_selectors\s*=\s*[\(\[]""")
 EXAMPLE_FIELD = re.compile(r"""^\s*[\"']?example[\"']?\s*(?::|=(?!=))""")
+AA_SHAPE_RX = re.compile(r"[\"']?artificial_analysis_[a-z_]+_index[\"']?\s*[:=]\s*-?\d")
+AA_MARKER = "synthetic: Artificial Analysis shapes, invented values"
+# Historic plan text whose numbers' provenance is unknown; this dict only shrinks.
+AA_SHAPE_KNOWN = {
+    "docs/superpowers/plans/2026-09-02-ai-kit-model-discovery-config.md": "backlog",
+    "docs/superpowers/plans/2026-09-05-model-catalog-effort-suffix-fallback.md": "backlog",
+    "docs/superpowers/plans/2026-09-05-router-name-purpose-heuristic.md": "backlog",
+}
 
 
 def _modelish(value: str) -> bool:
@@ -262,6 +270,41 @@ def baseline_problems(found: dict, baseline: dict, existing: set[str]) -> list[s
     return problems
 
 
+def aa_text_problem(path: str, text: str) -> str | None:
+    """Return the first unmarked Artificial Analysis response-shaped numeric line."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not AA_SHAPE_RX.search(line):
+            continue
+        if AA_MARKER in line:
+            continue
+        previous = index - 1
+        while previous >= 0 and AA_SHAPE_RX.search(lines[previous]):
+            previous -= 1
+        if previous >= 0 and AA_MARKER in lines[previous]:
+            continue
+        return f"AA response shape without the synthetic marker: {path}:{index + 1}"
+    return None
+
+
+def aa_shape_problems(root: Path, files: list[str], known=AA_SHAPE_KNOWN) -> list[str]:
+    problems = []
+    for path in files:
+        try:
+            text = (root / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        has_shape = any(AA_SHAPE_RX.search(line) for line in text.splitlines())
+        if path in known:
+            if not has_shape:
+                problems.append(f"AA shape fixed, remove from AA_SHAPE_KNOWN: {path}")
+            continue
+        problem = aa_text_problem(path, text)
+        if problem:
+            problems.append(problem)
+    return problems
+
+
 def _git_binary_available() -> bool:
     return bool(__import__("shutil").which("git"))
 
@@ -279,6 +322,56 @@ def _inside_work_tree() -> bool:
 
 GIT_WORK_TREE_AVAILABLE = _git_binary_available() and _inside_work_tree()
 GIT_WORK_TREE_SKIP = "requires a git work tree; the clean-room container has no .git"
+
+
+class TestAaShapes(unittest.TestCase):
+    @unittest.skipUnless(GIT_WORK_TREE_AVAILABLE, GIT_WORK_TREE_SKIP)
+    def test_tree_has_no_unmarked_aa_shape(self):
+        self.assertEqual([], aa_shape_problems(REPO, tracked_files(REPO)))
+
+    def test_aa_rule_non_vacuity(self):
+        cases = (
+            (
+                "numeric shape",
+                '{"artificial_analysis_intelligence_index": 68.4}',
+                "AA response shape without the synthetic marker: x.json:1",
+            ),
+            (
+                "line marker",
+                AA_MARKER + '\n{"artificial_analysis_intelligence_index": 68.4}',
+                None,
+            ),
+            (
+                "marker covers matching run",
+                AA_MARKER + '\n{"artificial_analysis_intelligence_index": 68.4}\n'
+                '{"artificial_analysis_coding_index": 70.0}',
+                None,
+            ),
+            (
+                "marker is not file-wide",
+                AA_MARKER + '\nx = 1\n{"artificial_analysis_intelligence_index": 68.4}',
+                "AA response shape without the synthetic marker: x.py:3",
+            ),
+            (
+                "key without number",
+                'evaluations.get("artificial_analysis_intelligence_index")',
+                None,
+            ),
+        )
+        for name, text, expected in cases:
+            path = "x.py" if name == "marker is not file-wide" else "x.json"
+            with self.subTest(case=name):
+                self.assertEqual(expected, aa_text_problem(path, text))
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            known_path = next(iter(AA_SHAPE_KNOWN))
+            target = root / known_path
+            target.parent.mkdir(parents=True)
+            target.write_text("no response shape\\n", encoding="utf-8")
+            self.assertEqual(
+                [f"AA shape fixed, remove from AA_SHAPE_KNOWN: {known_path}"],
+                aa_shape_problems(root, [known_path]),
+            )
 
 
 class TestHardcodedModels(unittest.TestCase):
