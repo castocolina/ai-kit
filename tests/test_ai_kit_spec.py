@@ -106,6 +106,15 @@ from ai_kit_spec.vendor import infer_vendor_from_model
 
 from tests import host_fakes
 
+# 35: no test reaches the Arena network
+_NO_ARENA = lambda **_kw: ({"config": "text", "split": "latest", "categories": {}}, False)
+
+
+def _fresh_meta():
+    sources = ("models_dev", "artificial_analysis", "arena")
+    records = {key: {"last_fetched": time.time(), "ok": True} for key in sources}
+    return {"schema_version": model_catalog.CATALOG_SCHEMA_VERSION, "sources": records}
+
 # Fixture provenance (JSON cannot hold comments, so the record lives here, next to the
 # constant the tests read the fixture through):
 # - Source command: `codex debug models` (CLI version codex-cli 0.147.0, the real binary
@@ -2006,6 +2015,7 @@ class TestCodexEnumerationEndToEnd(unittest.TestCase):
                     "--catalog-path",
                     catalog_path,
                 ],
+                fetch_arena_fn=_NO_ARENA,
                 fetch_models_dev_fn=lambda: (models_dev_data, True),
                 fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                 load_secret_fn=lambda env, key: None,
@@ -8445,7 +8455,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
         # than the catalog file's own mtime. Every test below that wants to stay network-free
         # under `--if-stale` must seed THIS file fresh, not just the catalog file.
         with open(catalog_path + ".fetch-meta.json", "w", encoding="utf-8") as f:
-            json.dump({"last_fetched": time.time()}, f)
+            json.dump(_fresh_meta(), f)
 
     def _write_current_schema_catalog(self, catalog_path):
         # 16 D-12: a skip-fetch run additionally requires the catalog's `_meta.schema_version`
@@ -8485,6 +8495,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                         catalog_path,
                         "--if-stale",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=self._never_fetch_models_dev,
                     fetch_artificial_analysis_fn=self._never_fetch_aa,
                 )
@@ -8495,20 +8506,12 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             self.assertEqual(result["unmatched"][0]["model_id"], "vendor/brand-new")
 
     def test_if_stale_skip_never_touches_the_fetch_freshness_marker(self):
-        # Important finding (coordinator review): a skip_fetch run must leave the fetch-meta
-        # sidecar file completely untouched (content AND mtime) -- otherwise a subsequent
-        # --if-stale run would (wrongly) see it as freshly re-verified and keep extending the
-        # TTL window forever without ever actually re-fetching. Seed a meta file with an old
-        # `last_fetched` epoch (already outside CATALOG_TTL_SECONDS, so a real fetch WOULD be
-        # warranted by that timestamp) but a very recent mtime (so cache_is_stale's mtime check
-        # alone would call it fresh) -- proving staleness is judged by the file's mtime here
-        # (same cache_is_stale mechanism as everywhere else in this codebase), and that a
-        # skipped run leaves that mtime/content alone rather than refreshing it.
+        # 35 D-02: a skip run leaves the per-source sidecar untouched (content and mtime).
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
             self._write_current_schema_catalog(catalog_path)
             meta_path = catalog_path + ".fetch-meta.json"
-            original_marker = {"last_fetched": 12345.0}
+            original_marker = _fresh_meta()
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(original_marker, f)
             before_mtime = os.stat(meta_path).st_mtime
@@ -8527,6 +8530,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                         catalog_path,
                         "--if-stale",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=self._never_fetch_models_dev,
                     fetch_artificial_analysis_fn=self._never_fetch_aa,
                 )
@@ -8559,6 +8563,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                         "--catalog-path",
                         catalog_path,
                     ],  # no --if-stale -- always fetches
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: ({}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda env, key: None,
@@ -8569,7 +8574,8 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             self.assertTrue(os.path.exists(meta_path))
             meta = cache_read_json(meta_path)
             assert meta is not None
-            self.assertIsInstance(meta["last_fetched"], float)
+            self.assertIsInstance(meta["sources"]["models_dev"]["last_fetched"], float)
+            self.assertTrue(meta["sources"]["models_dev"]["ok"])
 
     def test_no_api_key_is_treated_as_source_skipped_not_a_genuine_no_match(self):
         # CRITICAL finding (#3, coordinator review): this is the line that was never actually
@@ -8592,6 +8598,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                         "--catalog-path",
                         catalog_path,
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: ({}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: (
                         [{"id": "1", "slug": "x"}],
@@ -8628,6 +8635,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                         "--extra-candidate",
                         "codex:vendor/typed-in-model",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=self._never_fetch_models_dev,
                     fetch_artificial_analysis_fn=self._never_fetch_aa,
                 )
@@ -8677,6 +8685,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                         "--if-stale",
                     ],
                     env_fn=lambda: {"HOME": d},
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=self._never_fetch_models_dev,
                     fetch_artificial_analysis_fn=self._never_fetch_aa,
                 )
@@ -8713,6 +8722,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                     ["fetch-model-catalog", "--runtimes-json", runtimes_path,
                      "--catalog-path", catalog_path, "--cwd", d, "--if-stale"],
                     env_fn=lambda: {"HOME": d},
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=self._never_fetch_models_dev,
                     fetch_artificial_analysis_fn=self._never_fetch_aa,
                 )
@@ -8869,7 +8879,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
 
     def _write_fresh_fetch_meta(self, catalog_path):
         with open(catalog_path + ".fetch-meta.json", "w", encoding="utf-8") as f:
-            json.dump({"last_fetched": time.time()}, f)
+            json.dump(_fresh_meta(), f)
 
     @staticmethod
     def _legacy_entry():
@@ -8986,6 +8996,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                         catalog_path,
                         "--if-stale",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: fetches.append("md") or ({}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda env, key: None,
@@ -9000,7 +9011,15 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             self.assertEqual(written["_meta"], {
                 "schema_version": model_catalog.CATALOG_SCHEMA_VERSION
             })
-            self.assertEqual(written["openai/gpt-5.6-sol"], self._legacy_entry())  # preserved
+            legacy = self._legacy_entry()
+            entry = written["openai/gpt-5.6-sol"]
+            for field in ("provider", "confidence", "last_verified", "tool_calling", "source"):
+                self.assertEqual(entry[field], legacy[field])
+            self.assertEqual(
+                entry["runtimes"]["opencode"]["model_id"],
+                legacy["runtimes"]["opencode"]["model_id"],
+            )
+            # The legacy fields are preserved; the facts layer only adds facts (35).
 
     def test_meta_with_older_version_is_refetched(self):
         with tempfile.TemporaryDirectory() as d:
@@ -9026,6 +9045,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                         catalog_path,
                         "--if-stale",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: fetches.append("md") or ({}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda env, key: None,
@@ -9058,6 +9078,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                         catalog_path,
                         "--if-stale",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=self.fail,
                     fetch_artificial_analysis_fn=self.fail,
                     load_secret_fn=lambda env, key: None,
@@ -9069,7 +9090,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                 "schema_version": model_catalog.CATALOG_SCHEMA_VERSION, "note": "keep"
             })
 
-    def test_models_dev_down_aa_only_never_stamps_meta_so_next_run_refetches(self):
+    def test_models_dev_down_stamps_schema_and_records_failure_so_next_run_refetches(self):
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
             with open(catalog_path, "w", encoding="utf-8") as f:
@@ -9090,6 +9111,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                         "--catalog-path",
                         catalog_path,
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: ({}, False),  # models.dev down
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda env, key: "k",
@@ -9100,10 +9122,12 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             self.assertTrue(result["artificial_analysis_ok"])
             cached = cache_read_json(catalog_path)
             assert cached is not None
-            self.assertNotIn("_meta", cached)  # not stamped
-            # fetch-meta WAS written (existing behavior) but the catalog is still versionless
-            # -- the immediate second --if-stale run must fetch again.
-            self.assertTrue(os.path.exists(catalog_path + ".fetch-meta.json"))
+            self.assertEqual(
+                cached["_meta"], {"schema_version": model_catalog.CATALOG_SCHEMA_VERSION}
+            )
+            meta = cache_read_json(catalog_path + ".fetch-meta.json")
+            assert meta is not None
+            self.assertFalse(meta["sources"]["models_dev"]["ok"])
             fetches = []
             buf2 = io.StringIO()
             with redirect_stdout(buf2):
@@ -9116,6 +9140,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                         catalog_path,
                         "--if-stale",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: fetches.append("md") or ({}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda env, key: None,
@@ -9251,6 +9276,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                         "--catalog-path",
                         catalog_path,
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: ({}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda env, key: None,
@@ -9365,6 +9391,9 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
                             catalog_path,
                         ],
                         which_fn=self._claude_which,
+                        fetch_arena_fn=lambda **_kw: (
+                            {"config": "text", "split": "latest", "categories": {}}, True
+                        ),
                         fetch_models_dev_fn=md_fake,
                         fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                         load_secret_fn=lambda _env_, key: None,
@@ -9593,6 +9622,7 @@ class TestClaudeFallback(unittest.TestCase):
                         catalog_path,
                     ],
                     which_fn=lambda name, **_k: None,
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: ({"openai": {"models": {}}}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,
@@ -9683,6 +9713,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (models_dev_data, True),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -9738,7 +9769,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 },
             )
             # Create a fetch-meta sidecar so it's "fresh" enough to skip
-            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(c + ".fetch-meta.json", _fresh_meta())
             fetch_called = []
 
             def never_fetch_models_dev():
@@ -9757,6 +9788,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                         c,
                     ],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=never_fetch_models_dev,
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -9811,6 +9843,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (models_dev_data, True),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -10127,6 +10160,7 @@ openai/gpt-5.6-sol
                         os.path.join(d, "catalog.json"),
                     ],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: ({}, True),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -10183,6 +10217,7 @@ openai/gpt-5.6-sol
                 code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (
                         {"vendor": {"models": {"no-modalities": {"id": "no-modalities"}}}},
                         True,
@@ -10197,7 +10232,7 @@ openai/gpt-5.6-sol
             self.assertEqual(entries["vendor/no-modalities"]["image_input"], True)
             self.assertEqual(entries["vendor/no-modalities"]["image_input_source"], "opencode")
             # Run 2: skip fetch, runtime changes to False
-            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(c + ".fetch-meta.json", _fresh_meta())
             cache_write_json(
                 r,
                 {
@@ -10223,6 +10258,7 @@ openai/gpt-5.6-sol
                         c,
                     ],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: self.fail("should skip fetch"),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -10261,6 +10297,7 @@ openai/gpt-5.6-sol
                 code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (
                         {
                             "vendor": {
@@ -10280,7 +10317,7 @@ openai/gpt-5.6-sol
                 )
             self.assertEqual(code, 0)
             # Run 2: skip, runtime now says False
-            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(c + ".fetch-meta.json", _fresh_meta())
             cache_write_json(
                 r,
                 {
@@ -10306,6 +10343,7 @@ openai/gpt-5.6-sol
                         c,
                     ],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: self.fail("should skip"),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -10345,6 +10383,7 @@ openai/gpt-5.6-sol
                 code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (
                         {"vendor": {"models": {"no-modalities": {"id": "no-modalities"}}}},
                         True,
@@ -10354,7 +10393,9 @@ openai/gpt-5.6-sol
                     which_fn=lambda name, **_k: None,
                 )
             # Run 2: skip, no image_input in runtime snapshot
-            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(c + ".fetch-meta.json", _fresh_meta())
+            # No raw cache: the fresh source reaches the build as not answered (35-19).
+            os.remove(os.path.join(d, "sources", "models_dev.json"))
             cache_write_json(
                 r,
                 {
@@ -10374,6 +10415,7 @@ openai/gpt-5.6-sol
                         c,
                     ],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: self.fail("should skip"),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -10410,7 +10452,7 @@ openai/gpt-5.6-sol
                 },
             )
             # Skip fetch, but runtime now says False
-            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(c + ".fetch-meta.json", _fresh_meta())
             cache_write_json(
                 r,
                 {
@@ -10436,6 +10478,7 @@ openai/gpt-5.6-sol
                         c,
                     ],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: self.fail("should skip"),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -11089,6 +11132,7 @@ class TestClaudeRuntimeFreshness(unittest.TestCase):
                     code = main(
                         argv,
                         which_fn=self._claude_which,
+                        fetch_arena_fn=_NO_ARENA,
                         fetch_models_dev_fn=lambda: (md, True),
                         fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                         load_secret_fn=lambda _env_, key: None,
@@ -11216,6 +11260,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
                         catalog_path,
                     ],
                     which_fn=recording_which,
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (TestClaudeEnumerationEndToEnd.MD, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,
@@ -11266,6 +11311,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
                         catalog_path,
                     ],
                     which_fn=recording_which,
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (no_anthropic, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,
@@ -11312,6 +11358,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
                         catalog_path,
                     ],
                     which_fn=lambda name, **_k: "/fake/bin/claude" if name == "claude" else None,
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (md, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,
@@ -11405,6 +11452,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
                         catalog_path,
                     ],
                     which_fn=lambda name, **_k: "/fake/bin/claude" if name == "claude" else None,
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (md, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,

@@ -2700,6 +2700,7 @@ def _write_seed_files(paths: _Paths, *, confirm_routers: bool, catalog, runtimes
     that makes `fetch-model-catalog --if-stale` skip (`cache_is_stale` is True for a missing
     file, so without it every live `inventory` would fetch and rewrite)."""
     from ai_kit_spec import cache as spec_cache  # pylint: disable=import-outside-toplevel
+    from ai_kit_spec import model_catalog  # pylint: disable=import-outside-toplevel
 
     cat = catalog if catalog is not None else _load_json_file(CACHE_SEED / "model-catalog.json")
     if confirm_routers:
@@ -2708,7 +2709,16 @@ def _write_seed_files(paths: _Paths, *, confirm_routers: bool, catalog, runtimes
     paths.cache.mkdir(parents=True, exist_ok=True)
     spec_cache.cache_write_json(str(paths.catalog), cat)
     spec_cache.cache_write_json(str(paths.runtimes), _drop_model_less_rows(rts))
-    spec_cache.cache_write_json(str(paths.catalog) + SIDECAR_SUFFIX, {"last_fetched": time.time()})
+    spec_cache.cache_write_json(
+        str(paths.catalog) + SIDECAR_SUFFIX,
+        {
+            "schema_version": model_catalog.CATALOG_SCHEMA_VERSION,
+            "sources": {
+                key: {"last_fetched": time.time(), "ok": True}
+                for key in ("models_dev", "artificial_analysis", "arena")
+            },
+        },
+    )
 
 
 def _fixed_point_fetch(paths: _Paths) -> None:

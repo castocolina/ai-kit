@@ -5,7 +5,7 @@ applied after the build. catalog_build only calls this module (D-01).
 from collections.abc import Callable
 from typing import NamedTuple
 
-from ai_kit_spec import catalog_bands, catalog_context, catalog_tiers, model_names
+from ai_kit_spec import catalog_bands, catalog_context, catalog_tiers, model_names, optional_sources
 from ai_kit_spec.catalog_labels import fact
 from ai_kit_spec.model_catalog import canonical_key, merge_catalog_entry
 from ai_kit_spec.model_heuristics import infer_purpose_from_name
@@ -333,6 +333,18 @@ def _pool_for(sources) -> dict:
     return pool
 
 
+def _seed_provider_key(runtime: str, bare: str, sources) -> str | None:
+    row = next((item for item in optional_sources.SEED_ROWS if item.runtime == runtime), None)
+    provider = row.models_dev_provider if row is not None else None
+    if not isinstance(provider, str):
+        return None
+    payload = sources.models_dev_data.get(provider)
+    rows = payload.get("models") if isinstance(payload, dict) else None
+    if isinstance(rows, dict) and isinstance(rows.get(bare), dict):
+        return canonical_key(provider, bare)
+    return None
+
+
 class _ResolutionInput(NamedTuple):
     candidate: dict
     base: str
@@ -380,8 +392,11 @@ def resolve_candidates(candidates: list, sources, inputs: FactsInputs) -> tuple:
             output.append({**candidate, "unresolved": True})
             continue
         bare = base.rsplit("/", 1)[-1]
+        seeded = _seed_provider_key(candidate["runtime"], bare, sources)
         if bare in pool:
             output.append({**candidate, "match_name": pool[bare]})
+        elif seeded is not None:
+            output.append({**candidate, "match_name": seeded})
         else:
             pending.append((candidate, base))
     resolved, matches = _resolve_pending(pending, pool, inputs)

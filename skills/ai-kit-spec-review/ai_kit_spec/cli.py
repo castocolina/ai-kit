@@ -9,7 +9,9 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from ai_kit_spec import (
+    catalog_fetch,
     config_migrate,
+    jev_names,
     provider_check,
     routing,
     secret_shapes,
@@ -17,17 +19,19 @@ from ai_kit_spec import (
     trust,
     usability,
 )
+from ai_kit_spec.arena_source import fetch_arena
 from ai_kit_spec.cache import (
-    cache_is_stale,
     cache_read_json,
     cache_write_json,
 )
+from ai_kit_spec.catalog_attribution import attribution_lines, catalog_sources
 from ai_kit_spec.catalog_build import (
     CatalogSources,
     _anthropic_model_ids,
     _runtime_meta_from_snapshot,
     build_model_catalog,
 )
+from ai_kit_spec.catalog_facts import FactsInputs
 from ai_kit_spec.catalog_labels import now_iso
 from ai_kit_spec.commands import (
     ResolvedReviewer,
@@ -72,16 +76,18 @@ from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
 from ai_kit_spec.local_secrets import load_secret
 from ai_kit_spec.model_catalog import (
     CATALOG_SCHEMA_VERSION,
-    CATALOG_TTL_SECONDS,
     apply_heuristic_corrections,
     cache_catalog_path,
     canonical_key,
     catalog_schema_is_current,
     join_catalog_meta,
+    locked_catalog_update,
     merge_catalog_entry,
+    rebase_on_current,
     split_catalog_meta,
 )
 from ai_kit_spec.model_sources import fetch_artificial_analysis, fetch_models_dev
+from ai_kit_spec.models_config import read_models_settings
 from ai_kit_spec.quota import (
     QUOTA_TTL_SECONDS,
     ProbeSeams,
@@ -121,6 +127,17 @@ class FetchBuildInputs(NamedTuple):
     sources: CatalogSources
     skip_fetch: bool
     runtime_meta: dict
+    facts_inputs: object = None
+
+
+class FetchedSources(NamedTuple):
+    sources: CatalogSources
+    catalog_meta: dict
+    skip_fetch: bool
+    results: dict
+    settings: object
+    source_at: dict
+    sidecar: dict | None
 
 
 class FetchCatalogOutput(NamedTuple):
@@ -143,6 +160,7 @@ class CliDeps(NamedTuple):
     load_secret_fn: Callable[..., Any] = load_secret
     fetch_models_dev_fn: Callable[..., Any] = fetch_models_dev
     fetch_artificial_analysis_fn: Callable[..., Any] = fetch_artificial_analysis
+    fetch_arena_fn: Callable[..., Any] = fetch_arena
     popen_fn: Callable[..., Any] = subprocess.Popen  # the opencode 2.x image probe server
     urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN  # its loopback API call
 
@@ -203,6 +221,11 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
              "the config.toml [lanes] roster (e.g. a first-time codex/grok setup with "
              "nothing registered yet) -- still goes through the same matching/enrichment "
              "path as anything else.")
+    p_catalog.add_argument(
+        "--jev", action="store_true",
+        help=("ask jev-fast-decision, when installed, for unmatched names and unknown classes "
+              "(35 D-04, D-06)"),
+    )
     p_catalog.add_argument(
         "--if-stale", action="store_true",
         help="gate NETWORK CALLS ONLY: when --catalog-path exists, is fresher than "
@@ -526,28 +549,24 @@ def _discovered_catalog_candidates(
 
 def _fetch_catalog_external_sources(
     deps: CliDeps, args: argparse.Namespace, catalog_meta: dict
-) -> tuple[CatalogSources, dict, bool]:
-    fetch_meta_path = args.catalog_path + ".fetch-meta.json"
-    skip_fetch = (
-        args.if_stale
-        and not cache_is_stale(fetch_meta_path, CATALOG_TTL_SECONDS)
-        and catalog_schema_is_current(catalog_meta)
+) -> FetchedSources:
+    env = deps.env_fn()
+    settings = read_models_settings(args.cwd or os.getcwd(), env)
+    path = args.catalog_path + ".fetch-meta.json"
+    now = time.time()
+    meta = catalog_fetch.read_fetch_meta(path, now)
+    api_key = deps.load_secret_fn(env, "ARTIFICIAL_ANALYSIS_API_KEY") or ""
+    plan = catalog_fetch.source_plan(
+        meta, settings,
+        catalog_fetch.PlanFlags(bool(args.if_stale), catalog_schema_is_current(catalog_meta)),
+        api_key, now,
     )
-    if skip_fetch:
-        return CatalogSources({}, False, [], False), catalog_meta, skip_fetch
-    api_key = deps.load_secret_fn(deps.env_fn(), "ARTIFICIAL_ANALYSIS_API_KEY")
-    models_dev_data, models_dev_ok = deps.fetch_models_dev_fn()
-    aa_models, aa_fetch_ok = deps.fetch_artificial_analysis_fn(api_key)
-    aa_ok = aa_fetch_ok and bool(api_key)
-    if models_dev_ok or aa_ok:
-        cache_write_json(fetch_meta_path, {"last_fetched": time.time()})
-    if models_dev_ok:
-        catalog_meta = {**catalog_meta, "schema_version": CATALOG_SCHEMA_VERSION}
-    return (
-        CatalogSources(models_dev_data, models_dev_ok, aa_models, aa_ok),
-        catalog_meta,
-        skip_fetch,
-    )
+    raw = catalog_fetch.fetch_sources(deps, plan, api_key, args.catalog_path)
+    skip_fetch = not any(result["fetched"] for result in raw.results.values())
+    sidecar = catalog_fetch.updated_fetch_meta(meta, raw.results, now) if not skip_fetch else None
+    catalog_meta = {**catalog_meta, "schema_version": CATALOG_SCHEMA_VERSION}
+    return FetchedSources(raw.sources, catalog_meta, skip_fetch, raw.results, settings,
+                          raw.source_at, sidecar)
 
 
 def _finalize_fetch_catalog_meta(
@@ -569,8 +588,19 @@ def _finalize_fetch_catalog_meta(
     return catalog_meta
 
 
-def _write_fetch_catalog_result(args, out: FetchCatalogOutput) -> None:
-    cache_write_json(args.catalog_path, join_catalog_meta(out.catalog, out.catalog_meta))
+def _write_fetch_catalog_result(args, out: FetchCatalogOutput, fetched: FetchedSources) -> None:
+    if os.path.exists(args.catalog_path) and not isinstance(
+        cache_read_json(args.catalog_path), dict
+    ):
+        cache_write_json(args.catalog_path, {})
+    written = locked_catalog_update(
+        args.catalog_path,
+        lambda current: join_catalog_meta(
+            rebase_on_current(split_catalog_meta(current)[0], out.catalog), out.catalog_meta
+        ),
+    )
+    if fetched.sidecar is not None:
+        cache_write_json(args.catalog_path + ".fetch-meta.json", fetched.sidecar)
     print(json.dumps({
         "catalog_path": args.catalog_path,
         "entry_count": len(out.catalog),
@@ -579,7 +609,10 @@ def _write_fetch_catalog_result(args, out: FetchCatalogOutput) -> None:
         "discovered": out.inputs.discovered,
         "models_dev_ok": out.inputs.sources.models_dev_ok,
         "artificial_analysis_ok": out.inputs.sources.aa_ok,
-        "fetch_skipped": out.inputs.skip_fetch,
+        "fetch_skipped": fetched.skip_fetch,
+        "arena_ok": fetched.sources.arena_ok,
+        "sources": fetched.results,
+        "attribution": attribution_lines(catalog_sources(split_catalog_meta(written)[0])),
     }))
 
 
@@ -612,6 +645,7 @@ def _run_fetch_catalog_build(
         inputs.sources,
         inputs.existing_catalog,
         runtime_meta=inputs.runtime_meta,
+        facts_inputs=inputs.facts_inputs,
     )
     extra = {("claude", c["model_id"]) for c in claude_candidates}
     filtered = [
@@ -656,16 +690,20 @@ def _cmd_fetch_model_catalog(args: argparse.Namespace, deps: CliDeps) -> int:
     # ran this invocation AND at least one source came back genuinely ok -- never touched
     # on a skipped-fetch run, so its own mtime reflects the last REAL fetch, not the last
     # catalog write.
-    sources, catalog_meta, skip_fetch = _fetch_catalog_external_sources(
-        deps, args, catalog_meta
+    fetched = _fetch_catalog_external_sources(deps, args, catalog_meta)
+    env = deps.env_fn()
+    facts_inputs = FactsInputs(
+        snapshot=runtimes, settings=fetched.settings, now=now_iso(),
+        name_judge=jev_names.name_judge(env) if args.jev else None,
+        class_judge=jev_names.class_judge(env) if args.jev else None,
+        source_at=fetched.source_at,
     )
     out = _run_fetch_catalog_build(
-        FetchBuildInputs(
-            discovered, existing_catalog, catalog_meta, sources, skip_fetch, runtime_meta
-        ),
+        FetchBuildInputs(discovered, existing_catalog, fetched.catalog_meta,
+                         fetched.sources, fetched.skip_fetch, runtime_meta, facts_inputs),
         deps,
     )
-    _write_fetch_catalog_result(args, out)
+    _write_fetch_catalog_result(args, out, fetched)
     return 0
 
 def _cmd_confirm_catalog_entry(args: argparse.Namespace, deps: CliDeps) -> int:
