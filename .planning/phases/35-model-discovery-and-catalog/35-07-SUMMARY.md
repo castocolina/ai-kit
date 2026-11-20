@@ -18,7 +18,7 @@ key-files:
   modified:
     - tests/test_catalog_arena.py
 
-requirements-completed: [HUB-02]
+requirements-completed: [HUB-03]
 
 executor: "cross-AI lane: pi router-env/my-coding-lite, one run (872 s, status=ok exit=0)"
 ---
