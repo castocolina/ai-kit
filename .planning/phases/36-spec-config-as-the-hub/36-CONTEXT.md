@@ -1,6 +1,6 @@
 # Phase 36: spec-config as the hub - Context
 
-**Gathered:** 2026-11-16 (interactive path, no owner question needed, jev screening, after 36-SPEC.md); updated 2026-11-16 (re-run 2, herdr hosting and free models, interactive path, jev screening, after the 36-SPEC.md R12 amendment)
+**Gathered:** 2026-11-16 (interactive path, no owner question needed, jev screening, after 36-SPEC.md); updated 2026-11-16 (re-run 2, herdr hosting and free models, interactive path, jev screening, after the 36-SPEC.md R12 amendment); updated 2026-11-16 (free-lane pool study and data use, owner directive, after the R12 g to i and R13 amendments; PROVISIONAL)
 **Status:** Ready for planning (after Phase 35 lands: this phase reads its classified catalog, usability records, per-(runtime, model) efforts and hardcoding guard)
 
 <domain>
@@ -22,7 +22,9 @@ Phase 35's guard.
 Downstream agents MUST read `36-SPEC.md` before planning or implementing. Requirements are not duplicated here.
 
 **Refined 2026-11-16 (re-run 2, D-15 to D-19):** 12 requirements are locked; R12 (free models selectable, a usage-limited
-flag and an alternative lane) is added, and R1 to R11 are unchanged.
+flag and an alternative lane) is added, and R1 to R11 are unchanged. *(Refined 2026-11-16, free-lane pool study, D-20 to D-23: 13
+requirements are locked; R12 gains the recorded pool, the different-pool fallback and the shared-pool warning (g to i), and R13 (a free
+model's data-use note and the owner's confirmation) is added; PROVISIONAL.)*
 
 **In scope:** the no-config check and chain (R1, R2); per-role orders (R3); effort per lane (R4); escalation flags (R5);
 the proposal command and wizard flow (R6); removing seed-flag refusals (R7); the referee rule (R8); the migration backup
@@ -226,8 +228,41 @@ adapter's resume and stop paths and session-model fallback (Phase 41); jev choos
   `--host none` or the environment variable `AIKIT_HOST=none`; no config key is needed, so this phase's writer and validator carry nothing
   new. The wizard's probe calls inherit `--host auto` from `runner_flags` and the written file stays identical.)*
 
+### Added 2026-11-16 (free-lane pool study and data use, owner directive; all four decisions are PROVISIONAL and need owner confirmation)
+
+Source: `.planning/research/2026-11-16-opencode-free-models.md` (read 2026-11-16). Its labels: the free models appear to share one pool
+per account or network (reported by users, scope unresolved, maintainers say the limit is decided by the hosted service); the data-use
+exceptions per model come from the vendor's own docs page (verified, read 2026-11-16); only four of the listed free models are
+zero-retention, so project code may go to a third party; no machine-readable data-use field was found in the catalog (open question 5
+there, unchecked).
+
+- **D-20: A flagged lane records its pool, `usage_pool`, beside the flag.** One line `<provider>/<tier>`: the provider prefix of the model
+  id as the host lists it and `free` as the tier, proposed by the wizard, editable by the owner, optional for a hand-written lane. The
+  string is a provider-level stand-in because the real scope (account, IP, session) is not documented; Phase 38.1 R11 keys its
+  blocked-until record the same way and a shared fixture pins that the two strings agree. Amends D-16 (the flag stays flat, a second
+  flat key joins it). **Own reasoning** (no jev: it follows the owner's keyed-by-pool directive). Ledger.
+- **D-21: The fallback comes from a different pool.** Refines D-16: `lane_fallback` returns the first lane of the role, in the role's
+  order, that is neither flagged nor in the same pool; a lane with no `usage_pool` is a pool of its own, so only an equal string counts as
+  shared. Reason: free models of one provider appear to draw on one pool, so an unflagged sibling would fail the same way. The alternative
+  proposed by D-17 skips candidates of the flagged pool. **Own reasoning.** Ledger.
+- **D-22: The wizard warns about the shared pool.** When the owner picks or is offered a second lane of the same provider as the
+  alternative, one line says other free models of that provider appear to share one pool and are not an alternative, with the label
+  "reported, unverified for any other provider". No warning for a different provider. **Own reasoning.** Ledger.
+- **D-23: A free model's data-use note is shown first, recorded beside the lane and confirmed (new R13, HUB-10).** For a chosen zero-price
+  model whose source does not say it is local, the wizard shows `zero_retention`, `may_be_kept_or_trained` or `unknown` with a display
+  line, source, read date and label (`verified` only for the vendor's own page read in this run through Phase 35's optional web source,
+  else `reported`), states that a review or execute lane sends project content to that vendor, and asks for an explicit yes; a yes writes
+  `data_use`, `data_use_source` and `data_use_confirmed = true`, a no or a skip writes no lane. Unknown is never defaulted to a safe value
+  and no shipped list decides (a table never decides, D-15). The question comes before D-15's usage-limited question. **Owner confirms:**
+  the decline path (no lane written) and the closed value list; the alternative is a lane written but marked unconfirmed, which would
+  let an unconfirmed lane run later. Open: the vendor page is HTML, so the plan decides how the wizard reads a per-model statement
+  from it (and falls to `unknown` when it cannot). **Own reasoning** (the orchestrator classified the finding through jev). Ledger.
+
 ### Handoffs to later phases
 
+- *Added 2026-11-16 (free-lane pool study):* **Phase 38.1**: R11 keys its blocked-until record by the same `<provider>/<tier>` string
+  (38.1 D-23). **Phases 40 and 41**: read `lane_fallback` (now different-pool) and the record (new EXE-09). **Phase 35**: the optional
+  web source is how a vendor page is read; a catalog field for data use, if models.dev gains one, replaces the page read.
 - **Phase 35**: this phase reads its per-(runtime, model) `efforts`, usability record, tiers and classes, and adds a rule to its
   guard; if the executed shapes differ, the plan adapts and records it.
 - **Phase 37**: owns the runner side: claude and copilot effort flags, closed effort sets, the `exec: null` formula for claude,
@@ -267,7 +302,8 @@ adapter's resume and stop paths and session-model fallback (Phase 41); jev choos
 - `.planning/phases/33-one-config-design/33-CONTEXT.md` (D-03 tables, D-11 trust, D-12 migration, D-22 reader, D-24 roles),
   `docs/config/design.md`
 - `.planning/todos/pending/2026-11-16-spec-config-wizard-owner-observations.md`,
-  `.planning/todos/pending/2026-10-29-unify-review-execute-lane-toml-effort-escalation-and-jev-classification.md`
+  `.planning/todos/pending/2026-10-29-unify-review-execute-lane-toml-effort-escalation-and-jev-classification.md`,
+  `.planning/research/2026-11-16-opencode-free-models.md` *(added 2026-11-16: source of D-20 to D-23)*
 - `skills/ai-kit-spec-review/ai_kit_spec/` (`config_io.py`, `config_migrate.py`, `quota.py`, `routing.py`, `commands.py`, `cli.py`,
   `runner_dispatch.py`, `execute_selection.py`, `model_ranker.py`, `toml_splice.py`), `references/cross-ai-dispatch.md`,
   `references/ranking-weights.toml`
