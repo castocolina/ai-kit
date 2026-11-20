@@ -725,7 +725,11 @@ def _cmd_fetch_model_catalog(args: argparse.Namespace, deps: CliDeps) -> int:
                          fetched.sources, fetched.skip_fetch, runtime_meta, facts_inputs),
         deps,
     )
-    _write_fetch_catalog_result(args, out, fetched)
+    try:
+        _write_fetch_catalog_result(args, out, fetched)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 1
     return 0
 
 def _cmd_confirm_catalog_entry(args: argparse.Namespace, deps: CliDeps) -> int:

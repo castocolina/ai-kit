@@ -3,10 +3,11 @@ merge, current-snapshot filtering, and heuristic-correction writeback (design sp
 2026-09-02, Sections 4/5/8). One bad entry is rejected and reported; it never aborts the
 whole catalog write."""
 import fcntl
+import json
 import os
 import re
 
-from ai_kit_spec.cache import cache_base, cache_read_json, cache_write_json
+from ai_kit_spec.cache import cache_base, cache_write_bytes, cache_write_json
 from ai_kit_spec.catalog_labels import fact_problem
 from ai_kit_spec.detection import normalize_runtime_keys
 
@@ -350,6 +351,27 @@ def rebase_on_current(current: dict, built: dict) -> dict:
     return result
 
 
+def _current_catalog(path: str, replace_unreadable: bool) -> dict:
+    """The catalog under the lock. Only a corrupt file may be replaced, and its bytes are kept."""
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read()
+    except FileNotFoundError:
+        return {}
+    except OSError as error:
+        raise ValueError(f"catalog unreadable, not overwritten: {path}") from error
+    try:
+        current = json.loads(raw.decode("utf-8"))
+    except ValueError:  # JSONDecodeError and UnicodeDecodeError are both ValueError
+        current = None
+    if isinstance(current, dict):
+        return current
+    if not replace_unreadable:
+        raise ValueError(f"catalog unreadable, not overwritten: {path}")
+    cache_write_bytes(path + ".corrupt", raw)
+    return {}
+
+
 def locked_catalog_update(path: str, update, *, replace_unreadable: bool = False) -> dict:
     """Read-modify-write of the catalog under an exclusive lock (35 SPEC R1/R6/R8 concurrency
     backstop): writers of different entries both survive; for one entry the last write wins."""
@@ -358,14 +380,7 @@ def locked_catalog_update(path: str, update, *, replace_unreadable: bool = False
     with open(path + ".lock", "a", encoding="utf-8") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:
-            if os.path.exists(path):
-                current = cache_read_json(path)
-                if not isinstance(current, dict):
-                    if not replace_unreadable:
-                        raise ValueError(f"catalog unreadable, not overwritten: {path}")
-                    current = {}
-            else:
-                current = {}
+            current = _current_catalog(path, replace_unreadable)
             new = update(current)
             cache_write_json(path, new)
             return new

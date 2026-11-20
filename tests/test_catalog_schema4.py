@@ -206,6 +206,36 @@ class TestLockedCatalogUpdate(unittest.TestCase):
         self.assertEqual(received, [{}])
         self.assertEqual(cache_read_json(missing_path), {"ok": True})
 
+    def test_non_utf8_file_reads_as_none(self):
+        with open(self.path, "wb") as handle:
+            handle.write(b"\xff\xfe{")
+        self.assertIsNone(cache_read_json(self.path))
+
+    def test_corrupt_catalog_is_replaced_and_backed_up(self):
+        for raw in (b"{not json", b"\xff\xfe{", b"[1]"):
+            with self.subTest(raw=raw):
+                with open(self.path, "wb") as handle:
+                    handle.write(raw)
+                locked_catalog_update(self.path, lambda current: {"ok": True},
+                                      replace_unreadable=True)
+                self.assertEqual(cache_read_json(self.path), {"ok": True})
+                with open(self.path + ".corrupt", "rb") as handle:
+                    self.assertEqual(handle.read(), raw)
+
+    def test_readable_catalog_is_never_replaced(self):
+        cache_write_json(self.path, {"a": {}})
+        result = locked_catalog_update(self.path, lambda current: current,
+                                       replace_unreadable=True)
+        self.assertEqual(result, {"a": {}})
+        self.assertFalse(os.path.exists(self.path + ".corrupt"))
+
+    def test_oserror_read_is_never_replaced(self):
+        os.mkdir(self.path)
+        with self.assertRaises(ValueError):
+            locked_catalog_update(self.path, lambda current: current, replace_unreadable=True)
+        self.assertTrue(os.path.isdir(self.path))
+        self.assertFalse(os.path.exists(self.path + ".corrupt"))
+
     def test_refresh_publish_keeps_concurrent_probe_and_confirmation(self):
         key = "fake/placeholder-model-1"
         second = "fake/placeholder-model-2"
