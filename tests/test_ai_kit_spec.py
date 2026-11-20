@@ -7723,10 +7723,12 @@ class TestBuildModelCatalog(unittest.TestCase):
         _, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, [], True), {}
         )
-        self.assertEqual(len(unmatched), 1)
-        self.assertTrue(unmatched[0]["is_router"])
-        self.assertTrue(unmatched[0]["fallback_quota"])
-        self.assertIn("batch_mode", unmatched[0])
+        self.assertEqual(unmatched, [])
+        entry = cli.build_model_catalog(
+            discovered, cli.CatalogSources({}, True, [], True), {}
+        )[0]["router-env/totally-unknown"]
+        self.assertTrue(entry["is_router"])
+        self.assertTrue(entry["fallback_quota"])
 
     def test_already_confirmed_manual_entry_is_not_re_reported_as_unmatched(self):
         # A candidate already persisted (via confirm-catalog-entry, a previous run) is known --
@@ -7978,6 +7980,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "confidence": "low",
                 "last_verified": "2026-08-01",
                 "is_router": False,
+                "heuristic_confirmed": ["is_router"],
             }
         }
         # user corrected this away from the heuristic default (True)
@@ -10114,13 +10117,12 @@ openai/gpt-5.6-sol
                 )
             self.assertEqual(code, 0)
             result = json.loads(buf.getvalue())
-            unmatched = [
-                u for u in result.get("unmatched", []) if u["model_id"] == "router-env/custom"
-            ]
-            self.assertEqual(len(unmatched), 1)
-            self.assertEqual(unmatched[0]["runtime"], "opencode")
-            self.assertEqual(unmatched[0].get("image_input"), True)
-            self.assertEqual(unmatched[0].get("image_input_source"), "opencode")
+            self.assertEqual(result.get("unmatched", []), [])
+            catalog = cache_read_json(os.path.join(d, "catalog.json"))
+            assert isinstance(catalog, dict)
+            entry = catalog["router-env/custom"]
+            self.assertTrue(entry["is_router"])
+            self.assertTrue(entry["fallback_quota"])
 
     def test_vendor_unknown_router_candidate_carries_image_input(self):
         """Vendor-unknown router carries image_input from runtime metadata."""

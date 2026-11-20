@@ -3,6 +3,7 @@ import re
 import time
 from typing import NamedTuple
 
+from ai_kit_spec import catalog_facts
 from ai_kit_spec.detection import OPENCODE_API_IMAGE_SOURCE
 from ai_kit_spec.model_catalog import canonical_key, merge_catalog_entry
 from ai_kit_spec.model_heuristics import (
@@ -24,6 +25,8 @@ class CatalogSources(NamedTuple):
     models_dev_ok: bool
     aa_models: list
     aa_ok: bool
+    arena_data: dict | None = None
+    arena_ok: bool = False
 
 
 class CatalogBuildCtx(NamedTuple):
@@ -617,15 +620,18 @@ def _fetch_source_matches(
 ) -> tuple[_SourceMatches, str | None]:
     model_id = candidate["model_id"]
     cli_name = candidate["runtime"]
+    if candidate.get("unresolved") is True:
+        return _SourceMatches(None, None, None), provider_hint
+    match_name = candidate.get("match_name", model_id)
     models_dev_data = sources.models_dev_data
     models_dev_ok = sources.models_dev_ok
     aa_models = sources.aa_models
     aa_ok = sources.aa_ok
     md_match = (match_models_dev(
-        model_id, models_dev_data,
+        match_name, models_dev_data,
         provider_hint=_FIRST_PARTY_PROVIDER_BY_CLI.get(cli_name)) if models_dev_ok else None)
     provider_hint = (md_match or {}).get("provider") or provider_hint
-    aa_match = (match_artificial_analysis(model_id, aa_models, provider_hint=provider_hint)
+    aa_match = (match_artificial_analysis(match_name, aa_models, provider_hint=provider_hint)
                 if aa_ok else None)
     md_enrich_match = _lookup_md_enrich_match(
         model_id, md_match, aa_match, models_dev_data, models_dev_ok)
@@ -645,8 +651,9 @@ def _process_matched_catalog_candidate(
     matches, provider_hint = _fetch_source_matches(candidate, ctx.sources, provider_hint)
     existing_key = _find_existing_key_for_runtime(existing_catalog, cli_name, model_id)
     no_signal = matches.md_match is None and matches.aa_match is None
+    lookup_name = candidate.get("match_name", model_id)
     resolution = _resolve_catalog_provider(_ProviderLookup(
-        model_id, catalog, existing_catalog, matches, provider_hint, no_signal, existing_key))
+        lookup_name, catalog, existing_catalog, matches, provider_hint, no_signal, existing_key))
     if resolution.provider is None or (no_signal and resolution.existing_entry is None):
         record = {"runtime": cli_name, "model_id": model_id, "provider": resolution.provider,
                   "key": resolution.key, "vendor_unknown": resolution.vendor_unknown,
@@ -663,6 +670,13 @@ def _process_catalog_candidate(
     ctx: CatalogBuildCtx,
 ) -> tuple[dict, str | None, dict | None]:
     model_id = candidate["model_id"]
+    if model_id.startswith(catalog_facts.ROUTER_PREFIX):
+        key = catalog_facts.router_alias_key(candidate["runtime"], model_id)
+        entry = catalog_facts.router_alias_entry(
+            candidate["runtime"], model_id, ctx.existing_catalog.get(key), ctx.today
+        )
+        catalog, reason = merge_catalog_entry(catalog, key, entry)
+        return catalog, reason, None
     provider_hint = model_id.split("/", 1)[0] if "/" in model_id else None
     name_purpose = (infer_purpose_from_name(model_id)
                     if infer_is_router(model_id)
@@ -678,6 +692,7 @@ def build_model_catalog(
     sources: CatalogSources,
     existing_catalog: dict,
     runtime_meta: dict | None = None,
+    facts_inputs=None,
 ) -> tuple:
     """Pure orchestration (design spec 2026-09-02, Section 4 steps 2-5): match each discovered
     {"runtime", "model_id"} candidate against both external sources, enrich deterministically from
@@ -714,6 +729,11 @@ def build_model_catalog(
     copies that CLI-reported list verbatim, per ai-kit-spec-config's own
     cli-model-selection.md). The metadata key is only added when the lookup actually has
     one, so callers that pass no `runtime_meta` see byte-identical records as before."""
+    if facts_inputs is not None:
+        discovered_models, matches = catalog_facts.resolve_candidates(
+            discovered_models, sources, facts_inputs
+        )
+        facts_inputs = facts_inputs._replace(matches=matches)
     catalog = dict(existing_catalog)
     rejections = []
     unmatched = []
@@ -728,4 +748,7 @@ def build_model_catalog(
             rejections.append(rejection)
         if record:
             unmatched.append(record)
+    if facts_inputs is not None:
+        catalog, extra = catalog_facts.apply_facts(catalog, sources, facts_inputs)
+        rejections.extend(extra)
     return catalog, rejections, unmatched
