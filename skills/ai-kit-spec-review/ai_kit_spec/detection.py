@@ -9,6 +9,7 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -676,6 +677,11 @@ def parse_opencode_verbose_image_input(stdout) -> dict:
 OPENCODE_API_MIN_MAJOR = 2
 OPENCODE_API_IMAGE_SOURCE = "opencode-api"
 _OPENCODE_PROBE_DEADLINE_S = 15
+_OPENCODE_503_TRIES = 6
+_OPENCODE_503_PAUSE_S = 2.0
+_OPENCODE_REQUEST_DEADLINE_S = _OPENCODE_PROBE_DEADLINE_S
+_opencode_sleep = time.sleep
+_opencode_clock = time.monotonic
 _OPENCODE_BANNER_MAX_LINES = 50
 # The probe talks to its own loopback server only: never through an http_proxy, which would
 # receive the Basic-auth password (17-REVIEW C-WR-01).
@@ -735,6 +741,48 @@ def parse_opencode_api_models(payload) -> dict:
             continue
         result[f"{provider_id}/{model_id}"] = "image" in input_caps
     return result
+
+
+def _exact_positive_int(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
+def parse_opencode_api_records(payload) -> dict:
+    """Parse per-model listing facts from a decoded `/api/model` response."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        return {}
+    result = {}
+    for item in payload["data"]:
+        if not isinstance(item, dict):
+            continue
+        provider_id, model_id = item.get("providerID"), item.get("id")
+        if not isinstance(provider_id, str) or not provider_id.strip():
+            continue
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        variants = item.get("variants")
+        efforts = [variant["id"] for variant in variants
+                   if isinstance(variant, dict) and isinstance(variant.get("id"), str)] \
+            if isinstance(variants, list) else []
+        limits = item.get("limit")
+        limit = {key: _exact_positive_int(limits.get(key)) for key in
+                 ("context", "input", "output")} if isinstance(limits, dict) else {
+                     "context": None, "input": None, "output": None}
+        enabled = item.get("enabled")
+        status = item.get("status")
+        cost = item.get("cost")
+        result[f"{provider_id}/{model_id}"] = {
+            "efforts": efforts, "limit": limit,
+            "enabled": enabled if isinstance(enabled, bool) else None,
+            "status": status if isinstance(status, str) else None,
+            "cost": cost if isinstance(cost, list) else [],
+        }
+    return result
+
+
+def parse_opencode_api_payload(payload) -> dict:
+    return {"image": parse_opencode_api_models(payload),
+            "records": parse_opencode_api_records(payload)}
 
 
 def _read_opencode_banner(stream) -> tuple:
@@ -861,15 +909,14 @@ def _stop_server(proc) -> None:
         proc.stdout.close()
 
 
-def probe_opencode_api_image_input(binary: str,
-                                   popen_fn: Callable[..., Any] = subprocess.Popen,
-                                   urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN,
-                                   env=None) -> dict:
+def probe_opencode_api(binary: str,
+                       popen_fn: Callable[..., Any] = subprocess.Popen,
+                       urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN,
+                       env=None) -> dict:
     """Starts a private `opencode serve --hostname 127.0.0.1 --port 0`, reads the
     printed loopback port and one-time password from its stdout, and calls
     `GET http://127.0.0.1:<port>/api/model` with HTTP basic auth `opencode:<password>`
-    (17 D-24/D-32). Returns `{"providerID/id": bool}` via
-    `parse_opencode_api_models`; any failure returns {}.
+    (17 D-24/D-32). Returns image capability and full model records; any failure returns {}.
 
     The server runs in its own session from `_opencode_private_dir()` with
     `_probe_env()`: opencode loads opencode.json from its cwd and every ancestor, and can
@@ -883,10 +930,20 @@ def probe_opencode_api_image_input(binary: str,
     XDG data dir, never config. opencode 1.x must not reach this (see
     opencode_image_input_with_source)."""
     with _opencode_private_dir(env) as probe_dir, _sigterm_unwinds():
-        return _probe_from(binary, probe_dir, popen_fn, urlopen_fn)
+        return _probe_from(
+            binary, probe_dir, popen_fn, urlopen_fn, parse=parse_opencode_api_payload)
 
 
-def _probe_from(binary, probe_dir, popen_fn, urlopen_fn) -> dict:
+def probe_opencode_api_image_input(binary: str,
+                                   popen_fn: Callable[..., Any] = subprocess.Popen,
+                                   urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN,
+                                   env=None) -> dict:
+    """Image-only wrapper for older callers. Thin wrapper of probe_opencode_api (35)."""
+    return probe_opencode_api(binary, popen_fn, urlopen_fn, env).get("image", {})
+
+
+def _probe_from(binary, probe_dir, popen_fn, urlopen_fn,
+                parse=parse_opencode_api_models) -> dict:
     try:
         proc = popen_fn([binary, "serve", "--hostname", "127.0.0.1", "--port", "0"],
                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
@@ -896,6 +953,7 @@ def _probe_from(binary, probe_dir, popen_fn, urlopen_fn) -> dict:
     timer = threading.Timer(_OPENCODE_PROBE_DEADLINE_S, _signal_server, (proc, _SIGKILL))
     timer.daemon = True
     try:
+        start = _opencode_clock()
         timer.start()
         port, token = _read_opencode_banner(proc.stdout)
         if port is None or token is None:
@@ -904,15 +962,32 @@ def _probe_from(binary, probe_dir, popen_fn, urlopen_fn) -> dict:
         # Unredirected: a redirect never carries the password to another host.
         request.add_unredirected_header(
             "Authorization", "Basic " + base64.b64encode(f"opencode:{token}".encode()).decode())
-        with urlopen_fn(request, timeout=10) as response:
-            body = response.read()
-        return parse_opencode_api_models(json.loads(body))
+        body = _opencode_request_body(request, urlopen_fn, start)
+        return parse(json.loads(body)) if body is not None else {}
     except (OSError, subprocess.TimeoutExpired, urllib.error.URLError,
             http.client.HTTPException, ValueError):
         return {}
     finally:
         timer.cancel()
         _stop_server(proc)
+
+
+def _opencode_request_body(request, urlopen_fn, start):
+    for attempt in range(_OPENCODE_503_TRIES):
+        remaining = _OPENCODE_REQUEST_DEADLINE_S - (_opencode_clock() - start)
+        if remaining <= 0:
+            return None
+        try:
+            with urlopen_fn(request, timeout=min(10, remaining)) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            if error.code != 503 or attempt == _OPENCODE_503_TRIES - 1:
+                raise
+            remaining = _OPENCODE_REQUEST_DEADLINE_S - (_opencode_clock() - start)
+            if remaining <= _OPENCODE_503_PAUSE_S:
+                return None
+            _opencode_sleep(_OPENCODE_503_PAUSE_S)
+    return None
 
 
 def opencode_image_input_with_source(binary: str, run_fn=subprocess.run,
@@ -1051,6 +1126,25 @@ class OpencodeSeams(NamedTuple):
 _DEFAULT_OPENCODE_SEAMS = OpencodeSeams()
 
 
+def _opencode_fields(binpath, run_fn, opencode) -> dict:
+    major = opencode_major_version(binpath, run_fn=run_fn, env=opencode.env)
+    if major is not None and major >= OPENCODE_API_MIN_MAJOR:
+        facts = probe_opencode_api(binpath, opencode.popen_fn, opencode.urlopen_fn, opencode.env)
+        fields = {}
+        image = facts.get("image")
+        if image:
+            fields["image_input"] = image
+            fields["image_input_source"] = OPENCODE_API_IMAGE_SOURCE
+        else:
+            fields["image_input_probe"] = "failed"
+        records = facts.get("records")
+        if records:
+            fields["model_records"] = records
+        return fields
+    image = detect_opencode_verbose_image_input(binpath, run_fn=run_fn, env=opencode.env)
+    return {"image_input": image, "image_input_source": "opencode"} if image else {}
+
+
 def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalog_fn=None,
                             opencode: OpencodeSeams = _DEFAULT_OPENCODE_SEAMS,
                             path_env=None) -> dict:
@@ -1082,14 +1176,7 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalo
         entry = {"installed": True, "path": binpath, "real_path": os.path.realpath(binpath)}
         entry.update(_listing_fields(cli, binpath, run_fn, opencode.env) or {})
         if cli == "opencode":
-            image_input_map, image_input_source = opencode_image_input_with_source(
-                binpath, run_fn, opencode.popen_fn, opencode.urlopen_fn, opencode.env)
-            if image_input_map:
-                entry["image_input"] = image_input_map
-                entry["image_input_source"] = image_input_source
-            elif image_input_source == OPENCODE_API_IMAGE_SOURCE:
-                # A failed 2.x probe is a recorded gap, never silently "no data" (D-24).
-                entry["image_input_probe"] = "failed"
+            entry.update(_opencode_fields(binpath, run_fn, opencode))
         elif cli == "claude":
             # 16 D-04: hybrid alias + catalog-id sourcing; never calls run_fn (claude is
             # never executed) and never calls catalog_fn unless claude is installed (the

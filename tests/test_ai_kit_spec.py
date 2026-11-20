@@ -10911,13 +10911,14 @@ class TestOpencodeApiImageInput(unittest.TestCase):
 
         # 2.x: the probe itself is patched here (popen_fn/urlopen_fn fakes: see above).
         with mock.patch.object(
-                detection, "probe_opencode_api_image_input",
-                return_value={"opencode/exo-free": True}) as probe_mock:
+                detection, "probe_opencode_api",
+                return_value={"image": {"router-env/placeholder-model-1": True},
+                              "records": {}}) as probe_mock:
             snapshot = build_runtimes_snapshot(
                 which_fn=fake_which, run_fn=self._fake_version_run())
         probe_mock.assert_called_once()
         entry = snapshot["clis"]["opencode"]
-        self.assertEqual(entry["image_input"], {"opencode/exo-free": True})
+        self.assertEqual(entry["image_input"], {"router-env/placeholder-model-1": True})
         self.assertEqual(entry["image_input_source"], "opencode-api")
 
         # 1.x: no probe runs.
@@ -10929,7 +10930,7 @@ class TestOpencodeApiImageInput(unittest.TestCase):
                 returncode=0,
                 stdout="1.18.32\n" if argv[1:] == ["--version"] else verbose_text)
 
-        with mock.patch.object(detection, "probe_opencode_api_image_input") as probe_mock:
+        with mock.patch.object(detection, "probe_opencode_api") as probe_mock:
             snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run)
         probe_mock.assert_not_called()
         self.assertEqual(snapshot["clis"]["opencode"]["image_input_source"], "opencode")
