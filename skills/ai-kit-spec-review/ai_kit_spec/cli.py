@@ -8,7 +8,15 @@ import time
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from ai_kit_spec import config_migrate, provider_check, routing, toml_splice, trust
+from ai_kit_spec import (
+    config_migrate,
+    provider_check,
+    routing,
+    secret_shapes,
+    toml_splice,
+    trust,
+    usability,
+)
 from ai_kit_spec.cache import (
     cache_is_stale,
     cache_read_json,
@@ -20,6 +28,7 @@ from ai_kit_spec.catalog_build import (
     _runtime_meta_from_snapshot,
     build_model_catalog,
 )
+from ai_kit_spec.catalog_labels import now_iso
 from ai_kit_spec.commands import (
     ResolvedReviewer,
     build_grok_command,
@@ -400,6 +409,10 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
                           help="custom entry only (never with --runtime): the command template")
     p_check.add_argument("--extra-json", default=None,
                           help="JSON object of extra {placeholder} fields the template needs")
+    p_check.add_argument(
+        "--catalog-path", default=None,
+        help="record the result as runtimes[<runtime>].usability of this catalog (35 D-10)",
+    )
 
 
 
@@ -1061,6 +1074,16 @@ def _cmd_check_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     resolved = ResolvedReviewer(key=args.key, model=args.model, vendor=args.vendor,
                                  runtime=rid, command=args.reviewer_command, extra=extra)
     result = probe_reviewer_quota(resolved, seams=deps.probe_seams())
+    if args.catalog_path and rid:
+        record = usability.record_for(result, rid, now_iso())
+        if record is not None:
+            key, problem = usability.record_usability(args.catalog_path, rid, args.model, record)
+            result["usability"] = {"recorded": key is not None, "key": key,
+                                   "problem": problem, "state": record["state"]}
+    for field in ("detail", "reason"):
+        value = result.get(field)
+        if isinstance(value, str):
+            result[field] = secret_shapes.redact(value, "[redacted]")
     print(json.dumps(result))
     return 0
 _COMMANDS = {
