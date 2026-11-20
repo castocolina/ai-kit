@@ -5,7 +5,7 @@ applied after the build. catalog_build only calls this module (D-01).
 from collections.abc import Callable
 from typing import NamedTuple
 
-from ai_kit_spec import catalog_bands, catalog_tiers, model_names
+from ai_kit_spec import catalog_bands, catalog_context, catalog_tiers, model_names
 from ai_kit_spec.catalog_labels import fact
 from ai_kit_spec.model_catalog import canonical_key, merge_catalog_entry
 from ai_kit_spec.model_heuristics import infer_purpose_from_name
@@ -146,7 +146,9 @@ def _runtime_row_update(item: _RuntimeInput) -> dict | None:
     return update
 
 
-def runtime_updates(entry: dict, inputs: FactsInputs, known_ids: frozenset) -> dict:
+def runtime_updates(
+    entry: dict, inputs: FactsInputs, known_ids: frozenset, key: str, sources
+) -> dict:
     updates = {}
     for rid, row in entry.get("runtimes", {}).items():
         model_id = row.get("model_id") if isinstance(row, dict) else None
@@ -157,6 +159,34 @@ def runtime_updates(entry: dict, inputs: FactsInputs, known_ids: frozenset) -> d
         cli = cli if isinstance(cli, dict) else {}
         update = _runtime_row_update(_RuntimeInput(rid, model_id, row, cli, inputs, known_ids))
         if update is not None:
+            context_levels = [
+                (
+                    catalog_context.override_for(inputs.settings, rid, model_id),
+                    "user-stated",
+                    "[[models.context]]",
+                    None,
+                ),
+                *[
+                    (raw, "measured", source, at)
+                    for raw, source, at in catalog_context.host_figures(
+                        rid, model_id, inputs.snapshot
+                    )
+                ],
+                (
+                    catalog_context.models_dev_figure(key, model_id, sources),
+                    "measured",
+                    "models.dev",
+                    _at(inputs, "models_dev"),
+                ),
+            ]
+            context, note = catalog_context.resolve_context(context_levels, inputs.now)
+            if context is not None:
+                update["context"] = context
+                update["ctx_window"] = context["value"]
+            elif sources.models_dev_ok:
+                update["context"] = fact(None, "measured", "models.dev", _at(inputs, "models_dev"))
+                update["ctx_window"] = None
+            update["ctx_note"] = note or None
             updates[rid] = update
     return updates
 
@@ -170,24 +200,45 @@ class _ApplyInput(NamedTuple):
     known: frozenset
 
 
+def keep_user_stated(existing_facts: dict, new_facts: dict) -> dict:
+    """Do not replace facts explicitly confirmed by the user."""
+    return {
+        name: value
+        for name, value in new_facts.items()
+        if not (
+            isinstance(existing_facts.get(name), dict)
+            and existing_facts[name].get("label") == "user-stated"
+        )
+    }
+
+
 def _apply_entry(catalog: dict, item: _ApplyInput):
     key, entry, sources, inputs, cuts, known = item
     if entry.get("provider") == "router-env":
-        facts = {
-            **entry.get("facts", {}),
-            "class": fact("router", "assumed", ROUTER_SOURCE, inputs.now),
+        facts = dict(entry.get("facts", {}))
+        facts.update(
+            keep_user_stated(facts, {"class": fact("router", "assumed", ROUTER_SOURCE, inputs.now)})
+        )
+        incoming = {
+            **entry,
+            "facts": facts,
+            "runtimes": runtime_updates(entry, inputs, known, key, sources),
         }
-        incoming = {**entry, "facts": facts, "runtimes": runtime_updates(entry, inputs, known)}
     else:
         new_facts, identity = md_facts(key, sources, _at(inputs, "models_dev"), cuts)
-        facts = {**entry.get("facts", {}), **new_facts}
+        facts = dict(entry.get("facts", {}))
+        facts.update(keep_user_stated(facts, new_facts))
         settings = inputs.settings
         configured_sources = getattr(settings, "sources", ())
         if settings is not None and "models.dev" not in configured_sources:
             facts = {
                 name: value for name, value in facts.items() if value.get("source") != "models.dev"
             }
-        incoming = {**entry, "facts": facts, "runtimes": runtime_updates(entry, inputs, known)}
+        incoming = {
+            **entry,
+            "facts": facts,
+            "runtimes": runtime_updates(entry, inputs, known, key, sources),
+        }
         if identity is not None:
             incoming["identity"] = identity
     return merge_catalog_entry(catalog, key, incoming)
@@ -250,7 +301,8 @@ def apply_facts(catalog: dict, sources, inputs: FactsInputs) -> tuple:
     tier_updates = catalog_tiers.tier_facts(updated, sources, inputs)
     for key, entry in list(updated.items()):
         cleaned = _drop_disabled_facts(entry, inputs)
-        cleaned = _merge_derived(cleaned, tier_updates.get(key, {}), sources, inputs)
+        derived = keep_user_stated(cleaned, tier_updates.get(key, {}))
+        cleaned = _merge_derived(cleaned, derived, sources, inputs)
         updated, reason = merge_catalog_entry(updated, key, {**entry, "facts": cleaned})
         if reason:
             rejections.append(reason)
