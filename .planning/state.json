@@ -81,7 +81,7 @@
     {
       "number": "35",
       "name": "Model discovery and catalog",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "number": "36",
@@ -204,5 +204,5 @@
     "label": "Advance to the next step",
     "reason": "Phase 16 of 40 · 38% · executing"
   },
-  "updated_at": "2026-11-20T05:41:36.013Z"
+  "updated_at": "2026-11-20T05:59:55.963Z"
 }
