@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from ai_kit_spec import (
+    catalog_cmds,
     catalog_fetch,
     config_migrate,
     jev_names,
@@ -451,6 +452,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _register_catalog_parsers(sub)
     _register_report_parsers(sub)
     _register_dispatch_parsers(sub)
+    catalog_cmds.register_parsers(sub)
     return parser
 
 def _cmd_cache_path(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -589,15 +591,12 @@ def _finalize_fetch_catalog_meta(
 
 
 def _write_fetch_catalog_result(args, out: FetchCatalogOutput, fetched: FetchedSources) -> None:
-    if os.path.exists(args.catalog_path) and not isinstance(
-        cache_read_json(args.catalog_path), dict
-    ):
-        cache_write_json(args.catalog_path, {})
     written = locked_catalog_update(
         args.catalog_path,
         lambda current: join_catalog_meta(
             rebase_on_current(split_catalog_meta(current)[0], out.catalog), out.catalog_meta
         ),
+        replace_unreadable=True,
     )
     if fetched.sidecar is not None:
         cache_write_json(args.catalog_path + ".fetch-meta.json", fetched.sidecar)
@@ -719,14 +718,21 @@ def _cmd_confirm_catalog_entry(args: argparse.Namespace, deps: CliDeps) -> int:
             "reason": "--entry-json must be an object with a string 'model_id' and an "
                       "object 'entry'"}))
         return 1
-    # 16 D-12: split `_meta` off before merging so merge_catalog_entry only ever sees
-    # real entries, then write it back verbatim -- confirm never disturbs cache metadata.
-    entries, meta = split_catalog_meta(cache_read_json(args.catalog_path))
-    merged, reason = merge_catalog_entry(entries, payload["model_id"], payload["entry"])
-    if reason:
-        print(json.dumps({"confirmed": False, "reason": reason}))
+    def update(current):
+        entries, meta = split_catalog_meta(current)
+        merged, reason = merge_catalog_entry(entries, payload["model_id"], payload["entry"])
+        if reason:
+            raise catalog_cmds.Refused(1, reason)
+        return join_catalog_meta(merged, meta)
+
+    try:
+        locked_catalog_update(args.catalog_path, update)
+    except catalog_cmds.Refused as error:
+        print(json.dumps({"confirmed": False, "reason": error.message}))
+        return error.code
+    except ValueError as error:
+        print(json.dumps({"confirmed": False, "reason": str(error)}))
         return 1
-    cache_write_json(args.catalog_path, join_catalog_meta(merged, meta))
     print(json.dumps({"confirmed": True, "model_id": payload["model_id"]}))
     return 0
 
@@ -741,14 +747,21 @@ def _cmd_apply_heuristic_correction(args: argparse.Namespace, deps: CliDeps) -> 
     # correction that would produce a schema-invalid entry is rejected here exactly like
     # confirm-catalog-entry rejects an invalid new entry, never silently written.
     corrections = cache_read_json(args.corrections_json) or {}
-    # 16 D-12: split `_meta` off before correcting, write it back verbatim -- a
-    # correction never disturbs the catalog's cache metadata.
-    entries, meta = split_catalog_meta(cache_read_json(args.catalog_path))
-    catalog, reason = apply_heuristic_corrections(entries, args.model_id, corrections)
-    if reason:
-        print(json.dumps({"applied": False, "reason": reason}))
+    def update(current):
+        entries, meta = split_catalog_meta(current)
+        catalog, reason = apply_heuristic_corrections(entries, args.model_id, corrections)
+        if reason:
+            raise catalog_cmds.Refused(1, reason)
+        return join_catalog_meta(catalog, meta)
+
+    try:
+        locked_catalog_update(args.catalog_path, update)
+    except catalog_cmds.Refused as error:
+        print(json.dumps({"applied": False, "reason": error.message}))
+        return error.code
+    except ValueError as error:
+        print(json.dumps({"applied": False, "reason": str(error)}))
         return 1
-    cache_write_json(args.catalog_path, join_catalog_meta(catalog, meta))
     print(json.dumps({"applied": True, "model_id": args.model_id}))
     return 0
 
@@ -1155,6 +1168,7 @@ _COMMANDS = {
     "dispatch-execute": _cmd_dispatch_execute,
     "dispatch-reviewer": _cmd_dispatch_reviewer,
     "check-reviewer": _cmd_check_reviewer,
+    **catalog_cmds.COMMANDS,
 }
 
 def _dispatch(argv: list, deps: CliDeps) -> int:

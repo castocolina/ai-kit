@@ -1,0 +1,178 @@
+"""35 D-01, D-13: catalog commands (confirm-model, models-config, catalog-report and
+optional-source commands). cli.py registers them; this module never imports cli. Handlers
+take (args, deps) and print JSON or text."""
+
+import difflib
+import json
+import os
+import sys
+
+from ai_kit_spec import catalog_bands, config_io, models_config
+from ai_kit_spec.catalog_labels import fact, now_iso
+from ai_kit_spec.model_catalog import (
+    apply_heuristic_corrections,
+    join_catalog_meta,
+    locked_catalog_update,
+    merge_catalog_entry,
+    split_catalog_meta,
+)
+
+CONFIRMABLE = ("is_router", "batch_mode", "fallback_quota", "class")
+_BOOL_FIELDS = ("is_router", "batch_mode", "fallback_quota")
+
+
+class Refused(Exception):
+    def __init__(self, code: int, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _parse_value(field: str, raw: str):
+    if field in _BOOL_FIELDS:
+        lowered = raw.lower()
+        if lowered not in ("true", "false"):
+            raise ValueError(f"{field} needs true or false")
+        return lowered == "true"
+    if field == "class" and raw in catalog_bands.CLASSES and raw != "unknown":
+        return raw
+    allowed = ", ".join(value for value in catalog_bands.CLASSES if value != "unknown")
+    raise ValueError(f"class must be one of: {allowed}")
+
+
+def cmd_confirm_model(args, deps) -> int:
+    if args.field not in CONFIRMABLE:
+        print(f"unknown confirm-model field: {args.field}", file=sys.stderr)
+        return 2
+    try:
+        value = _parse_value(args.field, args.value)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    now = now_iso()
+
+    def update(current):
+        entries, meta = split_catalog_meta(current)
+        key = args.model_id
+        if key not in entries:
+            nearest = difflib.get_close_matches(key, list(entries), n=5, cutoff=0.4)
+            raise Refused(1, f"unknown catalog key: {key}; nearest: {', '.join(nearest)}")
+        entry = entries[key]
+        if args.field in _BOOL_FIELDS:
+            entries, reason = apply_heuristic_corrections(entries, key, {args.field: value})
+        else:
+            entries, reason = merge_catalog_entry(
+                entries,
+                key,
+                {
+                    **entry,
+                    "facts": {
+                        **entry.get("facts", {}),
+                        "class": fact(value, "user-stated", "confirm-model", now),
+                    },
+                },
+            )
+        if reason:
+            raise Refused(1, reason)
+        entry = entries[key]
+        confirmed = {
+            **entry.get("confirmed_fields", {}),
+            args.field: {"by": "confirm-model", "at": now, "note": args.note or ""},
+        }
+        entries, reason = merge_catalog_entry(
+            entries, key, {**entry, "confirmed_fields": confirmed}
+        )
+        if reason:
+            raise Refused(1, reason)
+        return join_catalog_meta(entries, meta)
+
+    try:
+        locked_catalog_update(args.catalog_path, update)
+    except Refused as error:
+        print(error.message, file=sys.stderr)
+        return error.code
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    print(json.dumps({"model_id": args.model_id, "field": args.field, "value": value,
+                      "confirmed": True}))
+    return 0
+
+
+def _settings_json(settings) -> dict:
+    return {
+        "sources": list(settings.sources),
+        "cache_days": settings.cache_days,
+        "context": [item._asdict() for item in settings.context],
+    }
+
+
+def _parse_cache_days(pairs: list[str]) -> dict:
+    result = {}
+    for pair in pairs:
+        key, separator, raw = pair.partition("=")
+        if not separator or not key:
+            raise ValueError(f"bad --cache-days value: {pair}")
+        try:
+            result[key] = int(raw)
+        except ValueError as error:
+            raise ValueError(f"bad --cache-days value: {pair}") from error
+    return result
+
+
+def cmd_models_config(args, deps) -> int:
+    env = deps.env_fn()
+    cwd = args.cwd or os.getcwd()
+    if args.show:
+        print(json.dumps(_settings_json(models_config.read_models_settings(cwd, env))))
+        return 0
+    try:
+        cache_days = _parse_cache_days(args.cache_days)
+        context = []
+        for runtime, model, raw_tokens in args.context:
+            try:
+                tokens = int(raw_tokens)
+            except ValueError as error:
+                raise ValueError(f"bad --context tokens: {raw_tokens}") from error
+            context.append(models_config.ContextOverride(runtime, model, tokens))
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    sources = args.sources.split(",") if args.sources is not None else None
+    if sources is None and not cache_days and not context:
+        print("nothing to write", file=sys.stderr)
+        return 2
+    path = (config_io.cfg_global_path(env) if args.global_scope
+            else config_io.cfg_local_path(cwd))
+    models_config.write_models_settings(
+        path,
+        sources=sources,
+        cache_days=cache_days or None,
+        context=context if args.context else None,
+    )
+    print(json.dumps({"written": path}))
+    return 0
+
+
+def register_parsers(sub) -> None:
+    confirm = sub.add_parser("confirm-model")
+    confirm.add_argument("--catalog-path", required=True)
+    confirm.add_argument("--model-id", required=True)
+    confirm.add_argument("--field", choices=CONFIRMABLE, required=True)
+    confirm.add_argument("--value", required=True)
+    confirm.add_argument("--note", default="")
+
+    settings = sub.add_parser("models-config")
+    settings.add_argument("--cwd", default=None)
+    settings.add_argument("--global", dest="global_scope", action="store_true")
+    settings.add_argument("--sources", default=None)
+    settings.add_argument("--cache-days", action="append", default=[])
+    settings.add_argument("--context", nargs=3, action="append", default=[],
+                          metavar=("RUNTIME", "MODEL", "TOKENS"))
+    settings.add_argument("--show", action="store_true")
+
+
+COMMANDS = {
+    "confirm-model": cmd_confirm_model,
+    "models-config": cmd_models_config,
+}

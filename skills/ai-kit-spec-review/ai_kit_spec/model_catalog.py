@@ -351,7 +351,7 @@ def rebase_on_current(current: dict, built: dict) -> dict:
     return result
 
 
-def locked_catalog_update(path: str, update) -> dict:
+def locked_catalog_update(path: str, update, *, replace_unreadable: bool = False) -> dict:
     """Read-modify-write of the catalog under an exclusive lock (35 SPEC R1/R6/R8 concurrency
     backstop): writers of different entries both survive; for one entry the last write wins."""
     path = os.path.abspath(path)
@@ -362,7 +362,9 @@ def locked_catalog_update(path: str, update) -> dict:
             if os.path.exists(path):
                 current = cache_read_json(path)
                 if not isinstance(current, dict):
-                    raise ValueError(f"catalog unreadable, not overwritten: {path}")
+                    if not replace_unreadable:
+                        raise ValueError(f"catalog unreadable, not overwritten: {path}")
+                    current = {}
             else:
                 current = {}
             new = update(current)
