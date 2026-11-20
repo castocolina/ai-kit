@@ -497,6 +497,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [2026-11-16] [skills] spec-config wizard owner observations (catalog first, short choice, only chosen lanes written) — [todo file](.planning/todos/pending/2026-11-16-spec-config-wizard-owner-observations.md)
 - [2026-11-17] [tooling] Wizard step for a component registry, cross-host install, self-update and scheduled updates — [todo file](.planning/todos/pending/2026-11-17-wizard-step-for-a-component-registry-cross-host-install-self.md)
 - [2026-11-19] [tooling] Scan git projects and auto-update their project-local open-GSD install on a schedule — [todo file](.planning/todos/pending/2026-11-19-scan-git-projects-and-auto-update-project-local-open-gsd.md)
+- [2026-11-20] [planning] Grok is not a cross-AI target: amend the 36, 37 and 38.1 specs and keep the grok code until Phase 39.1 — [todo file](.planning/todos/pending/2026-11-20-grok-is-not-a-cross-ai-target-amend-the-36-37-38-1-specs.md)
+- [2026-11-20] [tooling] Keep every run ledger and resume state in a gitignored tmp folder inside the project — [todo file](.planning/todos/pending/2026-11-20-run-ledger-and-resume-state-in-gitignored-tmp.md)
+- [2026-11-20] [tooling] Hand skills and MCP servers to cross-AI review and execute lanes by name, path or prose — [todo file](.planning/todos/pending/2026-11-20-skills-and-mcp-servers-for-cross-ai-lanes.md)
 
 ### Blockers/Concerns
 
