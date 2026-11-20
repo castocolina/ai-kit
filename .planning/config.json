@@ -43,7 +43,7 @@
     "security_asvs_level": 1,
     "security_block_on": "high",
     "cross_ai_execution": true,
-    "cross_ai_command": "env AI_KIT_REFUSE_REAL_HOME=1 node .planning/scripts/cross-ai.mjs --runtime pi --model router-env/my-coding-lite --mode exec",
+    "cross_ai_command": "env AI_KIT_REFUSE_REAL_HOME=1 node .planning/scripts/cross-ai.mjs --runtime pi --model router-env/my-coding --mode exec",
     "cross_ai_timeout": 1800,
     "plan_review_convergence": true,
     "_auto_chain_active": false,
