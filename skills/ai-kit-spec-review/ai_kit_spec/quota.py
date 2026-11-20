@@ -214,9 +214,10 @@ class ProbeSeams(NamedTuple):
 def _probe_entry(result: RunnerResult, detail: str) -> dict:
     """Available exactly when the runner or launcher reports no reason (D-13)."""
     if result.reason is None:
-        return {"available": True, "checked_at": time.time(), "reason": None, "detail": ""}
+        return {"available": True, "checked_at": time.time(), "reason": None, "detail": "",
+                "answered": bool(result.stdout and result.stdout.strip())}
     return {"available": False, "checked_at": time.time(), "reason": result.reason,
-            "detail": detail[:_DETAIL_MAX_CHARS]}
+            "detail": detail[:_DETAIL_MAX_CHARS], "answered": False}
 
 
 class _ProbeRun(NamedTuple):
@@ -272,7 +273,8 @@ def probe_reviewer_quota(resolved: "ResolvedReviewer", seams: ProbeSeams | None 
     no runtime) runs through the launcher with one 30 s tier. Available exactly when that call
     reports no reason. `detail` is the relayed stderr, truncated."""
     if not resolved.runtime and not resolved.command:
-        return {"available": True, "checked_at": time.time(), "reason": None, "detail": ""}
+        return {"available": True, "checked_at": time.time(), "reason": None, "detail": "",
+                "answered": False}
     probe_prompt = "Only say: Hello world!"
     try:
         run = _run_probe(resolved, probe_prompt, seams or ProbeSeams())

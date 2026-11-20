@@ -1,0 +1,37 @@
+{
+  "_note": "shape of opencode 2.3.2 GET /api/model (verified 2026-11-19); invented ids and values",
+  "location": "fake",
+  "data": [
+    {
+      "providerID": "router-env",
+      "id": "placeholder-model-1",
+      "capabilities": {"input": ["text", "image"], "output": ["text"]},
+      "variants": [{"id": "low", "settings": {"reasoningEffort": "low"}}, {"id": "high", "settings": {"reasoningEffort": "high"}}],
+      "limit": {"context": 200000, "input": 150000, "output": 32000},
+      "enabled": true,
+      "status": "active",
+      "cost": [{"input": 1, "output": 2, "cache": {}, "tier": "default"}]
+    },
+    {
+      "providerID": "router-env",
+      "id": "placeholder-model-2",
+      "capabilities": {"input": ["text"], "output": ["text"]},
+      "variants": [],
+      "limit": {"context": 128000, "input": null, "output": 8192},
+      "enabled": false,
+      "status": "active",
+      "cost": []
+    },
+    {
+      "providerID": "router-env",
+      "id": "placeholder-model-3",
+      "capabilities": {"input": ["text"], "output": ["text"]},
+      "variants": [{"id": "none", "settings": {}}, {"id": "thinking", "settings": {}}],
+      "limit": {"context": 0, "input": 1.5},
+      "enabled": true,
+      "status": "deprecated",
+      "cost": []
+    },
+    {"id": "placeholder-model-4", "capabilities": {"input": ["text"]}}
+  ]
+}

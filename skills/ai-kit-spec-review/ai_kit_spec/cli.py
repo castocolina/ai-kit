@@ -8,18 +8,33 @@ import time
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from ai_kit_spec import config_migrate, provider_check, routing, toml_splice, trust
+from ai_kit_spec import (
+    catalog_cmds,
+    catalog_fetch,
+    config_migrate,
+    jev_names,
+    optional_sources,
+    provider_check,
+    routing,
+    secret_shapes,
+    toml_splice,
+    trust,
+    usability,
+)
+from ai_kit_spec.arena_source import fetch_arena
 from ai_kit_spec.cache import (
-    cache_is_stale,
     cache_read_json,
     cache_write_json,
 )
+from ai_kit_spec.catalog_attribution import attribution_lines, catalog_sources
 from ai_kit_spec.catalog_build import (
     CatalogSources,
     _anthropic_model_ids,
     _runtime_meta_from_snapshot,
     build_model_catalog,
 )
+from ai_kit_spec.catalog_facts import FactsInputs
+from ai_kit_spec.catalog_labels import now_iso
 from ai_kit_spec.commands import (
     ResolvedReviewer,
     build_grok_command,
@@ -53,6 +68,7 @@ from ai_kit_spec.detection import (
     cache_runtimes_path,
     detect_current_runtime,
     detect_tool_availability,
+    detect_unlisted_runtimes,
     find_code_index_alternative,
     group_models_by_family,
     normalize_runtime_keys,
@@ -62,16 +78,18 @@ from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
 from ai_kit_spec.local_secrets import load_secret
 from ai_kit_spec.model_catalog import (
     CATALOG_SCHEMA_VERSION,
-    CATALOG_TTL_SECONDS,
     apply_heuristic_corrections,
     cache_catalog_path,
     canonical_key,
     catalog_schema_is_current,
     join_catalog_meta,
+    locked_catalog_update,
     merge_catalog_entry,
+    rebase_on_current,
     split_catalog_meta,
 )
 from ai_kit_spec.model_sources import fetch_artificial_analysis, fetch_models_dev
+from ai_kit_spec.models_config import read_models_settings
 from ai_kit_spec.quota import (
     QUOTA_TTL_SECONDS,
     ProbeSeams,
@@ -111,6 +129,17 @@ class FetchBuildInputs(NamedTuple):
     sources: CatalogSources
     skip_fetch: bool
     runtime_meta: dict
+    facts_inputs: object = None
+
+
+class FetchedSources(NamedTuple):
+    sources: CatalogSources
+    catalog_meta: dict
+    skip_fetch: bool
+    results: dict
+    settings: object
+    source_at: dict
+    sidecar: dict | None
 
 
 class FetchCatalogOutput(NamedTuple):
@@ -133,6 +162,7 @@ class CliDeps(NamedTuple):
     load_secret_fn: Callable[..., Any] = load_secret
     fetch_models_dev_fn: Callable[..., Any] = fetch_models_dev
     fetch_artificial_analysis_fn: Callable[..., Any] = fetch_artificial_analysis
+    fetch_arena_fn: Callable[..., Any] = fetch_arena
     popen_fn: Callable[..., Any] = subprocess.Popen  # the opencode 2.x image probe server
     urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN  # its loopback API call
 
@@ -150,6 +180,10 @@ def _register_cache_detect_parsers(sub: argparse._SubParsersAction) -> None:
     sub.add_parser("detect-current-runtime")
 
     p_detect = sub.add_parser("detect-runtimes")
+    p_detect.add_argument(
+        "--runtime", dest="extra_runtime", action="append", default=[],
+        help="a runtime id missing from the table; shown as installed, no listing (35 R1)",
+    )
     p_detect.add_argument(
         "--save", default=None, help="write the snapshot to this path via cache_write_json"
     )
@@ -189,6 +223,11 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
              "the config.toml [lanes] roster (e.g. a first-time codex/grok setup with "
              "nothing registered yet) -- still goes through the same matching/enrichment "
              "path as anything else.")
+    p_catalog.add_argument(
+        "--jev", action="store_true",
+        help=("ask jev-fast-decision, when installed, for unmatched names and unknown classes "
+              "(35 D-04, D-06)"),
+    )
     p_catalog.add_argument(
         "--if-stale", action="store_true",
         help="gate NETWORK CALLS ONLY: when --catalog-path exists, is fresher than "
@@ -400,6 +439,10 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
                           help="custom entry only (never with --runtime): the command template")
     p_check.add_argument("--extra-json", default=None,
                           help="JSON object of extra {placeholder} fields the template needs")
+    p_check.add_argument(
+        "--catalog-path", default=None,
+        help="record the result as runtimes[<runtime>].usability of this catalog (35 D-10)",
+    )
 
 
 
@@ -410,6 +453,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _register_catalog_parsers(sub)
     _register_report_parsers(sub)
     _register_dispatch_parsers(sub)
+    catalog_cmds.register_parsers(sub)
     return parser
 
 def _cmd_cache_path(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -447,13 +491,15 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
     # 16 D-12: the skip requires a fresh mtime, the current schema_version and a claude
     # entry matching the current catalog. The test lives in routing so this caller and the
     # bounded refresh cannot drift.
-    if args.if_stale and routing.runtimes_cache_is_fresh(args.if_stale, deps.env_fn()):
+    if (args.if_stale and not args.extra_runtime
+            and routing.runtimes_cache_is_fresh(args.if_stale, deps.env_fn())):
         print(json.dumps({}))  # fresh — caller should treat this as "nothing to do"
         return 0
     snapshot = build_runtimes_snapshot(which_fn=deps.which_fn, run_fn=deps.run_fn,
                                         catalog_fn=_read_default_catalog,
                                         opencode=OpencodeSeams(deps.popen_fn, deps.urlopen_fn,
                                                                deps.env_fn()))
+    snapshot["clis"].update(detect_unlisted_runtimes(args.extra_runtime, deps.which_fn))
     save_path = args.if_stale or args.save
     if save_path:
         cache_write_json(save_path, snapshot)
@@ -506,28 +552,32 @@ def _discovered_catalog_candidates(
 
 def _fetch_catalog_external_sources(
     deps: CliDeps, args: argparse.Namespace, catalog_meta: dict
-) -> tuple[CatalogSources, dict, bool]:
-    fetch_meta_path = args.catalog_path + ".fetch-meta.json"
-    skip_fetch = (
-        args.if_stale
-        and not cache_is_stale(fetch_meta_path, CATALOG_TTL_SECONDS)
-        and catalog_schema_is_current(catalog_meta)
+) -> FetchedSources:
+    env = deps.env_fn()
+    settings = read_models_settings(args.cwd or os.getcwd(), env)
+    path = args.catalog_path + ".fetch-meta.json"
+    now = time.time()
+    meta = catalog_fetch.read_fetch_meta(path, now)
+    api_key = deps.load_secret_fn(env, "ARTIFICIAL_ANALYSIS_API_KEY") or ""
+    plan = catalog_fetch.source_plan(
+        meta, settings,
+        catalog_fetch.PlanFlags(bool(args.if_stale), catalog_schema_is_current(catalog_meta)),
+        api_key, now,
     )
-    if skip_fetch:
-        return CatalogSources({}, False, [], False), catalog_meta, skip_fetch
-    api_key = deps.load_secret_fn(deps.env_fn(), "ARTIFICIAL_ANALYSIS_API_KEY")
-    models_dev_data, models_dev_ok = deps.fetch_models_dev_fn()
-    aa_models, aa_fetch_ok = deps.fetch_artificial_analysis_fn(api_key)
-    aa_ok = aa_fetch_ok and bool(api_key)
-    if models_dev_ok or aa_ok:
-        cache_write_json(fetch_meta_path, {"last_fetched": time.time()})
-    if models_dev_ok:
-        catalog_meta = {**catalog_meta, "schema_version": CATALOG_SCHEMA_VERSION}
-    return (
-        CatalogSources(models_dev_data, models_dev_ok, aa_models, aa_ok),
-        catalog_meta,
-        skip_fetch,
-    )
+    raw = catalog_fetch.fetch_sources(deps, plan, api_key, args.catalog_path)
+    skip_fetch = not any(result["fetched"] for result in raw.results.values())
+    sidecar = catalog_fetch.updated_fetch_meta(meta, raw.results, now) if not skip_fetch else None
+    catalog_meta = {**catalog_meta, "schema_version": CATALOG_SCHEMA_VERSION}
+    return FetchedSources(raw.sources, catalog_meta, skip_fetch, raw.results, settings,
+                          raw.source_at, sidecar)
+
+
+def _claude_seed_provider() -> str:
+    row = next(row for row in optional_sources.SEED_ROWS if row.runtime == "claude")
+    provider = row.models_dev_provider
+    if provider is None:
+        raise ValueError("the claude seed row names no models.dev provider")
+    return provider
 
 
 def _finalize_fetch_catalog_meta(
@@ -540,8 +590,8 @@ def _finalize_fetch_catalog_meta(
         anthropic_ids = [
             i
             for i in anthropic_ids
-            if canonical_key("anthropic", i) in catalog
-            and "claude" in catalog[canonical_key("anthropic", i)].get("runtimes", {})
+            if canonical_key(_claude_seed_provider(), i) in catalog
+            and "claude" in catalog[canonical_key(_claude_seed_provider(), i)].get("runtimes", {})
         ]
     if anthropic_ids:
         catalog_meta["anthropic_model_ids"] = anthropic_ids
@@ -549,8 +599,16 @@ def _finalize_fetch_catalog_meta(
     return catalog_meta
 
 
-def _write_fetch_catalog_result(args, out: FetchCatalogOutput) -> None:
-    cache_write_json(args.catalog_path, join_catalog_meta(out.catalog, out.catalog_meta))
+def _write_fetch_catalog_result(args, out: FetchCatalogOutput, fetched: FetchedSources) -> None:
+    written = locked_catalog_update(
+        args.catalog_path,
+        lambda current: join_catalog_meta(
+            rebase_on_current(split_catalog_meta(current)[0], out.catalog), out.catalog_meta
+        ),
+        replace_unreadable=True,
+    )
+    if fetched.sidecar is not None:
+        cache_write_json(args.catalog_path + ".fetch-meta.json", fetched.sidecar)
     print(json.dumps({
         "catalog_path": args.catalog_path,
         "entry_count": len(out.catalog),
@@ -559,7 +617,10 @@ def _write_fetch_catalog_result(args, out: FetchCatalogOutput) -> None:
         "discovered": out.inputs.discovered,
         "models_dev_ok": out.inputs.sources.models_dev_ok,
         "artificial_analysis_ok": out.inputs.sources.aa_ok,
-        "fetch_skipped": out.inputs.skip_fetch,
+        "fetch_skipped": fetched.skip_fetch,
+        "arena_ok": fetched.sources.arena_ok,
+        "sources": fetched.results,
+        "attribution": attribution_lines(catalog_sources(split_catalog_meta(written)[0])),
     }))
 
 
@@ -576,6 +637,17 @@ def _claude_catalog_candidates(
     ]
     return claude_candidates, True
 
+def _optional_candidates_for_fetch(inputs, deps, claude_candidates):
+    snapshot = inputs.facts_inputs.snapshot if inputs.facts_inputs is not None else {}
+    store = cache_read_json(optional_sources.store_path(deps.env_fn())) or {}
+    optional = catalog_cmds.optional_fetch_candidates(snapshot, store, inputs.sources)
+    taken = {
+        (candidate["runtime"], candidate["model_id"])
+        for candidate in inputs.discovered + claude_candidates
+    }
+    return optional, catalog_cmds.builder_candidates(optional, taken)
+
+
 def _run_fetch_catalog_build(
     inputs: FetchBuildInputs, deps: CliDeps
 ) -> FetchCatalogOutput:
@@ -587,12 +659,16 @@ def _run_fetch_catalog_build(
     claude_candidates, materialized = _claude_catalog_candidates(
         inputs.discovered, anthropic_ids, deps.which_fn
     )
+    optional, for_build = _optional_candidates_for_fetch(inputs, deps, claude_candidates)
     catalog, rejections, unmatched = build_model_catalog(
-        inputs.discovered + claude_candidates,
+        inputs.discovered + claude_candidates + for_build,
         inputs.sources,
         inputs.existing_catalog,
         runtime_meta=inputs.runtime_meta,
+        facts_inputs=inputs.facts_inputs,
     )
+    catalog, extra_rejections = catalog_cmds.attach_listed_from(catalog, optional)
+    rejections.extend(extra_rejections)
     extra = {("claude", c["model_id"]) for c in claude_candidates}
     filtered = [
         record
@@ -636,16 +712,24 @@ def _cmd_fetch_model_catalog(args: argparse.Namespace, deps: CliDeps) -> int:
     # ran this invocation AND at least one source came back genuinely ok -- never touched
     # on a skipped-fetch run, so its own mtime reflects the last REAL fetch, not the last
     # catalog write.
-    sources, catalog_meta, skip_fetch = _fetch_catalog_external_sources(
-        deps, args, catalog_meta
+    fetched = _fetch_catalog_external_sources(deps, args, catalog_meta)
+    env = deps.env_fn()
+    facts_inputs = FactsInputs(
+        snapshot=runtimes, settings=fetched.settings, now=now_iso(),
+        name_judge=jev_names.name_judge(env) if args.jev else None,
+        class_judge=jev_names.class_judge(env) if args.jev else None,
+        source_at=fetched.source_at,
     )
     out = _run_fetch_catalog_build(
-        FetchBuildInputs(
-            discovered, existing_catalog, catalog_meta, sources, skip_fetch, runtime_meta
-        ),
+        FetchBuildInputs(discovered, existing_catalog, fetched.catalog_meta,
+                         fetched.sources, fetched.skip_fetch, runtime_meta, facts_inputs),
         deps,
     )
-    _write_fetch_catalog_result(args, out)
+    try:
+        _write_fetch_catalog_result(args, out, fetched)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 1
     return 0
 
 def _cmd_confirm_catalog_entry(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -661,14 +745,21 @@ def _cmd_confirm_catalog_entry(args: argparse.Namespace, deps: CliDeps) -> int:
             "reason": "--entry-json must be an object with a string 'model_id' and an "
                       "object 'entry'"}))
         return 1
-    # 16 D-12: split `_meta` off before merging so merge_catalog_entry only ever sees
-    # real entries, then write it back verbatim -- confirm never disturbs cache metadata.
-    entries, meta = split_catalog_meta(cache_read_json(args.catalog_path))
-    merged, reason = merge_catalog_entry(entries, payload["model_id"], payload["entry"])
-    if reason:
-        print(json.dumps({"confirmed": False, "reason": reason}))
+    def update(current):
+        entries, meta = split_catalog_meta(current)
+        merged, reason = merge_catalog_entry(entries, payload["model_id"], payload["entry"])
+        if reason:
+            raise catalog_cmds.Refused(1, reason)
+        return join_catalog_meta(merged, meta)
+
+    try:
+        locked_catalog_update(args.catalog_path, update)
+    except catalog_cmds.Refused as error:
+        print(json.dumps({"confirmed": False, "reason": error.message}))
+        return error.code
+    except ValueError as error:
+        print(json.dumps({"confirmed": False, "reason": str(error)}))
         return 1
-    cache_write_json(args.catalog_path, join_catalog_meta(merged, meta))
     print(json.dumps({"confirmed": True, "model_id": payload["model_id"]}))
     return 0
 
@@ -683,14 +774,21 @@ def _cmd_apply_heuristic_correction(args: argparse.Namespace, deps: CliDeps) -> 
     # correction that would produce a schema-invalid entry is rejected here exactly like
     # confirm-catalog-entry rejects an invalid new entry, never silently written.
     corrections = cache_read_json(args.corrections_json) or {}
-    # 16 D-12: split `_meta` off before correcting, write it back verbatim -- a
-    # correction never disturbs the catalog's cache metadata.
-    entries, meta = split_catalog_meta(cache_read_json(args.catalog_path))
-    catalog, reason = apply_heuristic_corrections(entries, args.model_id, corrections)
-    if reason:
-        print(json.dumps({"applied": False, "reason": reason}))
+    def update(current):
+        entries, meta = split_catalog_meta(current)
+        catalog, reason = apply_heuristic_corrections(entries, args.model_id, corrections)
+        if reason:
+            raise catalog_cmds.Refused(1, reason)
+        return join_catalog_meta(catalog, meta)
+
+    try:
+        locked_catalog_update(args.catalog_path, update)
+    except catalog_cmds.Refused as error:
+        print(json.dumps({"applied": False, "reason": error.message}))
+        return error.code
+    except ValueError as error:
+        print(json.dumps({"applied": False, "reason": str(error)}))
         return 1
-    cache_write_json(args.catalog_path, join_catalog_meta(catalog, meta))
     print(json.dumps({"applied": True, "model_id": args.model_id}))
     return 0
 
@@ -1061,6 +1159,16 @@ def _cmd_check_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     resolved = ResolvedReviewer(key=args.key, model=args.model, vendor=args.vendor,
                                  runtime=rid, command=args.reviewer_command, extra=extra)
     result = probe_reviewer_quota(resolved, seams=deps.probe_seams())
+    if args.catalog_path and rid:
+        record = usability.record_for(result, rid, now_iso())
+        if record is not None:
+            key, problem = usability.record_usability(args.catalog_path, rid, args.model, record)
+            result["usability"] = {"recorded": key is not None, "key": key,
+                                   "problem": problem, "state": record["state"]}
+    for field in ("detail", "reason"):
+        value = result.get(field)
+        if isinstance(value, str):
+            result[field] = secret_shapes.redact(value, "[redacted]")
     print(json.dumps(result))
     return 0
 _COMMANDS = {
@@ -1087,6 +1195,7 @@ _COMMANDS = {
     "dispatch-execute": _cmd_dispatch_execute,
     "dispatch-reviewer": _cmd_dispatch_reviewer,
     "check-reviewer": _cmd_check_reviewer,
+    **catalog_cmds.COMMANDS,
 }
 
 def _dispatch(argv: list, deps: CliDeps) -> int:

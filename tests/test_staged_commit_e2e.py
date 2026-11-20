@@ -220,6 +220,7 @@ class TestStagedCommit(unittest.TestCase):
         cls.mapper = load_by_path(cls.repo / "tools" / "staged_mapper.py")
         runner = load_by_path(cls.repo / "tools" / RUNNER.name)
         cls.shared = runner.SHARED_MACHINERY
+        cls.arch = sorted(runner.ARCH_MODULES)
         cls.all_over_budget = over_budget(runner)
 
     @classmethod
@@ -248,7 +249,7 @@ class TestStagedCommit(unittest.TestCase):
     def expected(self, *paths: str) -> set[str]:
         """The copied mapper's own answer: covering modules plus the arch group when due."""
         decision = self.mapper.decide(self.repo, list(paths), self.shared)
-        return {*decision.modules, *(["tests.test_arch"] if decision.arch else [])}
+        return {*decision.modules, *(self.arch if decision.arch else [])}
 
     def test_a_commit_runs_only_the_modules_covering_the_staged_file(self) -> None:
         self.stage_append("tools/alpha.py", "# touched\n")
@@ -286,7 +287,7 @@ class TestStagedCommit(unittest.TestCase):
         code, out = self.commit("-m", "touch the runner")
         self.assertEqual(code, 0, out)
         self.assertIn("full unit+arch run: shared test machinery", out)
-        every = {"tests.test_alpha", "tests.test_beta", "tests.test_arch"}
+        every = {"tests.test_alpha", "tests.test_beta", *self.arch}
         self.assertEqual(ran_modules(out), every)
 
     @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0,

@@ -16,10 +16,10 @@ comments and bare string statements (docstrings) are stripped with tokenize firs
 name a file without reading it. A code file keeps matching anywhere in a test's source: a comment
 naming a tool is often the only link to the test that covers it.
 
-shortcut: a test that reaches files only through a glob or directory walk (skills/*/SKILL.md)
-is not selected for them; the push stage's full suites cover it; upgrade if a commit-stage
-miss is ever observed. A tool that another tool loads by path is selected only when the
-loader's test names it.
+shortcut: a test that reaches files only through a glob or directory walk is not selected for them
+unless it is listed in SKILLS_TREE_WALKERS (skills/ only); the push stage's full suites cover the
+rest; upgrade if another commit-stage miss is observed. A tool that another tool loads by path is
+selected only when the loader's test names it.
 """
 import argparse
 import functools
@@ -120,6 +120,11 @@ def _tool_forms(stem: str) -> tuple[str, ...]:
 # folder keeps the bare token: its tests name it in install lists and constants that do read it.
 TIGHT_SKILL_FOLDERS = frozenset({"ai-kit-spec-review"})
 
+# Test modules that read every file under skills/ through a directory walk and name no skill folder,
+# so no name form selects them: any staged path under skills/ selects them (a plan-35-13 commit
+# changed a skill file and its commit hook missed tests.test_skill_text_history).
+SKILLS_TREE_WALKERS = frozenset({"tests.test_skill_text_history"})
+
 
 def _skill_forms(folder: str) -> tuple[str, ...]:
     """The regexes that select a test naming the skill folder `folder`. A tight folder is selected
@@ -217,7 +222,8 @@ def _data_covering(index: Index, patterns: list[re.Pattern[str]]) -> set[str]:
 
 def covering_modules(index: Index, path: str) -> frozenset[str]:
     """The test modules whose reach text names the unit of `path` (for a data file, their code
-    only); a staged test module that still exists covers itself."""
+    only); a staged path under skills/ also selects SKILLS_TREE_WALKERS; a staged test module that
+    still exists covers itself."""
     patterns = [re.compile(token) for token in unit_tokens(path)]
     if _is_data_file(path):
         found = _data_covering(index, patterns)
@@ -226,6 +232,8 @@ def covering_modules(index: Index, path: str) -> frozenset[str]:
             module for module, text in index.reach.items()
             if any(pattern.search(text) for pattern in patterns)
         }
+    if path.startswith("skills/"):
+        found |= SKILLS_TREE_WALKERS & index.reach.keys()
     own = f"tests.{PurePosixPath(path).stem}"
     if _is_test_module(path) and own in index.reach:
         found.add(own)
