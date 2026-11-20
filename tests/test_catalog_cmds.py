@@ -8,11 +8,12 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import catalog_build, catalog_facts, cli, model_catalog
+from ai_kit_spec import catalog_build, catalog_facts, cli, model_catalog, optional_sources
 
 T = "2026-11-20T00:00:00Z"
 
@@ -171,6 +172,128 @@ class TestConfirmModel(_Scratch):
         self.assertEqual(code, 2)
         self.assertIn("fallback_quota needs true or false", error)
         self.assertEqual(self._read_catalog(), original)
+
+
+class TestCatalogReportCommand(_Scratch):
+    def setUp(self):
+        super().setUp()
+        self.env["XDG_CACHE_HOME"] = os.path.join(self.root, "cache")
+        os.makedirs(self.env["HOME"], exist_ok=True)
+        self.runtimes_path = os.path.join(self.root, "runtimes.json")
+
+    def _report(self, entries, snapshot=None, detect=False):
+        self._write_catalog(entries)
+        if snapshot is not None:
+            with open(self.runtimes_path, "w", encoding="utf-8") as handle:
+                json.dump(snapshot, handle)
+        args = ["catalog-report", "--catalog-path", self.catalog_path]
+        args += ["--detect"] if detect else ["--runtimes-json", self.runtimes_path]
+        return self._call(args)
+
+    def test_text_output_facts_and_attribution(self):
+        key = "fake/placeholder-model-4"
+        entry = self._entry(key, runtime="opencode", model=key)
+        entry["facts"] = {
+            "tier": {"value": "strong", "label": "measured", "source": "models.dev",
+                     "fetched_at": T},
+            "strengths": {"value": ["coding"], "label": "measured", "source": "arena",
+                          "fetched_at": T},
+        }
+        snapshot = {"clis": {"opencode": {"listing": "none"}}}
+        code, output, error = self._report({key: entry}, snapshot)
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("facts: tier:", output)
+        self.assertIn("strengths:", output)
+        self.assertLess(output.index("models.dev ("), output.index("Arena leaderboard"))
+        self.assertIn("\n\nAttribution:\n", output)
+
+    def test_json_output(self):
+        key = "fake/placeholder-model-4"
+        entry = self._entry(key, runtime="opencode", model=key)
+        entry["facts"] = {"tier": {"value": "strong", "label": "measured",
+                                     "source": "models.dev", "fetched_at": T}}
+        self._write_catalog({key: entry})
+        args = ["catalog-report", "--catalog-path", self.catalog_path,
+                "--runtimes-json", self.runtimes_path, "--json"]
+        with open(self.runtimes_path, "w", encoding="utf-8") as handle:
+            json.dump({"clis": {}}, handle)
+        code, output, error = self._call(args)
+        self.assertEqual((code, error), (0, ""))
+        data = json.loads(output)
+        self.assertIn("facts", data["rows"][0])
+        self.assertEqual(data["attribution"], [
+            "models.dev (https://models.dev): repository license MIT; no attribution request found."
+        ])
+
+    def test_failed_refresh_keeps_credit(self):
+        key = "fake/placeholder-model-4"
+        entry = self._entry(key, runtime="opencode", model=key)
+        entry["facts"] = {"tier": {"value": "strong", "source": "artificial-analysis"}}
+        path = self.catalog_path + ".fetch-meta.json"
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"sources": {"artificial_analysis": {"ok": False}}}, handle)
+        code, output, error = self._report({key: entry}, {"clis": {}})
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("Source: Artificial Analysis (artificialanalysis.ai)", output)
+        self.assertIn("Not endorsed by Artificial Analysis", output)
+        self.assertIn("caching rule not stated", output)
+
+    def test_empty_catalog_no_attribution(self):
+        code, output, error = self._report({}, {"clis": {}})
+        self.assertEqual((code, error), (0, ""))
+        self.assertNotIn("Attribution:", output)
+
+    def test_optional_name_shown(self):
+        path = optional_sources.store_path(self.env)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"copilot": {"placeholder-model-9": [{
+                "name": "placeholder-model-9", "source": "web", "label": "web, unverified",
+                "url": "https://example.invalid/models", "date": "2026-11-01",
+            }]}}, handle)
+        code, output, error = self._report({}, {"clis": {}})
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("copilot  placeholder-model-9  [not listed]", output)
+        self.assertIn("unmatched", output)
+        self.assertIn("web, unverified (https://example.invalid/models, 2026-11-01)", output)
+
+    def test_host_row_shown(self):
+        snapshot = {"clis": {"pi": {"installed": True, "listing": "ok", "models": []}}}
+        code, output, error = self._report({}, snapshot)
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("pi  -  [listed, empty]", output)
+
+    def test_unreadable_store_ignored(self):
+        path = optional_sources.store_path(self.env)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("{not json")
+        key = "fake/placeholder-model-4"
+        code, output, error = self._report(
+            {key: self._entry(key, runtime="opencode", model=key)}, {"clis": {}}
+        )
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn(key, output)
+
+    def test_detect_is_run_local_proof(self):
+        first = "router-env/placeholder-model-1"
+        second = "router-env/placeholder-model-2"
+        entries = {
+            first: self._entry(first, runtime="opencode", model=first),
+            second: self._entry(second, runtime="opencode", model=second),
+        }
+        snapshot = {"clis": {"opencode": {
+            "listing": "ok", "models": [first],
+            "listed_from": {"at": "2026-11-01T00:00:00Z"},
+        }}}
+        with mock.patch("ai_kit_spec.catalog_cmds.detection.build_runtimes_snapshot",
+                        return_value=snapshot):
+            code, live_output, error = self._report(entries, detect=True)
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("stale (not in the listing of 2026-11-01T00:00:00Z", live_output)
+        code, cached_output, error = self._report(entries, snapshot)
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("not checked (cached 2026-11-01T00:00:00Z)", cached_output)
 
 
 class TestModelsConfigCommand(_Scratch):

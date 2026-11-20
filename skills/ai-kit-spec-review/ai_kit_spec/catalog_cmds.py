@@ -7,7 +7,16 @@ import json
 import os
 import sys
 
-from ai_kit_spec import catalog_bands, config_io, models_config
+from ai_kit_spec import (
+    catalog_bands,
+    catalog_report,
+    config_io,
+    detection,
+    models_config,
+    optional_sources,
+)
+from ai_kit_spec.cache import cache_read_json
+from ai_kit_spec.catalog_attribution import attribution_lines, catalog_sources
 from ai_kit_spec.catalog_labels import fact, now_iso
 from ai_kit_spec.model_catalog import (
     apply_heuristic_corrections,
@@ -154,6 +163,49 @@ def cmd_models_config(args, deps) -> int:
     return 0
 
 
+def _optional_rows_input(env, entries) -> dict:
+    store = cache_read_json(optional_sources.store_path(env)) or {}
+    if not isinstance(store, dict):
+        return {}
+    return {
+        runtime: optional_sources.optional_candidates(store, runtime)
+        for runtime in store
+        if isinstance(runtime, str)
+    }
+
+
+def cmd_catalog_report(args, deps) -> int:
+    entries = split_catalog_meta(cache_read_json(args.catalog_path) or {})[0]
+    if args.detect:
+        snapshot = detection.build_runtimes_snapshot(
+            which_fn=deps.which_fn,
+            run_fn=deps.run_fn,
+            catalog_fn=lambda: cache_read_json(args.catalog_path),
+            opencode=detection.OpencodeSeams(
+                deps.popen_fn, deps.urlopen_fn, deps.env_fn()
+            ),
+        )
+        fresh = True
+    else:
+        snapshot = cache_read_json(args.runtimes_json) or {}
+        fresh = False
+    rows = catalog_report.report_rows(
+        entries, snapshot, _optional_rows_input(deps.env_fn(), entries), fresh=fresh
+    )
+    lines = attribution_lines(catalog_sources(entries))
+    if args.json:
+        print(json.dumps({
+            "rows": [row._asdict() for row in rows],
+            "attribution": lines,
+        }))
+    else:
+        output = catalog_report.render_lines(rows)
+        if lines:
+            output.extend(("", "Attribution:", *lines))
+        print("\n".join(output))
+    return 0
+
+
 def register_parsers(sub) -> None:
     confirm = sub.add_parser("confirm-model")
     confirm.add_argument("--catalog-path", required=True)
@@ -171,8 +223,16 @@ def register_parsers(sub) -> None:
                           metavar=("RUNTIME", "MODEL", "TOKENS"))
     settings.add_argument("--show", action="store_true")
 
+    report = sub.add_parser("catalog-report")
+    report.add_argument("--catalog-path", required=True)
+    proof = report.add_mutually_exclusive_group(required=True)
+    proof.add_argument("--detect", action="store_true")
+    proof.add_argument("--runtimes-json", required=False)
+    report.add_argument("--json", action="store_true")
+
 
 COMMANDS = {
     "confirm-model": cmd_confirm_model,
     "models-config": cmd_models_config,
+    "catalog-report": cmd_catalog_report,
 }
