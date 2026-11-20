@@ -102,7 +102,9 @@ class TestLockedCatalogUpdate(unittest.TestCase):
             worker.start()
         for worker in workers:
             worker.join()
-        self.assertEqual(set(cache_read_json(self.path)), {
+        stored = cache_read_json(self.path)
+        assert stored is not None
+        self.assertEqual(set(stored), {
             f"router-env/placeholder-model-{index}" for index in range(1, 9)
         })
 
@@ -152,6 +154,7 @@ class TestLockedCatalogUpdate(unittest.TestCase):
         locked_catalog_update(self.path, confirm)
         locked_catalog_update(self.path, lambda current: rebase_on_current(current, built))
         result = cache_read_json(self.path)
+        assert result is not None
         self.assertEqual(result[key]["runtimes"]["pi"], {
             "model_id": "placeholder-model-1", "ctx_window": 2000, "usability": USABILITY
         })

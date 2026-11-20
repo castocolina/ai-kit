@@ -66,4 +66,9 @@ One commit, `49a4d1f feat(35-01): per-runtime deep merge, locked catalog update 
 - 20 stub files contain `self.skipTest("filled by plan 35-`; a stub run reports `OK (skipped=1)`, not a failure.
 - `python3 tools/gen_test_groups.py` leaves `git status --porcelain` empty (listings committed and current).
 
+- Wave checkpoint push refused once (`push_failed`): the pre-push `pyright` hook reported 6 errors in
+  `tests/test_catalog_schema4.py` (`cache_read_json` returns `dict | None`, used unnarrowed); pyright runs only at the push stage,
+  so the commit hook had passed. Fixed by lane run 3 in `fix(35-01): narrow optional cache reads in the schema tests for pyright`
+  (two `assert ... is not None` lines); `make pyright` exit 0 afterwards, checked by the orchestrator.
+
 ## Self-Check: PASSED
