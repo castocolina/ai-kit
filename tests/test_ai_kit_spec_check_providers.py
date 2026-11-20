@@ -353,7 +353,7 @@ class TestSpecConfigStep(unittest.TestCase):
         for index in auth_lines:
             self.assertTrue(never < index < section_end, lines[index])
 
-    def test_skill_evals_have_the_ten_cases(self):
+    def test_skill_evals_have_the_twelve_cases(self):
         with open(EVALS_JSON, encoding="utf-8") as handle:
             data = json.load(handle)
         self.assertEqual(
@@ -369,6 +369,8 @@ class TestSpecConfigStep(unittest.TestCase):
                 "edge-unconfirmed-read-only-asks-before-test",
                 "edge-catalog-stale-report-and-usability",
                 "edge-router-alias-assumed",
+                "edge-declined-runtime-never-presented",
+                "edge-migrate-only-runs-no-setup",
             ],
         )
 

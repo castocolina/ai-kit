@@ -22,7 +22,8 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
     ```bash
     python3 "$TOOLS_PY" cache-path --kind catalog
     ```
-    Record the printed line as the literal absolute path `$CATALOG_JSON` stands for below.
+    Record the printed line as the literal absolute path `$CATALOG_JSON` stands for below. Step 1.5
+    printed the same path first (`catalog.md` `## Catalog path`); carry it forward.
     **The CLIs to consider were already chosen in SKILL.md's Step 2.2 stub** — do not re-ask.
     Build the catalog from the whole snapshot: see [`catalog.md`](catalog.md) `## Build and classify` (the fetch reads the whole snapshot and caches each source by its own age).
 2. **For any kept CLI with no `models` array (grok always; codex or pi when its listing
@@ -72,7 +73,8 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
 6. **Rank only what's actually installed right now** — load the catalog, filter to
    `current_candidate_keys` using the SAME `discovered` list item 3's captured JSON already has
    (never recomputed from `$RUNTIMES_JSON` alone — that would silently drop every
-   single-provider-CLI candidate), THEN rank per purpose. A catalog entry for a CLI/model no
+   single-provider-CLI candidate), narrowed to the runtimes the user kept at Step 2.2 (an
+   installed runtime the user declined is never ranked or shown), THEN rank per purpose. A catalog entry for a CLI/model no
    longer present in the current snapshot is excluded from ranking and from anything shown to
    the user, without being deleted from the cache; a kept entry's in-memory `runtimes` is
    narrowed to the pairs in the current snapshot, so a stale cached mapping never makes it
@@ -90,7 +92,8 @@ from ai_kit_spec.model_catalog import current_candidate_keys
 from ai_kit_spec.model_ranker import load_ranking_weights, score_candidates
 catalog = json.load(open('$CATALOG_JSON'))
 fetch_result = json.load(open('$SCRATCH/fetch-model-catalog-result.json'))
-discovered = fetch_result['discovered']
+kept = {<runtime ids the user kept at Step 2.2>}
+discovered = [c for c in fetch_result['discovered'] if c['runtime'] in kept]
 current = current_candidate_keys(catalog, discovered)
 pairs = {(c['runtime'], c['model_id']) for c in discovered}
 # Keep only this snapshot's runtime/model pairs: a stale cached mapping must not route.

@@ -104,6 +104,26 @@
         "Labels the alias assumed router with fallback quota",
         "Asks no heuristic question about the alias"
       ]
+    },
+    {
+      "id": "edge-declined-runtime-never-presented",
+      "prompt": "Set up lanes. Both opencode and pi are installed, I keep only pi, and an opencode model ranks higher in the catalog.",
+      "expected_output": "Ranks and shows candidates only for the kept runtime pi; the declined opencode runtime and its higher-ranked model are never presented as a candidate.",
+      "files": [],
+      "assertions": [
+        "Narrows the discovered pairs to the kept runtime before ranking",
+        "Does not present the declined opencode model as a candidate"
+      ]
+    },
+    {
+      "id": "edge-migrate-only-runs-no-setup",
+      "prompt": "Migrate my old .aikit/review-spec.toml to the new config format, nothing else.",
+      "expected_output": "Reports migration pending, names the command that migrates it on its next read, and stops without setup writes.",
+      "files": [],
+      "assertions": [
+        "Reports migration pending before any detect-runtimes --save or catalog step",
+        "Runs no detect-runtimes --save, no catalog step and writes no config"
+      ]
     }
   ]
 }

@@ -209,11 +209,11 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 - [ ] **HUB-01**: An `ai-kit-spec-*` skill that starts with no config chains spec-config; a missing spec-config
   fails with a message naming the fix; `--no-cross-ai` still runs on the session model with no config.
-- [ ] **HUB-02**: spec-config discovers providers and models on claude, opencode, pi, cursor, codex and copilot, and
+- [x] **HUB-02**: spec-config discovers providers and models on claude, opencode, pi, cursor, codex and copilot, and
   records per model where it was listed from and a separate usability state (verified with date, rejected with the
   error, or unverified, shown visibly). *(amended 2026-11-14, owner decision: running spec-config builds the
   catalog of every model the machine can reach before any role is proposed)*
-- [ ] **HUB-03**: The model catalog merges models.dev, Artificial Analysis and the Arena leaderboard into tier (four
+- [x] **HUB-03**: The model catalog merges models.dev, Artificial Analysis and the Arena leaderboard into tier (four
   or more, effort-aware), class, relative cost, modalities and strengths, each value labeled measured or judged,
   with cache times; it shows each source's required attribution, never commits or ships Artificial Analysis data
   (its free tier forbids redistribution), and takes Arena data from the official dataset under its CC-BY-4.0 terms.
@@ -1087,8 +1087,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | CFG-05 | Phase 33 | Complete |
 | CFG-06 | Phase 33 | Complete |
 | HUB-01 | Phase 36 | Pending |
-| HUB-02 | Phase 35 | Pending |
-| HUB-03 | Phase 35 | Pending |
+| HUB-02 | Phase 35 | Complete |
+| HUB-03 | Phase 35 | Complete |
 | HUB-04 | Phase 32.2 | Complete |
 | HUB-05 | Phase 36 | Pending |
 | HUB-06 | Phase 35 | Complete |

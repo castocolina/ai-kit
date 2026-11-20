@@ -1,5 +1,11 @@
 # Model catalog (spec-config Step 1.5)
 
+## Catalog path
+
+- Run: `cache-path --kind catalog`
+
+Keep the printed line as the literal `<catalog>` path in every command below; Step 2.2 reuses the same path (`cli-model-selection.md` item 1).
+
 ## Discover
 
 - Run: `detect-runtimes --save <runtimes.json>`

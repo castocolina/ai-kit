@@ -102,6 +102,8 @@ mention which of these are present on this machine — this is the data
 and follow it: it asks Step 2.5's write-risk question before any live probe, reports availability
 and stale providers, then stops with no writes.
 
+**A migrate-only request is not this wizard's write.** When the user only asks to migrate an old `review-spec.toml`, report `migration pending`, say that the next command that reads the roster (`probe-quota`, `resolve-reviewers` or a review run) migrates it, and stop: run no `detect-runtimes --save`, no catalog step and no write. Run the full setup only if the user also wants the lanes replaced.
+
 **Otherwise**, persist the snapshot before continuing to Step 2:
 ```bash
 python3 "$TOOLS_PY" detect-runtimes --save "$RUNTIMES_JSON"
@@ -154,8 +156,6 @@ at a glance.
 - If it **does** exist, use `AskUserQuestion` to ask explicitly before writing anywhere: "A global roster already exists at `<user config>` (or as an old `review-spec.toml` there that migrates into it). Write a per-project roster at `./.aikit/config.toml` instead (recommended — doesn't touch the global roster), or replace the global roster?" — with the local option first/default. Picking "replace" here is the replacement consent below for the global file.
 
 **Replacement gate (every flag combination).** `Read` the resolved target itself. If it already holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates into the target on the write) and the user has not already approved replacing that exact file above, use `AskUserQuestion`: "`<resolved absolute path>` already holds a roster. Replace it with the roster built in this run (its current reviewers and policy are lost unless you re-enter them; other tables and comments in the file are kept; an old `review-spec.toml` migrates first and stays recoverable as `review-spec.toml.migrated`), or stop and keep it?" — with "stop" first/default. `--local`/`--global` choose the target, never consent to replace it. On "stop", end the run without writing. Only an explicit "replace" lets Step 3 pass `--replace`; without it `render-toml --out` refuses an existing roster and writes nothing.
-
-**A migrate-only request is not this wizard's write.** When the user only asks to migrate an old `review-spec.toml`, report `migration pending` and say that the next command that reads the roster (`probe-quota`, `resolve-reviewers` or a review run) migrates it; run the full setup only if the user also wants the lanes replaced.
 
 **Once the target is resolved, announce it immediately** — print "Writing to: `<resolved absolute path>`" before asking any of the reviewer questions below, so the user knows where this run's answers are headed from the start (not just in Step 4's closing report, which restates the same path after the write actually happens).
 

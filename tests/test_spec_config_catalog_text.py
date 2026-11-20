@@ -18,6 +18,7 @@ RUN_LINE = re.compile(r"^- Run: `([^`]+)`$", re.MULTILINE)
 ALLOWED = (
     "detect-runtimes", "fetch-model-catalog", "catalog-report", "web-query",
     "record-web-names", "herdr-names", "confirm-model", "models-config", "check-reviewer",
+    "cache-path",
 )
 
 
@@ -55,7 +56,8 @@ class TestSpecConfigCatalogText(unittest.TestCase):
     def test_commands_named(self):
         for command in ("detect-runtimes", "fetch-model-catalog", "web-query",
                         "record-web-names", "herdr-names", "catalog-report",
-                        "check-reviewer --catalog-path", "confirm-model", "models-config"):
+                        "check-reviewer --catalog-path", "confirm-model", "models-config",
+                        "cache-path --kind catalog"):
             self.assertIn(command, self.catalog)
 
     def test_rules_worded(self):
