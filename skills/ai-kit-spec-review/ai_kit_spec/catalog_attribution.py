@@ -1,4 +1,3 @@
-# pylint: disable=line-too-long
 """35 R7 / Amend-5: credit lines for every catalog source used, in one fixed order,
 and the Artificial Analysis terms line. Static text, ASCII."""
 

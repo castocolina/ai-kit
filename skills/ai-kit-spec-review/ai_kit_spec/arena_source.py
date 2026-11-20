@@ -1,5 +1,6 @@
-# pylint: disable=line-too-long
-"""35 D-03 / Amend-10: Arena leaderboard rows from the official CC-BY-4.0 dataset through the datasets-server JSON API: one /filter query per category, 3 tries, /rows fallback, page ceiling. Returns (data, ok) like model_sources and never raises; network only through fetch_fn."""  # noqa: E501
+"""35 D-03 / Amend-10: Arena leaderboard rows from the official CC-BY-4.0 dataset through the
+datasets-server JSON API: one /filter query per category, 3 tries, /rows fallback, page ceiling.
+Returns (data, ok) like model_sources and never raises; network only through fetch_fn."""
 
 import time
 import urllib.error
