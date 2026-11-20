@@ -57,6 +57,7 @@ modules green.
   `test_router_entries_are_not_matched`.
 - Open design question for the orchestrator (not in the plan): when the rule gives `unknown` and no class judge answers this run, a cached
   jev-judged class of the entry is overwritten by `unknown`, because jev is not one of the three sources of the outage rule.
+  - Resolved: owner-orchestrator decision (plan 35-03, verified records are kept) and fix-up commit `922c475 fix(35-16): keep a cached jev class when no class judge answers`: `tier_facts` drops the derived class for such an entry, so the cached class stays unchanged (the schema has no stale marker); `test_cached_judged_class_survives_a_refresh_without_a_judge_answer` covers absent and invalid judge answers.
 - `_aa_edge` and `_edge` narrow with `assert ... is not None` after a numeric check (the rule of this wave's gate notes allows it; an explicit check
   would be cleaner). The only remaining pylint disable is `protected-access` for the plan-named `catalog_bands._num`.
 - Both runs of this plan carried a time-budget note in the prompt (plan 15's first run, which hit the 1800 s deadline in its commit hook, had none).

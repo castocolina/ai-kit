@@ -384,6 +384,37 @@ class TestTiersOutageAndCuts(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertNotIn(key, result)
 
+    def test_cached_judged_class_survives_a_refresh_without_a_judge_answer(self):
+        first = _build(
+            _entry("placeholder-model-9"),
+            inputs=catalog_facts.FactsInputs(
+                {}, now=T, class_judge=lambda items: [("coding", 0.8, "")]
+            ),
+        )
+        self.assertEqual(first["facts"]["class"]["source"], "jev")
+        self.assertEqual(first["facts"]["class"]["value"], "coding")
+
+        second = _build(
+            ("fake/placeholder-model-9", first),
+            inputs=catalog_facts.FactsInputs({}, now="2026-11-12T00:00:00Z"),
+        )
+        self.assertEqual(second["facts"]["class"], first["facts"]["class"])
+
+        third = _build(
+            ("fake/placeholder-model-9", first),
+            inputs=catalog_facts.FactsInputs(
+                {},
+                now="2026-11-12T00:00:00Z",
+                class_judge=lambda items: [("not-a-class", 0.8, "")],
+            ),
+        )
+        self.assertEqual(third["facts"]["class"], first["facts"]["class"])
+
+        unknown = _build(
+            _entry("placeholder-model-8"), inputs=catalog_facts.FactsInputs({}, now=T)
+        )
+        self.assertEqual(unknown["facts"]["class"]["value"], "unknown")
+
 
 if __name__ == "__main__":
     unittest.main()

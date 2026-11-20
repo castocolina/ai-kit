@@ -313,6 +313,11 @@ def _build_run(catalog, sources, inputs) -> _Run:
     return _Run(index, matches, cuts, times, inputs)
 
 
+def _has_judged_class(entry) -> bool:
+    cached = entry.get("facts", {}).get("class")
+    return isinstance(cached, dict) and cached.get("source") == "jev"
+
+
 def tier_facts(catalog: dict, sources, inputs) -> dict:
     run = _build_run(catalog, sources, inputs)
     output, unknown = {}, []
@@ -323,6 +328,10 @@ def tier_facts(catalog: dict, sources, inputs) -> dict:
         output[key] = facts
         if judge:
             unknown.append(judge)
-    for key, cls in _judge_unknown_classes(unknown, inputs).items():
-        output[key]["class"] = cls
+    answers = _judge_unknown_classes(unknown, inputs)
+    for key, _ in unknown:
+        if key in answers:
+            output[key]["class"] = answers[key]
+        elif _has_judged_class(catalog[key]):
+            del output[key]["class"]  # a refresh never degrades a class that jev judged earlier
     return output
