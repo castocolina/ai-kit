@@ -382,7 +382,9 @@ class RunnerStagedTest(unittest.TestCase):
     def test_a_covered_file_runs_its_module_and_the_arch_group_once(self) -> None:
         code, out = self.main("--staged", "tools/beta.py", "tools/beta.py")
         self.assertEqual(code, 0, out)
-        self.assertEqual(self.ran, [["tests.test_beta", "tests.test_arch"]])
+        self.assertEqual(
+            self.ran, [["tests.test_beta", "tests.test_arch", "tests.test_arch_hardcoded_models"]]
+        )
         self.assertIn("staged: tests.test_beta", out)
 
     def test_shared_machinery_runs_the_full_unit_and_arch_groups(self) -> None:

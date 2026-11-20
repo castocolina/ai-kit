@@ -7689,7 +7689,7 @@ class TestBuildModelCatalog(unittest.TestCase):
             self.assertNotIn("tool_calling", entry)
             self.assertNotIn("structured_output", entry)
             self.assertNotIn("max_output_tokens", entry)
-            self.assertIsNone(entry["runtimes"][cli_name]["ctx_window"])
+            self.assertNotIn("ctx_window", entry["runtimes"][cli_name])
 
     def test_unmatched_new_candidate_is_reported_but_never_persisted(self):
         # CRITICAL: an unmatched, never-before-seen candidate must NOT land in the catalog
