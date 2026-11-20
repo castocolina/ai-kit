@@ -623,20 +623,6 @@
    ]
   },
   {
-   "path": "skills/ai-kit-spec-config/SKILL.md",
-   "cleaned_by": "35",
-   "hits": [
-    "keyval gpt-5.6-sol"
-   ]
-  },
-  {
-   "path": "skills/ai-kit-spec-config/evals/files/stale-opencode/config.toml",
-   "cleaned_by": "35",
-   "hits": [
-    "keyval gone/model-x"
-   ]
-  },
-  {
    "path": "skills/ai-kit-spec-review/ai_kit_spec/detection.py",
    "cleaned_by": "36",
    "hits": [

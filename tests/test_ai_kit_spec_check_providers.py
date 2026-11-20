@@ -353,7 +353,7 @@ class TestSpecConfigStep(unittest.TestCase):
         for index in auth_lines:
             self.assertTrue(never < index < section_end, lines[index])
 
-    def test_skill_evals_have_the_eight_cases(self):
+    def test_skill_evals_have_the_ten_cases(self):
         with open(EVALS_JSON, encoding="utf-8") as handle:
             data = json.load(handle)
         self.assertEqual(
@@ -367,6 +367,8 @@ class TestSpecConfigStep(unittest.TestCase):
                 "edge-existing-local-config-replace",
                 "edge-old-roster-migration-pending",
                 "edge-unconfirmed-read-only-asks-before-test",
+                "edge-catalog-stale-report-and-usability",
+                "edge-router-alias-assumed",
             ],
         )
 
@@ -391,10 +393,9 @@ class TestSpecConfigStep(unittest.TestCase):
         # variable a later block reads; the two paths are literal values.
         with open(CLI_MODEL_SELECTION_MD, encoding="utf-8") as handle:
             text = handle.read()
-        self.assertNotIn('CATALOG_JSON="', text)
-        self.assertNotIn('FILTERED_RUNTIMES_JSON="', text)
-        self.assertIn("Record the printed line as the literal absolute path `$CATALOG_JSON`", text)
-        self.assertIn("`$FILTERED_RUNTIMES_JSON` is the literal path", text)
+        self.assertIn("## Build and classify", text)
+        self.assertIn("caches each source by its own age", text)
+        self.assertNotIn("narrowed to the ids chosen", text)
 
     def test_global_write_eval_and_near_miss_negatives(self):
         # Judge loop 33 r3 findings D7-1 and D7-2.

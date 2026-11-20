@@ -241,7 +241,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   also records its pool (provider plus tier, for example the one pool that the free models of a provider appear to share), the
   fallback is the first lane of the role that is neither flagged nor in the same pool, and the wizard warns that other free
   models of the same provider share the pool; source `.planning/research/2026-11-16-opencode-free-models.md`)*
-- [ ] **HUB-06**: spec-config flags stale entries (removed models, providers no longer configured).
+- [x] **HUB-06**: spec-config flags stale entries (removed models, providers no longer configured).
 - [ ] **HUB-07**: jev ranks candidates and the user picks; by default the ranking proposes flagship-class models for
   review and coding-class models for execution; no skill, rail or default hardcodes a referee name.
   *(amended 2026-11-14, owner decision: from the classified catalog, spec-config proposes a coding set and a
@@ -249,10 +249,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   default)* *(amended 2026-11-16, 36 D-18: the proposal also shows a separate group of zero-price models, ordered by the same
   scores and labelled with the price source, so the owner can select a free model; a zero price never marks a lane
   usage-limited, only the owner does)*
-- [ ] **HUB-08**: The opencode CLI profile and the runner's comments match the installed opencode as its own
+- [x] **HUB-08**: The opencode CLI profile and the runner's comments match the installed opencode as its own
   `--help` reports it (current providers, the effort levels the model API lists, the `opencode models` flags), and a
   test fails when the profile names a flag the recorded help text lacks.
-- [ ] **HUB-09**: Only `router-env/<x>` model names may be hardcoded in code, defaults, rails, skills, docs and tests as
+- [x] **HUB-09**: Only `router-env/<x>` model names may be hardcoded in code, defaults, rails, skills, docs and tests as
   expected values, and in tests only for pi and opencode; every other provider or model name comes from live
   discovery, the catalog or the user's config. A test fails on a new violation, with a committed baseline of today's
   violating files that can only shrink (a baseline file that no longer violates also fails); a runtime table is seed
@@ -1091,10 +1091,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | HUB-03 | Phase 35 | Pending |
 | HUB-04 | Phase 32.2 | Complete |
 | HUB-05 | Phase 36 | Pending |
-| HUB-06 | Phase 35 | Pending |
+| HUB-06 | Phase 35 | Complete |
 | HUB-07 | Phase 36 | Pending |
-| HUB-08 | Phase 35 | Pending |
-| HUB-09 | Phase 35 | Pending |
+| HUB-08 | Phase 35 | Complete |
+| HUB-09 | Phase 35 | Complete |
 | HUB-10 | Phase 36 | Pending |
 | REV-01 | Phase 40 | Pending |
 | REV-02 | Phase 40 | Pending |

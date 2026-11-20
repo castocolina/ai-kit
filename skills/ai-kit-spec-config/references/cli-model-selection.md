@@ -7,8 +7,8 @@ and the runner builds the argv. Only a runtime outside the runner table, grok to
 stores a `command` instead. `$TOOLS_PY`, `$RUNTIMES_JSON` and `$SCRATCH` are the literal
 paths SKILL.md's Step 0 printed; every temporary file here goes under `$SCRATCH`. Every `Bash`
 call starts a fresh shell, so no value set in one block survives into the next: `$CATALOG_JSON`
-(item 1) and `$FILTERED_RUNTIMES_JSON` are literal paths too, substituted directly into every
-later block, never shell variables.
+(item 1) is a literal path too, substituted directly into every later block, never a shell
+variable.
 
 For every CLI the user wants to consider (from Step 1's detection), build the ranked
 candidate list via the model-discovery catalog rather than guessing or searching per model.
@@ -24,60 +24,10 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
     ```
     Record the printed line as the literal absolute path `$CATALOG_JSON` stands for below.
     **The CLIs to consider were already chosen in SKILL.md's Step 2.2 stub** — do not re-ask.
-    Group each kept multi-provider CLI's raw model list BEFORE any of it is
-    discovered/matched/ranked. Two separate properties matter here: whether a CLI is
-    **multi-provider** (`opencode` or `cursor`, the runtime table's `multi_provider` rows;
-    pi, codex, claude and grok are single-provider) and whether it **lists models** (a
-    `models` array in the snapshot: every runtime but grok, unless its listing failed). Only a
-    multi-provider CLI gets grouped. For each multi-provider CLI the user kept, **never hand its raw
-    model list to `fetch-model-catalog` as-is** — a
-    multi-provider CLI's raw list can be very long (confirmed live: cursor's catalog is
-   ~200 ids, a handful of base model families each multiplied out by effort/thinking/fast-tier
-   variants, e.g. `claude-opus-5-thinking-high-fast`), and most of those tier variants will not
-   exact-match models.dev/Artificial Analysis, which would otherwise turn item 4 below into
-   hundreds of individual unmatched searches and confirmation prompts for what is really only a
-   handful of base families. Group it first:
-   ```bash
-   python3 "$TOOLS_PY" group-models --runtimes-json "$RUNTIMES_JSON" --runtime <id>
-   ```
-   This prints `{"<family>": ["<variant-id>", ...], ...}` — one entry per base model family,
-   each holding its own tier/effort/fast variants (the grouping is a plain suffix-stripping
-   heuristic, not a quality judgment; an id it can't confidently collapse just becomes its own
-   single-member family, which is fine). Present the **families**, not the raw ids, and let the
-   user pick a family (defaulting to its base id) or drill into a specific tier/effort variant
-   only if they want one. **Always ask this via `AskUserQuestion` with `multiSelect: true`,
-   consistently across every multi-provider CLI — never single-select here, and never decide
-   select-mode per CLI on your own judgment.** A user may legitimately want more than one family
-   registered from the same CLI (e.g. both a flagship and a fast tier); deciding single- vs
-   multi-select case-by-case has been observed live to produce inconsistent behavior across
-   CLIs in the same run. Collect the chosen model id(s) per CLI, then write a FILTERED runtimes
-   snapshot — a copy of `$RUNTIMES_JSON` keeping only the CLIs the user kept, with each
-   multi-provider CLI's `models` narrowed to the ids chosen above (every other kept CLI passes
-   through unchanged, its `models` array included when it has one) — and use that filtered
-   file, not the raw `$RUNTIMES_JSON`, as `--runtimes-json` in item 3's `fetch-model-catalog`
-   call below. `$FILTERED_RUNTIMES_JSON` is the literal path `<$SCRATCH>/filtered-runtimes.json`:
-   ```bash
-   python3 -c "
-import json
-snap = json.load(open('$RUNTIMES_JSON'))
-kept_clis = {<CLI names the user kept>}
-chosen = {<cli>: [<chosen model id(s)>], ...}  # only for multi-provider CLIs
-snap['clis'] = {name: ({**data, 'models': chosen[name]} if name in chosen else data)
-                for name, data in snap.get('clis', {}).items() if name in kept_clis}
-json.dump(snap, open('$FILTERED_RUNTIMES_JSON', 'w'))
-"
-   ```
-   This is deliberate: `fetch-model-catalog` has no per-CLI/model selection flag of its own, and
-   doesn't need one — its contract (discover everything a runtimes snapshot lists) is unchanged;
-   this step scopes discovery upstream, at the input snapshot, before the subcommand ever runs,
-   rather than duplicating the family-grouping judgment call this step already makes with the
-   user.
+    Build the catalog from the whole snapshot: see [`catalog.md`](catalog.md) `## Build and classify` (the fetch reads the whole snapshot and caches each source by its own age).
 2. **For any kept CLI with no `models` array (grok always; codex or pi when its listing
    failed) that has NO existing lane entry in `config.toml` yet** (first-time setup): ask the
-   user for a candidate model id now (never guess or trust training knowledge — WebSearch it for
-   recency first, per this skill's `NEVER` list; confirmed live 2026-08-28 that guessing here,
-   `gpt-5.6-sol-high` instead of the real `gpt-5.6-sol`, produces a candidate that fails
-   outright at Step 2.5's live test). Collect these as `--extra-candidate <cli>:<model-id>`
+   user for a candidate model id now (never guess or trust training knowledge; web names come only from `web-query`'s fixed query and `record-web-names`, never from a model-specific search). Collect these as `--extra-candidate <cli>:<model-id>`
    flags (repeatable) for the next command — this is what lets a brand-new
    single-provider-CLI candidate flow through the SAME matching/enrichment/ranking path as
    everything else, instead of being registered blind.
@@ -91,7 +41,7 @@ json.dump(snap, open('$FILTERED_RUNTIMES_JSON', 'w'))
    `$RUNTIMES_JSON`'s own `models` arrays alone would silently exclude codex/grok/every
    single-provider-CLI candidate from ranking):
    ```bash
-   python3 "$TOOLS_PY" fetch-model-catalog --runtimes-json "$FILTERED_RUNTIMES_JSON" \
+   python3 "$TOOLS_PY" fetch-model-catalog --runtimes-json "$RUNTIMES_JSON" \
      --catalog-path "$CATALOG_JSON" --cwd "$(pwd)" --if-stale \
      [--extra-candidate <cli>:<model-id> ...] > "$SCRATCH/fetch-model-catalog-result.json"
    ```
@@ -116,68 +66,10 @@ json.dump(snap, open('$FILTERED_RUNTIMES_JSON', 'w'))
    entry in the captured JSON's `unmatched` list (a candidate that matched neither models.dev
    nor Artificial Analysis and has no prior catalog entry — each entry already carries its own
    locally-inferred `is_router`/`batch_mode`/`fallback_quota`, computed by `fetch-model-catalog`
-   itself even though the candidate isn't in the catalog yet): do ONE targeted WebSearch for
-   that specific model id + vendor name, summarize what you find in one line, and use
-   `AskUserQuestion` to have the user confirm or correct the provider AND the three heuristic
-   fields before any of it is ever persisted — this is the only per-model search this step ever
-   does now, reserved for genuinely new/unrecognized models (e.g. one released after
-   models.dev/Artificial Analysis last indexed it). Never auto-persist an unmatched candidate.
+   itself even though the candidate isn't in the catalog yet): show the owner the candidate with its labels, ask the owner to confirm or correct each uncertain field, and write one correction only with `confirm-model --catalog-path <catalog> --model-id <key> --field <field> --value <value>`. Web names come only through `web-query`'s fixed query and `record-web-names`. Never write a catalog entry by hand and never auto-persist an unmatched candidate.
 
-   **The catalog key MUST be re-derived from whatever provider the user actually confirms,
-   never reused from `unmatched.key`** (which was computed from the PRE-confirmation provider
-   GUESS). If the user corrects the provider, `unmatched.key` and the confirmed `provider`
-   would otherwise disagree — violating the catalog's own `vendor/model` key invariant.
-   Recompute the key the same way `fetch-model-catalog` itself would, via
-   `canonical_key(confirmed_provider, bare_model_id)` — `bare_model_id` is `unmatched.model_id`
-   with any `"<cli-provider-label>/"` prefix stripped (the same split `bare_model_part` uses:
-   everything after the first `/`, or the whole string if there's no `/`). Do this with the same
-   inline `python3 -c` `sys.path.insert` convention item 5 below uses (no separate CLI
-   subcommand needed for a pure string computation):
-   ```bash
-   CONFIRMED_KEY="$(python3 -c "
-import sys
-sys.path.insert(0, '$(dirname "$TOOLS_PY")')
-from ai_kit_spec.model_catalog import canonical_key
-bare = '<unmatched.model_id>'.split('/', 1)[-1]
-print(canonical_key('<confirmed provider>', bare))
-")"
-   ```
-   Once confirmed, persist it under `$CONFIRMED_KEY` — never under the stale `unmatched.key`.
-   This is the ONLY path that ever writes an unmatched candidate to the catalog
-   (`fetch-model-catalog` itself deliberately never does):
-   ```bash
-   cat > "$SCRATCH/confirm-entry.json" <<'JSON'
-{"model_id": "<value of $CONFIRMED_KEY>",
- "entry": {"provider": "<confirmed provider>",
-           "runtimes": {"<cli>": {"model_id": "<unmatched.model_id>"}},
-           "source": {"models_dev": false, "artificial_analysis": false, "manual": true},
-           "confidence": "low", "last_verified": "<today, YYYY-MM-DD>",
-           "is_router": <confirmed is_router>, "batch_mode": <confirmed batch_mode>,
-           "fallback_quota": <confirmed fallback_quota>,
-           "heuristic_confirmed": ["is_router", "batch_mode", "fallback_quota"]}}
-JSON
-   python3 "$TOOLS_PY" confirm-catalog-entry --catalog-path "$CATALOG_JSON" \
-     --entry-json "$SCRATCH/confirm-entry.json"
-   ```
-   `heuristic_confirmed` records that the user was JUST asked to confirm all three fields
-   above, in this same step — without it, Step 8 later in this same wizard run would re-ask
-   `is_router`/`batch_mode`/`fallback_quota` for this same candidate, since it has no other way
-   to know those three fields were already confirmed here.
-
-   When the `unmatched` entry carries `reasoning_modes` and/or `image_input` (data
-   `detect-runtimes` read from the CLI itself: effort levels from `codex debug models`,
-   image capability from opencode's v2 API (`GET /api/model`, read through a private
-   `opencode serve` on opencode 2.x, `image_input_source: opencode-api`; `opencode models
-   --verbose` on 1.x, `image_input_source: opencode`)), copy each one verbatim into the
-   confirmation `entry`, together with `image_input_source` whenever `image_input` is
-   copied. It is CLI-reported data, not a guess, so it is not one of the fields the user is
-   asked to confirm. Omit a key the unmatched entry does not carry — never write
-   `image_input: false` without a source.
-
-   (When the user does NOT correct the provider — the common case — `$CONFIRMED_KEY` always
-   equals `unmatched.key` exactly, since both are `canonical_key` applied to the same provider
-   and bare model id; nothing changes for that path.)
-5. **Rank only what's actually installed right now** — load the catalog, filter to
+5. Read `catalog-report` (Step 1.5): use only rows that are not stale; show labels as printed.
+6. **Rank only what's actually installed right now** — load the catalog, filter to
    `current_candidate_keys` using the SAME `discovered` list item 3's captured JSON already has
    (never recomputed from `$RUNTIMES_JSON` alone — that would silently drop every
    single-provider-CLI candidate), THEN rank per purpose. A catalog entry for a CLI/model no
@@ -254,7 +146,7 @@ for purpose in ('review', 'execute'):
    Execution routing would skip such a pick anyway (`review_only`). The one claude pair that
    does execute is a Claude Code alias on a Claude Code host, registered through Step 2.7's
    session-default ask, not this ranked flow.
-6. Present the top candidates per purpose to the user in this shape (adapt scores/labels to what
+7. Present the top candidates per purpose to the user in this shape (adapt scores/labels to what
    the catalog actually returned — illustrative, not literal output; the exact field set shown
    for a given candidate always matches whatever the `field()` calls above actually found
    non-`None` for it, never more than that). **Every candidate line must also show which
@@ -305,11 +197,10 @@ for purpose in ('review', 'execute'):
    entry this wizard writes, from this step or from Step 2.7's session-default flow below, states
    its `purpose` explicitly (an absent `purpose` reads as "matches both roles" on the consumer
    side, which must never be an accident of a newly-written entry, only the documented
-   legacy-compat default). This IS the answer to what used to be a separate `purpose`
-   question — see Step 2.6 below.
-7. **Before finalizing a CLI where ai-kit cannot read a codebase-memory-mcp registration
+   legacy-compat default). This IS the answer to the separate `purpose` question — see Step 2.6 below.
+8. **Before finalizing a CLI where ai-kit cannot read a codebase-memory-mcp registration
    (today: `grok`), check for an alternative whose registration it can read.** For each model
-   confirmed onto such a CLI in the previous item, run:
+   confirmed onto such a CLI in item 7, run:
    ```bash
    python3 "$TOOLS_PY" check-code-index-alternative --runtime <id> --model <model-id> \
      --runtimes-json "$RUNTIMES_JSON"
@@ -320,28 +211,5 @@ for purpose in ('review', 'execute'):
    for grounding-heavy review/execute work."` This is informational only (best-effort substring
    match, per `find_code_index_alternative`'s own docstring) — the user still makes the final call; never
    silently substitute the CLI or drop the original option.
-8. Confirm `is_router`/`batch_mode`/`fallback_quota` for any candidate where the catalog set them
-   via naming heuristic (never an external source, per the design) — **but skip any field
-   already listed in that entry's `heuristic_confirmed` array** (a plain bool alone cannot
-   distinguish "the heuristic's own untouched guess" from "the user already confirmed this exact
-   value"; `heuristic_confirmed` is the provenance record that makes "don't ask again" actually
-   work). For every field NOT yet in `heuristic_confirmed`, ask one line each: "`router-env`
-   looks like a router with fallback — correct?" / "`gpt-5-mini` looks batch-suitable —
-   correct?" **Persist the answer back to the catalog cache immediately — whether the user
-   corrects the value OR simply confirms the heuristic's guess as-is** (so the NEXT run of this
-   wizard doesn't ask again either way; calling this only on an actual *change* would leave a
-   confirmed-but-unchanged field looking identical to a never-asked one), via the
-   `apply-heuristic-correction` subcommand — never a raw `json.dump`/`open`, which bypasses this
-   repo's atomic, validated cache-write path:
-   ```bash
-   cat > "$SCRATCH/heuristic-correction.json" <<'JSON'
-{"is_router": false}
-JSON
-   python3 "$TOOLS_PY" apply-heuristic-correction --catalog-path "$CATALOG_JSON" \
-     --model-id "<key>" --corrections-json "$SCRATCH/heuristic-correction.json"
-   ```
-   This call marks `is_router` confirmed in the catalog entry's `heuristic_confirmed` list
-   regardless of whether `false` differs from the heuristic's original guess — the JSON body
-   above always carries the field's FINAL value (corrected or reconfirmed), and
-   `apply_heuristic_corrections` records every key present in that body as confirmed.
+9. Router aliases defined by the owner (for example `placeholder-alias-1`) are assumed router with fallback quota and get no heuristic question; the report shows them as assumed.
 

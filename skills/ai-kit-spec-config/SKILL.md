@@ -118,6 +118,12 @@ Show its lines to the user as they are. A `warning:` line is a finding to relay,
 and an `(unconfirmed: ...)`, `config file only` or `not checked` line is never upgraded to
 "verified" or called "stale".
 
+### Step 1.5 — Catalog
+
+Run the catalog flow and **MANDATORY read** [`references/catalog.md`](references/catalog.md).
+Show the `catalog-report` output and its attribution lines verbatim, then continue to Step 2.
+The coding and review proposal belongs to Phase 36 and is not described here.
+
 ### Step 2 — Ask
 
 Before registering any candidate, weigh it against two judgment calls, not
@@ -177,10 +183,9 @@ through this catalog/ranking flow — continue at Step 2.3/2.7.
 models, calling `fetch-model-catalog`, ranking, or presenting candidates, read
 [`references/cli-model-selection.md`](references/cli-model-selection.md) completely
 from start to finish. **NEVER set any range limits when reading this file.** It is the
-8-item procedure (group → extra-candidate → fetch → unmatched-confirm → rank → present
-→ code-index-alternative → heuristic-confirm) plus the exact command templates. Skipping
+9-item procedure (snapshot and catalog path → extra-candidate → fetch → unmatched-confirm → catalog-report → rank → present → code-index-alternative → router-alias note) plus the exact command templates. Skipping
 it reproduces live landmines this wizard already hit: guessing a codex id
-(`gpt-5.6-sol-high` instead of `gpt-5.6-sol`), dumping a ~200-id cursor list
+(`placeholder-model-1-high` instead of `placeholder-model-1`), dumping a ~200-id cursor list
 ungrouped, ranking before unmatched confirmation, and silently dropping every
 single-provider-CLI candidate by rebuilding `discovered` from `$RUNTIMES_JSON` alone.
 
@@ -217,8 +222,7 @@ python3 "$TOOLS_PY" build-command --runtime <id> \
   [--effort <e>] [--service-tier <t>] [--mode plan|ask]
 ```
 **codex's `model` field must be the BARE model id — never suffix an effort/tier tag onto it.**
-`codex exec -m gpt-5.6-sol-high` is REJECTED outright ("The
-'gpt-5.6-sol-high' model is not supported..."); the correct pair is `model = "gpt-5.6-sol"`
+A live check confirmed that codex rejects an effort suffix on the model id; shown here with invented placeholders: `codex exec -m placeholder-model-1-high` is rejected, and the correct pair is `model = "placeholder-model-1"`
 with `effort = "high"` stored on the entry (the runner passes it as `--codex-effort`, not in
 the model string). This is the opposite convention from cursor below, where effort/fast/context
 ARE baked into the model-id string — do not carry that pattern over to codex. codex has no
@@ -266,9 +270,10 @@ nothing confirms a read-only invocation for it.
 the model id works.** Run:
 ```bash
 python3 "$TOOLS_PY" check-reviewer --key <candidate-key> --model <model-id> \
-  --vendor <vendor> --runtime <id> \
+  --vendor <vendor> --runtime <id> --catalog-path <catalog> \
   [--extra-json '<json>']
 ```
+Pass `--catalog-path <catalog>` to `check-reviewer` so the result is recorded as the pair's usability.
 A custom entry (no `runtime`) is tested the same way with `--command '<template>'` instead of
 `--runtime`. This makes one real call through the runner or the custom launcher (the same
 mechanism `probe-quota` uses later) and prints `{"available": bool, "detail": "..."}`. If
@@ -475,5 +480,5 @@ Finally, `rm -rf "$SCRATCH"` (only on a successful write; a failed one keeps it,
 
 ## Evidence
 
-- The bare-model rule for codex was confirmed live on 2026-08-29: `codex exec -m gpt-5.6-sol-high` was rejected ("The 'gpt-5.6-sol-high' model is not supported...").
+- The bare-model rule for codex was confirmed live with a real model id, shown here with invented placeholders: codex rejects an effort suffix on the model id.
 - Until 2026-08-29 an earlier design gave host-run entries an automatic guaranteed-baseline slot in `double` mode regardless of ladder position; a real config hit this and got a silently reordered ladder, so it was removed.

@@ -5,16 +5,16 @@ milestone_name: Skill Refactor
 current_phase: 35
 current_phase_name: Model discovery and catalog
 status: executing
-stopped_at: Completed 35-23-PLAN.md
-last_updated: "2026-11-20T20:45:19.418Z"
+stopped_at: Completed 35-25-PLAN.md
+last_updated: "2026-11-20T21:09:39.959Z"
 last_activity: 2026-11-20
 last_activity_desc: Phase 35 execution started
-state_head: a8f5819490c6166bb84218fba34d7e8aa930137b
+state_head: 75f4da269aea15936f862aca2dd9afd0cbbabd26
 progress:
   total_phases: 40
   completed_phases: 15
   total_plans: 152
-  completed_plans: 150
+  completed_plans: 151
   percent: 38
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 ## Current Position
 
 Phase: 35 (Model discovery and catalog) — EXECUTING
-Plan: 27 of 28
+Plan: 28 of 28
 Status: Ready to execute
 Last activity: 2026-11-20 — Phase 35 execution started
 
@@ -361,6 +361,7 @@ Progress: [████░░░░░░] 38%
 | Phase 35 P22 | 14min | 2 tasks | 4 files |
 | Phase 35 P28 | 9min | 2 tasks | 2 files |
 | Phase 35 P23 | 12min | 2 tasks | 3 files |
+| Phase 35 P25 | 25min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -725,8 +726,8 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-20T20:45:18.419Z
-Stopped at: Completed 35-23-PLAN.md
+Last session: 2026-11-20T21:09:38.930Z
+Stopped at: Completed 35-25-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
