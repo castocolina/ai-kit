@@ -556,7 +556,8 @@ def _build_matched_catalog_entry(inputs: _MatchedMergeInputs) -> dict:
     resolution = inputs.resolution
     matches = inputs.matches
     provider = resolution.provider
-    assert provider is not None
+    if provider is None:
+        raise ValueError("a matched catalog entry needs a provider")
     existing_entry = resolution.existing_entry
     enrich = _matched_enrichment_fields(candidate, ctx, resolution, matches)
     model_id = candidate["model_id"]
@@ -607,7 +608,6 @@ def _merge_matched_catalog_entry(
         return catalog, None, record
     entry = _build_matched_catalog_entry(inputs)
     _apply_runtime_meta(entry, runtime_meta, cli_name, model_id)
-    assert key is not None
     catalog, reason = merge_catalog_entry(catalog, key, entry)
     return catalog, reason, None
 

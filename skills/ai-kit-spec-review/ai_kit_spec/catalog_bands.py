@@ -5,7 +5,7 @@ Every cut is a quartile of this refresh's rows; a value on a cut goes to the hig
 
 import math
 import statistics
-from typing import NamedTuple
+from typing import NamedTuple, TypeGuard
 
 TIERS = ("frontier", "strong", "capable", "light", "unknown")
 COST_BANDS = ("low", "medium", "high", "premium", "free_or_local", "unknown")
@@ -20,7 +20,7 @@ STRENGTH_CATEGORIES = (
 )
 
 
-def _num(value) -> bool:
+def _num(value) -> TypeGuard[float]:
     return (
         isinstance(value, (int, float))
         and not isinstance(value, bool)
@@ -59,7 +59,6 @@ def price_per_million(cost) -> tuple:
     output_price = cost.get("output")
     if not _num(input_price) or not _num(output_price):
         return None, False
-    assert input_price is not None and output_price is not None
     if input_price < 0 or output_price < 0:
         return None, False
     if input_price == 0 and output_price == 0:

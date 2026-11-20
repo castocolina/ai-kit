@@ -154,6 +154,16 @@ class TestModelsConfig(unittest.TestCase):
             models_config.write_models_settings(self.project_path, sources=["lmsys"])
         self.assertEqual(pathlib.Path(self.project_path).read_bytes(), original)
 
+    def test_write_context_rejects_non_table_models(self):
+        original = "models = 5\n"
+        self._write(self.project_path, original)
+        with self.assertRaises(config_io.ConfigError):
+            models_config.write_models_settings(
+                self.project_path,
+                context=[models_config.ContextOverride("pi", "fake/placeholder-model-1", 1000)],
+            )
+        self.assertEqual(pathlib.Path(self.project_path).read_text(encoding="utf-8"), original)
+
     def test_two_writers_keep_one_value(self):
         self._write(self.project_path, "# keep\n")
         errors = []

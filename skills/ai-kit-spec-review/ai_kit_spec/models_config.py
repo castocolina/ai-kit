@@ -83,22 +83,19 @@ def _context(raw) -> tuple:
                 "needs runtime, model and a positive whole tokens value",
             )
         runtime, model, tokens = entry.get("runtime"), entry.get("model"), entry.get("tokens")
-        invalid_text = (
-            not isinstance(runtime, str)
-            or not runtime.strip()
-            or not isinstance(model, str)
-            or not model.strip()
-        )
-        invalid_tokens = (
-            isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0
-        )
-        if invalid_text or invalid_tokens:
+        if not (
+            isinstance(runtime, str)
+            and runtime.strip()
+            and isinstance(model, str)
+            and model.strip()
+            and isinstance(tokens, int)
+            and not isinstance(tokens, bool)
+            and tokens > 0
+        ):
             raise config_io.ConfigError(
                 f"[[models.context]] entry {index}",
                 "needs runtime, model and a positive whole tokens value",
             )
-        assert isinstance(runtime, str) and isinstance(model, str)
-        assert isinstance(tokens, int) and not isinstance(tokens, bool)
         result.append(ContextOverride(runtime, model, tokens))
     return tuple(result)
 
@@ -130,7 +127,8 @@ def _context_dicts(context: tuple) -> list:
 def write_models_settings(path: str, sources=None, cache_days=None, context=None) -> None:
     """Validate and atomically splice provided model settings into a config file."""
     validated_sources = _sources(sources) if sources is not None else None
-    validated_days = _cache_days(cache_days) if cache_days is not None else None
+    if cache_days is not None:
+        _cache_days(cache_days)
     validated_context = _context(context) if context is not None else None
     try:
         if os.path.exists(path):
@@ -142,13 +140,13 @@ def write_models_settings(path: str, sources=None, cache_days=None, context=None
             text = ""
         if validated_sources is not None:
             text = toml_splice.set_table(text, ("models",), {"sources": list(validated_sources)})
-        if validated_days is not None:
-            assert cache_days is not None
+        if cache_days is not None:
             days_to_write = {key: cache_days[key] for key in cache_days}
             text = toml_splice.set_table(text, ("models", "cache_days"), days_to_write)
         if validated_context is not None:
             models_table = parsed.get("models", {})
-            assert isinstance(models_table, dict)
+            if not isinstance(models_table, dict):
+                raise config_io.ConfigError(path, "[models] must be a table")
             existing_context = models_table.get("context", [])
             if validated_context:
                 if existing_context == []:

@@ -199,8 +199,7 @@ def resolve_many(names: list, pool: dict, judge_batch=None) -> dict:
         results[name] = Resolution("unmatched", None, tuple(found), None)
         if found and judge_batch is not None:
             pending.append((name, found))
-    if pending:
-        assert judge_batch is not None
+    if pending and judge_batch is not None:
         answers = judge_batch([(name, found[:5]) for name, found in pending])
         answers = answers if isinstance(answers, list) else []
         for index, (name, found) in enumerate(pending):

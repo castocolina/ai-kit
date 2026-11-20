@@ -574,8 +574,10 @@ def _fetch_catalog_external_sources(
 
 def _claude_seed_provider() -> str:
     row = next(row for row in optional_sources.SEED_ROWS if row.runtime == "claude")
-    assert row.models_dev_provider is not None
-    return row.models_dev_provider
+    provider = row.models_dev_provider
+    if provider is None:
+        raise ValueError("the claude seed row names no models.dev provider")
+    return provider
 
 
 def _finalize_fetch_catalog_meta(

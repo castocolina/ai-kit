@@ -230,9 +230,8 @@ def _usability_problem(row: dict) -> bool:
 
 def _context_problem(row: dict) -> bool:
     context = row.get("context")
-    if fact_problem(context) is not None:
+    if not isinstance(context, dict) or fact_problem(context) is not None:
         return True
-    assert isinstance(context, dict)
     value = context["value"]
     return value is not None and (
         not isinstance(value, int) or isinstance(value, bool) or value <= 0

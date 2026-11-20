@@ -202,7 +202,6 @@ def _aa_edge(entry) -> float | None:
     coding = scores.get("coding_index") if isinstance(scores, dict) else None
     intelligence = scores.get("intelligence_index") if isinstance(scores, dict) else None
     if catalog_bands._num(coding) and catalog_bands._num(intelligence):
-        assert coding is not None and intelligence is not None
         return coding - intelligence
     return None
 
@@ -211,7 +210,6 @@ def _edge(entry, slot, run):
     ratings = slot.get("ratings", {}) if isinstance(slot, dict) else {}
     coding, overall = ratings.get("coding"), ratings.get("overall")
     if catalog_bands._num(coding) and catalog_bands._num(overall):
-        assert coding is not None and overall is not None
         return coding - overall, run.cuts.arena_deltas.get("coding"), "arena"
     edge = _aa_edge(entry) if run.cuts.aa_on else None
     if edge is not None:
