@@ -119,6 +119,8 @@ E2E_MODULES = frozenset({
     "tests.test_curated_config_apply_e2e",
     "tests.test_ai_kit_gsd_curated_config_matrix",
     "tests.test_ai_kit_spec_e2e",
+    # real node --print-argv per runtime: the exec-formula drift check (36-08)
+    "tests.test_ai_kit_spec_exec_formula_e2e",
     "tests.test_ai_kit_gsd_spec_discuss_e2e",
     "tests.test_jev_skill_install_e2e",  # R8: real setup.py runs under a temp HOME
     "tests.test_hook_registry_e2e",  # R10: real setup.py hook runs under a temp HOME
@@ -163,6 +165,7 @@ E2E_RECORDED_SECS = {
     "tests.test_ai_kit_gsd_spec_discuss_e2e": 1,
     "tests.test_ai_kit_project_rules_all_e2e": 1,
     "tests.test_ai_kit_spec_e2e": 1,
+    "tests.test_ai_kit_spec_exec_formula_e2e": 1,
     "tests.test_ai_kit_spec_goal_prompt_e2e": 1,
     "tests.test_cross_ai_runner_e2e": 17,
     "tests.test_cross_ai_selftest_logic_1_e2e": 24,
