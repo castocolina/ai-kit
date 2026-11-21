@@ -18,7 +18,7 @@ its own model:
 A `native` round on Claude Code is unchanged: its round 4/5 bump is subagent-driven-development's
 own Model Selection judgment (the `Agent` tool's `model`), with no ladder. A custom entry (a
 `command` and no `runtime`) never executes (`purpose = "execute"` exits 2 at `resolve-injection`,
-otherwise it is skipped as `review_only`), so it never reaches this rule.
+otherwise it is skipped with route `no_formula`: a custom lane runs in review mode only), so it never reaches this rule.
 
 subagent-driven-development requires rounds 4–5 to "dispatch a fresh implementer on a MORE CAPABLE
 model". Excluding the stuck key and re-walking the ladder does not guarantee that — the next
