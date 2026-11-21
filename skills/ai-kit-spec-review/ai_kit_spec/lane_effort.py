@@ -13,7 +13,7 @@ from ai_kit_spec.model_catalog import split_catalog_meta
 from ai_kit_spec.routing import strip_model_suffix
 from ai_kit_spec.usability import find_runtime_key
 
-# Mirrors of cross-ai.mjs CODEX_EFFORTS and PI_THINKING, pinned by the template test.
+# Python-side level sets; the runner checks a level's shape only (37 D-07).
 RUNNER_CODEX_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
 RUNNER_PI_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 LEVEL_RX = re.compile(r"[a-z][a-z0-9_-]{0,15}")

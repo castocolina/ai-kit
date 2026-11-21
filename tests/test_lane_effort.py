@@ -121,16 +121,12 @@ class TestEffortForm(unittest.TestCase):
                           ("cursor", "placeholder-model-1")):
             self.assertTrue(runner_dispatch.model_id_ok(rt, effort_form(rt, ident, "high").model))
 
-    def test_runner_sets_match_the_template(self):
+    def test_runner_has_no_closed_effort_set(self):
         path = resolve_cross_ai_template_path()
         assert path is not None
         text = Path(path).read_text(encoding="utf-8")
-        for name, levels in (("CODEX_EFFORTS", lane_effort.RUNNER_CODEX_EFFORTS),
-                             ("PI_THINKING", lane_effort.RUNNER_PI_LEVELS)):
-            match = re.search(rf"const {name} = new Set\(\[(.*?)\]\);", text)
-            self.assertIsNotNone(match)
-            assert match is not None
-            self.assertEqual(set(re.findall(r"'([^']+)'", match.group(1))), set(levels))
+        self.assertNotIn("const CODEX_EFFORTS", text)
+        self.assertNotIn("const PI_THINKING", text)
         suffix = RUNTIMES["pi"].model_suffix
         assert suffix is not None
         for level in lane_effort.RUNNER_PI_LEVELS:

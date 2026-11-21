@@ -1219,6 +1219,8 @@ let liveFields = {
   cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean',
   route: 'unknown', rule: '-', pattern: 'none',
 };
+// The settings report, session id and escalation flags the status line's 37 group prints (D-12); main fills it.
+let liveSettings = { report: [], sessionId: null, escalation: { runtime: false, model: false } };
 let finished = false;
 let finishedExit = 1;
 let runDeadline = 0;
@@ -1293,6 +1295,9 @@ function finish(status, fields) {
     `exit=${exit} cli_rc=${fields.cli_rc ?? '-'} elapsed=${elapsed}s out=${fields.out ?? 0} ` +
     `tree=${tree} action=stop route=${route} rule=${rule} pattern=${pattern}` +
     ` attempts=${attempts} cycles=${cycles}`;
+  let group = 'session=- applied=- ignored=- unknown=- escalate=-';
+  try { group = String(statusGroup(liveSettings.report, liveSettings.sessionId, liveSettings.escalation)).trim(); } catch { /* the one status line is printed whatever the group does (Pitfall 4) */ }
+  line += ` ${group}`;
   if (fields.retryAfterS !== undefined && fields.retryAfterS !== null) {
     line += ` retry_after_s=${fields.retryAfterS} cycle=${fields.cycle ?? cycles}`;
   }
@@ -1396,9 +1401,9 @@ const RUNTIMES = {
   pi: {
     bins: ['pi'],
     list: { argv: PI_RPC_ARGS, input: PI_RPC_REQUEST, parse: parsePiListingIds },
-    exec: (m, c) => ['-p', '--model', m, ...(c.adds ? c.adds.effort : piThinkingArgs(m, c)), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
+    exec: (m, c) => ['-p', '--model', m, ...(c.adds?.effort || []), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
       ...(c.profileFlags || [])],
-    review: (m, c) => ['-p', '--model', m, ...(c.adds ? c.adds.effort : piThinkingArgs(m, c)), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
+    review: (m, c) => ['-p', '--model', m, ...(c.adds?.effort || []), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
       ...(c.profileFlags || [])],
     resume: (m, c, sid, mode) => RUNTIMES.pi[mode](m, c),
     parse: (out) => ({ text: out, sessionId: null, error: null }),
@@ -1667,16 +1672,9 @@ function reportLines(report) {
   return report.map((e) => `cross-ai: setting ${e.name}=${cleanSettingValue(e.name, e.value)} ${e.state}${e.reason ? ` reason=${e.reason}` : ''}${e.form ? ` form=${e.form}` : ''}`);
 }
 
-// CONFIG.effort.pi pins thinking unless the model spec already carries a :level suffix
-// (without either, pi runs the user's default, xhigh on some machines).
-function piThinkingArgs(model, ctx) {
-  return ctx.piThinking && !RUNTIMES.pi.modelSuffix.test(model) ? ['--thinking', ctx.piThinking] : [];
-}
-
 function withCodexKnobs(argv, ctx) {
   const out = [...argv];
-  // The run path still passes ctx.codexEffort and ctx.piThinking without adds.
-  if (ctx.adds) out.push(...ctx.adds.effort); else if (ctx.codexEffort) out.push('-c', `model_reasoning_effort=${ctx.codexEffort}`);
+  out.push(...(ctx.adds?.effort || []));
   if (ctx.adds) out.push(...ctx.adds.context);
   if (ctx.codexServiceTier) out.push('-c', `service_tier=${ctx.codexServiceTier}`);
   return out;
@@ -4970,12 +4968,13 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const tmp = makeTemp('cross-ai-');
   const ctx = {
     cwd: process.cwd(), sid: crypto.randomUUID(), outFile: path.join(tmp, 'last-message.md'),
-    codexEffort: opts.codexEffort, codexServiceTier: opts.codexServiceTier,
+    adds: opts.adds, codexServiceTier: opts.codexServiceTier,
     cursorMode: opts.cursorMode,
-    piThinking: opts.piThinking, codexSandbox: opts.codexSandbox,
+    codexSandbox: opts.codexSandbox,
     profileFlags: opts.profileFlags || [],
     promptArg: '<prompt>',
   };
+  if (opts.sessionId) ctx.sid = opts.sessionId;
   const env = childEnv(rt.env, process.env);
   // A resume argv is checked against the runtime's own resume formula, so its session flag is
   // trusted and only extras beyond the formula count as a widening.
@@ -4990,10 +4989,12 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     return { ok: false, status: 'usage', exit: 2, cli_rc: '-', outBytes: 0 };
   };
   if (rt.argvPrompt) ctx.promptArg = argvPromptElement(prompt);
-  let argv = withExtra(name, rt[mode](model, ctx));
-  const initialProblem = reviewProblem(argv);
+  // The first attempt spawns the argv the settings report was confirmed against (SPEC R2, R7).
+  const first = opts.resume && opts.sessionId ? sameSessionArgv(name, rt, model, ctx, opts.sessionId, mode, prompt) : null;
+  let argv = first ? first.argv : withExtra(name, rt[mode](model, ctx));
+  const initialProblem = reviewProblem(argv, first ? opts.sessionId : null);
   if (initialProblem) return refuseReview(initialProblem);
-  let input = rt.argvPrompt ? null : prompt;
+  let input = first ? first.input : (rt.argvPrompt ? null : prompt);
   // The dirty-tree gate runs once, when a fresh series opens, and its input covers every
   // call of that series. Re-running it mid-series would see the series' own edits.
   let seriesInput = prompt;
@@ -5160,7 +5161,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     };
   };
   try {
-    if (persisted && persisted.task_digest === digest && persisted.last_sid) {
+    if (!opts.callSessionId && persisted && persisted.task_digest === digest && persisted.last_sid) {
       ctx.sid = persisted.last_sid;
       // A re-entry repeats the task on the saved session, so the session gets the prompt
       // itself; the resume note would hide it.
@@ -5515,8 +5516,6 @@ function strictJson(text) {
   return value;
 }
 
-const CODEX_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
-const PI_THINKING = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const CURSOR_MODES = new Set(['ask', 'plan']);
 const ROUTE_VALUES = new Set(['router', 'unknown']);
 // D-07 level token.
@@ -6398,7 +6397,7 @@ process.stdin.on('data', () => {}).on('end', () => {
 
 const STATUS_HEAD_RE = new RegExp(
   '^(.* action=stop)(?: (route=\\S+ rule=\\S+ pattern=\\S+))?' +
-  '(?: (attempts=\\S+ cycles=\\S+))?(?: (retry_after_s=\\S+ cycle=\\S+))?(?: upstream=\\S+)?$',
+  '(?: (attempts=\\S+ cycles=\\S+))?(?: (session=\\S+ applied=\\S+ ignored=\\S+ unknown=\\S+ escalate=\\S+))?(?: (retry_after_s=\\S+ cycle=\\S+))?(?: upstream=\\S+)?$',
 );
 
 function statusLineOk(stderr, pattern) {
@@ -6438,12 +6437,13 @@ function statusTail(stderr) {
   const line = stderr.split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
   const parts = STATUS_HEAD_RE.exec(line);
   if (!parts || !parts[2]) return null;
-  const tail = [parts[2], parts[3], parts[4]].filter(Boolean).join(' ');
+  const tail = [parts[2], parts[3], parts[4], parts[5]].filter(Boolean).join(' ');
   const tok = Object.fromEntries(tail.split(' ').map((t) => t.split('=')));
   return {
     route: tok.route, rule: tok.rule, pattern: tok.pattern,
     attempts: tok.attempts, cycles: tok.cycles,
     retry_after_s: tok.retry_after_s, cycle: tok.cycle,
+    session: tok.session, applied: tok.applied, ignored: tok.ignored, unknown: tok.unknown, escalate: tok.escalate,
   };
 }
 
@@ -12983,7 +12983,147 @@ async function blackBoxSelfTest(listOnly = false) {
           return JSON.stringify(argv) === JSON.stringify(want) ? null : `argv=${JSON.stringify(argv)}`;
         },
       },
+      {
+        name: 'settings-run-lines', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const lines = r.stderr.split('\n');
+          if (!lines.includes('cross-ai: setting model=fake/ok applied') ||
+              !lines.includes('cross-ai: setting role=execute applied')) return 'missing applied settings';
+          const last = lines.reduce((n, line, i) => line.startsWith('cross-ai: setting ') ? i : n, -1);
+          const first = lines.findIndex((line) => line.startsWith('cross-ai: cli=pi '));
+          if (first < 0 || last >= first) return 'settings not before cli';
+          const tail = statusTail(r.stderr);
+          if (!tail || tail.escalate !== '-' || tail.unknown === undefined ||
+              !tail.applied?.split(',').includes('model') || !tail.applied.split(',').includes('role')) return 'invalid settings status';
+          return null;
+        },
+      },
 
+      {
+        name: 'settings-effort-equals-config', kind: 'logic',
+        config: { effort: { pi: 'high' } },
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--effort', 'high'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: setting effort='));
+          if (lines.length !== 1 || lines[0] !== 'cross-ai: setting effort=high applied') return `effort lines=${JSON.stringify(lines)}`;
+          const line = (r.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: argv='));
+          if (!line) return 'missing argv';
+          const argv = JSON.parse(line.slice('cross-ai: argv='.length));
+          const i = argv.indexOf('--thinking');
+          return i >= 0 && argv[i + 1] === 'high' && argv.filter((a) => a === '--thinking').length === 1 ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
+      {
+        name: 'settings-config-effort-claude', kind: 'logic',
+        config: { effort: { claude: 'high' } },
+        args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-ok'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* tree=clean action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n');
+          if (!lines.includes('cross-ai: setting effort=high applied')) return 'missing effort line';
+          const line = lines.find((l) => l.startsWith('cross-ai: argv='));
+          if (!line) return 'missing argv';
+          const argv = JSON.parse(line.slice('cross-ai: argv='.length));
+          const i = argv.indexOf('--effort');
+          return i >= 0 && argv[i + 1] === 'high' ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
+      {
+        name: 'settings-context-not-fed', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--context', '1m'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n');
+          if (!lines.includes('cross-ai: setting context=1m ignored reason=no_form')) return 'missing context line';
+          const line = lines.find((l) => l.startsWith('cross-ai: argv='));
+          if (!line) return 'missing argv';
+          const argv = JSON.parse(line.slice('cross-ai: argv='.length));
+          return !argv.includes('--context') && !argv.some((a) => a.includes('1m')) ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
+      {
+        name: 'settings-status-model-as-called', kind: 'logic',
+        args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--effort', 'high'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=cursor model=fake-ok-cursor exit=0 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          const line = (r.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: argv='));
+          if (!line) return 'missing argv';
+          const argv = JSON.parse(line.slice('cross-ai: argv='.length));
+          const id = 'fake-ok-cursor' + '[effort=high]';
+          return argv.includes(id) && ctx.calls.includes('cursor-agent ' + id) ? null : `argv or calls=${JSON.stringify(ctx.calls)}`;
+        },
+      },
+      {
+        name: 'escalate-echo-both', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--escalate-runtime', '--escalate-model'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n');
+          for (const key of ['runtime', 'model']) {
+            const hits = lines.filter((l) => new RegExp(`^cross-ai: setting escalate_${key}=\\S+ ignored reason=recorded_only$`).test(l));
+            if (hits.length !== 1) return `escalate ${key} lines=${hits.length}`;
+          }
+          const tail = statusTail(r.stderr || '');
+          return tail?.escalate === 'runtime,model' && ['escalate_runtime', 'escalate_model'].every((k) => tail.ignored?.split(',').includes(k)) ? null : `tail=${JSON.stringify(tail)}`;
+        },
+      },
+      {
+        name: 'escalate-echo-model-only', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--escalate-model'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail?.escalate === 'model' && !(r.stderr || '').split('\n').some((l) => l.startsWith('cross-ai: setting escalate_runtime')) ? null : `tail=${JSON.stringify(tail)}`;
+        },
+      },
+      {
+        name: 'escalate-one-spawn', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/auth', '--escalate-runtime', '--escalate-model'], exit: 69,
+        status: /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 .* action=stop$/,
+        check: async (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi auth').length !== 1) return `calls=${JSON.stringify(ctx.calls)}`;
+          const lane = sameLane(ctx, 'pi', 'fake/auth');
+          if (lane) return lane;
+          const plain = await runCaseProcess({ args: ['--runtime', 'pi', '--model', 'fake/auth'] }, ctx);
+          return plain.status === 69 ? null : `plain status=${plain.status}`;
+        },
+      },
+      {
+        name: 'status-group-before-retry', kind: 'logic', config: { retry: { ...HARD_TIER_RETRY } },
+        args: ['--runtime', 'pi', '--model', 'fake/event400'], exit: 75,
+        status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 .* action=stop$/,
+        check: (r) => {
+          const line = (r.stderr || '').split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
+          if (!/ attempts=\d+ cycles=\d+ session=\S+ applied=\S+ ignored=\S+ unknown=\S+ escalate=\S+ retry_after_s=\d+ cycle=\d+$/.test(line)) return `status=${line}`;
+          const tail = statusTail(r.stderr || '');
+          return tail?.retry_after_s === '600' && tail.escalate === '-' ? null : `tail=${JSON.stringify(tail)}`;
+        },
+      },
+      {
+        name: 'settings-session-first-argv', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--session-id', 'placeholder-sid-1'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: async (r, ctx) => {
+          if (!(r.stderr || '').split('\n').includes('cross-ai: setting session=placeholder-sid-1 applied')) return 'missing session line';
+          const rows = () => readOr(ctx.env.FAKE_SIDS, '').split('\n').filter(Boolean).map((l) => l.split(' '));
+          if (rows().length !== 1 || rows()[0][0] !== 'placeholder-sid-1') return `sids=${JSON.stringify(rows())}`;
+          const cursor = await runCaseProcess({ args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--session-id', 'c1'] }, ctx);
+          const lines = (cursor.stderr || '').split('\n');
+          const line = lines.find((l) => l.startsWith('cross-ai: argv='));
+          if (cursor.status !== 0 || !lines.includes('cross-ai: setting session=c1 applied') || !line) return 'cursor session or status';
+          const argv = JSON.parse(line.slice('cross-ai: argv='.length));
+          if (JSON.stringify(argv.slice(-2)) !== JSON.stringify(['--resume', 'c1'])) return `cursor argv=${JSON.stringify(argv)}`;
+          const pi = await runCaseProcess({ args: ['--runtime', 'pi', '--model', 'fake/ok'] }, ctx);
+          const piLine = (pi.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: argv='));
+          if (pi.status !== 0 || !piLine) return 'pi status or argv';
+          const piArgv = JSON.parse(piLine.slice('cross-ai: argv='.length));
+          const i = piArgv.indexOf('--session-id');
+          return i >= 0 && rows().length === 2 && rows()[1][0] === piArgv[i + 1] ? null : `sids=${JSON.stringify(rows())}`;
+        },
+      },
     ];
 
     const unkinded = cases.filter((c) => c.kind !== 'logic' && c.kind !== 'runtime').map((c) => c.name);
@@ -13024,6 +13164,8 @@ async function blackBoxSelfTest(listOnly = false) {
   }
 }
 
+function callOf(o, name, model, newSessionId) { return { model, effort: o.effort, context: o.context, sessionId: o.sessionId, newSessionId, sandbox: o.mode === 'exec' && Boolean(o.codexSandbox), configEffort: (CONFIG.effort || {})[name] ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel }; }
+
 async function main(argv) {
   runStartedMs = Date.now();
   finished = false;
@@ -13031,6 +13173,7 @@ async function main(argv) {
     cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean',
     route: 'unknown', rule: '-', pattern: 'none',
   };
+  liveSettings = { report: [], sessionId: null, escalation: { runtime: false, model: false } };
   let o;
   try { o = parseArgs(argv); } catch (e) {
     log(`cross-ai: ${e.message}`);
@@ -13062,12 +13205,6 @@ async function main(argv) {
   const c = {
     name, rt, model,
     bin: resolveBin(rt, process.env.PATH || ''),
-  };
-  // Baked per-runner effort (the plan's selection); --codex-effort still wins for codex.
-  const effort = CONFIG.effort || {};
-  const knobs = {
-    codexEffort: o.codexEffort ?? (CODEX_EFFORTS.has(effort.codex) ? effort.codex : null),
-    piThinking: PI_THINKING.has(effort.pi) ? effort.pi : null,
   };
   if (o.mode === 'exec' && !rt.exec) {
     log(`cross-ai: ${name} is review-only (no exec formula)`);
@@ -13103,7 +13240,7 @@ async function main(argv) {
     log('cross-ai: --codex-sandbox applies to exec mode only; review already runs read-only');
   }
   if (o.printArgv) {
-    const plan = c.model ? planSettings(rt, o.mode, { model: c.model, effort: o.effort, context: o.context, sessionId: o.sessionId, newSessionId: '<sid>', sandbox: o.mode === 'exec' && Boolean(o.codexSandbox), configEffort: effort[name] ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel }) : null;
+    const plan = c.model ? planSettings(rt, o.mode, callOf(o, name, c.model, '<sid>')) : null;
     const ctx = {
       cwd: process.cwd(), sid: plan ? (plan.sessionId ?? '<sid>') : '<sid>', outFile: '<tmp>/last-message.md',
       adds: plan ? plan.adds : undefined, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
@@ -13117,6 +13254,8 @@ async function main(argv) {
     if (plan && argvOut) {
       confirmReport(plan.report, argvOut, '', o.mode);
       for (const line of reportLines(plan.report)) log(line);
+      liveSettings.report = plan.report;
+      liveSettings.escalation = { runtime: Boolean(o.escalateRuntime), model: Boolean(o.escalateModel) };
       log(`cross-ai: model-id ${redactKeyShapes(String(plan.model).replace(/[\x00-\x1f\x7f-\x9f]/g, ''))}`);
       const rung1 = sameSessionArgv(name, rt, plan.model, ctx, '<sid>', o.mode);
       if (rung1) log(`cross-ai: rung1 ${name} argv=${JSON.stringify(rung1.argv)}`);
@@ -13199,7 +13338,7 @@ async function main(argv) {
   if (o.mode === 'review' && c.model) {
     const probe = {
       cwd: process.cwd(), sid: '<sid>', outFile: '<tmp>/last-message.md',
-      cursorMode: o.cursorMode, piThinking: knobs.piThinking, profileFlags,
+      cursorMode: o.cursorMode, profileFlags,
       promptArg: '<prompt>',
     };
     const bare = c.rt.review(c.model, probe);
@@ -13211,15 +13350,24 @@ async function main(argv) {
       return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
   }
+  // SPEC R2: one plan per call; lines print after the review-argv check and before the listing preflight and the spawn.
+  const plan = planSettings(c.rt, o.mode, callOf(o, c.name, c.model, crypto.randomUUID()));
+  const runCtx = { cwd: process.cwd(), sid: plan.sessionId ?? '<sid>', outFile: '<tmp>/last-message.md', codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null, profileFlags, promptArg: '<prompt>', adds: plan.adds };
+  const resumed = plan.resume && plan.sessionId ? sameSessionArgv(c.name, c.rt, plan.model, runCtx, plan.sessionId, o.mode) : null;
+  const firstArgv = resumed ? resumed.argv : withExtra(c.name, c.rt[o.mode](plan.model, runCtx));
+  const report = confirmReport(plan.report, firstArgv, '', o.mode) || plan.report;
+  for (const line of reportLines(report)) log(line);
+  liveSettings.report = report;
+  liveSettings.escalation = { runtime: Boolean(o.escalateRuntime), model: Boolean(o.escalateModel) };
   const listEnv = childEnv(c.rt.env, process.env);
   const listing = await listModels(c.rt, c.bin, listEnv, runDeadline);
   if (listing.ok) {
-    const listed = c.rt.modelSuffix ? c.model.replace(c.rt.modelSuffix, '') : c.model;
-    if (listed !== c.model) {
-      log(`cross-ai: ${c.name} preflight checks ${listed}; the suffix ${c.model.slice(listed.length)} is not validated`);
+    const listed = c.rt.modelSuffix ? plan.model.replace(c.rt.modelSuffix, '') : plan.model;
+    if (listed !== plan.model) {
+      log(`cross-ai: ${c.name} preflight checks ${listed}; the suffix ${plan.model.slice(listed.length)} is not validated`);
     }
     if (!listing.ids.includes(listed)) {
-      log(`cross-ai: ${c.name} bad_model (${c.model} not in model list)`);
+      log(`cross-ai: ${c.name} bad_model (${plan.model} not in model list)`);
       return reportAndFinish('bad_model', {
         ...liveFields, cli: c.name, model: c.model, tree: 'clean', cli_rc: '-',
       });
@@ -13232,9 +13380,10 @@ async function main(argv) {
   }
   // From here until the next snapshot nothing proves the tree clean (CR-03).
   liveFields.tree = 'unknown';
-  const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, {
-    beforeSig: noTree ? null : stateSig(before), codexEffort: knobs.codexEffort,
-    piThinking: knobs.piThinking, codexServiceTier: o.codexServiceTier,
+  const r = await runCli(c.name, c.rt, c.bin, plan.model, o.mode, prompt, {
+    beforeSig: noTree ? null : stateSig(before),
+    adds: plan.adds, sessionId: plan.sessionId ?? null, resume: Boolean(plan.resume), callSessionId: o.sessionId ?? null,
+    codexServiceTier: o.codexServiceTier,
     cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
     route: liveFields.route, retry: resolved.retry, capS: resolved.capS,
     profileFlags,
