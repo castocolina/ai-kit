@@ -197,7 +197,7 @@ python3 "$TOOLS_PY" build-command --runtime <id> \
 ```
 **codex's `model` field must be the BARE model id — never suffix an effort/tier tag onto it.**
 A live check confirmed that codex rejects an effort suffix on the model id; shown here with invented placeholders: `codex exec -m placeholder-model-1-high` is rejected, and the correct pair is `model = "placeholder-model-1"`
-with `effort = "high"` stored on the entry (the runner passes it as `--codex-effort`, not in
+with `effort = "high"` stored on the entry (the lane passes it to the runner as `--effort`, and the runner writes codex's own effort setting, not in
 the model string). For cursor below, fast and context sit in the model-id string and the runner composes
 the lane's effort into it at dispatch — never carry that pattern over to codex. codex has no
 `models`/`list-models` subcommand (confirmed via `codex --help`), but `detect-runtimes`

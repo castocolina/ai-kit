@@ -444,7 +444,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   quota errors" means 5xx on every lane and quota on confirmed router lanes only; a direct lane keeps the 2026-11-02 rule (a quota
   error stops at once). Evidence: 34 router cooldowns, 24 under 2 minutes and 8 over 4 hours; recorded in
   `38.1-RETRY-POLICY.md`)*
-- [ ] **RUN-12**: Where herdr is available at runtime (`HERDR_ENV=1` and the `herdr` CLI), the runner may run a lane in a tab it
+- [x] **RUN-12**: Where herdr is available at runtime (`HERDR_ENV=1` and the `herdr` CLI), the runner may run a lane in a tab it
   opens and closes what it opened when the lane ends; the lane's command line, settings, session id, classification and exit codes
   are identical to the headless run, and the headless path stays the unchanged default, tested without herdr, with `--host none`
   and with `AIKIT_HOST=none`. A pane has no exit code, so a hosted lane reports through its own files (output, error, exit code),
@@ -1130,7 +1130,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-09 | Phase 38.1 | Pending |
 | RUN-10 | Phase 38.1 | Pending |
 | RUN-11 | Phase 38.1 | Pending |
-| RUN-12 | Phase 37 | Pending |
+| RUN-12 | Phase 37 | Complete |
 | RUN-13 | Phase 38 | Pending |
 | RUN-14 | Phase 38.1 | Pending |
 | RUN-15 | Phase 39.1 | Pending |

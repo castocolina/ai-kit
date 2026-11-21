@@ -11,7 +11,7 @@ source: live smoke test against a real installed claude CLI, piping a
 
 # claude — reviewer profile
 
-The runner has a review formula and an execute formula for `claude`. The execute formula runs with full permissions, like every other execute runtime, and is labelled unverified until a live probe is recorded; the runner then prints a note on every execute call. ai-kit's routing still skips an exec-mode `claude` candidate with route `no_formula` until it reads the runner's own `--describe` fact: a fact about what ai-kit has recorded, not a table flag. Advice (seed row, unverified): `claude` is usually the main agent on this host, so it is more often a review target than an executor.
+The runner has a review formula and an execute formula for `claude`. The execute formula runs with full permissions, like every other execute runtime, and is labelled unverified until a live probe is recorded; the runner then prints a note on every execute call. Routing skips an exec-mode `claude` candidate with route `no_formula` only when the recorded runner fact (the runner's `--describe`, stored at detection) says the runner copy has no exec formula: a fact about the runner, not a table flag. Advice (seed row, unverified): `claude` is usually the main agent on this host, so it is more often a review target than an executor.
 
 The runner's review formula (review mode) is:
 
