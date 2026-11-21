@@ -12,6 +12,7 @@ from ai_kit_spec import (
     catalog_cmds,
     catalog_fetch,
     config_migrate,
+    config_status,
     jev_names,
     optional_sources,
     provider_check,
@@ -454,6 +455,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _register_report_parsers(sub)
     _register_dispatch_parsers(sub)
     catalog_cmds.register_parsers(sub)
+    config_status.register_parsers(sub)
     return parser
 
 def _cmd_cache_path(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -1196,6 +1198,7 @@ _COMMANDS = {
     "dispatch-reviewer": _cmd_dispatch_reviewer,
     "check-reviewer": _cmd_check_reviewer,
     **catalog_cmds.COMMANDS,
+    **config_status.COMMANDS,
 }
 
 def _dispatch(argv: list, deps: CliDeps) -> int:
