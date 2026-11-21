@@ -1,0 +1,8 @@
+{
+ "version": "2026.11.13",
+ "recorded": "2026-11-21",
+ "commands": [
+  "cursor-agent --version",
+  "cursor-agent --help"
+ ]
+}

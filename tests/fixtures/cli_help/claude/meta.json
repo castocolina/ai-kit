@@ -1,0 +1,8 @@
+{
+ "version": "2.1.330",
+ "recorded": "2026-11-21",
+ "commands": [
+  "claude --version",
+  "claude --help"
+ ]
+}

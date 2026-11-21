@@ -1,0 +1,9 @@
+{
+ "version": "1.0.112",
+ "recorded": "2026-11-21",
+ "commands": [
+  "copilot --version",
+  "copilot --help",
+  "copilot skill --help"
+ ]
+}

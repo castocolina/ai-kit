@@ -1,0 +1,10 @@
+{
+ "version": "0.170.0",
+ "recorded": "2026-11-21",
+ "commands": [
+  "codex --version",
+  "codex --help",
+  "codex exec --help",
+  "codex exec resume --help"
+ ]
+}
