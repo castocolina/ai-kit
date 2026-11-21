@@ -20,7 +20,7 @@
  * generator will then refuse to overwrite this file silently (sha256 header above).
  *
  * Flags:
- *   --runtime <id>                           the one CLI this call runs
+ *   --runtime <id>                           the one CLI this call runs; an id with no formula is refused unless --argv-file declares its command
  *   --prefer <list>                          alias: only the first entry runs (notice
  *                                            names the rest)
  *   --model <id>                             model for the selected runtime (wins over
@@ -40,7 +40,10 @@
  *   --skill-path <dir>                       repeatable skill path
  *   --skill-name <name>                      repeatable skill name
  *   --mcp-config <file>                      MCP configuration path
- *   --argv-file <path>                       command argv path
+ *   --argv-file <path>                       a JSON array: the command and its arguments for a runtime id with no formula
+ *                                            (the file must lie inside the cwd tree; the command resolves through PATH;
+ *                                            {model}, {effort}, {session} are the only placeholders;
+ *                                            the prompt goes on stdin; a setting with no placeholder is reported no_slot)
  *   --describe                               describe runner capabilities
  *   --tools-profile exec|review|none         named tool set from the runtime's table row
  *                                            (review accepts review or none)
@@ -1517,6 +1520,10 @@ const RUNTIMES = {
   },
 };
 
+// SPEC R4: the only placeholders a declared argv file may hold; the prompt always goes on stdin.
+const ARGV_FILE_PLACEHOLDERS = ['{model}', '{effort}', '{session}'];
+const ARGV_FILE_NO_FORM = Object.freeze({ kind: 'none', style: 'none', flag: null, key: null, valueKind: null, label: Object.freeze({ state: 'unknown', source: 'declared by --argv-file' }) });
+
 // Settings planner (D-11, D-14): rows carry forms as data; one pure planSettings decides argv additions and the report.
 const SETTING_REASONS = ['no_form', 'id_carries', 'unverified_form', 'mode_forbids', 'no_slot', 'recorded_only', 'no_provider_form', 'bad_value', 'no_herdr', 'host_failed'];
 const SETTING_NAMES = ['model', 'provider', 'role', 'effort', 'context', 'session', 'escalate_runtime', 'escalate_model', 'host', 'skill', 'mcp'];
@@ -1633,8 +1640,44 @@ const SETTING_HANDLERS = {
   },
 };
 
+function fillArgvFile(list, model, ctx) {
+  const s = (ctx && ctx.adds && ctx.adds.slots) || {};
+  return list.map((el) => el.replaceAll('{model}', () => model).replaceAll('{effort}', () => s.effort ?? '').replaceAll('{session}', () => s.session ?? ''));
+}
+
+function argvFileAllowed(row, mode) { return !row || typeof row[mode] !== 'function'; }
+
+function argvFileRow(declared) {
+  const formula = (m, c) => fillArgvFile(declared.argv.slice(1), m, c);
+  const forms = Object.fromEntries(Object.keys(RUNTIMES.claude.forms || {}).map((k) => [k, ARGV_FILE_NO_FORM]));
+  return { argvFile: true, slots: declared.slots, argvRest: declared.argv.slice(1), bins: [declared.argv[0]], list: null, exec: formula, review: formula, resume: null, parse: (out) => ({ text: out, sessionId: null, error: null }), modelSuffix: null, modelId: null, profiles: null, reviewExtras: [], env: {}, errorsUnverified: true, forms };
+}
+
+function planArgvFile(plan, row) {
+  const slots = row.slots;
+  const effortEntry = plan.report.find((e) => e.name === 'effort');
+  const sessionEntry = plan.report.find((e) => e.name === 'session');
+  if (slots.effort && !effortEntry) return { ...plan, error: '--argv-file holds {effort} and the call names no effort (pass --effort)' };
+  if (slots.session && !sessionEntry) return { ...plan, error: '--argv-file holds {session} and the call names no session id (pass --session-id)' };
+  const values = { effort: effortEntry?.value ?? null, session: sessionEntry?.value ?? null };
+  const slotElement = (name) => fillArgvFile([row.argvRest.find((el) => el.includes(`{${name}}`))], plan.model, { adds: { slots: values } })[0];
+  const report = plan.report.map((entry) => {
+    if (entry.name === 'provider') {
+      const { reason, proof, ...rest } = entry;
+      return { ...rest, value: '-', state: 'unknown' };
+    }
+    if (['model', 'effort', 'session', 'context'].includes(entry.name)) {
+      const { reason, proof, ...rest } = entry;
+      return slots[entry.name] ? { ...rest, state: 'applied', proof: [slotElement(entry.name)] } : { ...rest, state: 'ignored', reason: 'no_slot' };
+    }
+    return entry;
+  });
+  return { ...plan, report, resume: false, sessionId: slots.session ? sessionEntry.value : null, adds: { ...plan.adds, slots: { effort: slots.effort ? effortEntry.value : null, session: slots.session ? sessionEntry.value : null } } };
+}
+
 // Pure: no fs, env, spawn or clock. role is 'review' | 'exec'. Returns an object so later members (capabilities) fit.
 function planSettings(row, role, call) {
+  if (row.argvFile) return planArgvFile(planSettings({ ...row, argvFile: false }, role, call), row);
   const plan = { model: call.model, adds: { session: [], effort: [], context: [], skills: [], mcp: [] }, sessionId: null, resume: false, report: [], provider: null };
   for (const name of SETTING_NAMES) SETTING_HANDLERS[name]?.(plan, row, role, call);
   for (const entry of plan.report) if (entry.proof === 'model') entry.proof = { slot: plan.model };
@@ -5007,7 +5050,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const initialProblem = reviewProblem(argv, first ? opts.sessionId : null);
   if (initialProblem) return refuseReview(initialProblem);
   let input = first ? first.input : (rt.argvPrompt ? null : prompt);
-  let attemptSid = first ? opts.sessionId : (argv.includes(ctx.sid) ? ctx.sid : null);
+  let attemptSid = rt.argvFile ? (opts.sessionId ?? null) : (first ? opts.sessionId : (argv.includes(ctx.sid) ? ctx.sid : null));
   let unshownNoted = false;
   // The dirty-tree gate runs once, when a fresh series opens, and its input covers every
   // call of that series. Re-running it mid-series would see the series' own edits.
@@ -5423,7 +5466,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         rungLabel = 'reset';
         const retry = newSessionArgv(name, rt, model, ctx, mode, nextInput);
         argv = retry.argv;
-        attemptSid = argv.includes(ctx.sid) ? ctx.sid : null;
+        attemptSid = rt.argvFile ? (opts.sessionId ?? null) : (argv.includes(ctx.sid) ? ctx.sid : null);
         input = retry.input;
       } else {
         ladder.retry += 1;
@@ -5433,7 +5476,8 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         const fresh = gated ? nextInput : prompt;
         const retry = newSessionArgv(name, rt, model, ctx, mode, fresh);
         argv = retry.argv;
-        attemptSid = argv.includes(ctx.sid) ? ctx.sid : null;
+        // An argv-file row rebuilds the same filled argv, so its explicit id (maybe embedded, such as --session=<id>) stays.
+        attemptSid = rt.argvFile ? (opts.sessionId ?? null) : (argv.includes(ctx.sid) ? ctx.sid : null);
         input = retry.input;
       }
     }
@@ -5549,6 +5593,26 @@ function strictJson(text) {
     else if (c === ',') { const frame = stack[stack.length - 1]; if (frame) frame.wantKey = true; }
   }
   return value;
+}
+
+function loadArgvFile(relPath, text = null) {
+  if (text === null) {
+    try { text = readCallFile('--argv-file', relPath, { cwdOnly: true }).text; } catch (e) { return { error: e.message }; }
+  }
+  let argv;
+  try { argv = strictJson(text); } catch { return { error: `--argv-file is not strict JSON: ${relPath}` }; }
+  if (!Array.isArray(argv)) return { error: '--argv-file must hold a JSON array of strings' };
+  if (!argv.length) return { error: '--argv-file holds an empty array; the first element is the command' };
+  for (const [i, el] of argv.entries()) {
+    if (typeof el !== 'string') return { error: `--argv-file element ${i} is not a string` };
+    if (!el) return { error: `--argv-file element ${i} is empty` };
+    if (el.includes('\u0000')) return { error: `--argv-file element ${i} holds a NUL character` };
+    const remainder = ARGV_FILE_PLACEHOLDERS.reduce((s, placeholder) => s.replaceAll(placeholder, ''), el);
+    if (/[{}]/.test(remainder)) return { error: `--argv-file element ${i} holds an unknown placeholder (only {model}, {effort} and {session})` };
+    if (i === 0 && ARGV_FILE_PLACEHOLDERS.some((placeholder) => el.includes(placeholder))) return { error: '--argv-file element 0 is the command and holds no placeholder' };
+  }
+  const slots = Object.fromEntries(['model', 'effort', 'session'].map((name) => [name, argv.slice(1).some((el) => el.includes(`{${name}}`))]));
+  return { argv, slots };
 }
 
 const CURSOR_MODES = new Set(['ask', 'plan']);
@@ -6397,6 +6461,26 @@ process.stdin.on('data', (d) => { input += d; }).on('end', () => {
 `);
 }
 
+function writeFakeDeclared(binDir) {
+  writeExe(binDir, 'placeholder-cli-1', '', String.raw`
+let stdin = '';
+process.stdin.on('data', (d) => { stdin += d; }).on('end', () => {
+  const argv = process.argv.slice(2);
+  log('declared ' + JSON.stringify(argv));
+  if (process.env.FAKE_DECLARED_SEEN) fs.writeFileSync(process.env.FAKE_DECLARED_SEEN, JSON.stringify({ argv, stdin }));
+  const chosen = argOf('--model');
+  if (chosen === 'fake-crash') { process.stderr.write('placeholder failure ' + (process.env.AIKIT_XAI_SENTINEL || '') + '\n'); process.exit(7); }
+  if (chosen === 'fake-edit-then-ok' && !fs.readFileSync('ign/argv.json', 'utf8').includes('changed-command')) {
+    fs.writeFileSync('ign/argv.json', '["changed-command"]');
+    process.stderr.write('circuit_open\n'); process.exit(1);
+  }
+  if (chosen !== 'fake-review') fs.appendFileSync('a.txt', 'declared\n');
+  process.stdout.write('# Summary\nok');
+  process.exit(0);
+});
+`);
+}
+
 function writeFakeCodex(binDir) {
   writeExe(binDir, 'codex', '', String.raw`
 const sub = process.argv.slice(2);
@@ -6871,6 +6955,7 @@ async function blackBoxSelfTest(listOnly = false) {
     writeFakeCodex(binDir);
     writeFakeClaude(binDir);
     writeFakeCopilot(binDir);
+    writeFakeDeclared(binDir);
     for (const name of fs.readdirSync(binDir)) {
       if (name === 'codex') continue;
       const src = path.join(binDir, name);
@@ -7340,6 +7425,162 @@ async function blackBoxSelfTest(listOnly = false) {
           const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
           return line && line.includes('fake/ok') && !line.includes('fake-ok') ? null : 'unexpected argv';
         },
+      },
+      {
+        name: 'argv-file-exec-ok', kind: 'logic',
+        files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}', '--effort={effort}'] },
+        env: { FAKE_DECLARED_SEEN: path.join(tmp, 'declared-exec-ok.json') },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'argv.json', '--model', 'fake-ok', '--effort', 'high', '--context', '1m'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=placeholder-cli-1 model=fake-ok exit=0 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          const seen = JSON.parse(fs.readFileSync(ctx.env.FAKE_DECLARED_SEEN, 'utf8'));
+          if (JSON.stringify(seen.argv) !== JSON.stringify(['--model', 'fake-ok', '--effort=high'])) return 'argv';
+          if (!seen.stdin.startsWith('prompt\n') || seen.argv.some((el) => el.includes('prompt'))) return 'stdin';
+          const lines = (r.stderr || '').split('\n');
+          for (const line of ['cross-ai: setting model=fake-ok applied', 'cross-ai: setting effort=high applied', 'cross-ai: setting context=1m ignored reason=no_slot']) if (!lines.includes(line)) return `missing ${line}`;
+          if (lines.some((line) => line.startsWith('cross-ai: setting provider=') && line !== 'cross-ai: setting provider=- unknown')) return 'provider';
+          return ctx.calls.filter((line) => line.startsWith('declared ')).length === 1 ? null : 'call count';
+        },
+      },
+      {
+        name: 'argv-file-print-argv', kind: 'logic',
+        files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}', '--effort={effort}'] },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'argv.json', '--model', 'fake-ok', '--effort', 'high', '--print-argv'],
+        exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((s) => s.startsWith('placeholder-cli-1\t'));
+          if (line !== `placeholder-cli-1\t${path.join(tmp, 'bin', 'placeholder-cli-1')}\t["--model","fake-ok","--effort=high"]`) return 'argv';
+          return (r.stderr || '').split('\n').includes('cross-ai: rung1 placeholder-cli-1 unavailable') ? null : 'rung1';
+        },
+      },
+      ...[
+        { suffix: 'outside', setup: (c) => { fs.writeFileSync(path.join(c.tmp, 'outside-argv.json'), '["placeholder-cli-1"]'); return null; }, args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', '../outside-argv.json', '--model', 'fake-ok'], text: '--argv-file must name a file inside the working directory: ../outside-argv.json' },
+        { suffix: 'symlink', setup: (c) => { const target = path.join(c.tmp, 'symlink-target.json'); fs.writeFileSync(target, '["placeholder-cli-1"]'); fs.symlinkSync(target, path.join(c.repo, 'argv.json')); return null; }, text: '--argv-file must name a file inside the working directory: argv.json' },
+        { suffix: 'oversize', files: ['placeholder-cli-1', 'x'.repeat(70000)], text: '--argv-file is over 65536 bytes: argv.json' },
+        { suffix: 'invalid-utf8', setup: (c) => { fs.writeFileSync(path.join(c.repo, 'argv.json'), Buffer.from([0x5b, 0x22, 0xff, 0x22, 0x5d])); return null; }, text: '--argv-file is not valid UTF-8: argv.json' },
+        { suffix: 'bom', setup: (c) => { fs.writeFileSync(path.join(c.repo, 'argv.json'), '\uFEFF["placeholder-cli-1"]'); return null; }, text: '--argv-file starts with a byte-order mark: argv.json' },
+        { suffix: 'bad-json', setup: (c) => { fs.writeFileSync(path.join(c.repo, 'argv.json'), '["placeholder-cli-1",'); return null; }, text: '--argv-file is not strict JSON: argv.json', exact: true },
+        { suffix: 'duplicate-key', setup: (c) => { fs.writeFileSync(path.join(c.repo, 'argv.json'), '["placeholder-cli-1",{"a":1,"a":2}]'); return null; }, text: '--argv-file is not strict JSON: argv.json', exact: true },
+        { suffix: 'not-array', files: { command: 'placeholder-cli-1' }, text: '--argv-file must hold a JSON array of strings' },
+        { suffix: 'empty-array', files: [], text: '--argv-file holds an empty array; the first element is the command' },
+        { suffix: 'non-string', files: ['placeholder-cli-1', 3], text: '--argv-file element 1 is not a string' },
+        { suffix: 'empty-element', files: ['placeholder-cli-1', ''], text: '--argv-file element 1 is empty' },
+        { suffix: 'nul-element', files: ['placeholder-cli-1', 'a\u0000b'], text: '--argv-file element 1 holds a NUL character' },
+        { suffix: 'unknown-placeholder', files: ['placeholder-cli-1', '-p', '{prompt}'], text: '--argv-file element 2 holds an unknown placeholder (only {model}, {effort} and {session})' },
+        { suffix: 'command-placeholder', files: ['{model}', '-p'], text: '--argv-file element 0 is the command and holds no placeholder' },
+        { suffix: 'effort-unset', files: ['placeholder-cli-1', '--effort', '{effort}'], text: '--argv-file holds {effort} and the call names no effort (pass --effort)' },
+        { suffix: 'session-unset', files: ['placeholder-cli-1', '--session', '{session}'], text: '--argv-file holds {session} and the call names no session id (pass --session-id)' },
+        { suffix: 'known-runtime', files: ['placeholder-cli-1'], args: ['--runtime', 'pi', '--role', 'execute', '--argv-file', 'argv.json', '--model', 'fake/ok'], text: '--argv-file needs a runtime with no execute formula in the runner; pi has one' },
+      ].map((row) => ({
+        name: `argv-file-refuse-${row.suffix}`, kind: 'logic',
+        args: row.args || ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'argv.json', '--model', 'fake-ok'],
+        ...(row.files ? { files: { 'argv.json': row.files } } : {}), ...(row.setup ? { setup: row.setup } : {}),
+        exit: 2, status: /^AIKIT-XAI status=usage .* action=stop$/,
+        check: (r, ctx) => {
+          const lines = (r.stderr || '').split('\n');
+          if (!lines.some((line) => row.exact ? line === `cross-ai: ${row.text}` : line.includes(`cross-ai: ${row.text}`))) return 'missing refusal';
+          return ctx.calls.some((line) => line.startsWith('declared ')) ? 'unexpected call' : null;
+        },
+      })),
+      {
+        name: 'pure-argv-file-allowed', kind: 'logic', pure: () => {
+          const row = { exec: null, review: () => [] };
+          return argvFileAllowed(undefined, 'exec') && argvFileAllowed(row, 'exec') && !argvFileAllowed(row, 'review') ? null : 'formula eligibility';
+        },
+      },
+      {
+        name: 'pure-argv-file-slot-proof', kind: 'logic', pure: () => {
+          const declared = { argv: ['placeholder-cli-1', '--effort={effort}', '-x', 'high'], slots: { model: false, effort: true, session: false } };
+          const plan = { model: 'fake-ok', adds: { session: [], effort: [], context: [], skills: [], mcp: [] }, sessionId: null, resume: false, report: [{ name: 'model', value: 'fake-ok', state: 'applied', proof: ['fake-ok'] }, { name: 'effort', value: 'high', state: 'ignored', reason: 'no_form' }], provider: null };
+          const out = planArgvFile(plan, argvFileRow(declared));
+          const effort = out.report.find((entry) => entry.name === 'effort');
+          const modelEntry = out.report.find((entry) => entry.name === 'model');
+          if (effort.state !== 'applied' || JSON.stringify(effort.proof) !== '["--effort=high"]') return 'effort proof';
+          if (modelEntry.state !== 'ignored' || modelEntry.reason !== 'no_slot' || 'proof' in modelEntry) return 'model proof';
+          try { confirmReport(out.report, ['--effort=high', '-x', 'high'], ''); } catch { return 'valid proof rejected'; }
+          try { confirmReport(out.report, ['--effort=low', '-x', 'high'], ''); } catch { return null; }
+          return 'unrelated argument proved slot';
+        },
+      },
+      {
+        name: 'argv-file-review-ok', kind: 'logic',
+        files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}', '--session', '{session}'] },
+        env: { FAKE_DECLARED_SEEN: path.join(tmp, 'declared-review-ok.json') },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'review', '--argv-file', 'argv.json', '--model', 'fake-review', '--effort', 'high', '--session-id', 'placeholder-sid-1'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=placeholder-cli-1 model=fake-review exit=0 .* tree=clean action=stop$/,
+        check: (r, ctx) => {
+          const seen = JSON.parse(fs.readFileSync(ctx.env.FAKE_DECLARED_SEEN, 'utf8'));
+          if (JSON.stringify(seen.argv) !== JSON.stringify(['--model', 'fake-review', '--session', 'placeholder-sid-1'])) return 'argv';
+          const lines = (r.stderr || '').split('\n');
+          if (!lines.includes('cross-ai: setting effort=high ignored reason=no_slot') || !lines.includes('cross-ai: setting session=placeholder-sid-1 applied')) return 'settings';
+          return lines.filter((line) => line.startsWith('AIKIT-XAI ')).at(-1)?.includes(' session=placeholder-sid-1 ') ? null : 'session';
+        },
+      },
+      {
+        name: 'argv-file-review-tree-check', kind: 'logic', files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}'] },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'review', '--argv-file', 'argv.json', '--model', 'fake-ok'],
+        exit: 1, status: /^AIKIT-XAI status=contract_violation cli=placeholder-cli-1 .* tree=dirty action=stop$/,
+      },
+      {
+        name: 'argv-file-crash-redacted', kind: 'logic', files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}'] },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'argv.json', '--model', 'fake-crash'],
+        exit: 1, status: /^AIKIT-XAI status=crash cli=placeholder-cli-1 model=fake-crash exit=1 cli_rc=7 .* tree=clean action=stop$/,
+        check: (r, ctx) => {
+          const stderr = r.stderr || ''; const line = stderr.split('\n').filter((s) => s.startsWith('AIKIT-XAI ')).at(-1);
+          if (!line?.includes(' pattern=unverified') || !stderr.includes('placeholder failure') || stderr.includes('sk-aikit-SENTINEL-' + process.pid)) return 'redaction or pattern';
+          return ctx.calls.filter((s) => s.startsWith('declared ')).length === 1 ? null : 'call count';
+        },
+      },
+      {
+        name: 'argv-file-same-argv-twice', kind: 'logic', files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}'] },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'review', '--argv-file', 'argv.json', '--model', 'fake-review'],
+        exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        second: { exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/ },
+        check: (both) => {
+          const first = both.calls1.filter((s) => s.startsWith('declared ')); const second = both.calls2.filter((s) => s.startsWith('declared '));
+          if (first.length !== 1 || second.length !== 1 || first[0] !== second[0]) return 'argv changed';
+          return fs.readFileSync(path.join(both.repo, 'argv.json'), 'utf8') === JSON.stringify(['placeholder-cli-1', '--model', '{model}']) ? null : 'file changed';
+        },
+      },
+      {
+        name: 'argv-file-read-once', kind: 'logic',
+        setup: (c) => {
+          fs.writeFileSync(path.join(c.repo, '.gitignore'), 'ign/\n');
+          fs.mkdirSync(path.join(c.repo, 'ign'));
+          fs.writeFileSync(path.join(c.repo, 'ign', 'argv.json'), JSON.stringify(['placeholder-cli-1', '--model', '{model}', '--session={session}']));
+          for (const args of [['add', '.gitignore'], ['commit', '-q', '-m', 'ignore']]) {
+            const g = spawnSync('git', args, { cwd: c.repo, env: c.env, encoding: 'utf8' });
+            if (g.status !== 0) return `setup git ${args.join(' ')}: ${g.stderr}`;
+          }
+          return null;
+        },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'ign/argv.json', '--model', 'fake-edit-then-ok', '--session-id', 'placeholder-sid-2'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=placeholder-cli-1 model=fake-edit-then-ok exit=0 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          const calls = ctx.calls.filter((s) => s.startsWith('declared ')); const lines = (r.stderr || '').split('\n');
+          if (calls.length !== 2 || calls.some((s) => s !== 'declared ["--model","fake-edit-then-ok","--session=placeholder-sid-2"]')) return 'retry argv';
+          if (lines.some((s) => s.includes('no fresh session is started')) || !lines.filter((s) => s.startsWith('AIKIT-XAI ')).at(-1)?.includes(' session=placeholder-sid-2 ')) return 'session';
+          return fs.readFileSync(path.join(ctx.repo, 'ign', 'argv.json'), 'utf8') === '["changed-command"]' ? null : 'file not changed';
+        },
+      },
+      {
+        name: 'argv-file-session-no-slot', kind: 'logic', files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}'] },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'review', '--argv-file', 'argv.json', '--model', 'fake-review', '--session-id', 'placeholder-sid-3'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=placeholder-cli-1 model=fake-review exit=0 .* tree=clean action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n'); const line = lines.filter((s) => s.startsWith('AIKIT-XAI ')).at(-1) || '';
+          return lines.includes('cross-ai: setting session=placeholder-sid-3 ignored reason=no_slot') && line.includes(' session=- ') && !line.includes(' session=placeholder-sid-3') ? null : 'session';
+        },
+      },
+      {
+        name: 'argv-file-constructor-no-model', kind: 'logic', files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}'] },
+        args: ['--runtime', 'constructor', '--role', 'review', '--argv-file', 'argv.json'], exit: 2, status: /^AIKIT-XAI status=no_model .* action=stop$/,
+        check: (r) => (r.stderr || '').includes('internal error') ? 'internal error' : null,
+      },
+      {
+        name: 'argv-file-constructor-model', kind: 'logic', files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}'] },
+        args: ['--runtime', 'constructor', '--role', 'review', '--argv-file', 'argv.json', '--model', 'fake-review'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=constructor model=fake-review exit=0 .* tree=clean action=stop$/,
       },
       ...[['gate-runtime-constructor', ['--runtime', 'constructor']],
         ['gate-runtime-constructor-model', ['--runtime', 'constructor', '--model-constructor', 'fake-ok']]].map(([name, args]) => ({
@@ -13522,12 +13763,23 @@ async function main(argv) {
   }
   for (const note of picked.notes) log(note);
   const name = picked.name;
-  // SPEC R4: an id with no row is refused for a named fact, never with a list of known runtimes.
-  if (!Object.hasOwn(RUNTIMES, name)) {
+  let declared = null;
+  if (o.argvFile) {
+    if (!argvFileAllowed(ownValue(RUNTIMES, name), o.mode)) {
+      log(`cross-ai: --argv-file needs a runtime with no ${o.mode === 'exec' ? 'execute' : 'review'} formula in the runner; ${name} has one`);
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
+    const loaded = loadArgvFile(o.argvFile);
+    if (loaded.error) {
+      log(loaded.error.startsWith('cross-ai: ') ? loaded.error : `cross-ai: ${loaded.error}`);
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
+    declared = argvFileRow(loaded);
+  } else if (!Object.hasOwn(RUNTIMES, name)) {
     log(`cross-ai: no formula for ${name} in the runner; pass --argv-file, or use a runtime it has a formula for`);
     return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
-  const rt = RUNTIMES[name];
+  const rt = declared || RUNTIMES[name];
   if (o.model !== null && o.models[name] !== undefined) {
     log(`cross-ai: --model wins; ignored --model-${name} ${o.models[name]}`);
   }
@@ -13579,6 +13831,10 @@ async function main(argv) {
   }
   if (o.printArgv) {
     const plan = c.model ? planSettings(rt, o.mode, callOf(o, name, c.model, '<sid>')) : null;
+    if (plan?.error) {
+      log(`cross-ai: ${plan.error}`);
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
     const ctx = {
       cwd: process.cwd(), sid: plan ? (plan.sessionId ?? '<sid>') : '<sid>', outFile: '<tmp>/last-message.md',
       adds: plan ? plan.adds : undefined, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
@@ -13593,7 +13849,7 @@ async function main(argv) {
       confirmReport(plan.report, argvOut, '', o.mode);
       for (const line of reportLines(plan.report)) log(line);
       liveSettings.report = plan.report;
-      liveSettings.sessionId = o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null;
+      liveSettings.sessionId = rt.argvFile ? plan.sessionId : (o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null);
       liveSettings.escalation = { runtime: Boolean(o.escalateRuntime), model: Boolean(o.escalateModel) };
       log(`cross-ai: model-id ${redactKeyShapes(String(plan.model).replace(/[\x00-\x1f\x7f-\x9f]/g, ''))}`);
       const rung1 = sameSessionArgv(name, rt, plan.model, ctx, '<sid>', o.mode);
@@ -13691,6 +13947,10 @@ async function main(argv) {
   }
   // SPEC R2: one plan per call; lines print after the review-argv check and before the listing preflight and the spawn.
   const plan = planSettings(c.rt, o.mode, callOf(o, c.name, c.model, crypto.randomUUID()));
+  if (plan.error) {
+    log(`cross-ai: ${plan.error}`);
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
   const runCtx = { cwd: process.cwd(), sid: plan.sessionId ?? '<sid>', outFile: '<tmp>/last-message.md', codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null, profileFlags, promptArg: '<prompt>', adds: plan.adds };
   const resumed = plan.resume && plan.sessionId ? sameSessionArgv(c.name, c.rt, plan.model, runCtx, plan.sessionId, o.mode) : null;
   const firstArgv = resumed ? resumed.argv : withExtra(c.name, c.rt[o.mode](plan.model, runCtx));
@@ -13698,7 +13958,7 @@ async function main(argv) {
   for (const line of reportLines(report)) log(line);
   liveSettings.report = report;
   const sessionEntry = report.find((e) => e.name === 'session');
-  liveSettings.sessionId = o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null;
+  liveSettings.sessionId = rt.argvFile ? plan.sessionId : (o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null);
   liveSettings.escalation = { runtime: Boolean(o.escalateRuntime), model: Boolean(o.escalateModel) };
   const listEnv = childEnv(c.rt.env, process.env);
   const listing = await listModels(c.rt, c.bin, listEnv, runDeadline);
@@ -13724,7 +13984,8 @@ async function main(argv) {
   const r = await runCli(c.name, c.rt, c.bin, plan.model, o.mode, prompt, {
     beforeSig: noTree ? null : stateSig(before),
     adds: plan.adds, sessionId: plan.sessionId ?? null, resume: Boolean(plan.resume), callSessionId: o.sessionId ?? null,
-    pinSession: Boolean(o.sessionId) && sessionEntry?.state === 'applied',
+    // An argv-file retry re-runs the same filled argv, so its session is kept without the pin (no fresh id exists to refuse).
+    pinSession: !rt.argvFile && Boolean(o.sessionId) && sessionEntry?.state === 'applied',
     codexServiceTier: o.codexServiceTier,
     cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
     route: liveFields.route, retry: resolved.retry, capS: resolved.capS,
