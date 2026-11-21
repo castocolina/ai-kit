@@ -1357,6 +1357,10 @@ process.on('uncaughtException', (e) => {
       ));
 });
 
+// SPEC R6: the live record of claude's permission flag (37-SPIKE.md Q3b); it labels only the flag.
+const CLAUDE_EXEC_PROBE_RECORD = null;
+// SPEC R6: the live record of the whole execute formula and its resume; null keeps it unverified, with a note on every execute call.
+const CLAUDE_EXEC_FORMULA_RECORD = null;
 const RUNTIMES = {
   cursor: {
     bins: ['cursor-agent', 'agent'],
@@ -1465,12 +1469,15 @@ const RUNTIMES = {
     },
   },
   // read-only enforcement not live-verified
+  // execute formula: full permissions like every other execute runtime; labelled by execLabel until a live record of the exact formula and its resume exists (SPEC R6).
   claude: {
     bins: ['claude'],
     list: null,
-    exec: null,
+    exec: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'bypassPermissions', ...(c.adds?.effort || [])],
     review: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'plan', ...(c.adds?.effort || [])],
-    resume: null,
+    resume: (m, c, sid, mode) => [...RUNTIMES.claude[mode](m, c), '--resume', sid],
+    permissionLabel: CLAUDE_EXEC_PROBE_RECORD === null ? { state: 'unverified', source: 'claude permission flag: no live probe record (37-SPIKE.md Q3b)' } : { state: 'verified', source: CLAUDE_EXEC_PROBE_RECORD },
+    execLabel: CLAUDE_EXEC_FORMULA_RECORD === null ? { state: 'unverified', source: 'claude execute formula: no live record of the exact formula and its resume (37-SPIKE.md Q3)' } : { state: 'verified', source: CLAUDE_EXEC_FORMULA_RECORD },
     parse: (out) => {
       const j = parseJson((out || '').trim());
       if (!j || typeof j !== 'object') return { text: '', sessionId: null, error: 'no claude json' };
@@ -1485,7 +1492,7 @@ const RUNTIMES = {
     env: {},
     forms: {
       context: { kind: 'id-suffix', valueKind: null, label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: no model-context flag; the [1m] model suffix is not in the help' } },
-      session: { style: 'minted', resumeFlag: '--resume', label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: "-r, --resume [value] Resume a conversation by session ID or name"; no resume formula in this row yet; resume not live-probed' } },
+      session: { style: 'minted', resumeFlag: '--resume', label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: "-r, --resume [value] Resume a conversation by session ID or name"; resume not live-probed' } },
       effort: { kind: 'flag', flag: '--effort', label: { state: 'verified', source: 'claude 2.1.330 --help 2026-11-21: "--effort <level> Effort level for the current session (low, medium, high, xhigh, max)"' } },
       provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
     },
@@ -5261,9 +5268,9 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const lane = confirmedRoute(route);
       const evidenceOf = (cls) => {
         const rule = cls && cls.rule ? cls.rule : '-';
-        // A runtime whose error wording is uncaptured reports every pattern unverified,
-        // even a wildcard row the catalog itself labels verified.
-        const pattern = rt.errorsUnverified ? 'unverified' : (cls && cls.label ? cls.label : 'none');
+        // A runtime whose error wording is uncaptured, or whose execute formula is unverified on an execute call, reports every pattern unverified.
+        const unverified = rt.errorsUnverified || (mode === 'exec' && rt.execLabel?.state === 'unverified');
+        const pattern = unverified ? 'unverified' : (cls && cls.label ? cls.label : 'none');
         return { route, rule, pattern, upstream: upstreamOf(cls, r, name) };
       };
       if (r.spawnErr) {
@@ -6447,13 +6454,24 @@ process.stdout.write('# Summary\nok');
 }
 
 function writeFakeClaude(binDir) {
-  writeExe(binDir, 'claude', '', String.raw`
+  writeExe(binDir, 'claude', "import { spawnSync } from 'node:child_process';\n", String.raw`
 log('claude ' + argOf('--model'));
 let input = '';
 process.stdin.on('data', (d) => { input += d; }).on('end', () => {
   const given = argOf('--resume');
   recordSession('claude', given, input);
-  const result = { type: 'result', result: 'ok', is_error: false };
+  if (argOf('--model') === 'fake-auth') {
+    process.stderr.write('401 unauthorized\n');
+    console.log(JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized' }));
+    process.exit(1);
+  }
+  const execute = argOf('--permission-mode') !== 'plan';
+  if (execute) {
+    fs.appendFileSync('a.txt', 'claude\n');
+    spawnSync('git', ['add', 'a.txt']);
+    spawnSync('git', ['commit', '-q', '-m', 'fake claude execute']);
+  }
+  const result = { type: 'result', result: execute ? '## Summary\nok' : 'ok', is_error: false };
   if (process.env.FAKE_SESSION_MODE !== 'nosid') result.session_id = given || 'x';
   console.log(JSON.stringify(result));
   process.exit(0);
@@ -10475,15 +10493,23 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
-        name: 'claude-exec-usage',
+        name: 'claude-exec-commit',
         kind: 'logic',
-        args: ['--prefer', 'claude', '--mode', 'exec', '--model-claude', 'fake-ok'],
-        exit: 2,
-        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
-        check: (r) => ((r.stderr || '').includes('claude is review-only') ? null : 'missing review-only line'),
+        args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          if ((r.stderr || '').includes('cross-ai: note: claude execute formula is unverified (no live probe record)') !== (CLAUDE_EXEC_FORMULA_RECORD === null)) return 'incorrect note';
+          const line = (r.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: argv='));
+          if (!line) return 'missing argv';
+          const expected = RUNTIMES.claude.exec('fake-ok', { cwd: ctx.repo, adds: { session: [], effort: [], context: [], skills: [], mcp: [] } });
+          if (JSON.stringify(JSON.parse(line.slice('cross-ai: argv='.length)).slice(0, expected.length)) !== JSON.stringify(expected)) return 'wrong argv';
+          const git = spawnSync('git', ['log', '--format=%s'], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
+          return git.stdout.includes('fake claude execute') ? null : 'missing commit';
+        },
       },
       {
-        // A later review-only entry is ignored, never started, and never rejects the first.
+        // A later --prefer entry is ignored, never started, and never rejects the first.
         name: 'review-only-later-menu-ok',
         kind: 'logic',
         args: ['--prefer', 'pi,claude', '--mode', 'exec', '--model-pi', 'fake/ok', '--model-claude', 'fake-ok'],
@@ -12984,18 +13010,13 @@ async function blackBoxSelfTest(listOnly = false) {
         check: (_r, ctx) => (ctx.calls.length ? `calls=${ctx.calls.join('|')}` : null),
       },
       {
-        name: 'review-only-first-refused',
+        name: 'prefer-first-claude-exec-runs',
         kind: 'logic',
-        args: [
-          '--mode', 'exec', '--prefer', 'claude,pi', '--model-claude', 'fake-ok',
-          '--model-pi', 'fake/ok',
-        ],
-        exit: 2,
-        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        args: ['--mode', 'exec', '--prefer', 'claude,pi', '--model-claude', 'fake-ok', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* tree=dirty action=stop$/,
         check: (r, ctx) => {
-          if (!(r.stderr || '').includes('claude is review-only')) {
-            return 'missing review-only line';
-          }
+          if (!(r.stderr || '').includes('cross-ai: --prefer reads only its first entry (claude); ignored: pi')) return 'missing ignored note';
           return ctx.calls.some((l) => l.startsWith('pi ')) ? 'pi ran' : null;
         },
       },
@@ -13694,6 +13715,32 @@ async function blackBoxSelfTest(listOnly = false) {
           return pi.status === 0 && !line.includes(ctx.env.AIKIT_XAI_SENTINEL) && statusTail(pi.stderr || '')?.session === '-' ? null : 'pi key-shaped id';
         },
       },
+      {
+        name: 'claude-exec-resume', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-ok'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* tree=dirty action=stop$/,
+        check: async (r, ctx) => {
+          if (statusTail(r.stderr || '')?.session !== 'x') return 'first session';
+          const next = await runCaseProcess({ args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-ok', '--session-id', 'x'] }, ctx);
+          if (next.status !== 0 || statusTail(next.stderr || '')?.session !== 'x' || !(next.stderr || '').includes('"--resume","x"')) return 'resume';
+          return JSON.stringify(sessionRows(ctx)) === JSON.stringify([['claude', '-', 'prompt'], ['claude', 'x', 'prompt']]) ? null : 'session rows';
+        },
+      },
+      {
+        name: 'claude-exec-pattern-unverified', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-auth'], exit: 69,
+        status: /^AIKIT-XAI status=auth cli=claude model=fake-auth exit=69 .* action=stop$/,
+        check: async (r, ctx) => {
+          if (statusTail(r.stderr || '')?.pattern !== (CLAUDE_EXEC_FORMULA_RECORD === null ? 'unverified' : 'verified')) return 'execute pattern';
+          const review = await runCaseProcess({ args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-auth'] }, ctx);
+          return review.status === 69 && statusTail(review.stderr || '')?.pattern === 'verified' ? null : 'review pattern';
+        },
+      },
+      {
+        name: 'claude-exec-no-model', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'execute'], exit: 2,
+        status: /^AIKIT-XAI status=no_model cli=claude .* exit=2 .* action=stop$/,
+      },
     ];
 
     const unkinded = cases.filter((c) => c.kind !== 'logic' && c.kind !== 'runtime').map((c) => c.name);
@@ -13735,6 +13782,10 @@ async function blackBoxSelfTest(listOnly = false) {
 }
 
 function callOf(o, name, model, newSessionId) { return { model, effort: o.effort, context: o.context, sessionId: o.sessionId, newSessionId, sandbox: o.mode === 'exec' && Boolean(o.codexSandbox), configEffort: ownValue(CONFIG.effort, name) ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel }; }
+
+function logExecLabel(name, rt, mode) {
+  if (mode === 'exec' && rt.execLabel && rt.execLabel.state === 'unverified') log(`cross-ai: note: ${name} execute formula is unverified (no live probe record)`);
+}
 
 async function main(argv) {
   runStartedMs = Date.now();
@@ -13848,6 +13899,7 @@ async function main(argv) {
     if (plan && argvOut) {
       confirmReport(plan.report, argvOut, '', o.mode);
       for (const line of reportLines(plan.report)) log(line);
+      logExecLabel(name, rt, o.mode);
       liveSettings.report = plan.report;
       liveSettings.sessionId = rt.argvFile ? plan.sessionId : (o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null);
       liveSettings.escalation = { runtime: Boolean(o.escalateRuntime), model: Boolean(o.escalateModel) };
@@ -13956,6 +14008,7 @@ async function main(argv) {
   const firstArgv = resumed ? resumed.argv : withExtra(c.name, c.rt[o.mode](plan.model, runCtx));
   const report = confirmReport(plan.report, firstArgv, '', o.mode) || plan.report;
   for (const line of reportLines(report)) log(line);
+  logExecLabel(c.name, c.rt, o.mode);
   liveSettings.report = report;
   const sessionEntry = report.find((e) => e.name === 'session');
   liveSettings.sessionId = rt.argvFile ? plan.sessionId : (o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null);

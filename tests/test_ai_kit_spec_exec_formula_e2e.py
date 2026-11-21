@@ -1,5 +1,6 @@
 """36 D-08 / SPEC R7: each runner row's exec_formula matches the runner template's own
-exec argv (cross-ai.mjs --print-argv, no model call, nothing written). E2E group: real node.
+exec argv (cross-ai.mjs --print-argv, no model call, nothing written); a row named in
+RUNNER_AHEAD_OF_MIRROR may have a runner formula the mirror lacks. E2E group: real node.
 """
 
 import json
@@ -17,6 +18,9 @@ from ai_kit_spec.detection import RUNTIMES, ExecFormula
 from tests.cross_ai_selftest import TEMPLATE, _real_node_executable, runner_env
 
 _PROBE_ID = {"pi": "fake/ok", "opencode": "fake/ok"}
+# A runner formula the mirror does not list yet is safe (routing stays narrower);
+# the reverse is drift.
+RUNNER_AHEAD_OF_MIRROR = {"claude": "37-10 gives claude an execute formula; the Python mirror keeps it review-only until plan 37-18 reads the runner's --describe fact"}  # noqa: E501
 
 
 def print_argv(node: str, tmp: str, args: list[str]) -> subprocess.CompletedProcess:
@@ -31,6 +35,9 @@ def formula_problems(rid: str, row, proc, model: str) -> list[str]:
         return [f"{rid}: runner row has no exec_formula"]
     head = row.exec_formula.head
     if head is None:
+        if (rid in RUNNER_AHEAD_OF_MIRROR and proc.returncode == 0
+                and proc.stdout.startswith(f"{rid}\t")):
+            return []
         if proc.returncode != 2 or "no exec formula" not in proc.stderr:
             return [f"{rid}: the table says the runner has no exec formula, "
                     f"but the runner exited {proc.returncode}"]
@@ -69,6 +76,16 @@ class TestExecFormulaDrift(unittest.TestCase):
 
 
 class TestExecFormulaDriftNonVacuity(unittest.TestCase):
+    def test_runner_ahead_of_mirror_is_named(self):
+        proc = subprocess.CompletedProcess(
+            [], 0, stdout='claude\tMISSING\t["-p","--model","fake-ok"]\n', stderr="")
+        self.assertEqual([], formula_problems("claude", RUNTIMES["claude"], proc, "fake-ok"))
+        row = RUNTIMES["cursor"]._replace(exec_formula=ExecFormula(None, "test"))
+        proc = subprocess.CompletedProcess(
+            [], 0, stdout='cursor\tMISSING\t["-p","--model","fake-ok"]\n', stderr="")
+        self.assertTrue(formula_problems("cursor", row, proc, "fake-ok")[0].startswith(
+            "cursor: the table says the runner has no exec formula"))
+
     def test_doctored_head_is_drift(self):
         row = RUNTIMES["cursor"]._replace(exec_formula=ExecFormula(("-p", "--wrong"), "test"))
         proc = subprocess.CompletedProcess(

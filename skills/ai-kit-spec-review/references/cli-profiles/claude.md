@@ -11,16 +11,21 @@ source: live smoke test against a real installed claude CLI, piping a
 
 # claude — reviewer profile
 
-The runner has a review formula for `claude` and no exec formula (an exec attempt exits 2), so
-routing skips an exec-mode `claude` candidate off a Claude Code host with route `no_formula`: a
-fact about the runner, not a table flag. Advice (seed row, unverified): `claude` is usually the
-main agent on this host, so it is more often a review target than an executor.
+The runner has a review formula and an execute formula for `claude`. The execute formula runs with full permissions, like every other execute runtime, and is labelled unverified until a live probe is recorded; the runner then prints a note on every execute call. ai-kit's routing still skips an exec-mode `claude` candidate with route `no_formula` until it reads the runner's own `--describe` fact: a fact about what ai-kit has recorded, not a table flag. Advice (seed row, unverified): `claude` is usually the main agent on this host, so it is more often a review target than an executor.
 
 The runner's review formula (review mode) is:
 
 ```text
 claude -p --model <model> --output-format json --permission-mode plan
 ```
+
+The execute formula (execute role) is:
+
+```text
+claude -p --model <model> --output-format json --permission-mode bypassPermissions
+```
+
+A resume adds `--resume <id>` with an id the runner printed in `session=`.
 
 ai-kit does not store that argv. A review entry stores the pair
 `runtime = "claude"` and `model`, and dispatch runs it through the supervised

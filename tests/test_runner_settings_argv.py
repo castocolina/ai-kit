@@ -390,13 +390,13 @@ class TestSessionForms(unittest.TestCase):
                 self.assertTrue(contains_run(argv, ["--sandbox", "workspace-write"]))
                 self.assertNotIn("resume", argv)
 
-    def test_minted_without_resume_formula(self):
+    def test_claude_review_resumes(self):
         rc, argv, lines, _, _, err = print_argv(
             ["--runtime", "claude", "--mode", "review", "--model", "fake-ok",
              "--session-id", "s-1"])
         self.assertEqual(rc, 0, err)
-        self.assertEqual(argv, NO_SETTING_ARGV["claude", "review"])
-        self.assertIn("cross-ai: setting session=s-1 ignored reason=no_form", lines)
+        self.assertEqual(argv, NO_SETTING_ARGV["claude", "review"] + ["--resume", "s-1"])
+        self.assertIn("cross-ai: setting session=s-1 applied", lines)
 
     def test_uuid_session_line_not_redacted(self):
         sid = "00000000-0000-4000-8000-000000000001"
