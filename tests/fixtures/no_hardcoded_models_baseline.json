@@ -694,13 +694,6 @@
    ]
   },
   {
-   "path": "skills/ai-kit-spec-config/evals/evals.json",
-   "cleaned_by": "36",
-   "hits": [
-    "referee router-env/my-coding-lite"
-   ]
-  },
-  {
    "path": "skills/ai-kit-spec-goal-prompt/evals/files/opengsd-mixed/project/planning/config.json",
    "cleaned_by": "backlog",
    "hits": [
