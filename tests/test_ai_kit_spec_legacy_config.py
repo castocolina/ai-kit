@@ -560,7 +560,8 @@ class TestSaveSide(unittest.TestCase):
         for case in cases:
             self.assertIn(case["key"], warning)
             self.assertNotIn(f'key = "{case["key"]}"', rendered)
-        self.assertIn("ladder = []", rendered)
+        self.assertNotIn("ladder", rendered)
+        self.assertNotIn("[lanes.policy", rendered)
         # Render migrates a runtime-less pinned model before validating, so the reject
         # is checked on the validator directly.
         pinned = validate_reviewer_fields({"key": "pinned", "model": "opus"})

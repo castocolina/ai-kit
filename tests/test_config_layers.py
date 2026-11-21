@@ -527,7 +527,7 @@ class TestLaneWriter(unittest.TestCase):
     (D-08, D-24; SPEC R3, R9). It is pure text: no path, HOME or cwd is involved."""
 
     ROSTER = {
-        "policy": {"mode": "single", "ladder": ["a", "b", "c"]},
+        "policy": {"mode": "single", "review": {"ladder": ["a", "b", "c"]}},
         "lanes": [
             {"key": "a", "runtime": "codex", "model": "m1"},
             {"key": "b", "runtime": "codex", "model": "m2"},
@@ -540,13 +540,14 @@ class TestLaneWriter(unittest.TestCase):
         "  max_attempts   =  3\n"
         "[foo]\n"
         "bar = 1\n"
-        "# Priority fallback order (first available reviewer wins the\n"
+        "[lanes.policy]\n"
+        'mode = "single"\n'
+        "# Priority fallback order, review lanes (first available wins the\n"
         "# primary slot):\n"
         "#   1. a\n"
         "#   2. b\n"
         "#   3. c\n"
-        "[lanes.policy]\n"
-        'mode = "single"\n'
+        "[lanes.policy.review]\n"
         'ladder = ["a", "b", "c"]\n'
         "[[lanes.review]]\n"
         'key = "a"\nruntime = "codex"\nmodel = "m1"\n'
@@ -583,7 +584,8 @@ class TestLaneWriter(unittest.TestCase):
     def test_empty_existing_text_gives_only_the_lanes_tables(self):
         parsed = tomllib.loads(config_io.cfg_render_lanes(self.ROSTER, ""))
         self.assertEqual(set(parsed), {"lanes"})
-        self.assertEqual(parsed["lanes"]["policy"], {"mode": "single", "ladder": ["a", "b", "c"]})
+        self.assertEqual(parsed["lanes"]["policy"],
+                         {"mode": "single", "review": {"ladder": ["a", "b", "c"]}})
         self.assertEqual([e["key"] for e in parsed["lanes"]["review"]], ["a", "b", "c"])
 
     def test_reviewers_json_key_is_refused(self):
@@ -603,7 +605,8 @@ class TestLaneWriter(unittest.TestCase):
             text = config_io.cfg_render_lanes(config, "")
         parsed = tomllib.loads(text)["lanes"]
         self.assertEqual([e["key"] for e in parsed["review"]], ["a"])
-        self.assertEqual(parsed["policy"]["ladder"], ["a"])
+        self.assertEqual(parsed["policy"]["review"]["ladder"], ["a"])
+        self.assertNotIn("ladder", parsed["policy"])
         self.assertIn("WARNING: 2 issue(s) found and NOT written", err.getvalue())
         self.assertIn("'route' is decided per run", err.getvalue())
 
@@ -629,27 +632,28 @@ class TestLaneWriter(unittest.TestCase):
         self.assertEqual(parsed["strategy"], "local-only")
         self.assertEqual([e["key"] for e in parsed["review"]], ["a", "b", "c"])
 
-    def test_first_write_puts_the_generated_ladder_block_above_the_policy(self):
-        config = {"policy": {"mode": "single", "ladder": ["a", "b"]},
-                  "lanes": [{"key": "a", "runtime": "codex", "model": "m1"},
-                            {"key": "b", "runtime": "codex", "model": "m2"}]}
+    def test_first_write_puts_the_generated_ladder_block_above_the_role_table(self):
+        config = {"policy": {"mode": "single", "review": {"ladder": ["a", "b"]}},
+                  "lanes": [{"key": "a", "runtime": "codex", "model": "placeholder-model-1"},
+                            {"key": "b", "runtime": "codex", "model": "placeholder-model-2"}]}
         text = config_io.cfg_render_lanes(config, "")
-        self.assertIn("# Priority fallback order (first available reviewer wins the\n"
-                      "# primary slot):\n#   1. a\n#   2. b\n[lanes.policy]\n", text)
-        config["policy"]["ladder"] = ["b", "a"]
+        self.assertIn("# Priority fallback order, review lanes (first available wins the\n"
+                      "# primary slot):\n#   1. a\n#   2. b\n[lanes.policy.review]\n", text)
+        config["policy"]["review"]["ladder"] = ["b", "a"]
         reordered = config_io.cfg_render_lanes(config, text)
-        self.assertIn("#   1. b\n#   2. a\n[lanes.policy]\n", reordered)
+        self.assertIn("#   1. b\n#   2. a\n[lanes.policy.review]\n", reordered)
         changed = self._changed(text, reordered)
         self.assertTrue(changed)
         self.assertTrue(all("#" in line or "ladder" in line for line in changed))
 
-    def test_user_comment_above_the_policy_is_kept_and_no_block_is_added(self):
-        existing = ('# my note\n[lanes.policy]\nmode = "single"\nladder = ["a"]\n'
-                    '[[lanes.review]]\nkey = "a"\nruntime = "codex"\nmodel = "m1"\n')
-        config = {"policy": {"mode": "single", "ladder": ["a"]},
-                  "lanes": [{"key": "a", "runtime": "codex", "model": "m1"}]}
+    def test_user_comment_above_a_role_table_is_kept_and_no_block_is_added(self):
+        existing = ('# my note\n[lanes.policy.review]\nladder = ["a"]\n'
+                    '[[lanes.review]]\nkey = "a"\nruntime = "codex"\n'
+                    'model = "placeholder-model-1"\n')
+        config = {"policy": {"review": {"ladder": ["a"]}},
+                  "lanes": [{"key": "a", "runtime": "codex", "model": "placeholder-model-1"}]}
         text = config_io.cfg_render_lanes(config, existing)
-        self.assertTrue(text.startswith("# my note\n[lanes.policy]\n"))
+        self.assertTrue(text.startswith("# my note\n[lanes.policy.review]\n"))
         self.assertNotIn("# Priority fallback order", text)
 
 

@@ -346,13 +346,13 @@ class TestRenderAndWriteToml(unittest.TestCase):
         import tomllib
 
         config = {
-            "policy": {"mode": "double", "ladder": ["a", "b"]},
+            "policy": {"mode": "double", "review": {"ladder": ["a"]}},
             "lanes": [{"key": "a", "model": "m1", "vendor": "openai"}],
         }
         rendered = cfg_render_lanes(config)
         parsed = tomllib.loads(rendered)
         self.assertEqual(parsed["lanes"]["policy"]["mode"], "double")
-        self.assertEqual(parsed["lanes"]["policy"]["ladder"], ["a", "b"])
+        self.assertEqual(parsed["lanes"]["policy"]["review"]["ladder"], ["a"])
         self.assertEqual(parsed["lanes"]["review"][0]["key"], "a")
 
     def test_write_toml_creates_parent_dirs(self):
@@ -405,17 +405,19 @@ class TestRenderAndWriteToml(unittest.TestCase):
     def test_ladder_renders_as_priority_fallback_comment(self):
         rendered = cfg_render_lanes(
             {
-                "policy": {"mode": "double", "ladder": ["codex-gpt", "sonnet-native"]},
-                "lanes": [],
+                "policy": {"mode": "double", "review": {"ladder": ["a", "b"]}},
+                "lanes": [{"key": "a", "runtime": "codex", "model": "placeholder-model-1"},
+                          {"key": "b", "runtime": "codex", "model": "placeholder-model-2"}],
             }
         )
-        self.assertIn("# Priority fallback order", rendered)
-        self.assertIn("#   1. codex-gpt", rendered)
-        self.assertIn("#   2. sonnet-native", rendered)
+        self.assertIn("# Priority fallback order, review lanes", rendered)
+        self.assertIn("#   1. a", rendered)
+        self.assertIn("#   2. b", rendered)
+        self.assertIn("double mode also seats an independent secondary", rendered)
         import tomllib
 
         parsed = tomllib.loads(rendered)  # comment must not break parsing
-        self.assertEqual(parsed["lanes"]["policy"]["ladder"], ["codex-gpt", "sonnet-native"])
+        self.assertEqual(parsed["lanes"]["policy"]["review"]["ladder"], ["a", "b"])
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_empty_ladder_renders_no_priority_comment(self):
@@ -426,8 +428,9 @@ class TestRenderAndWriteToml(unittest.TestCase):
     def test_single_mode_ladder_comment_omits_secondary_clause(self):
         rendered = cfg_render_lanes(
             {
-                "policy": {"mode": "single", "ladder": ["codex-gpt", "sonnet-native"]},
-                "lanes": [],
+                "policy": {"mode": "single", "review": {"ladder": ["a", "b"]}},
+                "lanes": [{"key": "a", "runtime": "codex", "model": "placeholder-model-1"},
+                          {"key": "b", "runtime": "codex", "model": "placeholder-model-2"}],
             }
         )
         self.assertIn("# Priority fallback order", rendered)
@@ -548,8 +551,8 @@ class TestRenderAndWriteToml(unittest.TestCase):
                 config_io.cfg_trust_store_dir({"HOME": d}), os.path.realpath(path), raw
             )
             resolved = config_io.cfg_resolve(d, {"HOME": d})
-            self.assertNotIn("bad", resolved["policy"]["ladder"])
-            self.assertIn("good", resolved["policy"]["ladder"])
+            self.assertNotIn("bad", resolved["orders"]["review"])
+            self.assertIn("good", resolved["orders"]["review"])
 
 
 class TestCacheCatalogPath(unittest.TestCase):

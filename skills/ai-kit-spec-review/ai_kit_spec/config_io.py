@@ -844,25 +844,22 @@ _RENAMED_REVIEWERS = (
     "(each entry's purpose picks its role: review, execute or both)"
 )
 _LADDER_COMMENT_HEAD = "# Priority fallback order"
+_FLAT_LADDER_NOTE = ("ai-kit-spec: render-toml: the flat policy ladder is written as one order "
+                     "per role ([lanes.policy.review], [lanes.policy.execute])")
 
 
-def _ladder_comment_lines(policy: dict) -> list[str]:
-    """The generated comment above [lanes.policy] that names the fallback order; none for an empty
-    ladder."""
-    ladder = policy.get("ladder") or []
+def _ladder_comment_lines(role: str, ladder: list, double: bool) -> list[str]:
+    """The generated comment above a role table naming its fallback order."""
     if not ladder:
         return []
-    lines = ["# Priority fallback order (first available reviewer wins the"]
-    if policy.get("mode") == "double":
-        lines.append("# primary slot; double mode also seats an independent secondary):")
-    else:
-        lines.append("# primary slot):")
-    lines.extend(f"#   {number}. {key}" for number, key in enumerate(ladder, 1))
-    return lines
+    tail = ("# primary slot; double mode also seats an independent secondary):"
+            if double and role == "review" else "# primary slot):")
+    return [f"{_LADDER_COMMENT_HEAD}, {role} lanes (first available wins the", tail,
+            *(f"#   {number}. {key}" for number, key in enumerate(ladder, 1))]
 
 
-def _refresh_ladder_comment(text: str, policy: dict) -> str:
-    """Keep the generated fallback-order comment above [lanes.policy] in step with its ladder.
+def _refresh_ladder_comment(text: str, path: tuple, generated_lines: list) -> str:
+    """Keep the generated fallback-order comment above the table at `path` in step with its ladder.
 
     The contiguous comment lines directly above the header are the generated block when the first
     one starts with _LADDER_COMMENT_HEAD: the block is replaced by the lines for the ladder now
@@ -870,7 +867,7 @@ def _refresh_ladder_comment(text: str, policy: dict) -> str:
     own comment there is left alone. Comments never change a parsed value."""
     blocks = toml_splice.split_blocks(text)
     index = next((number for number, block in enumerate(blocks)
-                  if not block.array and block.path == ("lanes", "policy")), None)
+                  if not block.array and block.path == path), None)
     if index is None:
         return text
     block = blocks[index]
@@ -878,7 +875,7 @@ def _refresh_ladder_comment(text: str, policy: dict) -> str:
     if lead and not lead[0].startswith(_LADDER_COMMENT_HEAD):
         return text
     newline = "\r\n" if "\r\n" in text else "\n"
-    generated = [line + newline for line in _ladder_comment_lines(policy)]
+    generated = [line + newline for line in generated_lines]
     if generated == lead:
         return text
     rewritten = [*generated, *block.lines[block.lead:]]
@@ -888,21 +885,68 @@ def _refresh_ladder_comment(text: str, policy: dict) -> str:
     return "".join(lines)
 
 
-def _cfg_lanes_policy(policy, dropped_keys: set, rejections: list) -> dict | None:
-    """The policy as written: its ladder without the rejected entries; None when there is none."""
+def _refresh_ladder_comments(text: str, policy: dict) -> str:
+    """Refresh generated comments for the policy and its role tables."""
+    text = _refresh_ladder_comment(text, ("lanes", "policy"), [])
+    for role in role_orders.ROLES:
+        table = policy.get(role)
+        if not isinstance(table, dict):
+            table = {}
+        text = _refresh_ladder_comment(text, ("lanes", "policy", role),
+                                       _ladder_comment_lines(role, table.get("ladder") or [],
+                                                             policy.get("mode") == "double"))
+    return text
+
+
+def _ladder_drops(source: list, keep: set, dropped: set) -> tuple[list, list]:
+    rejected = sorted({key for key in source if isinstance(key, str) and key in dropped})
+    unknown = sorted({key if isinstance(key, str) else repr(key) for key in source
+                      if not (isinstance(key, str) and (key in keep or key in dropped))})
+    return rejected, unknown
+
+
+def _report_drops(label: str, noun: str, drops: tuple, rejections: list) -> None:
+    rejected, unknown = drops
+    if rejected:
+        rejections.append(
+            f"{label}: dropped dangling reference(s) to rejected lane key(s) {rejected}")
+    if unknown:
+        rejections.append(f"{label}: dropped key(s) naming no {noun} {unknown}")
+
+
+def _role_source(role: str, raw, legacy: list, rejections: list) -> tuple[dict, list]:
+    """Return the role table's other keys and source order, or the legacy order."""
+    if raw is None:
+        return {}, legacy
+    if not isinstance(raw, dict) or not isinstance(raw.get("ladder"), list):
+        rejections.append(f"policy.{role}: needs a table with a 'ladder' list; not written")
+        return {}, []
+    return {k: v for k, v in raw.items() if k != "ladder"}, raw["ladder"]
+
+
+def _cfg_lanes_policy(policy, dropped_keys: set, rejections: list, role_keys: dict) -> dict | None:
+    """Write flat keys and nonempty per-role orders, filtering rejected and unknown lanes."""
     if not policy:
         return None
-    raw_ladder = policy.get("ladder") or []
-    dangling = dropped_keys & set(raw_ladder)
-    if dangling:
-        rejections.append(
-            f"policy.ladder: dropped dangling reference(s) to rejected reviewer key(s) "
-            f"{sorted(dangling)}"
-        )
-    written = dict(policy)
-    if "ladder" in written:
-        written["ladder"] = [key for key in raw_ladder if key not in dropped_keys]
-    return written
+    legacy = policy.get("ladder", [])
+    if not isinstance(legacy, list):
+        rejections.append("policy.ladder: not a list; not written")
+        legacy = []
+    if legacy:
+        print(_FLAT_LADDER_NOTE, file=sys.stderr)
+        _report_drops("policy.ladder", "lane", _ladder_drops(
+            legacy, role_keys["review"] | role_keys["execute"], dropped_keys), rejections)
+    written = {k: v for k, v in policy.items() if k != "ladder" and k not in role_orders.ROLES}
+    for role in role_orders.ROLES:
+        extra, source = _role_source(role, policy.get(role), legacy, rejections)
+        if policy.get(role) is not None:
+            _report_drops(f"policy.{role}.ladder", f"{role} lane",
+                          _ladder_drops(source, role_keys[role], dropped_keys), rejections)
+        ladder = list(dict.fromkeys(key for key in source
+                                    if isinstance(key, str) and key in role_keys[role]))
+        if ladder:
+            written[role] = {**extra, "ladder": ladder}
+    return written or None
 
 
 def _current_lanes(text: str) -> dict:
@@ -913,6 +957,30 @@ def _current_lanes(text: str) -> dict:
                            "render-toml target")
 
 
+def _splice_policy(text: str, old, policy: dict) -> str:
+    """Splice flat policy keys and role tables, removing obsolete or inline roles."""
+    old = old if isinstance(old, dict) else {}
+    flat, roles = role_orders.split_policy(policy)
+    headed = {block.path[2] for block in toml_splice.split_blocks(text)
+              if not block.array and len(block.path) == 3 and block.path[:2] == ("lanes", "policy")}
+    gone = tuple(name for name in old if name not in flat
+                 and not (name in role_orders.ROLES and name in headed))
+    if flat or gone:
+        text = toml_splice.set_table(text, ("lanes", "policy"), flat, remove=gone)
+    for role in role_orders.ROLES:
+        path = ("lanes", "policy", role)
+        if role in roles:
+            own = old.get(role) if role in headed else {}
+            if not isinstance(own, dict):
+                own = {}
+            text = toml_splice.set_table(
+                text, path, roles[role],
+                remove=tuple(name for name in own if name not in roles[role]))
+        elif role in headed:
+            text = toml_splice.remove_table(text, path)
+    return text
+
+
 def _splice_roster(text: str, current: dict, parts: dict) -> str:
     """The roster parts spliced into the text one table or array at a time (D-08)."""
     strategy, policy = parts["strategy"], parts["policy"]
@@ -921,13 +989,12 @@ def _splice_roster(text: str, current: dict, parts: dict) -> str:
     elif "strategy" in current:
         text = toml_splice.set_table(text, ("lanes",), {}, remove=("strategy",))
     if policy is not None:
-        gone = tuple(name for name in current.get("policy", {}) if name not in policy)
-        text = toml_splice.set_table(text, ("lanes", "policy"), policy, remove=gone)
+        text = _splice_policy(text, current.get("policy"), policy)
     elif "policy" in current:
         text = toml_splice.remove_table(text, ("lanes", "policy"))
     text = toml_splice.set_array(text, ("lanes", "review"), parts["review"] or [])
     text = toml_splice.set_array(text, ("lanes", "execute"), parts["execute"] or [])
-    return _refresh_ladder_comment(text, policy or {})
+    return _refresh_ladder_comments(text, policy or {})
 
 
 def _expected_lanes(current: dict, parts: dict) -> dict:
@@ -941,14 +1008,23 @@ def _expected_lanes(current: dict, parts: dict) -> dict:
     return lanes
 
 
+def _written_fallback_warnings(policy, review: list, execute: list) -> list[str]:
+    """The reader's no-fallback lines for the roster as written, in its written order."""
+    tables = policy or {}
+    orders = {role: tables[role]["ladder"] if isinstance(tables.get(role), dict) else []
+              for role in role_orders.ROLES}
+    return lane_settings.fallback_warnings({"review": review, "execute": execute}, orders)
+
+
 def cfg_render_lanes(config: dict, existing_text: str = "") -> str:
     """Set the [lanes] roster to `config` in config.toml text; every other byte is kept (D-08).
 
     `config` is {"strategy"?, "policy"?, "lanes": [entry, ...]}. Each entry's `purpose` picks its
     role (D-24). Entries are normalised and validated as before: a rejected one is dropped with a
-    WARNING line on stderr. Only the roster parts are spliced: `strategy`, [lanes.policy] and the
-    [[lanes.review]] / [[lanes.execute]] arrays. Raises ValueError for a JSON still keyed
-    'reviewers', and ConfigError when existing_text is not valid TOML."""
+    WARNING line on stderr. Only the roster parts are spliced: `strategy`, [lanes.policy] flat
+    keys, [lanes.policy.review] and [lanes.policy.execute] orders, and the role arrays.
+    Usage-limited lanes without a fallback are written and get the reader's warning (36 D-17).
+    Raises ValueError for a JSON still keyed 'reviewers', and ConfigError for invalid TOML."""
     if "reviewers" in config:
         raise ValueError(_RENAMED_REVIEWERS)
     entries, notes = _cfg_render_reviewers(config.get("lanes", []))
@@ -959,7 +1035,9 @@ def cfg_render_lanes(config: dict, existing_text: str = "") -> str:
     review, execute = config_migrate.split_by_purpose(valid)
     parts = {
         "strategy": config.get("strategy"),
-        "policy": _cfg_lanes_policy(config.get("policy"), dropped, rejections),
+        "policy": _cfg_lanes_policy(config.get("policy"), dropped, rejections,
+                                    {"review": {entry.get("key") for entry in review},
+                                     "execute": {entry.get("key") for entry in execute}}),
         "review": review or None,
         "execute": execute or None,
     }
@@ -970,6 +1048,8 @@ def cfg_render_lanes(config: dict, existing_text: str = "") -> str:
     if rejections:
         print(f"WARNING: {len(rejections)} issue(s) found and NOT written: {'; '.join(rejections)}",
               file=sys.stderr)
+    for line in _written_fallback_warnings(parts["policy"], review, execute):
+        print(line, file=sys.stderr)
     return text
 
 
