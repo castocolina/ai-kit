@@ -67,6 +67,7 @@ from ai_kit_spec.detection import (
     LOOPBACK_URLOPEN,
     RUNTIMES,
     OpencodeSeams,
+    advice_line,
     build_runtimes_snapshot,
     cache_runtimes_path,
     detect_current_runtime,
@@ -116,6 +117,7 @@ from ai_kit_spec.runner_dispatch import (
     run_custom_command,
     run_runner,
     run_runner_tiers,
+    spec_with_effort,
 )
 from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 from ai_kit_spec.vendor import infer_vendor_from_model
@@ -287,6 +289,11 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
 
 
 
+_EFFORT_HELP = ("the lane's effort level: codex gets --codex-effort; pi, cursor and opencode "
+                "carry it in the model id (:level, [effort=...], #variant); any other runtime "
+                "passes nothing and prints an 'ignored:' line naming the reason")
+
+
 def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
     p_merge = sub.add_parser("merge-reports")
     p_merge.add_argument("--doc-paths", required=True)
@@ -341,7 +348,7 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
     p_build_cmd = sub.add_parser("build-command")
     p_build_cmd.add_argument("--runtime", "--cli", dest="runtime", required=True,
                               help="runtime id, e.g. opencode, cursor")
-    p_build_cmd.add_argument("--effort", default=None)
+    p_build_cmd.add_argument("--effort", default=None, help=_EFFORT_HELP)
     p_build_cmd.add_argument("--service-tier", default=None)
     p_build_cmd.add_argument("--mode", default=None,
                               help="cursor only: 'plan' or 'ask' (both read-only); "
@@ -378,10 +385,7 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
                                   "-- a native candidate executes in-process and never reaches "
                                   "this subcommand at all")
     p_dispatch.add_argument("--model", required=True)
-    p_dispatch.add_argument("--effort", default=None,
-                             help="structural param a builder may or may not use, same as "
-                                  "build-command's own --effort -- codex's execute builder "
-                                  "honors it, others silently ignore it")
+    p_dispatch.add_argument("--effort", default=None, help=_EFFORT_HELP)
     p_dispatch.add_argument("--service-tier", default=None)
     p_dispatch.add_argument("--target-dir", required=True)
     p_dispatch.add_argument("--prompt-file", required=True,
@@ -938,15 +942,32 @@ def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
     print(rendered)
     return 0
 
+def _display_spec(entry: dict) -> RunnerSpec:
+    # No config here: the entry's own tiers, else the default policy's first tier.
+    timeout = resolve_timeout_tiers(entry, DEFAULT_POLICY)[0]
+    # A resolve-reviewers row carries `extra`; a raw config entry keeps its knobs top-level.
+    extra = entry["extra"] if "extra" in entry else to_resolved(entry).extra
+    return review_spec(entry["runtime"], entry.get("model", ""), extra, timeout)
+
+
+def _preview_notes(entry: dict) -> list[str]:
+    if not entry.get("runtime"):
+        return []
+    notes = []
+    ignored = _display_spec(entry).ignored
+    if ignored:
+        notes.append(ignored)
+    advice = advice_line(entry["runtime"])
+    if advice is not None:
+        notes.append(f"advice for {entry['runtime']}: {advice}")
+    return notes
+
+
 def _display_argv(entry: dict, prompt: str, which_fn) -> list[str]:
     """The argv a review would run: the runner's for a table runtime (the prompt goes on
     stdin, never into argv), the custom argv otherwise."""
     if entry.get("runtime"):
-        # No config here: the entry's own tiers, else the default policy's first tier.
-        timeout = resolve_timeout_tiers(entry, DEFAULT_POLICY)[0]
-        # A resolve-reviewers row carries `extra`; a raw config entry keeps its knobs top-level.
-        extra = entry["extra"] if "extra" in entry else to_resolved(entry).extra
-        spec = review_spec(entry["runtime"], entry.get("model", ""), extra, timeout)
+        spec = _display_spec(entry)
         node = which_fn("node") or "node"
         return build_runner_argv(spec, resolve_cross_ai_template_path() or "<runner>", node)
     resolved = to_resolved(entry)
@@ -961,6 +982,8 @@ def _cmd_render_command(args: argparse.Namespace, deps: CliDeps) -> int:
     try:
         # argv display: a JSON array, never a shell string, and never the prompt for a runtime
         print(json.dumps(_display_argv(reviewers[args.index], prompt, deps.which_fn)))
+        for note in _preview_notes(reviewers[args.index]):
+            print(f"render-command: {note}", file=sys.stderr)
     except ValueError as exc:
         # Deliberately no "### Status:" substring — same fail-closed
         # convention as merge-reports: review-spec/SKILL.md's existing
@@ -1044,13 +1067,14 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
     rid = runtime_id(args.runtime)
     row = RUNTIMES.get(rid)
     if row is not None and row.runner:
-        spec = RunnerSpec(
-            rid, "{model}", "review", 600,
-            effort=args.effort, service_tier=args.service_tier,
-            cursor_mode=args.mode if rid == "cursor" else None,
-        )
+        spec = spec_with_effort(rid, "{model}", "review", 600, {
+            "effort": args.effort, "service_tier": args.service_tier,
+            "cursor_mode": args.mode if rid == "cursor" else None,
+        })
         argv = build_runner_argv(spec, "<runner>", "node")
         print(json.dumps({"kind": "runner", "argv": argv}))
+        if spec.ignored:
+            print(f"build-command: {spec.ignored}", file=sys.stderr)
         print(f"build-command: a config.toml lane stores runtime and model for {rid}; "
               f"the runner builds this argv at dispatch", file=sys.stderr)
         return 0

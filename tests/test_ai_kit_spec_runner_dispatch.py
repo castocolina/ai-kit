@@ -18,9 +18,10 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import reviewer_dispatch
+from ai_kit_spec import detection, execute_dispatch, lane_effort, quota, reviewer_dispatch
 from ai_kit_spec import runner_dispatch as rd
 from ai_kit_spec.cli import main
+from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS, ResolvedReviewer
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.model_catalog import CATALOG_SCHEMA_VERSION
 from ai_kit_spec.runner_dispatch import (
@@ -34,6 +35,7 @@ from ai_kit_spec.runner_dispatch import (
     build_runner_argv,
     model_id_ok,
     parse_status_line,
+    review_spec,
     run_custom_command,
     run_runner,
     run_runner_tiers,
@@ -802,6 +804,173 @@ def _runner_result(stdout="### Status: Approved\n", returncode=0, reason=None,
     )
 
 
+_EFFORT_RUNTIMES = ("codex", "pi", "cursor", "opencode", "claude", "copilot")
+
+
+def _base_id(runtime):
+    return "fake/placeholder-model-1" if runtime in ("pi", "opencode") else "placeholder-model-1"
+
+
+def _check_effort_spec(test, spec, runtime, base):
+    expected = lane_effort.effort_form(runtime, base, "high")
+    test.assertEqual(spec.model, expected.model)
+    test.assertEqual(spec.ignored, expected.ignored)
+    flags = runner_flags(spec)
+    if runtime == "codex":
+        test.assertEqual(flags[flags.index("--codex-effort") + 1], "high")
+    elif expected.ignored:
+        test.assertNotIn("high", flags)
+        test.assertTrue(expected.ignored.startswith("ignored: "))
+        test.assertIn(runtime, expected.ignored)
+    else:
+        test.assertNotEqual(spec.model, base)
+
+
+class TestEffortWiring(unittest.TestCase):
+    def test_composed_pi_model_keeps_the_trailer(self):
+        spec = review_spec("pi", _base_id("pi"), {"effort": "high"}, 30)
+        popen = _ScriptedPopen([_FakeProc([_status_line(cli="pi", model=spec.model)])])
+        result = run_runner(spec, "hello", _seams(popen, [], []))
+        self.assertIsNotNone(result.status)
+        self.assertIsNone(result.reason)
+        self.assertEqual(popen.argvs[0][popen.argvs[0].index("--model") + 1], spec.model)
+
+    def test_run_runner_prints_the_ignored_line_first(self):
+        spec = review_spec("copilot", _base_id("copilot"), {"effort": "high"}, 30)
+        lines = []
+        popen = _ScriptedPopen([_FakeProc([_status_line(cli="copilot", model=spec.model)])])
+        run_runner(spec, "hello", _seams(popen, lines, []))
+        self.assertEqual(lines[0], "ai-kit-spec: " + str(spec.ignored))
+        self.assertNotIn("high", popen.argvs[0])
+
+    def test_ignored_line_prints_without_node(self):
+        spec = review_spec("copilot", _base_id("copilot"), {"effort": "high"}, 30)
+        lines = []
+        popen = _ScriptedPopen([])
+        seams = _seams(popen, lines, [])._replace(which_fn=lambda _: None)
+        result = run_runner(spec, "hello", seams)
+        self.assertEqual(lines[0], "ai-kit-spec: " + str(spec.ignored))
+        self.assertTrue(lines[1].startswith("ai-kit-spec: subprocess dispatch needs Node"))
+        self.assertEqual(result.reason, "dispatch_unavailable")
+        self.assertEqual(popen.argvs, [])
+
+    def test_no_effort_prints_nothing(self):
+        spec = review_spec("opencode", _base_id("opencode"), None, 30)
+        lines = []
+        run_runner(spec, "hello", _seams(_ScriptedPopen([_FakeProc([])]), lines, []))
+        self.assertFalse(any(line.startswith("ai-kit-spec: ignored") for line in lines))
+
+    def test_codex_effort_stays_a_flag(self):
+        spec = review_spec("codex", _base_id("codex"),
+                           {"effort": "high", "service_tier": "priority"}, 30)
+        self.assertEqual(spec.effort, "high")
+        self.assertEqual(spec.service_tier, "priority")
+        self.assertIsNone(spec.ignored)
+        _check_effort_spec(self, spec, "codex", _base_id("codex"))
+
+    def _paths(self, runtime, effort):
+        base = _base_id(runtime)
+        seen = []
+        def fake(spec, *_args):
+            seen.append(spec)
+            return _runner_result()
+        extra = {"effort": "high"} if effort else {}
+        entry = {"key": "k", "runtime": runtime, "model": base, "extra": extra}
+        seams = reviewer_dispatch.ReviewerSeams(
+            runner_tiers_fn=fake, build_tooling_guidance_fn=lambda *_a, **_k: "",
+            resolve_shared_reference_fn=lambda: None, code_index_registered_fn=lambda _rt: False)
+        reviewer_dispatch.dispatch_reviewer(
+            reviewer_dispatch.ReviewerDispatchSpec(entry, "review this", [600], {}), seams)
+        quota.probe_reviewer_quota(ResolvedReviewer("k", base, "", runtime, None, extra),
+                                   seams=quota.ProbeSeams(runner_fn=fake))
+        if runtime in SUPPORTED_EXECUTE_CLIS:
+            with tempfile.TemporaryDirectory() as target:
+                candidate = {"runtime": runtime, "model": base, **extra}
+                execute_dispatch.dispatch_execute(
+                    execute_dispatch.ExecuteDispatchSpec(candidate, "execute", target, 30),
+                    execute_dispatch.ExecuteSeams(runner_fn=fake, print_fn=lambda _: None,
+                        build_tooling_guidance_fn=lambda *_a, **_k: ""))
+        return seen
+
+    def test_dispatch_reviewer_forms(self):
+        for runtime in _EFFORT_RUNTIMES:
+            with self.subTest(runtime=runtime):
+                _check_effort_spec(self, self._paths(runtime, True)[0], runtime, _base_id(runtime))
+
+    def test_dispatch_execute_forms(self):
+        for runtime in SUPPORTED_EXECUTE_CLIS:
+            with self.subTest(runtime=runtime):
+                _check_effort_spec(self, self._paths(runtime, True)[2], runtime, _base_id(runtime))
+
+    def test_probe_forms(self):
+        for runtime in _EFFORT_RUNTIMES:
+            with self.subTest(runtime=runtime):
+                _check_effort_spec(self, self._paths(runtime, True)[1], runtime, _base_id(runtime))
+
+    def test_no_effort_passes_nothing_on_dispatch(self):
+        for runtime in _EFFORT_RUNTIMES:
+            with self.subTest(runtime=runtime):
+                for spec in self._paths(runtime, False):
+                    self.assertEqual(spec.model, _base_id(runtime))
+                    self.assertIsNone(spec.ignored)
+                    self.assertNotIn("--codex-effort", runner_flags(spec))
+
+    def test_build_command_forms(self):
+        for runtime in _EFFORT_RUNTIMES:
+            with self.subTest(runtime=runtime):
+                out, err = io.StringIO(), io.StringIO()
+                with redirect_stdout(out), redirect_stderr(err):
+                    code = main(["build-command", "--runtime", runtime, "--effort", "high"])
+                self.assertEqual(code, 0)
+                argv = json.loads(out.getvalue())["argv"]
+                expected = lane_effort.effort_form(runtime, "{model}", "high")
+                self.assertEqual(argv[argv.index("--model") + 1], expected.model)
+                if expected.ignored:
+                    self.assertIn("build-command: " + expected.ignored, err.getvalue())
+                    self.assertNotIn("high", argv)
+                if runtime == "codex":
+                    self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
+
+    def test_render_command_forms_and_advice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewers = os.path.join(tmp, "reviewers.json")
+            prompt = os.path.join(tmp, "prompt.txt")
+            with open(prompt, "w", encoding="utf-8") as handle:
+                handle.write("review")
+            for runtime in _EFFORT_RUNTIMES:
+                with self.subTest(runtime=runtime):
+                    base = _base_id(runtime)
+                    with open(reviewers, "w", encoding="utf-8") as handle:
+                        json.dump([{"key": "k", "runtime": runtime, "model": base,
+                                    "extra": {"effort": "high"}}], handle)
+                    out, err = io.StringIO(), io.StringIO()
+                    with redirect_stdout(out), redirect_stderr(err):
+                        args = ["render-command", "--reviewers-json", reviewers, "--index", "0",
+                                "--prompt-file", prompt]
+                        code = main(args, which_fn=lambda _: None)
+                    self.assertEqual(code, 0)
+                    argv = json.loads(out.getvalue())
+                    expected = lane_effort.effort_form(runtime, base, "high")
+                    self.assertEqual(argv[argv.index("--model") + 1], expected.model)
+                    if expected.ignored:
+                        self.assertIn("render-command: " + expected.ignored, err.getvalue())
+                    if runtime == "claude":
+                        advice = detection.advice_line(runtime)
+                        self.assertIsNotNone(advice)
+                        self.assertIn("render-command: advice for claude: " + str(advice),
+                                      err.getvalue())
+
+    def test_effort_help_names_the_ignored_line(self):
+        for sub in ("build-command", "dispatch-execute"):
+            with self.subTest(sub=sub):
+                out = io.StringIO()
+                with redirect_stdout(out), self.assertRaises(SystemExit):
+                    main([sub, "--help"])
+                text = " ".join(out.getvalue().split())
+                self.assertIn("'ignored:' line", text)
+                self.assertNotIn("silently ignore", text)
+
+
 class TestDispatchReviewerRunner(unittest.TestCase):
     """dispatch-reviewer runs a table runtime through the runner and a custom entry
     through the launcher (D-11, D-21)."""
@@ -833,7 +1002,7 @@ class TestDispatchReviewerRunner(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             reviewers, prompt = self._reviewers(tmp, [{
-                "key": "oc", "runtime": "opencode", "model": "x/y",
+                "key": "oc", "runtime": "opencode", "model": "fake/placeholder-model-1",
                 "extra": {"effort": "high"}, "route": "subprocess",
             }])
             out, err = io.StringIO(), io.StringIO()
@@ -846,7 +1015,8 @@ class TestDispatchReviewerRunner(unittest.TestCase):
         self.assertEqual(code, 0, err.getvalue())
         spec = seen["spec"]
         self.assertEqual(spec.runtime, "opencode")
-        self.assertEqual(spec.model, "x/y")
+        self.assertEqual(spec.model, "fake/placeholder-model-1#high")
+        self.assertIsNone(spec.ignored)
         self.assertEqual(spec.mode, "review")
         self.assertEqual(spec.timeout_s, 600)
         self.assertIsNone(spec.cwd)
