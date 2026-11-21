@@ -1361,6 +1361,8 @@ process.on('uncaughtException', (e) => {
 const CLAUDE_EXEC_PROBE_RECORD = null;
 // SPEC R6: the live record of the whole execute formula and its resume; null keeps it unverified, with a note on every execute call.
 const CLAUDE_EXEC_FORMULA_RECORD = null;
+const SKILL_PROSE = { label: { state: 'verified', source: 'runner: the SKILL.md text inlined before the prompt (stdin, or the copilot -p argument)' } };
+function skillsNone(source) { return { name: { form: null, label: { state: 'unknown', source } }, path: { flag: null, label: { state: 'unknown', source } }, prose: SKILL_PROSE }; }
 const RUNTIMES = {
   cursor: {
     bins: ['cursor-agent', 'agent'],
@@ -1380,6 +1382,7 @@ const RUNTIMES = {
     reviewExtras: [],
     env: {},
     forms: {
+      skills: skillsNone('cursor-agent 2026.11.13 help 2026-11-21: no skill form'),
       context: { kind: 'bracket', key: 'context', valueKind: 'label', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--model <model>" with the bracket example "[context=1m,effort=high,fast=false]"; meaning per model unverified' } },
       session: { style: 'minted', resumeFlag: '--resume', label: { state: 'unverified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--resume [chatId] Select a session to resume"; resume not live-probed' } },
       effort: { kind: 'id-bracket', key: 'effort', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--model <model>" with the bracket example "[context=1m,effort=high,fast=false]"' } },
@@ -1403,6 +1406,7 @@ const RUNTIMES = {
     reviewExtras: [],
     env: { OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1' },
     forms: {
+      skills: skillsNone('opencode 2.3.2 help 2026-11-21: no skill form'),
       context: { kind: 'none', valueKind: null, label: { state: 'unknown', source: 'opencode 2.3.2 run --help 2026-11-21: no context form' } },
       session: { style: 'minted', resumeFlag: '--session', label: { state: 'unverified', source: 'opencode 2.3.2 run --help 2026-11-21: "Session ID to continue, or to create if it does not exist"; caller-chosen id shapes unverified (a ses_ id was accepted live on 2026-11-16)' } },
       effort: { kind: 'id-suffix', key: '#', label: { state: 'verified', source: 'opencode 2.3.2 run --help 2026-11-21: "Model to use in the format provider/model#variant"' } },
@@ -1413,9 +1417,9 @@ const RUNTIMES = {
     bins: ['pi'],
     list: { argv: PI_RPC_ARGS, input: PI_RPC_REQUEST, parse: parsePiListingIds },
     exec: (m, c) => ['-p', '--model', m, ...(c.adds?.effort || []), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
-      ...(c.profileFlags || [])],
+      ...(c.profileFlags || []), ...(c.adds?.skills || [])],
     review: (m, c) => ['-p', '--model', m, ...(c.adds?.effort || []), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
-      ...(c.profileFlags || [])],
+      ...(c.profileFlags || []), ...(c.adds?.skills || [])],
     resume: (m, c, sid, mode) => RUNTIMES.pi[mode](m, c),
     parse: (out) => ({ text: out, sessionId: null, error: null }),
     // pi documents --model provider/id[:thinking]; the listing has bare ids.
@@ -1430,6 +1434,7 @@ const RUNTIMES = {
     reviewExtras: ['--skill'],
     env: {},
     forms: {
+      skills: { name: { form: null, reason: 'mode_forbids', label: { state: 'unknown', source: 'pi 1.5.2 help 2026-11-21: no load-by-name form; the formulas pass --no-skills' } }, path: { flag: '--skill', label: { state: 'verified', source: 'pi 1.5.2 help 2026-11-21: "--skill <path> Load a skill file or directory (can be used multiple times)"' } }, prose: SKILL_PROSE },
       context: { kind: 'none', valueKind: null, label: { state: 'unknown', source: 'pi 1.5.2 --help 2026-11-21: no context form' } },
       session: { style: 'chosen', flag: '--session-id', label: { state: 'unverified', source: 'pi 1.5.2 --help 2026-11-21: "--session-id <id> Use the current directory existing session with the ID, creating it otherwise"; resume not live-probed' } },
       effort: { kind: 'flag', flag: '--thinking', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--thinking <level> Set thinking level: off, minimal, low, medium, high, xhigh, max"' } },
@@ -1462,6 +1467,7 @@ const RUNTIMES = {
     reviewExtras: [],
     env: {},
     forms: {
+      skills: skillsNone('codex 0.170.0 help 2026-11-21: no skill form'),
       context: { kind: 'config', key: 'model_context_window', valueKind: 'tokens', label: { state: 'verified', source: 'codex 0.170.0 exec --help 2026-11-21: "-c, --config <key=value>"; a zero-token config parse rejected a non-integer model_context_window as "expected i64" (2026-11-16); its effect on a model window is unverified' } },
       session: { style: 'minted', resumeFlag: null, noResume: ['review', 'sandbox'], label: { state: 'unverified', source: 'codex 0.170.0 exec --help 2026-11-21: "resume Resume a previous session by id"; exec resume has no read-only sandbox form; resume not live-probed' } },
       effort: { kind: 'config', key: 'model_reasoning_effort', label: { state: 'verified', source: 'codex 0.170.0 exec --help 2026-11-21: "-c, --config <key=value>"; model_reasoning_effort is the runner\'s existing codex effort key' } },
@@ -1473,8 +1479,8 @@ const RUNTIMES = {
   claude: {
     bins: ['claude'],
     list: null,
-    exec: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'bypassPermissions', ...(c.adds?.effort || [])],
-    review: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'plan', ...(c.adds?.effort || [])],
+    exec: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'bypassPermissions', ...(c.adds?.effort || []), ...(c.adds?.skills || [])],
+    review: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'plan', ...(c.adds?.effort || []), ...(c.adds?.skills || [])],
     resume: (m, c, sid, mode) => [...RUNTIMES.claude[mode](m, c), '--resume', sid],
     permissionLabel: CLAUDE_EXEC_PROBE_RECORD === null ? { state: 'unverified', source: 'claude permission flag: no live probe record (37-SPIKE.md Q3b)' } : { state: 'verified', source: CLAUDE_EXEC_PROBE_RECORD },
     execLabel: CLAUDE_EXEC_FORMULA_RECORD === null ? { state: 'unverified', source: 'claude execute formula: no live record of the exact formula and its resume (37-SPIKE.md Q3)' } : { state: 'verified', source: CLAUDE_EXEC_FORMULA_RECORD },
@@ -1491,6 +1497,7 @@ const RUNTIMES = {
     reviewExtras: [],
     env: {},
     forms: {
+      skills: { name: { form: '/<name>', label: { state: 'unverified', source: 'claude 2.1.330 help 2026-11-21: "Skills still resolve via /skill-name" appears only in the bare-mode text' } }, path: { flag: '--add-dir', label: { state: 'unverified', source: 'claude 2.1.330 help 2026-11-21: "--add-dir <directories...> More directories Claude can access" names no skill loading' } }, prose: SKILL_PROSE },
       context: { kind: 'id-suffix', valueKind: null, label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: no model-context flag; the [1m] model suffix is not in the help' } },
       session: { style: 'minted', resumeFlag: '--resume', label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: "-r, --resume [value] Resume a conversation by session ID or name"; resume not live-probed' } },
       effort: { kind: 'flag', flag: '--effort', label: { state: 'verified', source: 'claude 2.1.330 --help 2026-11-21: "--effort <level> Effort level for the current session (low, medium, high, xhigh, max)"' } },
@@ -1505,8 +1512,8 @@ const RUNTIMES = {
     argvPrompt: true,
     errorsUnverified: true,
     modelId: MODEL_ID,
-    exec: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.adds?.context || []), '--session-id', c.sid, ...(c.profileFlags || [])],
-    review: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.adds?.context || []), '--session-id', c.sid, ...(c.profileFlags || [])],
+    exec: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.adds?.context || []), '--session-id', c.sid, ...(c.profileFlags || []), ...(c.adds?.skills || [])],
+    review: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.adds?.context || []), '--session-id', c.sid, ...(c.profileFlags || []), ...(c.adds?.skills || [])],
     resume: null,
     parse: (out) => ({ text: out, sessionId: null, error: null }),
     modelSuffix: null,
@@ -1519,6 +1526,7 @@ const RUNTIMES = {
     },
     reviewExtras: [],
     forms: {
+      skills: { name: { form: null, label: { state: 'unverified', source: 'copilot 1.0.112 skill help 2026-11-21: discovery roots only, no load-by-name form' } }, path: { flag: '--add-dir', root: '.github/skills', label: { state: 'unverified', source: 'copilot 1.0.112 help 2026-11-21: "--add-dir <directory> Allow file access to a directory and load its .github/skills" as trusted configuration; layout effect untested' } }, prose: SKILL_PROSE },
       context: { kind: 'flag', flag: '--context', valueKind: 'enum', values: ['default', 'long_context'], label: { state: 'verified', source: 'copilot 1.0.112 --help 2026-11-21: "--context <tier> Set the context window tier (overrides persisted setting) [possible values: default, long_context]"' } },
       session: { style: 'chosen', flag: '--session-id', label: { state: 'unverified', source: 'copilot 1.0.112 --help 2026-11-21: "--session-id <id> Resume an existing session or task by ID, or set the UUID for a new session"; resume not live-probed' } },
       effort: { kind: 'flag', flag: '--reasoning-effort', label: { state: 'verified', source: 'copilot 1.0.112 --help 2026-11-21: "--reasoning-effort <level> Set the reasoning effort level; supported levels depend on the model"' } },
@@ -1645,6 +1653,9 @@ const SETTING_HANDLERS = {
   escalate_model: (plan, row, role, call) => {
     if (call.escalateModel) plan.report.push({ name: 'escalate_model', value: 'true', state: 'ignored', reason: 'recorded_only' });
   },
+  skill: (plan, row, role, call) => {
+    if (call.skillPlan) { plan.adds.skills.push(...call.skillPlan.adds); plan.report.push(...call.skillPlan.report); }
+  },
 };
 
 function fillArgvFile(list, model, ctx) {
@@ -1657,6 +1668,7 @@ function argvFileAllowed(row, mode) { return !row || typeof row[mode] !== 'funct
 function argvFileRow(declared) {
   const formula = (m, c) => fillArgvFile(declared.argv.slice(1), m, c);
   const forms = Object.fromEntries(Object.keys(RUNTIMES.claude.forms || {}).map((k) => [k, ARGV_FILE_NO_FORM]));
+  forms.skills = { ...skillsNone('argv file lane: no skill slot'), name: { form: null, reason: 'no_slot', label: { state: 'unknown', source: 'argv file lane: no skill slot' } } };
   return { argvFile: true, slots: declared.slots, argvRest: declared.argv.slice(1), bins: [declared.argv[0]], list: null, exec: formula, review: formula, resume: null, parse: (out) => ({ text: out, sessionId: null, error: null }), modelSuffix: null, modelId: null, profiles: null, reviewExtras: [], env: {}, errorsUnverified: true, forms };
 }
 
@@ -1685,7 +1697,7 @@ function planArgvFile(plan, row) {
 // Pure: no fs, env, spawn or clock. role is 'review' | 'exec'. Returns an object so later members (capabilities) fit.
 function planSettings(row, role, call) {
   if (row.argvFile) return planArgvFile(planSettings({ ...row, argvFile: false }, role, call), row);
-  const plan = { model: call.model, adds: { session: [], effort: [], context: [], skills: [], mcp: [] }, sessionId: null, resume: false, report: [], provider: null };
+  const plan = { model: call.model, adds: { session: [], effort: [], context: [], skills: [], mcp: [] }, sessionId: null, resume: false, report: [], provider: null, promptPrefix: call.skillPlan?.promptPrefix ?? '' };
   for (const name of SETTING_NAMES) SETTING_HANDLERS[name]?.(plan, row, role, call);
   for (const entry of plan.report) if (entry.proof === 'model') entry.proof = { slot: plan.model };
   return plan;
@@ -5579,6 +5591,71 @@ function readCallFile(flag, relPath, opts = {}) {
   } finally { fs.closeSync(fd); }
 }
 
+function skillFrontmatterName(text) {
+  const front = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+  return front ? (/^name:[ \t]*["']?([^"'\r\n]*?)["']?[ \t]*$/m.exec(front[1])?.[1] ?? null) : null;
+}
+
+function loadSkills(o) {
+  const skills = [];
+  for (const [at, item] of o.skillArgs.entries()) {
+    if (item.flag !== '--skill-path') continue;
+    const shown = redactSecrets(item.value.replace(/[\x00-\x1f\x7f-\x9f]/g, ''));
+    if (CONTROL_CHAR_RE.test(item.value)) throw new Error('--skill-path: the path holds a control character');
+    let dir;
+    try { dir = fs.realpathSync(path.resolve(process.cwd(), item.value)); if (!fs.statSync(dir).isDirectory()) throw new Error(); }
+    catch { throw new Error(`--skill-path ${shown}: no such directory`); }
+    if (CONTROL_CHAR_RE.test(dir)) throw new Error('--skill-path: the path holds a control character');
+    if (skills.some((s) => s.path === dir)) continue;
+    const file = path.join(dir, 'SKILL.md');
+    if (!fs.existsSync(file)) throw new Error(`--skill-path ${shown}: no SKILL.md in the directory`);
+    const { bytes, text } = readCallFile('--skill-path', file);
+    if (text === '') throw new Error(`--skill-path ${shown}: SKILL.md is empty`);
+    const dirName = path.basename(dir), fmName = skillFrontmatterName(text);
+    const name = fmName && SKILL_NAME_RE.test(fmName) ? fmName : SKILL_NAME_RE.test(dirName) ? dirName : null;
+    if (!name) throw new Error(`--skill-path ${shown}: the skill needs a name of shape ^[a-z0-9][a-z0-9-]{0,63}$ (frontmatter name or directory name)`);
+    skills.push({ name, path: dir, dirName, fmName, sha256: crypto.createHash('sha256').update(bytes).digest('hex'), body: text, byName: false, at });
+  }
+  for (const [at, item] of o.skillArgs.entries()) {
+    if (item.flag !== '--skill-name') continue;
+    const s = skills.find((v) => v.path && (v.dirName === item.value || v.fmName === item.value));
+    if (s) { s.byName = true; s.name = item.value; s.at = Math.min(s.at, at); }
+    else if (!skills.some((v) => !v.path && v.name === item.value)) skills.push({ name: item.value, path: null, dirName: null, fmName: null, sha256: null, body: null, byName: true, at });
+  }
+  return skills.sort((a, b) => a.at - b.at);
+}
+
+function skillPathArg(form, s) {
+  if (!form.flag || form.label.state !== 'verified') return null;
+  if (!form.root) return s.path;
+  const tail = path.sep + form.root.split('/').join(path.sep) + path.sep + s.dirName;
+  return s.path.endsWith(tail) ? s.path.slice(0, -tail.length) : null;
+}
+function skillBlock(s) { return `<skill name="${s.name}" path="${s.path}" sha256="${s.sha256}">\n${s.body}\n</skill>\n`; }
+function planSkills(row, skills) {
+  const forms = row.forms?.skills || skillsNone('no recorded skill form');
+  const adds = [], report = []; let promptPrefix = '';
+  for (const s of skills) {
+    const entry = { name: 'skill', value: s.name };
+    if (s.byName && forms.name.form && forms.name.label.state === 'verified') {
+      const text = forms.name.form.replace('<name>', s.name) + '\n';
+      promptPrefix += text; report.push({ ...entry, state: 'applied', form: 'name', proofPrompt: text });
+    } else if (s.path && skillPathArg(forms.path, s) !== null) {
+      const frag = [forms.path.flag, skillPathArg(forms.path, s)];
+      adds.push(...frag); report.push({ ...entry, state: 'applied', form: 'path', proof: frag });
+    } else if (s.path && forms.prose.label.state === 'verified') {
+      const text = skillBlock(s); promptPrefix += text;
+      report.push({ ...entry, state: 'applied', form: 'prose', proofPrompt: text, sha256: s.sha256 });
+    } else {
+      const why = s.byName ? forms.name : forms.path;
+      report.push({ ...entry, state: 'ignored', reason: why.reason || (why.label.state === 'unverified' ? 'unverified_form' : 'no_form') });
+    }
+  }
+  return { adds, promptPrefix, report };
+}
+function skillBlockLines(report) { return report.filter((e) => e.name === 'skill' && e.form === 'prose').map((e) => `cross-ai: skill-block ${e.value} bytes=${Buffer.byteLength(e.proofPrompt)} sha256=${e.sha256}`); }
+function composePrompt(prefix, prepended, raw, preamble) { return prefix + (prepended === null ? raw : `${prepended.replace(/^(?:<!--[^\n]*-->\r?\n)+/, '')}\n\n${raw}`) + preamble; }
+
 // JSON.parse keeps the last duplicate key; a call file must not hold one (SPEC R14 adjacency). Callers print "<flag> is not strict JSON: <message>".
 function strictJson(text) {
   const value = JSON.parse(text);
@@ -5648,7 +5725,7 @@ function parseArgs(argv) {
     codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
     role: null, effort: null, context: null, escalateRuntime: false, escalateModel: false,
-    sessionId: null, host: null, skillPaths: [], skillNames: [], mcpConfig: null, argvFile: null, describe: false,
+    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false,
   };
   let modeFlag = null;
   for (let i = 0; i < argv.length; i++) {
@@ -5713,11 +5790,11 @@ function parseArgs(argv) {
     else if (a === '--escalate-model') o.escalateModel = true;
     else if (a === '--session-id') { o.sessionId = v(); if (!SESSION_ID_RE.test(o.sessionId)) throw new Error(`${a} must match ${SESSION_ID_RE.source}`); }
     else if (a === '--host') { o.host = v(); if (!['auto', 'none'].includes(o.host)) throw new Error('--host must be auto or none'); }
-    else if (a === '--skill-name') { const n = v(); if (!SKILL_NAME_RE.test(n)) throw new Error(`${a} must match ${SKILL_NAME_RE.source}`); o.skillNames.push(n); }
+    else if (a === '--skill-name') { const n = v(); if (!SKILL_NAME_RE.test(n)) throw new Error(`${a} must match ${SKILL_NAME_RE.source}`); o.skillNames.push(n); o.skillArgs.push({ flag: a, value: n }); }
     else if (['--skill-path', '--mcp-config', '--argv-file'].includes(a)) {
       const p = v();
       if (p === '' || CONTROL_CHAR_RE.test(p)) throw new Error(`${a} must be a non-empty path without control characters`);
-      if (a === '--skill-path') o.skillPaths.push(p);
+      if (a === '--skill-path') { o.skillPaths.push(p); o.skillArgs.push({ flag: a, value: p }); }
       else if (a === '--mcp-config') o.mcpConfig = p;
       else o.argvFile = p;
     } else if (a === '--describe') o.describe = true;
@@ -6439,6 +6516,7 @@ if (seen) {
     tokens, allowAll: process.env.COPILOT_ALLOW_ALL !== undefined,
   }));
 }
+if (process.env.FAKE_SKILL_EDIT) fs.appendFileSync(process.env.FAKE_SKILL_EDIT, 'edited\n');
 if (!tokens.length) {
   process.stderr.write('Error: not logged in. Run copilot login or set COPILOT_GITHUB_TOKEN.\n');
   process.exit(1);
@@ -6458,6 +6536,7 @@ function writeFakeClaude(binDir) {
 log('claude ' + argOf('--model'));
 let input = '';
 process.stdin.on('data', (d) => { input += d; }).on('end', () => {
+  if (process.env.FAKE_CLAUDE_SEEN) fs.writeFileSync(process.env.FAKE_CLAUDE_SEEN, JSON.stringify({ argv: process.argv.slice(2), stdin: input }));
   const given = argOf('--resume');
   recordSession('claude', given, input);
   if (argOf('--model') === 'fake-auth') {
@@ -6591,6 +6670,22 @@ function retryLine(r, fragment) {
   const lines = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: retry '));
   if (lines.length !== 1) return `retry lines=${lines.length}`;
   return lines[0].includes(fragment) ? null : lines[0];
+}
+
+function hostFilesDigest(home) {
+  const lines = [];
+  for (const rel of ['.claude', '.claude.json', '.agents', '.copilot', '.cursor', '.pi', '.codex', path.join('.config', 'opencode')]) {
+    const root = path.join(home, rel);
+    if (!fs.existsSync(root)) continue;
+    const files = fs.statSync(root).isDirectory()
+      ? fs.readdirSync(root, { withFileTypes: true, recursive: true }).filter((e) => e.isFile()).map((e) => path.join(e.parentPath || e.path, e.name))
+      : [root];
+    for (const file of files) {
+      const stat = fs.statSync(file);
+      if (stat.isFile()) lines.push(`${path.relative(home, file)}\t${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}\t${stat.mtimeMs}\t${stat.size}`);
+    }
+  }
+  return lines.sort().join('\n');
 }
 
 function statusTail(stderr) {
@@ -7001,6 +7096,14 @@ async function blackBoxSelfTest(listOnly = false) {
     const noFormula = (id) => `cross-ai: no formula for ${id} in the runner; pass --argv-file, or use a runtime it has a formula for`;
     const advisory = (rt, re) => `cross-ai: note: model id shape is unusual for ${rt} (seed shape: ${re.source})`;
     const keyId = ['sk', 'aikit', 'SENTINEL', String(process.pid)].join('-');
+    const skillBody = (n) => `# placeholder skill ${n}\n\nUse the word placeholder-token-${n}.\n`;
+    const expectSkillBlock = (dir, n, body) => `<skill name="placeholder-skill-${n}" path="${fs.realpathSync(dir)}" sha256="${crypto.createHash('sha256').update(Buffer.from(body, 'utf8')).digest('hex')}">\n${body}\n</skill>\n`;
+    const makeSkill = (c, n) => {
+      const dir = path.join(c.tmp, 'skills', `placeholder-skill-${n}`);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'SKILL.md'), skillBody(n));
+      return dir;
+    };
     const cases = [
       {
         name: 'ok',
@@ -13296,6 +13399,78 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
+        name: 'pure-skill-forms-verified',
+        kind: 'logic',
+        pure: () => {
+          const row = { forms: { skills: { name: { form: '/<name>', label: { state: 'verified', source: 's' } }, path: { flag: '--add-dir', root: '.github/skills', label: { state: 'verified', source: 's' } }, prose: SKILL_PROSE } } };
+          const record = (n, p, byName) => ({ name: `placeholder-skill-${n}`, path: p, dirName: `placeholder-skill-${n}`, byName, body: skillBody(n), sha256: crypto.createHash('sha256').update(skillBody(n)).digest('hex') });
+          const plan = planSkills(row, [record(1, null, true), record(2, '/x/proj/.github/skills/placeholder-skill-2', false), record(3, '/x/other/placeholder-skill-3', false)]);
+          if (plan.report.map((e) => `${e.state}:${e.form}`).join(',') !== 'applied:name,applied:path,applied:prose') return 'forms';
+          if (!plan.promptPrefix.startsWith('/placeholder-skill-1\n') || JSON.stringify(plan.adds) !== JSON.stringify(['--add-dir', '/x/proj'])) return 'plan output';
+          confirmReport(plan.report, ['-p', '--add-dir', '/x/proj'], composePrompt(plan.promptPrefix, null, 'p', ''));
+          try { confirmReport(plan.report, ['-p', '--add-dir', '/x/proj'], 'p'); } catch { return null; }
+          return 'missing prompt proof accepted';
+        },
+      },
+      {
+        name: 'skill-prose-claude-stdin',
+        kind: 'logic',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* action=stop$/,
+        setup: (c) => {
+          c.dir1 = makeSkill(c, 1); c.dir2 = makeSkill(c, 2);
+          fs.writeFileSync(path.join(c.repo, 'guide.md'), 'GUIDE\n');
+          for (const rel of ['.claude/skills/placeholder-skill-9/SKILL.md', '.agents/skills/placeholder-skill-9/SKILL.md', '.copilot/skills/placeholder-skill-9/SKILL.md', '.claude/settings.json']) {
+            const file = path.join(c.home, rel); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, '{}');
+          }
+          c.hostBefore = hostFilesDigest(c.home);
+          c.seen = path.join(c.tmp, 'claude-skill-seen'); c.env.FAKE_CLAUDE_SEEN = c.seen;
+          c.args = ['--runtime', 'claude', '--mode', 'review', '--model', 'fake-ok', '--no-preamble', '--prepend-file', 'guide.md', '--skill-path', c.dir2, '--skill-path', c.dir1];
+          return null;
+        },
+        check: (r, c) => {
+          const expected = expectSkillBlock(c.dir2, 2, skillBody(2)) + expectSkillBlock(c.dir1, 1, skillBody(1)) + 'GUIDE\n\n\nprompt\n';
+          if (JSON.parse(fs.readFileSync(c.seen, 'utf8')).stdin !== expected) return 'stdin differs';
+          const lines = r.stderr.split('\n');
+          const settings = lines.filter((l) => l.startsWith('cross-ai: setting skill='));
+          const blocks = lines.filter((l) => l.startsWith('cross-ai: skill-block '));
+          if (settings.length !== 2 || blocks.length !== 2 || !settings[0].includes('placeholder-skill-2') || !settings[1].includes('placeholder-skill-1') || !blocks[0].includes('placeholder-skill-2') || !blocks[1].includes('placeholder-skill-1')) return 'skill report order';
+          const tokens = Object.fromEntries((lines.filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '').split(' ').slice(1).map((t) => t.split('=')));
+          if (!tokens.applied?.includes('skill:placeholder-skill-2') || !tokens.applied?.includes('skill:placeholder-skill-1')) return 'status skills';
+          return hostFilesDigest(c.home) === c.hostBefore ? null : 'host files changed';
+        },
+      },
+      {
+        name: 'skill-prose-copilot-argv',
+        kind: 'logic',
+        env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
+        config: { retry: { max_retries: 2, session_resets: 1 } },
+        exit: 75,
+        status: /^AIKIT-XAI status=transient cli=copilot model=fake-event400 exit=75 .* action=stop$/,
+        setup: (c) => {
+          c.dir1 = makeSkill(c, 1); c.dir2 = makeSkill(c, 2);
+          c.seen = path.join(c.tmp, 'copilot-skill-seen'); c.env.FAKE_COPILOT_SEEN = c.seen;
+          c.env.FAKE_SKILL_EDIT = path.join(c.dir1, 'SKILL.md');
+          c.args = ['--runtime', 'copilot', '--model', 'fake-event400', '--no-preamble', '--skill-path', c.dir1];
+          return null;
+        },
+        check: async (_r, c) => {
+          if (c.calls.filter((l) => l.startsWith('copilot ')).length !== 3) return 'call count';
+          const seen = JSON.parse(fs.readFileSync(c.seen, 'utf8'));
+          const prefix = `${RESUME_MSG}\n\n`;
+          const prompt = seen.prompt.startsWith(prefix) ? seen.prompt.slice(prefix.length) : seen.prompt;
+          if (prompt !== expectSkillBlock(c.dir1, 1, skillBody(1)) + 'prompt\n') return 'retry prompt differs';
+          const block = expectSkillBlock(c.dir2, 2, skillBody(2));
+          const room = ARGV_PROMPT_MAX - Buffer.byteLength(prefix) - Buffer.byteLength(block);
+          const args = ['--runtime', 'copilot', '--model', 'fake-ok', '--no-preamble', '--skill-path', c.dir2];
+          const ctx = { ...c, env: { ...c.env, FAKE_SKILL_EDIT: '' } };
+          const fit = await runCaseProcess({ args, stdin: 'z'.repeat(room) }, ctx);
+          const over = await runCaseProcess({ args, stdin: 'z'.repeat(room + 1) }, ctx);
+          if (fit.status !== 0 || over.status !== 2 || !over.stderr.includes(`is over ${ARGV_PROMPT_MAX}`)) return `limits: ${fit.status},${over.status}`;
+          return null;
+        },
+      },
+      {
         name: 'pure-argv-prompt-guard',
         kind: 'logic',
         pure: () => {
@@ -13781,7 +13956,7 @@ async function blackBoxSelfTest(listOnly = false) {
   }
 }
 
-function callOf(o, name, model, newSessionId) { return { model, effort: o.effort, context: o.context, sessionId: o.sessionId, newSessionId, sandbox: o.mode === 'exec' && Boolean(o.codexSandbox), configEffort: ownValue(CONFIG.effort, name) ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel }; }
+function callOf(o, name, model, newSessionId, skillPlan = null) { return { model, effort: o.effort, context: o.context, sessionId: o.sessionId, newSessionId, sandbox: o.mode === 'exec' && Boolean(o.codexSandbox), configEffort: ownValue(CONFIG.effort, name) ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel, skillPlan }; }
 
 function logExecLabel(name, rt, mode) {
   if (mode === 'exec' && rt.execLabel && rt.execLabel.state === 'unverified') log(`cross-ai: note: ${name} execute formula is unverified (no live probe record)`);
@@ -13831,6 +14006,11 @@ async function main(argv) {
     return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   const rt = declared || RUNTIMES[name];
+  let skills, skillPlan;
+  try { skills = loadSkills(o); skillPlan = planSkills(rt, skills); } catch (e) {
+    log(`cross-ai: ${redactSecrets(redactSecrets(String(e.message)).replace(/[\x00-\x1f\x7f-\x9f]/g, ''))}`);
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
   if (o.model !== null && o.models[name] !== undefined) {
     log(`cross-ai: --model wins; ignored --model-${name} ${o.models[name]}`);
   }
@@ -13881,7 +14061,7 @@ async function main(argv) {
     log('cross-ai: --codex-sandbox applies to exec mode only; review already runs read-only');
   }
   if (o.printArgv) {
-    const plan = c.model ? planSettings(rt, o.mode, callOf(o, name, c.model, '<sid>')) : null;
+    const plan = c.model ? planSettings(rt, o.mode, callOf(o, name, c.model, '<sid>', skillPlan)) : null;
     if (plan?.error) {
       log(`cross-ai: ${plan.error}`);
       return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
@@ -13897,8 +14077,9 @@ async function main(argv) {
       ? withExtra(name, plan.resume ? rt.resume(plan.model, ctx, plan.sessionId, o.mode) : formula(plan.model, ctx)) : null;
     process.stdout.write(`${name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(argvOut) : 'NO MODEL'}\n`);
     if (plan && argvOut) {
-      confirmReport(plan.report, argvOut, '', o.mode);
+      confirmReport(plan.report, argvOut, composePrompt(skillPlan.promptPrefix, null, '<prompt>', ''), o.mode);
       for (const line of reportLines(plan.report)) log(line);
+      for (const line of skillBlockLines(plan.report)) log(line);
       logExecLabel(name, rt, o.mode);
       liveSettings.report = plan.report;
       liveSettings.sessionId = rt.argvFile ? plan.sessionId : (o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null);
@@ -13920,9 +14101,8 @@ async function main(argv) {
     log('cross-ai: pipe the prompt on stdin');
     return reportAndFinish('empty_stdin', { ...liveFields, tree: 'clean', exit: 2 });
   }
-  let body = raw;
+  let prepended = null;
   if (o.prependFile) {
-    let prepended;
     try {
       prepended = fs.readFileSync(path.resolve(process.cwd(), o.prependFile), 'utf8');
     } catch {
@@ -13930,9 +14110,8 @@ async function main(argv) {
       return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
     // The guidance file's stamp lines are bookkeeping for a human editor, not prompt text.
-    body = `${prepended.replace(/^(?:<!--[^\n]*-->\r?\n)+/, '')}\n\n${raw}`;
   }
-  const prompt = body + (o.preamble ? (o.mode === 'exec' ? EXEC_PREAMBLE : REVIEW_PREAMBLE) : '');
+  const prompt = composePrompt(skillPlan.promptPrefix, prepended, raw, o.preamble ? (o.mode === 'exec' ? EXEC_PREAMBLE : REVIEW_PREAMBLE) : '');
   if (rt.argvPrompt) {
     const over = argvPromptProblem(prompt);
     if (over) {
@@ -13998,7 +14177,7 @@ async function main(argv) {
     }
   }
   // SPEC R2: one plan per call; lines print after the review-argv check and before the listing preflight and the spawn.
-  const plan = planSettings(c.rt, o.mode, callOf(o, c.name, c.model, crypto.randomUUID()));
+  const plan = planSettings(c.rt, o.mode, callOf(o, c.name, c.model, crypto.randomUUID(), skillPlan));
   if (plan.error) {
     log(`cross-ai: ${plan.error}`);
     return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
@@ -14006,8 +14185,9 @@ async function main(argv) {
   const runCtx = { cwd: process.cwd(), sid: plan.sessionId ?? '<sid>', outFile: '<tmp>/last-message.md', codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null, profileFlags, promptArg: '<prompt>', adds: plan.adds };
   const resumed = plan.resume && plan.sessionId ? sameSessionArgv(c.name, c.rt, plan.model, runCtx, plan.sessionId, o.mode) : null;
   const firstArgv = resumed ? resumed.argv : withExtra(c.name, c.rt[o.mode](plan.model, runCtx));
-  const report = confirmReport(plan.report, firstArgv, '', o.mode) || plan.report;
+  const report = confirmReport(plan.report, firstArgv, prompt, o.mode) || plan.report;
   for (const line of reportLines(report)) log(line);
+  for (const line of skillBlockLines(report)) log(line);
   logExecLabel(c.name, c.rt, o.mode);
   liveSettings.report = report;
   const sessionEntry = report.find((e) => e.name === 'session');
