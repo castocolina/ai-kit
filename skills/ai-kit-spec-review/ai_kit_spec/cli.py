@@ -283,6 +283,11 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
         help="read an old roster read-only and report the pending migration instead of "
              "migrating it (the --check-only flow)")
 
+    p_quota.add_argument(
+        "--role", choices=["review", "execute", "both"], default="review",
+        help="which role's lanes to probe: review (default, the review flow), execute, or both "
+             "(the review order, then execute keys not already listed; the --check-only flow)")
+
     p_resolve = sub.add_parser("resolve-reviewers")
     p_resolve.add_argument("--cwd", required=True)
     p_resolve.add_argument("--quota-path", required=True)
@@ -815,13 +820,62 @@ def _cmd_apply_heuristic_correction(args: argparse.Namespace, deps: CliDeps) -> 
     print(json.dumps({"applied": True, "model_id": args.model_id}))
     return 0
 
+def _role_lanes(config: dict, names: tuple) -> list:
+    """Lanes from named roles, first key wins; fall back to the flat view if absent."""
+    if not any(isinstance(config.get(name), list) for name in names):
+        return [e for e in config.get("reviewers", [])
+                if isinstance(e, dict) and isinstance(e.get("key"), str)]
+    lanes, seen = [], set()
+    for name in names:
+        entries = config.get(name)
+        if isinstance(entries, list):
+            for entry in entries:
+                if (isinstance(entry, dict) and isinstance(entry.get("key"), str)
+                        and entry["key"] not in seen):
+                    seen.add(entry["key"])
+                    lanes.append(entry)
+    return lanes
+
+
+def _probe_role_keys(config: dict, role: str) -> list:
+    """One role's order, or review then unique execute keys for both."""
+    names = ("review", "execute") if role == "both" else (role,)
+    keys = []
+    for name in names:
+        for key in role_orders.role_order(config, name):
+            if key not in keys:
+                keys.append(key)
+    return keys
+
+
+def _probe_lanes(config: dict, role: str) -> list:
+    """Probe role lanes in order; both prefers review, including usage-limited lanes."""
+    review = {e["key"]: e for e in _role_lanes(config, ("review",))}
+    execute = {e["key"]: e for e in _role_lanes(config, ("execute",))}
+    first, second = (execute, review) if role == "execute" else (review, execute)
+    lanes = []
+    for key in _probe_role_keys(config, role):
+        entry = first.get(key) or second.get(key)
+        if entry is None:
+            continue
+        if (role == "both" and key in review and key in execute
+                and tuple(review[key].get(k) for k in ("runtime", "model", "command"))
+                != tuple(execute[key].get(k) for k in ("runtime", "model", "command"))):
+            print(f"ai-kit-spec: key '{key}' names different lanes in the review and execute "
+                  "roles; the execute lane is not probed (rename one of them)", file=sys.stderr)
+        lanes.append(entry)
+    return lanes
+
+
 def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
     config = cfg_resolve(args.cwd, deps.env_fn(), migrate=not args.no_migrate)
-    routes = _route_reviewers(config, deps, persist=not args.no_save_runtimes)
-    ladder = routing.probe_keys(role_orders.role_order(config, "review"), routes)
+    lanes = _probe_lanes(config, args.role)
+    routes = _route_reviewers(config, deps, persist=not args.no_save_runtimes, lanes=lanes)
+    ladder = routing.probe_keys([entry["key"] for entry in lanes], routes)
     existing = cache_read_json(args.quota_path) or {}
     updated = refresh_quota_cache(
-        config, ladder, existing, QUOTA_TTL_SECONDS, seams=deps.probe_seams(),
+        {**config, "reviewers": lanes}, ladder, existing, QUOTA_TTL_SECONDS,
+        seams=deps.probe_seams(),
     )
     cache_write_json(args.quota_path, updated)
     print(json.dumps(updated))
@@ -832,9 +886,11 @@ def _review_lanes(config: dict) -> list:
     return lanes if isinstance(lanes, list) else config.get("reviewers", [])
 
 
-def _route_reviewers(config: dict, deps: CliDeps, persist=True) -> dict[str, str]:
-    """Route review lanes (36 D-04), including keys shared with execute lanes."""
-    lanes = _review_lanes(config)
+def _route_reviewers(config: dict, deps: CliDeps, persist=True,
+                     lanes: list | None = None) -> dict[str, str]:
+    """Route supplied lanes, or review lanes by default."""
+    if lanes is None:
+        lanes = _review_lanes(config)
     env = deps.env_fn()
     seams = RuntimesSeams(deps.which_fn, deps.run_fn, deps.popen_fn, deps.urlopen_fn)
     routes = routing.route_all(

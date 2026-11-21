@@ -1,15 +1,21 @@
 """Per-role orders (36 SPEC R3, D-04): role_orders, cfg_combine's orders and readers."""
 
+import io
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-execute-superpowers"))
 
-from ai_kit_spec import config_io, quota, role_orders
+from ai_kit_spec import cli, config_io, quota, role_orders
+from ai_kit_spec.runner_dispatch import RunnerResult
 from ai_kit_spec_superpowers import dispatch_injection
 
 
@@ -231,6 +237,131 @@ class TestRoleOrdersExecuteAdapter(unittest.TestCase):
             "/repo", {}, cfg_resolve_fn=lambda cwd, env: resolved)
         self.assertEqual([r["key"] for r in candidates], ["e1"])
         self.assertEqual(top, ["e1"])
+
+
+PROBE_ROSTER = '''[[lanes.review]]
+key = "r1"
+model = "placeholder-model-1"
+command = "placeholder-cli-1 {model}"
+[[lanes.review]]
+key = "both1"
+model = "placeholder-model-2"
+command = "placeholder-cli-1 {model}"
+[[lanes.review]]
+key = "same1"
+model = "placeholder-model-5"
+command = "placeholder-cli-1 {model}"
+[[lanes.execute]]
+key = "e1"
+model = "placeholder-model-3"
+command = "placeholder-cli-1 --exec {model}"
+[[lanes.execute]]
+key = "both1"
+model = "placeholder-model-4"
+command = "placeholder-cli-1 --exec {model}"
+[[lanes.execute]]
+key = "same1"
+model = "placeholder-model-5"
+command = "placeholder-cli-1 {model}"
+[lanes.policy.review]
+ladder = ["r1", "both1", "same1"]
+[lanes.policy.execute]
+ladder = ["both1", "e1", "same1"]
+'''
+
+
+class TestProbeQuotaRole(_FileCase):
+    def probe(self, *extra) -> tuple[list, str]:
+        recorded = []
+
+        def rec(spec, prompt, seams):
+            recorded.append((spec.key, list(spec.argv)))
+            return RunnerResult(0, "", {"status": "ok"}, None, False, ["node", "runner"], "")
+
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = cli.main(["probe-quota", "--cwd", self.cwd, "--quota-path",
+                             os.path.join(self.cwd, "quota.json"), "--no-save-runtimes", *extra],
+                            runner_fn=rec, custom_fn=rec, env_fn=lambda: dict(self.env),
+                            which_fn=lambda _name, **_kwargs: None, run_fn=lambda *_a, **_k: None)
+        self.assertEqual(code, 0)
+        return recorded, err.getvalue()
+
+    def test_default_role_probes_the_review_lanes(self):
+        self.write_user(PROBE_ROSTER)
+        calls, err = self.probe()
+        self.assertEqual(calls, [("r1", ["placeholder-cli-1", "placeholder-model-1"]),
+                                 ("both1", ["placeholder-cli-1", "placeholder-model-2"]),
+                                 ("same1", ["placeholder-cli-1", "placeholder-model-5"])])
+        self.assertNotIn("probe-quota: 'both1'", err)
+
+    def test_execute_role_probes_the_execute_lanes(self):
+        self.write_user(PROBE_ROSTER)
+        calls, err = self.probe("--role", "execute")
+        self.assertEqual(calls, [("both1", ["placeholder-cli-1", "--exec", "placeholder-model-4"]),
+                                 ("e1", ["placeholder-cli-1", "--exec", "placeholder-model-3"]),
+                                 ("same1", ["placeholder-cli-1", "placeholder-model-5"])])
+        self.assertNotIn("names different lanes", err)
+
+    def test_both_probes_review_then_execute_once_per_key_and_warns(self):
+        self.write_user(PROBE_ROSTER)
+        calls, err = self.probe("--role", "both")
+        self.assertEqual(calls, [("r1", ["placeholder-cli-1", "placeholder-model-1"]),
+                                 ("both1", ["placeholder-cli-1", "placeholder-model-2"]),
+                                 ("same1", ["placeholder-cli-1", "placeholder-model-5"]),
+                                 ("e1", ["placeholder-cli-1", "--exec", "placeholder-model-3"])])
+        self.assertEqual([line for line in err.splitlines() if "names different lanes" in line],
+                         ["ai-kit-spec: key 'both1' names different lanes in the review and "
+                          "execute roles; the execute lane is not probed (rename one of them)"])
+
+    def test_usage_limited_lane_is_probed_like_any_other(self):
+        self.write_user(PROBE_ROSTER.replace('key = "e1"',
+                                             'key = "e1"\nusage_limited = true'))
+        calls, _ = self.probe("--role", "execute")
+        self.assertIn(("e1", ["placeholder-cli-1", "--exec", "placeholder-model-3"]), calls)
+
+    def snippet(self):
+        path = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-config", "references",
+                            "check-only.md")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        opener = 'python3 -c "\n'
+        start = text.rindex(opener, 0, text.index("probe_keys")) + len(opener)
+        body = text[start:text.index('\n"\n', start)]
+        review_dir = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review")
+        return body.replace('$(dirname "$TOOLS_PY")', review_dir).replace("$(pwd)", self.cwd)
+
+    def test_check_only_snippet_lists_model_and_command_for_both_roles(self):
+        self.write_user(PROBE_ROSTER)
+        deps = cli.CliDeps(which_fn=lambda *_a, **_k: None,
+                           run_fn=lambda *_a, **_k: subprocess.CompletedProcess([], 0, "", ""),
+                           env_fn=lambda: dict(self.env))
+        out, err = io.StringIO(), io.StringIO()
+        with (mock.patch.object(cli, "CliDeps", lambda: deps), redirect_stdout(out),
+              redirect_stderr(err)):
+            exec(compile(self.snippet(), "check-only-snippet", "exec"), {})
+        rows = json.loads(out.getvalue())
+        self.assertEqual(rows, [{"key": key, "runtime": None, "model": model,
+                                 "command": command, "custom": True}
+                                for key, model, command in [
+                                    ("r1", "placeholder-model-1", "placeholder-cli-1 {model}"),
+                                    ("both1", "placeholder-model-2", "placeholder-cli-1 {model}"),
+                                    ("same1", "placeholder-model-5", "placeholder-cli-1 {model}"),
+                                    ("e1", "placeholder-model-3",
+                                     "placeholder-cli-1 --exec {model}"),
+                                ]])
+        self.assertIn("key 'both1' names different lanes", err.getvalue())
+
+    def test_check_only_text_names_both_roles_and_the_probe_spend(self):
+        path = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-config", "references",
+                            "check-only.md")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn('probe-quota --cwd "$(pwd)" --role both', text)
+        self.assertIn("List every such entry with the model and command", text)
+        self.assertIn("A key that names different lanes", text)
+        self.assertIn("every `--check-only` run spends one probe per probed lane", text)
+        self.assertNotIn("reachable from `policy.ladder`", text)
 
 
 if __name__ == "__main__":
