@@ -5,16 +5,16 @@ milestone_name: Skill Refactor
 current_phase: 36
 current_phase_name: spec-config as the hub
 status: executing
-stopped_at: Completed 36-11-PLAN.md
-last_updated: "2026-11-21T03:25:31.125Z"
+stopped_at: Completed 36-12-PLAN.md
+last_updated: "2026-11-21T03:39:36.814Z"
 last_activity: 2026-11-20
 last_activity_desc: Phase 35 execution started
-state_head: e208cee625e90560478362deb83d64c1356e06ee
+state_head: 2b40a4483259644c7f7b54aad19ffc2e67d2b3bc
 progress:
   total_phases: 40
   completed_phases: 15
   total_plans: 181
-  completed_plans: 163
+  completed_plans: 164
   percent: 38
 ---
 
@@ -374,6 +374,7 @@ Progress: [████░░░░░░] 38%
 | Phase 36 P08 | 16min | 2 tasks | 4 files |
 | Phase 36 P10 | 16min | 3 tasks | 6 files |
 | Phase 36 P11 | 8min | 3 tasks | 4 files |
+| Phase 36 P12 | 13min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -738,8 +739,8 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-21T03:25:30.068Z
-Stopped at: Completed 36-11-PLAN.md
+Last session: 2026-11-21T03:39:35.757Z
+Stopped at: Completed 36-12-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

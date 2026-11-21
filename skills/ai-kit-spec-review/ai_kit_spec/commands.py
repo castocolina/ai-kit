@@ -1,7 +1,7 @@
 import shlex
 from typing import NamedTuple
 
-from ai_kit_spec.detection import RUNTIMES, runtime_id
+from ai_kit_spec.detection import RUNTIMES, has_exec_formula, runtime_id
 
 # ── Policy resolution ────────────────────────────────────────────────────────
 
@@ -58,12 +58,10 @@ def split_command_template(key: str, template: str | None) -> list[str]:
     return shlex.split(template)
 
 
-# The runner runtimes that are not review-only. Derived from the runtime table, never
-# hand-maintained: a review-only or runner-less row drops out of this set (and makes any
-# explicit choice of it a hard error via execute_cli_error, below). claude is review-only and
-# grok has no runner (Phase 16.1 D-15, Phase 18.1 D-14): both are a hard error here.
+# The runtimes the runner can execute: rows whose exec formula has a head (36 D-08). Derived from
+# the runtime table, never hand-maintained; any other choice is refused by execute_cli_error.
 SUPPORTED_EXECUTE_CLIS = tuple(sorted(
-    rt for rt, row in RUNTIMES.items() if row.runner and not row.review_only
+    rid for rid, row in RUNTIMES.items() if has_exec_formula(row)
 ))
 
 

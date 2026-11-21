@@ -87,7 +87,7 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
    python3 -c "
 import json, sys
 sys.path.insert(0, '$(dirname "$TOOLS_PY")')
-from ai_kit_spec.detection import RUNTIMES
+from ai_kit_spec.detection import RUNTIMES, has_exec_formula
 from ai_kit_spec.model_catalog import current_candidate_keys
 from ai_kit_spec.model_ranker import load_ranking_weights, score_candidates
 catalog = json.load(open('$CATALOG_JSON'))
@@ -104,7 +104,7 @@ name_declared = [e for e in entries if e.get('name_declared_purpose')]
 scored = [e for e in entries if not e.get('name_declared_purpose')]
 weights = load_ranking_weights()
 # Review-only (claude as a subprocess) and runner-less (grok) runtimes never execute.
-no_exec = {rid for rid, row in RUNTIMES.items() if row.review_only or not row.runner}
+no_exec = {rid for rid, row in RUNTIMES.items() if not has_exec_formula(row)}
 def via(e, purpose):
     return '/'.join(r for r in e.get('runtimes', {}) if purpose == 'review' or r not in no_exec)
 def field(e, path, label):
@@ -146,7 +146,7 @@ for purpose in ('review', 'execute'):
    runtime table marks review-only or runner-less — claude as a subprocess, and grok, whose
    custom command runs only as a reviewer — so a candidate reachable only through those never
    appears in the EXECUTE block, and its EXECUTE-side `via` names only executable runtimes.
-   Execution routing would skip such a pick anyway (`review_only`). The one claude pair that
+   Execution routing would skip such a pick anyway (`no_formula`). The one claude pair that
    does execute is a Claude Code alias on a Claude Code host, registered through Step 2.7's
    session-default ask, not this ranked flow.
 7. Present the top candidates per purpose to the user in this shape (adapt scores/labels to what

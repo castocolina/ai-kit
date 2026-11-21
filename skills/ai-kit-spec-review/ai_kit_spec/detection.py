@@ -97,7 +97,6 @@ class Runtime(NamedTuple):
     scrub_signals: tuple[str, ...] = ()
     list_argv: tuple[str, ...] | None = None
     native_selectors: tuple[str, ...] = ()
-    review_only: bool = False
     model_suffix: str | None = None
     multi_provider: bool = False
     runner: bool = True
@@ -150,7 +149,6 @@ RUNTIMES: dict[str, Runtime] = {
         (("CLAUDECODE", _LABEL_CLAUDE),),
         scrub_signals=("CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"),
         native_selectors=("fable", "opus", "sonnet", "haiku"),
-        review_only=True,
         exec_formula=ExecFormula(
             None, "cross-ai.mjs RUNTIMES.claude.exec is null, read 2026-11-20"),
         advice=Advice("usually the main agent in this host", "seed row"),
