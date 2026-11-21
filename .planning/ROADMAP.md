@@ -743,7 +743,7 @@ Plans:
   8. A zero-price model can be selected in spec-config (its own group in the proposal, with its price source), the owner's yes writes a `usage_limited` flag on the lane and nothing else does, a role holding only usage-limited lanes gets an alternative proposed or an explicit-none warning, and the wizard's questions and written file are identical with and without herdr. *(added 2026-11-16, re-run 2, 36 D-15 to D-19, owner directive on free models and herdr hosting)* *(amended 2026-11-16, free-lane pool study, 36 D-20 to D-22, PROVISIONAL, needs owner confirmation: the flag is written with the lane's pool (provider plus free tier); a flagged lane's fallback is the first lane of the role that is neither flagged nor in the same pool; the wizard warns that other free models of the same provider share one pool. Source: `.planning/research/2026-11-16-opencode-free-models.md`, where the shared pool is reported by users and not confirmed by a maintainer)*
   9. When the owner selects a free model that is not known to be local, the wizard shows its data-use note (`zero_retention`, `may_be_kept_or_trained` or `unknown`, with source, read date and a verified or reported label, unknown never defaulted to a safe value) and asks the owner to confirm sending project content to that lane; a yes records the note and the confirmation beside the lane, a no or a skip writes no lane. *(added 2026-11-16, free-lane pool study, 36 D-23, HUB-10, PROVISIONAL, needs owner confirmation: the decline path and the closed value list; the research note finds only four listed free models zero-retention, so project code may reach a third party)*
 
-**Plans**: 12/29 plans executed in 11 waves *(planned 2026-11-20; plan 36-29 is an orchestrator action: the judge loop for the three skills)*
+**Plans**: 13/29 plans executed in 11 waves *(planned 2026-11-20; plan 36-29 is an orchestrator action: the judge loop for the three skills)*
 **Wave 1**
 - [x] 36-01-PLAN.md (wave 1): stub every new test module and regenerate the test listing
 - [x] 36-02-PLAN.md (wave 1): planning amendments (R13, pool and data-use decisions D-20 to D-23, grok exclusion, review skill joins the judge bar)
@@ -765,7 +765,7 @@ Plans:
 - [x] 36-12-PLAN.md (wave 4): route `no_formula` replaces `review_only`
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 36-13-PLAN.md (wave 5): `propose-lanes` command
+- [x] 36-13-PLAN.md (wave 5): `propose-lanes` command
 - [ ] 36-14-PLAN.md (wave 5): execute selection, save message and no-seed-refusal test
 - [ ] 36-15-PLAN.md (wave 5): referee rule in the hardcoding guard
 - [ ] 36-16-PLAN.md (wave 5): review skill no-config chain
@@ -1198,7 +1198,7 @@ Plans:
 | 33. One config design | 12/12 | Complete    | 2026-11-15 |
 | 34. jev backends by host and Laya calibration | 10/10 | Complete    | 2026-11-16 |
 | 35. Model discovery and catalog | 28/28 | In Progress | - |
-| 36. spec-config as the hub | 12/29 | In Progress | - |
+| 36. spec-config as the hub | 13/29 | In Progress | - |
 | 37. Shared runner options and session ids | 0/TBD | Not started | - |
 | 38. Runner hardening and run safety | 0/TBD | Not started | - |
 | 38.1. Runner error classification and retry policy | 0/TBD | Not started | - |

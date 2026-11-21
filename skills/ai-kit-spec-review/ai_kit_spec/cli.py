@@ -15,6 +15,7 @@ from ai_kit_spec import (
     config_status,
     jev_names,
     optional_sources,
+    propose_cmds,
     provider_check,
     role_orders,
     routing,
@@ -167,6 +168,7 @@ class CliDeps(NamedTuple):
     fetch_arena_fn: Callable[..., Any] = fetch_arena
     popen_fn: Callable[..., Any] = subprocess.Popen  # the opencode 2.x image probe server
     urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN  # its loopback API call
+    score_judge_fn: Callable[..., Any] = jev_names.score_judge
 
     def probe_seams(self) -> ProbeSeams:
         """The runner and launcher a probe or a quota refresh spawns through."""
@@ -461,6 +463,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _register_report_parsers(sub)
     _register_dispatch_parsers(sub)
     catalog_cmds.register_parsers(sub)
+    propose_cmds.register_parsers(sub)
     config_status.register_parsers(sub)
     return parser
 
@@ -1212,6 +1215,7 @@ _COMMANDS = {
     "dispatch-reviewer": _cmd_dispatch_reviewer,
     "check-reviewer": _cmd_check_reviewer,
     **catalog_cmds.COMMANDS,
+    **propose_cmds.COMMANDS,
     **config_status.COMMANDS,
 }
 
