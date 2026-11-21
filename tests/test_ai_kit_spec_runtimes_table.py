@@ -910,13 +910,20 @@ class TestWordingGrep(unittest.TestCase):
         ]
         self.assertEqual(missing, [])
 
-    def test_review_only_label(self):
+    def test_no_formula_wording(self):
         paths = (
             "skills/ai-kit-spec-review/SKILL.md",
             "skills/ai-kit-spec-review/references/cli-profiles/claude.md",
         )
-        missing = [path for path in paths if "review-only" not in _read_repo(path)]
-        self.assertEqual(missing, [])
+        problems = []
+        for path in paths:
+            text = _read_repo(path)
+            if "no_formula" not in text:
+                problems.append(f"{path}: missing no_formula")
+            for token in ("review_only", "review-only"):
+                if token in text:
+                    problems.append(f"{path}: {token}")
+        self.assertEqual(problems, [])
 
     def test_node_floor(self):
         text = _read_repo("skills/ai-kit-spec-review/SKILL.md")

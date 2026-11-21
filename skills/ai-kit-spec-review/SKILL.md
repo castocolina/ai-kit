@@ -154,8 +154,22 @@ Runs once per invocation, after Step 0.6. Before walking the cross-AI ladder, as
 
 Once resolved, `REVIEWER_LIST`, `RUN_TMP_DIR`, `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `SHARED_TOOLING_PATH`, and `TOOL_AVAILABILITY_JSON` are consumed by Step 1 below exactly as named.
 
+**No-config check** (skipped with `--no-cross-ai`). Run `python3 "$TOOLS_PY" config-status --role review --cwd <CODEBASE_ROOT>` and read its first line.
+1. `active`: continue and ask nothing.
+2. `pending`: continue; the trust and migration steps handle it, never setup.
+3. `none`: ask once, with the host's question tool or numbered plain text, and never answer for the user:
+   (1) run ai-kit-spec-config now, (2) run once on the session model, (3) stop. An empty or unrecognised answer is (3).
+   (1): follow the sibling ai-kit-spec-config skill to its end, run config-status again (it must print `active`), then continue the task.
+   (2): continue on the session default and put the line `no cross-AI config: ran on the session model` in the surface message.
+   (3): stop.
+4. `none` and the host has no way to ask: print `no cross-AI config: run ai-kit-spec-config; continuing on the session model, no config written`,
+   continue on the session default and repeat that line in the surface message.
+5. `none`, the answer is (1) and no ../ai-kit-spec-config/SKILL.md exists beside this skill: stop with
+   `ai-kit-spec-config is not installed. Install ai-kit, then run ai-kit-spec-config.`
+6. Exit code 2: show the named error line and stop; any other nonzero exit: show the first stderr line and stop.
+
 **Probe-quota walks the configured ladder before any dispatch, and that walk is pre-dispatch
-selection, not a recovery.** `probe-quota` probes each ladder entry in order. A probe that fails
+selection, not a recovery.** `probe-quota` probes each lane of the review order in order. A probe that fails
 for any reason, a timeout included, marks that entry unavailable, and `resolve-reviewers` moves
 the review to the next configured entry, which may be another provider, before Step 1 dispatches
 anything. When no configured entry is available, the walk ends on the session default (same
@@ -216,9 +230,10 @@ after the file was deleted.
   Without Node, the probe walk marks subprocess entries unavailable before dispatch (the stderr
   line starts `ai-kit-spec: subprocess dispatch needs Node`); a dispatch that hits it is a
   `dispatch_unavailable` Failure, never a session-default run.
-- **`claude` is review-only:** the runtime table flags it review-only, so it is a review target
-  and never an execution CLI. Routing skips an exec-mode `claude` candidate unless it is a
-  Claude Code alias on a Claude Code host (that one runs natively).
+- **`claude` in exec mode:** the runner has a review formula for `claude` and no exec formula, so
+  routing skips an exec-mode `claude` candidate with route `no_formula` unless it is a Claude Code
+  alias on a Claude Code host (that one runs natively). The runtime table's advice for `claude`
+  (usually the main agent here) is shown with its source, unverified, and never skips a lane.
 
 ## NEVER (hard landmines)
 
@@ -243,7 +258,7 @@ Run this loop. Each iteration is one reviewer dispatch followed by (conditionall
 A reviewer or executor is a (runtime, model) pair. Each call runs it natively when its runtime is the current host and the host can select that model; otherwise it runs as a subprocess through the supervised runner. An entry with neither a runtime nor a model is the session default, which the host always runs natively. Today only Claude Code selects a model per call (its sonnet, opus, haiku and fable aliases); every other host runs only its session default natively.
 
 `resolve-reviewers` adds a per-call `route` and never stores it. A skip (`bad_model`,
-`no_inventory`, `not_installed`, `unknown_runtime`, `no_model`, `review_only`) never reaches
+`no_inventory`, `not_installed`, `unknown_runtime`, `no_model`, `no_formula`) never reaches
 `REVIEWER_LIST`: stderr prints `ai-kit-spec: skipping reviewer <key>: route <route>`. The routes
 that do dispatch are `native`, `subprocess`, `unverified` and `custom`.
 

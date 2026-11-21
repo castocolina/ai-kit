@@ -11,10 +11,10 @@ source: live smoke test against a real installed claude CLI, piping a
 
 # claude — reviewer profile
 
-`claude` is review-only. The runtime table sets `review_only`, routing skips an
-exec-mode `claude` candidate on any other host, and the runner has a review
-formula and no exec formula (an exec attempt exits 2). It is a review target,
-never an execution CLI.
+The runner has a review formula for `claude` and no exec formula (an exec attempt exits 2), so
+routing skips an exec-mode `claude` candidate off a Claude Code host with route `no_formula`: a
+fact about the runner, not a table flag. Advice (seed row, unverified): `claude` is usually the
+main agent on this host, so it is more often a review target than an executor.
 
 The runner's review formula (review mode) is:
 

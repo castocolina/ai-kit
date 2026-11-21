@@ -51,7 +51,8 @@ Runs once per invocation, after Step 0.6.
    tool calls. If
    `TOOLS_PY` does not exist at the resolved path, treat this
    exactly like `--no-cross-ai` (point 2 below) — cross-AI support isn't
-   installed, never block the review over it. If `TOOLS_PY` exists but
+   installed, never block the review over it (point 2 prints a notice that names the fix; a missing
+   `ai-kit-spec-config` skill is a different fact: point 3 checks it, only on `none` and answer (1)). If `TOOLS_PY` exists but
    `CHECKLIST_SKILL_MD` does not (a broken/partial install —
    `ai-kit-spec-review-checklist` missing while `ai-kit-spec-review` itself is
    present), native dispatch can proceed only on a host whose skill tool loads
@@ -108,7 +109,9 @@ Runs once per invocation, after Step 0.6.
    `tmp.XXXXXXXXXX` (unidentifiable after the fact, and see the Cleanup section for when this
    directory is actually removed — not simply "after this loop ends" any more).
 2. **If `--no-cross-ai` was requested (or `TOOLS_PY` is missing, point 0
-   above)**: set `REVIEWER_LIST` directly, in-context, to the single-entry
+   above)**: when `TOOLS_PY` is missing (never for `--no-cross-ai`, which prints nothing), first print
+   `ai-kit-spec-review: ai-kit-spec.py is missing; install ai-kit. Continuing on the session model, nothing checked.`
+   and repeat that line in the Surface message. Then set `REVIEWER_LIST` directly, in-context, to the single-entry
    array `[{"key": "session-default", "model": "", "vendor": "", "runtime": null,
    "command": null, "extra": {}, "route": "native"}]` — `ai-kit-spec.py`'s
    `NO_CONFIG_FALLBACK` constant's shape plus the `native` route Step 1 branches on. **Do not run
@@ -120,29 +123,20 @@ Runs once per invocation, after Step 0.6.
    `command`), Step 1's dispatch never needs `reviewers.json` for it either
    (only the subprocess branch reads that file), so nothing downstream is
    left dangling. Go directly to Step 1.
-3. **Required — check before the call below, not optionally**: the
-   `--if-stale` call immediately after this destroys the evidence a
-   missing-file check would find (it creates the file), so this order is
-   fixed — check first, save second:
-   ```bash
-   [ -f "$RUNTIMES_JSON" ] || echo "no-runtimes-snapshot-yet"
-   ```
-   Then refresh the runtimes snapshot if it's missing or older than
-   `RUNTIMES_TTL_SECONDS` (~30 days — CLI/model presence rarely changes):
+3. **No-config check, then the snapshot refresh.** Run the **No-config check** block of SKILL.md's
+   Step 0.7 here (`--no-cross-ai` and a missing `TOOLS_PY` never reach this point). Its outcomes map
+   onto this procedure: `active`, `pending` and a finished answer (1) continue below; answer (2) and
+   its point 4 set `REVIEWER_LIST` exactly as point 2 does and go straight to Step 1 (points 4-6 are
+   skipped and nothing is written); answer (3), its point 5 and its point 6 end the run before any
+   dispatch. Then refresh the runtimes snapshot if it is missing or older than `RUNTIMES_TTL_SECONDS`
+   (about 30 days; CLI and model presence rarely changes):
    ```bash
    python3 "$TOOLS_PY" detect-runtimes --if-stale "$RUNTIMES_JSON"
    ```
-   `--if-stale` checks `cache_is_stale` itself and no-ops
-   (prints `{}`, doesn't touch the file) when the existing snapshot is
-   still fresh; when missing or stale it detects and saves in the same
-   call, so this is always safe to run. If the check above printed
-   `no-runtimes-snapshot-yet` (this was the first-ever save), print one
-   line — "No cross-AI config saved yet — run `ai-kit-spec-config` so
-   this doesn't repeat every invocation." — then continue to step 4
-   regardless; do NOT skip reviewer resolution (there's usually no
-   `config.toml` roster yet either, so `resolve-reviewers` in step 5
-   degrades to `NO_CONFIG_FALLBACK` on its own — no special-casing needed
-   here beyond the detection call and the hint).
+   `--if-stale` checks `cache_is_stale` itself and no-ops (prints `{}`, doesn't touch the file) when
+   the existing snapshot is still fresh; when missing or stale it detects and saves in the same call,
+   so this is always safe to run. The snapshot is a cache of installed CLIs and models, not config:
+   a missing snapshot never means "no config"; only `config-status` answers that.
 4. Refresh quota for anything the config's ladder might need. `--cwd`
    takes exactly one directory — when Step 0.1 recorded `CODEBASE_ROOT`
    as a labeled set (cross-repo plans), use the root that owns the
@@ -177,7 +171,7 @@ Runs once per invocation, after Step 0.6.
    `custom` (a `command` and no `runtime`, through the fixed-argv launcher). A skip never
    appears here. Stderr names every reviewer that was left out
    (`ai-kit-spec: skipping reviewer <key>: route <route>`, for `bad_model`, `no_inventory`,
-   `not_installed`, `unknown_runtime`, `no_model` or `review_only`) and every one dispatched
+   `not_installed`, `unknown_runtime`, `no_model` or `no_formula`) and every one dispatched
    unchecked (`ai-kit-spec: dispatching reviewer <key> unverified: the <runtime> model list is
    unavailable, so neither ai-kit nor the runner can check <model> before it runs`). The runner
    itself has no `unverified` status; that word is only this route.
