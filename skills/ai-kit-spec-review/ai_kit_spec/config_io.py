@@ -693,12 +693,20 @@ def _combine_role(local_view: dict, global_view: dict, role: str, local_only: bo
 
 def _combine_roles(local_view: dict, global_view: dict, local_only: bool, policy: dict,
                    emit_warn) -> dict:
-    """Each role's merged lanes and order (36 D-04)."""
+    """Each role's merged lanes and order (36 D-04).
+
+    It prints one warning per role whose usage_limited lanes have no selectable lane to fall
+    back to (36 D-17).
+    """
     review = _combine_role(local_view, global_view, "review", local_only)
     execute = _combine_role(local_view, global_view, "execute", local_only)
-    return {"review": review, "execute": execute,
-            "orders": role_orders.role_orders(policy, {"review": review, "execute": execute},
-                                              emit_warn)}
+    result = {"review": review, "execute": execute,
+              "orders": role_orders.role_orders(policy, {"review": review, "execute": execute},
+                                                emit_warn)}
+    for line in lane_settings.fallback_warnings({"review": review, "execute": execute},
+                                                result["orders"]):
+        emit_warn(line)
+    return result
 
 
 def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None,

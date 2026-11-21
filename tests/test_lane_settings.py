@@ -1,5 +1,6 @@
 """Lane settings and their config_io hooks."""
 
+import ast
 import copy
 import io
 import os
@@ -30,8 +31,13 @@ def _render(config, existing=""):
     return text, stderr.getvalue()
 
 
-def _lane(key="k1"):
-    return {"key": key, "runtime": "codex", "model": "placeholder-model-1"}
+def _lane(key="k1", *, flagged=False, pool=None, runtime="codex", model="placeholder-model-1"):
+    lane: dict = {"key": key, "runtime": runtime, "model": model}
+    if flagged:
+        lane["usage_limited"] = True
+    if pool:
+        lane["pool"] = pool
+    return lane
 
 
 class TestLaneSettingsValidate(unittest.TestCase):
@@ -219,6 +225,255 @@ class TestModelBoundMerge(unittest.TestCase):
         originals = copy.deepcopy((global_list, local_list))
         config_io.cfg_merge_reviewers(global_list, local_list)
         self.assertEqual((global_list, local_list), originals)
+
+
+REPO = Path(__file__).resolve().parents[1]
+SCANNED = (REPO / "skills" / "ai-kit-spec-review" / "ai_kit_spec",
+           REPO / "skills" / "ai-kit-spec-execute-superpowers" / "ai_kit_spec_superpowers")
+FLAGS = frozenset(lane_settings.LANE_FLAG_KEYS)
+READERS = frozenset({"lane_escalation", "escalation_target", "lane_usage_limit", "lane_fallback"})
+
+
+def _flag_literal_lines(text: str) -> list[int]:
+    return sorted(n.lineno for n in ast.walk(ast.parse(text))
+                  if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in FLAGS)
+
+
+def _reader_lines(text: str) -> list[int]:
+    return sorted(n.lineno for n in ast.walk(ast.parse(text))
+                  if (isinstance(n, ast.Name) and n.id in READERS)
+                  or (isinstance(n, ast.Attribute) and n.attr in READERS)
+                  or (isinstance(n, ast.alias) and n.name in READERS))
+
+
+def _scanned_files():
+    return sorted(p for folder in SCANNED for p in folder.glob("*.py")
+                  if p.name != "lane_settings.py")
+
+
+class _ScratchLayers(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.cwd = str(self.root / "project")
+        Path(self.cwd).mkdir()
+        self.env = {"HOME": str(self.root / "home"), "XDG_CONFIG_HOME": str(self.root / "xdg")}
+        self.warnings = []
+
+    def write_user(self, text):
+        path = self.root / "xdg" / "ai-kit" / "config.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def write_project(self, text):
+        path = Path(self.cwd) / ".aikit" / "config.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def resolve(self):
+        return config_io.cfg_resolve(self.cwd, self.env, warn_fn=self.warnings.append)
+
+
+def _toml_lane(role, key, extra="", model="placeholder-model-1", runtime="codex"):
+    return (f'[[lanes.{role}]]\nkey = "{key}"\nruntime = "{runtime}"\n'
+            f'model = "{model}"\n{extra}\n')
+
+
+class TestLaneUsageLimit(_ScratchLayers):
+    def test_absent_is_not_limited(self):
+        self.assertEqual(lane_settings.lane_usage_limit(_lane()), (False, ""))
+
+    def test_flag_and_note(self):
+        self.assertEqual(lane_settings.lane_usage_limit({**_lane(), "usage_limited": True,
+                                                        "usage_limit_note": "a daily cap"}),
+                         (True, "a daily cap"))
+
+    def test_non_boolean_raises_naming_the_key(self):
+        with self.assertRaisesRegex(lane_settings.LaneSettingError,
+                                    "k1: 'usage_limited' must be a boolean"):
+            lane_settings.lane_usage_limit({**_lane(), "usage_limited": "yes"})
+
+    def test_layered_merge(self):
+        self.write_user(_toml_lane("execute", "k1", 'usage_limited = true\n'
+                                   'usage_limit_note = "a daily cap"\npool = "fake:free"',
+                                   "fake/placeholder-model-3", "opencode"))
+        self.write_project('[[lanes.execute]]\nkey = "k1"\nusage_limit_note = "about 100 a day"\n')
+        self.assertEqual(lane_settings.lane_usage_limit(self.resolve()["execute"][0]),
+                         (True, "about 100 a day"))
+        self.write_project('[[lanes.execute]]\nkey = "k1"\nmodel = "fake/placeholder-model-4"\n')
+        self.assertEqual(lane_settings.lane_usage_limit(self.resolve()["execute"][0]), (False, ""))
+
+
+class TestLaneFallback(unittest.TestCase):
+    def test_first_unflagged_in_order(self):
+        lanes = [_lane("A", flagged=True, pool="fake:free"), _lane("B", flagged=True),
+                 _lane("C"), _lane("D")]
+        self.assertEqual(lane_settings.lane_fallback(lanes, "A"), "C")
+
+    def test_same_pool_lane_is_skipped(self):
+        lanes = [_lane("A", flagged=True, pool="fake:free"), _lane("B", pool="fake:free"),
+                 _lane("C", pool="fake-other:free")]
+        self.assertEqual(lane_settings.lane_fallback(lanes, "A"), "C")
+
+    def test_none_when_every_other_lane_is_flagged_or_pooled(self):
+        lanes = [_lane("A", flagged=True, pool="fake:free"), _lane("B", pool="fake:free")]
+        self.assertIsNone(lane_settings.lane_fallback(lanes, "A"))
+        self.assertIsNone(lane_settings.lane_fallback(
+            [_lane("A", flagged=True), _lane("B", flagged=True)], "A"))
+        self.assertEqual(lane_settings.lane_fallback(
+            [_lane("A", flagged=True), _lane("B")], "A"), "B")
+
+    def test_unknown_key_and_duplicate_key(self):
+        lanes = [_lane("A", flagged=True, pool="fake:free"), _lane("C"), _lane("A")]
+        self.assertIsNone(lane_settings.lane_fallback(lanes, "missing"))
+        self.assertEqual(lane_settings.lane_fallback(lanes, "A"), "C")
+
+    def test_malformed_collections_never_raise(self):
+        lanes = ["x", None, {"key": 5}, {"no": "key"}, _lane("A", flagged=True), _lane("B")]
+        self.assertEqual(lane_settings.lane_fallback(lanes, "A"), "B")
+        malformed = None
+        self.assertIsNone(lane_settings.lane_fallback(malformed, "A"))  # type: ignore[arg-type]
+        roles = {"review": None, "execute": ["x", None, _lane("A", flagged=True)]}
+        self.assertEqual(lane_settings.fallback_warnings(roles, {"execute": ["A"]}),
+                         [lane_settings.FALLBACK_WARNING.format(role="execute", keys="A")])
+
+    def test_duplicates_are_removed_first(self):
+        lanes = [_lane("A", flagged=True), _lane("A"), _lane("B", flagged=True)]
+        self.assertIsNone(lane_settings.lane_fallback(lanes, "A"))
+        self.assertEqual(lane_settings.fallback_warnings({"execute": lanes},
+                                                         {"execute": ["A", "B"]}),
+                         [lane_settings.FALLBACK_WARNING.format(role="execute", keys="A, B")])
+        lanes = [_lane("A", flagged=True, pool="fake:free"), _lane("B", pool="fake:free"),
+                 _lane("B")]
+        self.assertIsNone(lane_settings.lane_fallback(lanes, "A"))
+
+    def test_selectable_lanes_per_role(self):
+        a, b, c = _lane("a"), _lane("b"), _lane("c")
+        self.assertEqual(lane_settings.selectable_lanes("review", [a, b, c], ["c", "a", "zz"]),
+                         [c, a])
+        self.assertEqual(lane_settings.selectable_lanes("execute", [a, b, c], ["c", "a"]),
+                         [c, a, b])
+        self.assertEqual(lane_settings.selectable_lanes("review", [a, b], []), [])
+        self.assertEqual(lane_settings.selectable_lanes("execute", [a, b], None), [a, b])
+
+
+class TestFallbackWarnings(_ScratchLayers):
+    def test_warning_text_and_no_warning_cases(self):
+        roles = {"review": [_lane("R")], "execute": [_lane("E", flagged=True, pool="fake:free"),
+                                                     _lane("F", pool="fake:free")]}
+        warning = ("ai-kit-spec: usage_limited execute lane(s) E have no lane to fall back to: "
+                   "every other execute lane is usage_limited or in the same pool")
+        self.assertEqual(lane_settings.fallback_warnings(
+            roles, {"review": ["R"], "execute": ["E", "F"]}), [warning])
+        self.assertEqual(lane_settings.fallback_warnings(
+            {"execute": [_lane("E", flagged=True), _lane("G")]}, {}), [])
+        self.assertEqual(lane_settings.fallback_warnings(
+            {"review": [_lane("R2", flagged=True), _lane("R")]}, {}),
+            [lane_settings.FALLBACK_WARNING.format(role="review", keys="R2")])
+
+    def test_reader_warns_for_a_hand_written_file(self):
+        self.write_user(_toml_lane("execute", "k1", "usage_limited = true")
+                        + _toml_lane("execute", "k2", "usage_limited = true", "placeholder-model-2")
+                        + '[lanes.policy.execute]\nladder = ["k1", "k2"]\n')
+        resolved = self.resolve()
+        self.assertEqual([x["key"] for x in resolved["execute"]], ["k1", "k2"])
+        warning = lane_settings.FALLBACK_WARNING.format(role="execute", keys="k1, k2")
+        self.assertEqual(self.warnings.count(warning), 1)
+
+    def test_reader_uses_the_selectable_lanes_of_each_role(self):
+        for role in ("execute", "review"):
+            self.warnings.clear()
+            self.write_user(_toml_lane(role, "x1")
+                            + _toml_lane(role, "x2", 'usage_limited = true\npool = "fake:free"',
+                                         "placeholder-model-2")
+                            + _toml_lane(role, "x3", 'pool = "fake:free"', "placeholder-model-3")
+                            + f'[lanes.policy.{role}]\nladder = ["x3", "x2"]\n')
+            self.resolve()
+            lines = [x for x in self.warnings if x.startswith("ai-kit-spec: usage_limited")]
+            warning = lane_settings.FALLBACK_WARNING.format(role="review", keys="x2")
+            self.assertEqual(lines, [] if role == "execute" else [warning])
+
+
+class TestLaneEscalation(_ScratchLayers):
+    def test_absent_is_false(self):
+        self.assertEqual(lane_settings.lane_escalation(_lane()), (False, False))
+
+    def test_both_true(self):
+        self.assertEqual(lane_settings.lane_escalation(
+            {**_lane(), "escalate_runtime": True, "escalate_model": True}), (True, True))
+
+    def test_non_boolean_raises(self):
+        with self.assertRaisesRegex(lane_settings.LaneSettingError,
+                                    "k1: 'escalate_model' must be a boolean"):
+            lane_settings.lane_escalation({**_lane(), "escalate_model": "yes"})
+
+    def test_layered_merge(self):
+        self.write_user(_toml_lane("review", "k1", "escalate_model = true"))
+        self.write_project('[[lanes.review]]\nkey = "k1"\nescalate_runtime = true\n')
+        self.assertEqual(lane_settings.lane_escalation(self.resolve()["review"][0]), (True, True))
+        self.write_project('[[lanes.review]]\nkey = "k1"\nescalate_runtime = true\n'
+                           'model = "placeholder-model-2"\n')
+        self.assertEqual(lane_settings.lane_escalation(self.resolve()["review"][0]), (True, False))
+
+
+class TestEscalationTarget(unittest.TestCase):
+    def test_runtime_and_model_kinds(self):
+        lanes = [_lane("a"), _lane("b", model="placeholder-model-2"),
+                 _lane("c", runtime="pi", model="placeholder-model-3"),
+                 _lane("d", model="placeholder-model-4")]
+        for key, kind, target in (("a", "runtime", "c"), ("a", "model", "b"),
+                                  ("b", "model", "d"), ("c", "runtime", "d")):
+            self.assertEqual(lane_settings.escalation_target(lanes, key, kind), target)
+
+    def test_one_lane_and_last_lane_have_no_target(self):
+        for kind in ("runtime", "model"):
+            self.assertIsNone(lane_settings.escalation_target([_lane("a")], "a", kind))
+        self.assertIsNone(lane_settings.escalation_target([_lane("a"), _lane("d")], "d", "runtime"))
+
+    def test_unknown_key_and_bad_kind(self):
+        self.assertIsNone(lane_settings.escalation_target([_lane("a")], "missing", "runtime"))
+        with self.assertRaises(ValueError):
+            lane_settings.escalation_target([_lane("a")], "a", "vendor")
+
+
+class TestNoFlagSetter(unittest.TestCase):
+    def test_only_lane_settings_holds_a_flag_literal(self):
+        files = _scanned_files()
+        self.assertTrue(files)
+        self.assertEqual([f"{p.relative_to(REPO)}:{lines}" for p in files
+                          if (lines := _flag_literal_lines(p.read_text()))], [])
+
+    def test_no_module_calls_a_lane_reader(self):
+        files = _scanned_files()
+        self.assertTrue(files)
+        self.assertEqual([f"{p.relative_to(REPO)}:{lines}" for p in files
+                          if (lines := _reader_lines(p.read_text()))], [])
+
+    def test_scanners_catch_a_planted_setter_and_reader(self):
+        self.assertEqual(_flag_literal_lines('entry["usage_limited"] = True'), [1])
+        self.assertEqual(_flag_literal_lines('"""usage_limited is the owner\'s yes."""'), [])
+        self.assertEqual(_reader_lines('from ai_kit_spec import lane_settings\n'
+                                       'lane_settings.lane_fallback([], "k")'), [2])
+        self.assertEqual(_reader_lines('from ai_kit_spec.lane_settings import lane_usage_limit'),
+                         [1])
+
+    def test_writer_and_defaults_set_no_flag(self):
+        text, _ = _render({"policy": {"mode": "single"},
+                           "lanes": [_lane("r1"), {**_lane("e1"), "purpose": "execute"},
+                                     {**_lane("b1"), "purpose": "both"}]})
+        for flag in FLAGS:
+            self.assertNotIn(flag, text)
+            self.assertNotIn(flag, config_io.DEFAULT_POLICY)
+
+    def test_zero_price_lane_gets_no_flag_on_write(self):
+        text, err = _render({"lanes": [{**_lane("z1", runtime="opencode",
+                                               model="fake/placeholder-model-3", pool="fake:free"),
+                                        "purpose": "execute", **FULL_DATA_USE}]})
+        self.assertIn("pool", tomllib.loads(text)["lanes"]["execute"][0])
+        self.assertNotIn("WARNING", err)
+        for flag in FLAGS:
+            self.assertNotIn(flag, text)
 
 
 if __name__ == "__main__":

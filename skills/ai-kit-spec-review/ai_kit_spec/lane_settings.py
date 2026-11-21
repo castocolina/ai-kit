@@ -4,6 +4,7 @@ Effort is checked by lane_effort; the data-use record by lane_data_use.
 """
 
 import re
+from typing import NamedTuple
 
 from ai_kit_spec import lane_data_use
 
@@ -70,3 +71,113 @@ def write_problem(entry: dict) -> str | None:
                 and entry.get("data_use_confirmed") is True
                 and (entry.get("data_use") == "unknown" or "data_use_label" in entry))
     return None if complete else FREE_LANE_REFUSAL.format(key=entry.get("key", "<unknown>"))
+
+
+# ── Readers (consumers: Phases 37, 40, 41; no run reads them in this phase) ──
+
+class LaneSettingError(ValueError):
+    """A lane setting a reader cannot use; the message names its lane and setting."""
+
+
+class UsageLimit(NamedTuple):
+    limited: bool
+    note: str
+
+
+class Escalation(NamedTuple):
+    runtime: bool
+    model: bool
+
+
+FALLBACK_WARNING = ("ai-kit-spec: usage_limited {role} lane(s) {keys} have no lane to fall back "
+                    "to: every other {role} lane is usage_limited or in the same pool")
+
+
+def _bool_setting(entry: dict, name: str) -> bool:
+    value = entry.get(name, False)
+    if not isinstance(value, bool):
+        raise LaneSettingError(f"{entry.get('key', '<unknown>')}: '{name}' must be a boolean")
+    return value
+
+
+def lane_usage_limit(entry: dict) -> UsageLimit:
+    """36 D-16 / SPEC R12 d: the one reader for the owner's usage-limit flag and note."""
+    note = entry.get("usage_limit_note", "")
+    return UsageLimit(_bool_setting(entry, "usage_limited"), note if isinstance(note, str) else "")
+
+
+def lane_escalation(entry: dict) -> Escalation:
+    """36 D-06 / SPEC R5: read escalation flags; non-booleans raise a named error."""
+    return Escalation(_bool_setting(entry, "escalate_runtime"),
+                      _bool_setting(entry, "escalate_model"))
+
+
+def _keyed(role_lanes) -> list:
+    """Return keyed lane dicts in order, keeping first occurrences and skipping malformed items."""
+    if not isinstance(role_lanes, list):
+        return []
+    seen = set()
+    result = []
+    for lane in role_lanes:
+        if isinstance(lane, dict) and isinstance(lane.get("key"), str) and lane["key"] not in seen:
+            seen.add(lane["key"])
+            result.append(lane)
+    return result
+
+
+def _flagged(lane: dict) -> bool:
+    return lane.get("usage_limited") is True
+
+
+def _fallback_from(base: dict, candidates: list) -> str | None:
+    return next((lane["key"] for lane in candidates if lane["key"] != base["key"]
+                 and not _flagged(lane)
+                 and not (base.get("pool") and lane.get("pool") == base.get("pool"))), None)
+
+
+def selectable_lanes(role: str, role_lanes, order) -> list:
+    """Review picks ordered lanes only; execute also picks remaining lanes in roster order."""
+    lanes = _keyed(role_lanes)
+    by_key = {lane["key"]: lane for lane in lanes}
+    keys = (list(dict.fromkeys(k for k in order if isinstance(k, str) and k in by_key))
+            if isinstance(order, list) else [])
+    ordered = [by_key[k] for k in keys]
+    return ordered if role == "review" else ordered + [lane for lane in lanes
+                                                      if lane["key"] not in keys]
+
+
+def lane_fallback(role_lanes: list, key: str) -> str | None:
+    """36 D-16, D-20 / SPEC R12 d: first different, unflagged, different-pool lane in order."""
+    lanes = _keyed(role_lanes)
+    base = next((lane for lane in lanes if lane["key"] == key), None)
+    return _fallback_from(base, lanes) if base is not None else None
+
+
+def escalation_target(role_lanes: list, key: str, kind: str) -> str | None:
+    """36 D-06 / SPEC R5: find the next configured lane matching the escalation kind."""
+    if kind not in ("runtime", "model"):
+        raise ValueError(f"escalation kind must be 'runtime' or 'model', not {kind!r}")
+    lanes = _keyed(role_lanes)
+    index = next((number for number, lane in enumerate(lanes) if lane["key"] == key), None)
+    if index is None:
+        return None
+    base = lanes[index]
+    for lane in lanes[index + 1:]:
+        same = lane.get("runtime") == base.get("runtime")
+        if (kind == "runtime" and not same) or (kind == "model" and same
+                                                and lane.get("model") != base.get("model")):
+            return lane["key"]
+    return None
+
+
+def fallback_warnings(roles: dict, orders: dict) -> list[str]:
+    """36 D-17 / SPEC R12 c: warn per role about flagged lanes without selectable fallbacks."""
+    orders = orders if isinstance(orders, dict) else {}
+    result = []
+    for role, lanes in roles.items():
+        pick = selectable_lanes(role, lanes, orders.get(role, []))
+        stranded = [lane["key"] for lane in _keyed(lanes)
+                    if _flagged(lane) and _fallback_from(lane, pick) is None]
+        if stranded:
+            result.append(FALLBACK_WARNING.format(role=role, keys=", ".join(stranded)))
+    return result
