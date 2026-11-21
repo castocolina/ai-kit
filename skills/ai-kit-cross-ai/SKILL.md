@@ -1,14 +1,16 @@
 ---
 name: ai-kit-cross-ai
 description: >
-  Use when you run, wait for, read, retry or chain an external AI CLI (pi,
-  opencode, codex, cursor, copilot) through ai-kit's cross-AI runner
-  (cross-ai.mjs): pick one runtime and model, launch the runner, read its exit
-  code and last AIKIT-XAI stderr line, and answer a stop. Also use when a lane
-  hits quota, a rate limit or a 429, exits 75 or 69, or prints retry_after_s=.
-  Covers the hard-tier wait, the user notice, GSD's retry/skip/abort answer and
-  the rule to never switch harness, provider or model. Not for reviewer setup
-  or GSD config (those are ai-kit-spec-config and ai-kit-gsd-curated-config).
+  Use when you run, wait for, read, retry or chain an external AI CLI (pi, opencode, codex,
+  cursor, copilot, claude) through ai-kit's cross-AI runner (cross-ai.mjs): pick one runtime
+  and model, pass the call's settings (role, effort, context, session id, skills, MCP servers),
+  launch the runner, read its exit code, its per-setting report and its last AIKIT-XAI stderr
+  line, resume a session in a second round, and answer a stop. Also use when a lane hits quota,
+  a rate limit or a 429, exits 75 or 69, prints retry_after_s=, reports a setting ignored, or
+  needs an --argv-file for a CLI the runner has no formula for. Covers the hard-tier wait, the
+  user notice, GSD's retry/skip/abort answer and the rule to never switch harness, provider or
+  model. Not for reviewer setup or GSD config (those are ai-kit-spec-config and
+  ai-kit-gsd-curated-config).
 ---
 
 # Cross-AI runner
@@ -28,20 +30,40 @@ When a run, a review or an execution step calls an external AI CLI and acts on t
 ## 1. Choose the runtime and model
 
 One `--runtime` and one `--model`, passed as given. The runner validates the id and owns each
-CLI's flags, so this skill does not restate them. `--mode exec|review` and
-`--tools-profile exec|review|none` select the contract and the tool set; the mode picks the
-default profile.
+CLI's flags, so this skill does not restate them. `--role execute|review` (`--mode exec|review`
+is the older alias; two values that disagree are a usage error, exit 2) and
+`--tools-profile exec|review|none` select the contract and the tool set; the role picks the default profile.
 
 The runtime and model are the owner's choice, set in the project hook or the plan before a run.
 Neither the runner nor a caller changes them in response to a failure: a failure ends in sections
 6-8, and only the owner changes the configuration afterwards.
+
+### Call settings
+
+Settings come from the owner's lane configuration or the calling skill's decision; the runner never chooses one and never checks a value against a list of levels or models.
+
+| Flag | Value | Setting |
+|---|---|---|
+| `--model <id>` | the id as the runtime names it; an unusual shape prints `cross-ai: note: model id shape is unusual for <runtime> (seed shape: <source>)` and still runs | `model` |
+| (no flag) | the provider part of a pi or opencode id | `provider` |
+| `--role execute` or `--role review` (`--mode` alias) | the contract | `role` |
+| `--effort <level>` (`--codex-effort` alias) | a lowercase token of 1 to 16 characters; the runner writes each runtime's own form | `effort` |
+| `--context <label>` | a lowercase label such as `1m` | `context` |
+| `--session-id <id>` | 1 to 128 letters, digits, `.`, `_`, `:` or `-` | `session` |
+| `--escalate-runtime` | no value | `escalate_runtime` |
+| `--escalate-model` | no value | `escalate_model` |
+| `--host auto` or `--host none` (`AIKIT_HOST` when the flag is absent) | `none` from either source wins | `host` |
+| `--skill-path <dir>`, `--skill-name <name>` (repeatable) | a directory holding `SKILL.md`; a skill installed on that host | `skill` |
+| `--mcp-config <file>` | a run-scoped JSON file | `mcp` |
+
+Two more flags print facts and call no model: `--print-argv` prints the argv, the settings lines and `cross-ai: model-id <id>`; `--describe` prints one JSON object with the setting names, reasons and states and, per runtime, its formulas, listing command, session style and each form with its source label (`host.available` says whether herdr is usable). Read `--describe` before naming a setting a host may not take.
 
 ## 2. Launch
 
 Run the project copy `.planning/scripts/cross-ai.mjs`. A project without one uses the template
 `skills/ai-kit-spec-review/references/cross-ai.mjs`. Before the first launch in a project, check
 the active copy's line-2 header (`sed -n 2p .planning/scripts/cross-ai.mjs`): this contract needs
-`template=8` or later. A lower template, or a `cross-ai.mjs.new` waiting beside it, is not this
+`template=9` or later. A lower template, or a `cross-ai.mjs.new` waiting beside it, is not this
 contract: stop and route the owner to `ai-kit-gsd-curated-config` `ensure-runner`.
 
 The prompt always goes on stdin; the runner has no prompt flag. For copilot the runner itself
@@ -58,9 +80,21 @@ foreground pattern.
 
 ```bash
 L="$(mktemp -d)"; printf 'lane dir: %s\n' "$L"
-node .planning/scripts/cross-ai.mjs --runtime "$RUNTIME" --model "$MODEL" --mode exec \
+node .planning/scripts/cross-ai.mjs --runtime "$RUNTIME" --model "$MODEL" --role execute \
   < prompt.md > "$L/lane.out" 2> "$L/lane.err"; echo $? > "$L/lane.rc"
 ```
+
+### A runtime the runner has no formula for
+
+Runtime ids match exactly (`Claude` is not `claude`). For an id the runner has no formula for, pass `--argv-file <path>`: a JSON array of argv strings inside the working tree, at most 65536 bytes, strict UTF-8, read once. `{model}`, `{effort}` and `{session}` are the only placeholders; a setting without its placeholder prints `ignored` with `reason=no_slot`, and the provider is `unknown`. The prompt still goes on stdin, never on argv, and the runner supervises the lane like any other (deadlines, heartbeats, redaction, the review tree check, the status line). Without the file the call ends with exit 2 and `no formula for <id> in the runner; pass --argv-file, or use a runtime it has a formula for`.
+
+### Hosting in a herdr tab
+
+`--host auto` runs the lane in a herdr tab when herdr is available (`HERDR_ENV=1` and a `herdr` executable on PATH, checked without calling herdr). The argv, settings report, session, classification, exit code and status line are the same as headless. The runner's own default is `none`; ai-kit's Python layer and hook builder pass `--host auto`. Switch hosting off with `--host none` or `AIKIT_HOST=none` (a shell profile makes it persistent); `none` from either source wins, and no config key exists. The `host` line reads `applied` (`herdr` or `none`), or `ignored` with `no_herdr` or `host_failed`, and a hosted lane also prints `cross-ai: host herdr tab=<id> label=<label>`. The run directory is `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/host/<run token>/` (mode 0700): `run.json` first, then the env and prompt files (mode 0600, which the launcher reads and deletes as its first steps), and the launcher's `out`, `err`, `pid` and `rc`. `rc` is the only verdict; herdr's screen text is never read. The runner closes only the tab it opened, by id, on every exit path, then removes the directory. Limits: a `setsid` grandchild survives the tab close (the same limit as a headless process-group kill); fish, nushell, a pane whose shell is not at a prompt, and macOS are unverified.
+
+### Skills and MCP servers for a lane
+
+`--skill-path <dir>` (a directory holding `SKILL.md`) and `--skill-name <name>` (a skill the caller knows is installed on that host) hand a lane skills; the runner never picks one. Per skill it applies the first form the host has verified, in the order name, path, prose; prose (the `SKILL.md` text inlined in a delimited block with its name, path and sha256, before the prompt) works on every runtime. Each skill prints `cross-ai: setting skill=<name> applied form=<name|path|prose>` or an `ignored` line with its reason. `--mcp-config <file>` passes MCP servers from a JSON file `{"mcpServers": {...}}` that the caller writes and only its owner can read. Only the file path reaches argv and only server names print; a host with no per-invocation form reports `no_form`, and a review profile that turns MCP off reports `mode_forbids`. The runner never writes or reads a host's own skill or MCP configuration. A skill body, the MCP file and an argv file share one size cap, 65536 bytes.
 
 ## 3. Wait
 
@@ -79,16 +113,16 @@ of `lane.err`. Both are already on disk, and re-reading never re-runs the lane. 
 file carries the whole evidence trailer. Python's 2048-character `stderr_tail` is not an evidence
 channel, so read the file, not a truncated tail.
 
-The last line is `AIKIT-XAI`. A real run's line (self-test case `auth`, fake CLI):
+The last line is `AIKIT-XAI`. A real run's line (a hermetic review run against the runner's test fake opencode, model `fake/auth`):
 
 ```
-AIKIT-XAI status=auth cli=pi model=fake/auth exit=69 cli_rc=1 elapsed=0s out=0 tree=clean action=stop route=unknown rule=text-unauthorized pattern=verified attempts=1 cycles=0
+AIKIT-XAI status=auth cli=opencode model=fake/auth exit=69 cli_rc=1 elapsed=0s out=0 tree=clean action=stop route=unknown rule=text-unauthorized pattern=verified attempts=1 cycles=0 session=- applied=model,provider,role ignored=- unknown=- escalate=-
 ```
 
-Before it, on a stop, come the report and the upstream lines (self-test case `auth`):
+Before it, on a stop, come the report and the upstream lines (same run):
 
 ```
-cross-ai: report status=auth lane=pi/fake/auth route=unknown attempts=1 cycles=0 first_failure=<iso time> last_failure=<iso time> due_at=- stopped=class upstream=present
+cross-ai: report status=auth lane=opencode/fake/auth route=unknown attempts=1 cycles=0 first_failure=<iso time> last_failure=<iso time> due_at=- stopped=class upstream=present
 cross-ai: upstream body="401 unauthorized"
 cross-ai: upstream fields=-
 ```
@@ -119,19 +153,63 @@ fresh session was refused because the tree changed), `hard-waits` or `cap` (the 
 spent). A bare exit 75 comes from that dirty-tree gate or from an unwritable state file
 (`cross-ai: cycle state unwritable`).
 
+### Settings report
+
+Before the runtime starts, the runner prints one stderr line per setting the call names, and always one for `model` and `role`:
+
+```
+cross-ai: setting <name>=<value> <state> [reason=<code>]
+```
+
+A skill line adds `form=<name|path|prose>` when it applies; an MCP line names one server. Values are redacted and lose control characters. `--print-argv` prints the same lines and `cross-ai: model-id <id>` (the id the runtime receives) with no model call. A setting the call does not name prints nothing.
+
+The names, in print order: `model`, `provider`, `role`, `effort`, `context`, `session`, `escalate_runtime`, `escalate_model`, `host`, `skill`, `mcp`.
+
+The states:
+- `applied`: the value reached the runtime (a flag, or inside the model id it receives).
+- `ignored`: named and not fed; the reason says why.
+- `unknown`: the runner cannot tell (a provider on an id form that has none, an argv-file lane's provider).
+
+The reasons, a closed list that `--describe` also prints:
+
+| Reason | Meaning |
+|---|---|
+| `no_form` | the runtime has no flag or id form for the setting |
+| `id_carries` | the model id already holds a value, and it wins |
+| `unverified_form` | a form is known but not verified, so it is not fed |
+| `mode_forbids` | the role's confinement forbids it (a session resume in codex review or with `--codex-sandbox`, a pi skill by name, MCP in a review profile that turns MCP off) |
+| `no_slot` | an argv-file lane whose file has no placeholder for it |
+| `recorded_only` | an escalation flag: echoed, never acted on |
+| `no_provider_form` | the runtime's model id has no provider part |
+| `bad_value` | a context label outside the form's value kind |
+| `no_herdr` | `--host auto` while herdr is not available |
+| `host_failed` | herdr failed before the lane started, so the lane ran headless once |
+
+An `ignored` or `unknown` line is information, not a failure: the call ran. Report it to the owner when the setting mattered, and never retry the lane elsewhere to get it applied.
+
+### Status line fields
+
+The last line always carries one group after `attempts=` and `cycles=` and before `retry_after_s=`:
+
+- `session=`: the session id the call used, or the one the host minted; `-` when the host printed none. Pass it as `--session-id` to continue (section 5).
+- `applied=`, `ignored=`, `unknown=`: comma lists of setting names by state, `-` when empty; a skill shows as `skill:<name>`, an MCP server as `mcp:<name>`.
+- `escalate=`: the escalation flags the call carried (`runtime`, `model`, or `runtime,model`), `-` when none. The runner records them and never starts a second lane.
+
 ## 5. Chain review or execution
 
 A review lane's answer is the report to merge; an execution lane's answer is the change to
 verify. Chain the next step only after section 4 has been read. A lane that is still running is
 not chained: wait for its own launch to exit and read its own `lane.rc` and `lane.err`.
 
+To continue a session in the next round, pass the `session=` value as `--session-id` with the same runtime, model and role; the round's own prompt is the next message. A call without `--session-id` starts fresh. pi and copilot take the caller's id, or a generated one when none is given; cursor, opencode, codex and claude continue an id they printed. An id the host rejects fails the call with the host's first error line, and the runner never falls back to a fresh session. codex review, and codex execute with `--codex-sandbox`, have no resume form: the call starts fresh, prints the new id and reports the `session` setting `ignored` with `reason=mode_forbids`. An explicit id wins over the id the runner stored for the lane's quota cycle.
+
 ## 6. Hard tier and notice
 
 An exit 75 whose `AIKIT-XAI` line carries `retry_after_s=` is the hard tier. A real run's line
-(self-test case `hard-tier-transient-cycle0`, fake CLI):
+(the same fake, model `fake/capacity`, with the `[runner.retry]` settings `max_retries = 0` and `session_resets = 0`):
 
 ```
-AIKIT-XAI status=transient cli=pi model=fake/event400 exit=75 cli_rc=1 elapsed=0s out=0 tree=clean action=stop route=unknown rule=text-event-400 pattern=verified attempts=2 cycles=0 retry_after_s=600 cycle=0
+AIKIT-XAI status=transient cli=opencode model=fake/capacity exit=75 cli_rc=1 elapsed=0s out=0 tree=clean action=stop route=unknown rule=text-service-unavailable pattern=verified attempts=1 cycles=0 session=- applied=model,provider,role ignored=- unknown=- escalate=- retry_after_s=600 cycle=0
 ```
 
 Wait once, for exactly `retry_after_s` seconds, then re-invoke the same lane, the same CLI and
@@ -173,6 +251,8 @@ another CLI, another model or another harness to finish the lane.
 
 ## Pitfalls
 
+- An `ignored` or `unknown` setting line is not a failure; an `unknown` provider with `no_provider_form` is expected on codex, cursor, claude and copilot, whose ids have no provider part.
+
 - Copilot's prompt ends up on argv (the runner puts it there), so the process table shows it.
 - Two timeouts, not one, and gsd-core's default is 300 s when the config key is absent.
 - No idle watchdog. `stdout +0 bytes` heartbeats are normal for `pi -p`.
@@ -189,3 +269,8 @@ another CLI, another model or another harness to finish the lane.
   the config, the hard tier, the pass-through and the catalog.
 - [`references/launch-and-wait.md`](references/launch-and-wait.md) — per-host launch and wait.
 - `skills/ai-kit-spec-review/references/cross-ai.mjs` — the runner template and its `--self-test`.
+
+## Evidence
+
+- Each host's effort, session, context, skill and MCP forms come from that host's own `--help`, kept as recorded help fixtures in this repository; `--describe` prints each form's state and source label.
+- The hosted-lane limits come from live herdr checks: closing the tab ended the launcher and its plain and `nohup` children, while a `setsid` grandchild survived.
