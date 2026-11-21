@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 36
-current_phase_name: spec-config as the hub
+current_phase: 35
+current_phase_name: Model discovery and catalog
 status: verifying
-stopped_at: Completed 36-29-PLAN.md
-last_updated: "2026-11-21T07:33:31.834Z"
-last_activity: 2026-11-20
-last_activity_desc: Phase 35 execution started
-state_head: 7e2539d38e5b755367e40cc424a0735f5183abcf
+stopped_at: Phase 36 complete, ready to verify Phase 35
+last_updated: "2026-11-21T09:20:23.786Z"
+last_activity: 2026-11-21
+last_activity_desc: Phase 36 complete, transitioned to Phase 35
+state_head: 498f5ed0f215ec943877fd886fb39ae17e4cf9bf
 progress:
   total_phases: 40
-  completed_phases: 15
+  completed_phases: 16
   total_plans: 181
   completed_plans: 181
-  percent: 38
+  percent: 40
 ---
 
 # Project State
@@ -29,18 +29,18 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 36 (spec-config as the hub) — READY TO EXECUTE
-Plan: 28 of 28
+Phase: 35 — Model discovery and catalog
+Plan: 28
 Status: Phase complete — ready for verification
-Last activity: 2026-11-20 — Phase 35 execution started
+Last activity: 2026-11-21 — Phase 36 complete, transitioned to Phase 35
 
-Progress: [████░░░░░░] 38%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 278
+- Total plans completed: 307
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -97,6 +97,7 @@ Progress: [████░░░░░░] 38%
 | 32.5 | 10 | - | - |
 | 33 | 12 | - | - |
 | 34 | 10 | - | - |
+| 36 | 29 | - | - |
 
 **Recent Trend:**
 
@@ -757,7 +758,7 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 ## Session Continuity
 
 Last session: 2026-11-21T07:33:30.770Z
-Stopped at: Completed 36-29-PLAN.md
+Stopped at: Phase 36 complete, ready to verify Phase 35
 Resume file: None
 
 ## Operator Next Steps

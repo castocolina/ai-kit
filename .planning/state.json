@@ -86,7 +86,7 @@
     {
       "number": "36",
       "name": "spec-config as the hub",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "37",
@@ -202,7 +202,7 @@
   "next": {
     "command": "/gsd-progress --next",
     "label": "Advance to the next step (verify)",
-    "reason": "Phase 17 of 40 · 38% · ready to verify"
+    "reason": "Phase 16 of 40 · 40% · ready to verify"
   },
-  "updated_at": "2026-11-21T07:33:28.293Z"
+  "updated_at": "2026-11-21T09:20:23.799Z"
 }
