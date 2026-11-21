@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 35
-current_phase_name: Model discovery and catalog
-status: verifying
+current_phase: 36
+current_phase_name: spec-config as the hub
+status: executing
 stopped_at: Completed 35-26-PLAN.md
-last_updated: "2026-11-20T21:19:22.744Z"
+last_updated: "2026-11-21T00:25:59.609Z"
 last_activity: 2026-11-20
 last_activity_desc: Phase 35 execution started
-state_head: ad6e7a5f67c320419a316945cad0b9048a040795
+state_head: 22ba084103c5748652443d02b324d48c1a45dfdc
 progress:
   total_phases: 40
   completed_phases: 15
-  total_plans: 152
+  total_plans: 181
   completed_plans: 152
   percent: 38
 ---
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 35 (Model discovery and catalog) — EXECUTING
+Phase: 36 (spec-config as the hub) — READY TO EXECUTE
 Plan: 28 of 28
-Status: Phase complete — ready for verification
+Status: Ready to execute
 Last activity: 2026-11-20 — Phase 35 execution started
 
 Progress: [████░░░░░░] 38%

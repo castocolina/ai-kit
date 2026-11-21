@@ -743,7 +743,60 @@ Plans:
   8. A zero-price model can be selected in spec-config (its own group in the proposal, with its price source), the owner's yes writes a `usage_limited` flag on the lane and nothing else does, a role holding only usage-limited lanes gets an alternative proposed or an explicit-none warning, and the wizard's questions and written file are identical with and without herdr. *(added 2026-11-16, re-run 2, 36 D-15 to D-19, owner directive on free models and herdr hosting)* *(amended 2026-11-16, free-lane pool study, 36 D-20 to D-22, PROVISIONAL, needs owner confirmation: the flag is written with the lane's pool (provider plus free tier); a flagged lane's fallback is the first lane of the role that is neither flagged nor in the same pool; the wizard warns that other free models of the same provider share one pool. Source: `.planning/research/2026-11-16-opencode-free-models.md`, where the shared pool is reported by users and not confirmed by a maintainer)*
   9. When the owner selects a free model that is not known to be local, the wizard shows its data-use note (`zero_retention`, `may_be_kept_or_trained` or `unknown`, with source, read date and a verified or reported label, unknown never defaulted to a safe value) and asks the owner to confirm sending project content to that lane; a yes records the note and the confirmation beside the lane, a no or a skip writes no lane. *(added 2026-11-16, free-lane pool study, 36 D-23, HUB-10, PROVISIONAL, needs owner confirmation: the decline path and the closed value list; the research note finds only four listed free models zero-retention, so project code may reach a third party)*
 
-**Plans**: TBD
+**Plans**: 29 plans in 11 waves *(planned 2026-11-20; plan 36-29 is an orchestrator action: the judge loop for the three skills)*
+**Wave 1**
+- [ ] 36-01-PLAN.md (wave 1): stub every new test module and regenerate the test listing
+- [ ] 36-02-PLAN.md (wave 1): planning amendments (R13, pool and data-use decisions D-20 to D-23, grok exclusion, review skill joins the judge bar)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 36-03-PLAN.md (wave 2): `config-status` command with the optional `--role`
+- [ ] 36-04-PLAN.md (wave 2): per-role orders, reader side
+- [ ] 36-05-PLAN.md (wave 2): effort forms, offered levels and write-time validation (`lane_effort.py`)
+- [ ] 36-06-PLAN.md (wave 2): proposal pool and groups (`lane_pool.py`)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 36-07-PLAN.md (wave 3): price, pool key and data-use record (`lane_price.py`, `lane_data_use.py`)
+- [ ] 36-08-PLAN.md (wave 3): runner exec-formula mirror, advice text and drift test
+- [ ] 36-09-PLAN.md (wave 3): proposal order, jev scores with the stability rule (`lane_order.py`)
+- [ ] 36-10-PLAN.md (wave 3): migration deletes the old roster by default, `--keep-backup`, role-correct review routing
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 36-11-PLAN.md (wave 4): lane settings validators and the writer-only free-lane check (`lane_settings.py`)
+- [ ] 36-12-PLAN.md (wave 4): route `no_formula` replaces `review_only`
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 36-13-PLAN.md (wave 5): `propose-lanes` command
+- [ ] 36-14-PLAN.md (wave 5): execute selection, save message and no-seed-refusal test
+- [ ] 36-15-PLAN.md (wave 5): referee rule in the hardcoding guard
+- [ ] 36-16-PLAN.md (wave 5): review skill no-config chain
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 36-17-PLAN.md (wave 6): lane readers (`lane_escalation`, `lane_usage_limit`, `lane_fallback`) and fallback warning
+- [ ] 36-18-PLAN.md (wave 6): effort form wired into dispatch, probe and previews
+- [ ] 36-19-PLAN.md (wave 6): execute adapter no-config chain
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 36-20-PLAN.md (wave 7): per-role orders, writer side
+- [ ] 36-21-PLAN.md (wave 7): effort probe, `check-reviewer --effort`, write-time effort refusal
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 36-22-PLAN.md (wave 8): `probe-quota --role`
+- [ ] 36-23-PLAN.md (wave 8): wizard JSON example test and herdr identity test
+- [ ] 36-24-PLAN.md (wave 8): wizard question flow and free-lane references
+
+**Wave 9** *(blocked on Wave 8 completion)*
+- [ ] 36-25-PLAN.md (wave 9): spec-config SKILL.md skeleton, headless stop, config-file reference
+
+**Wave 10** *(blocked on Wave 9 completion)*
+- [ ] 36-26-PLAN.md (wave 10): spec-config evals
+- [ ] 36-27-PLAN.md (wave 10): review and adapter evals
+- [ ] 36-28-PLAN.md (wave 10): README, design record, AGENTS.md wording and the `review_only` scan
+
+**Wave 11** *(blocked on Wave 10 completion)*
+- [ ] 36-29-PLAN.md (wave 11): judge loop for the three skills (orchestrator action)
+
+**Cross-cutting constraints:** <!-- gsd:generated -->
+- SPEC R2 empty edge: an empty or unrecognised answer to the ask means `stop`; there is no default yes
 
 ### Phase 37: Shared runner options and session ids
 
