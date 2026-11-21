@@ -1234,6 +1234,8 @@ let aborting = 0;
 let signalBy = 0;
 let backstop = null;
 const tempDirs = new Set();
+// Tabs a hosted lane opened and has not confirmed closed; exitFlushed retries them (D-26).
+const openTabs = new Map();
 const sleepers = new Set();
 
 function budgetMs(capMs, limit) {
@@ -1333,6 +1335,11 @@ function exitFlushed(code) {
   if (backstop) clearTimeout(backstop);
   // Every exit drops the temp folders still registered (an early return skips its finally).
   // The catch keeps a failing rm from looping through the crash handler back to here.
+  for (const [tab, dir] of [...openTabs]) {
+    let closed = false;
+    try { closed = closeTab(tab, 1000); } catch { /* retry failed */ }
+    if (!closed) { dropSecrets(dir); keepRecordOnly(dir, tab); }
+  }
   for (const dir of [...tempDirs]) { try { dropTemp(dir); } catch { tempDirs.delete(dir); } }
   process.exitCode = code;
   let pending = 2;
@@ -1671,6 +1678,13 @@ const SETTING_HANDLERS = {
   },
   escalate_model: (plan, row, role, call) => {
     if (call.escalateModel) plan.report.push({ name: 'escalate_model', value: 'true', state: 'ignored', reason: 'recorded_only' });
+  },
+  host: (plan, row, role, call) => {
+    const setting = call.hostSetting;
+    if (!setting || setting.value === null) return;
+    if (setting.value === 'none' || (setting.value === 'auto' && setting.available)) {
+      plan.report.push({ name: 'host', value: setting.value === 'none' ? 'none' : 'herdr', state: 'applied', proof: { unprovable: 'transport (D-28)' } });
+    } else if (setting.value === 'auto') plan.report.push({ name: 'host', value: 'auto', state: 'ignored', reason: 'no_herdr' });
   },
   skill: (plan, row, role, call) => {
     if (call.skillPlan) { plan.adds.skills.push(...call.skillPlan.adds); plan.report.push(...call.skillPlan.report); }
@@ -4801,6 +4815,193 @@ function writeRunDir(home, token, lane) {
   return { dir, files, label, record, prompted, envSkipped: envText.skipped };
 }
 
+// D-23: none from the flag or AIKIT_HOST wins; auto from either asks for hosting; anything else is ignored with a note.
+function hostSettingValue(flag, envValue) {
+  const env = typeof envValue === 'string' ? envValue.trim() : '';
+  const safe = redactSecrets(redactSecrets(env).replace(/[\x00-\x1f\x7f-\x9f]/g, '')).slice(0, 40);
+  const note = env && env !== 'auto' && env !== 'none' ? `cross-ai: AIKIT_HOST=${safe} is not auto or none; ignored` : null;
+  if (flag === 'none' || env === 'none') return { value: 'none', note };
+  if (flag === 'auto' || env === 'auto') return { value: 'auto', note };
+  return { value: null, note };
+}
+
+// 0b-4: 250 ms measured 0.08 % of a core.
+const HOST_POLL_MS = 250;
+const HOST_ID_RX = /^[A-Za-z0-9._:-]{1,64}$/;
+const HOST_ADMIT_GRACE_MS = 1000;
+// Review c1: a pane shell may take seconds to start the typed line; no pid by then means not started or dead.
+const HOST_PID_GRACE_MS = 5000;
+
+function closeTab(tabId, timeoutMs = HERDR_TIMEOUT_MS) {
+  const r = herdrCall('tab close', [tabId], timeoutMs);
+  if (r.ok) { openTabs.delete(tabId); return true; }
+  log(`cross-ai: host: tab close ${tabId} failed (${r.detail})`);
+  return false;
+}
+function dropSecrets(dir) {
+  for (const name of [HOST_FILES.env, HOST_FILES.prompt]) {
+    try { fs.rmSync(path.join(dir, name), { force: true }); } catch { /* best effort */ }
+  }
+}
+function keepRecordOnly(dir, tabId) {
+  try { for (const name of fs.readdirSync(dir)) if (name !== HOST_FILES.run) fs.rmSync(path.join(dir, name), { force: true }); } catch { /* best effort */ }
+  tempDirs.delete(dir);
+  log(`cross-ai: host: kept ${dir}/run.json for tab ${tabId ?? '-'} (close not confirmed)`);
+}
+async function waitDead(pid, ms) {
+  const end = Date.now() + ms;
+  while (pidAlive(pid) && Date.now() < end) await sleep(50);
+}
+async function waitForFile(file, ms) {
+  const end = Date.now() + ms;
+  while (!fs.existsSync(file) && Date.now() < end) await sleep(100);
+  return fs.existsSync(file);
+}
+// Review c1: signal only a verified group leader with an unchanged start time; anything unreadable means no signal.
+function launcherVerified(pid, recordedStart, currentStart, currentGroup) {
+  return recordedStart !== '-' && currentStart === recordedStart && currentGroup === pid;
+}
+async function hostedChild(bin, argv, opts) {
+  const capMs = opts.capMs ?? Number.POSITIVE_INFINITY;
+  const limit = opts.limit ?? finalizeBy;
+  const none = { code: null, signal: null, timedOut: false, limited: false, spawnErr: null, stdout: '', stderr: '' };
+  if (budgetMs(capMs, limit) <= 0) return { ...none, timedOut: true };
+  const home = path.resolve(stateHome());
+  const token = hostToken();
+  const dir = hostRunDir(home, token);
+  const problem = hostStartProblem(dir);
+  if (problem) return { hostFailed: problem, rerun: true };
+  const laneCwd = opts.cwd || process.cwd();
+  let made;
+  try {
+    made = writeRunDir(home, token, { role: opts.host.role, runtime: opts.host.runtime, cwd: laneCwd, bin, argv, env: opts.env || process.env, input: opts.input === undefined ? '' : opts.input, promptArg: opts.promptArg });
+  } catch (e) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+    return { hostFailed: `run directory not written (${e.code || e.message})`, rerun: true };
+  }
+  tempDirs.add(dir);
+  if (made.envSkipped) log(`cross-ai: host: ${made.envSkipped} environment names are not shell names and are not passed`);
+  let tabId = null;
+  let stop = null;
+  let typedSent = false;
+  const startupFinalize = (reason) => { stop = reason; };
+  currentFinalize = startupFinalize;
+  const startupEnd = (result) => {
+    dropSecrets(dir);
+    if (tabId !== null && !closeTab(tabId, Math.max(500, budgetMs(HERDR_TIMEOUT_MS, finalizeBy)))) keepRecordOnly(dir, tabId);
+    else dropTemp(dir);
+    if (currentFinalize === startupFinalize) currentFinalize = null;
+    return result;
+  };
+  let record;
+  try {
+    const created = herdrCall('tab create', ['--label', made.label, '--no-focus', '--cwd', laneCwd]);
+    const answer = created.ok ? parseJson(created.stdout.trim()) : null;
+    const id = answer?.result?.tab?.tab_id;
+    const paneId = answer?.result?.root_pane?.pane_id;
+    if (!HOST_ID_RX.test(id || '')) {
+      if (!created.ok && String(created.detail).startsWith('exit ')) return startupEnd({ hostFailed: `tab create failed (${created.detail})`, rerun: true });
+      dropSecrets(dir);
+      keepRecordOnly(dir, null);
+      if (currentFinalize === startupFinalize) currentFinalize = null;
+      return { hostFailed: `tab create answer lost (${created.detail || 'no tab id in its answer'}); kept the run record for the sweep`, rerun: true };
+    }
+    tabId = id;
+    openTabs.set(tabId, dir);
+    if (aborting || stop) return startupEnd(none);
+    if (!HOST_ID_RX.test(paneId || '')) return startupEnd({ hostFailed: 'tab create failed (no pane id in its answer)', rerun: true });
+    record = { ...made.record, tab_id: tabId, pane_id: paneId };
+    writeCycleState(made.files.run, record);
+    log(`cross-ai: host herdr tab=${tabId} label=${made.label}`);
+    typedSent = true;
+    const typed = herdrCall('pane run', [paneId, hostTypedLine(made.files)]);
+    if (aborting || stop) return startupEnd(none);
+    if (!typed.ok) {
+      const definite = String(typed.detail).startsWith('exit ');
+      const started = await waitForFile(made.files.pid, definite ? HOST_ADMIT_GRACE_MS : HOST_PID_GRACE_MS);
+      if (aborting || stop) return startupEnd(none);
+      if (!started) return startupEnd({ hostFailed: definite ? `pane run failed (${typed.detail})` : `pane run answer unclear (${typed.detail})`, rerun: definite });
+    }
+  } catch (e) { return startupEnd({ hostFailed: `startup failed (${e.code || e.message})`, rerun: !typedSent }); }
+  return new Promise((resolve) => {
+    let settled = false, timer = null, poller = null, timedOut = false, limited = false;
+    const out = { chunks: [], bytes: 0, dropped: false }, err = { chunks: [], bytes: 0, dropped: false };
+    const pos = { out: 0, err: 0 };
+    const fds = { out: fs.openSync(made.files.out, 'r'), err: fs.openSync(made.files.err, 'r') };
+    let launcherPid = null, launcherStart = null, verified = false, pseudo = null;
+    const pidDeadline = Date.now() + HOST_PID_GRACE_MS;
+    const readNew = (key) => {
+      const buf = Buffer.alloc(65536);
+      let n;
+      while ((n = fs.readSync(fds[key], buf, 0, buf.length, pos[key])) > 0) {
+        pos[key] += n;
+        const d = Buffer.from(buf.subarray(0, n));
+        pushCapped(key === 'out' ? out : err, d);
+        if (key === 'out') opts.onStdout?.(d); else opts.onStderr?.(d);
+      }
+    };
+    const finalize = async (reason, rc = null) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poller); clearTimeout(timer);
+      if (currentFinalize === finalize) currentFinalize = null;
+      if (reason === 'limit') limited = true;
+      if (verified && launcherVerified(launcherPid, launcherStart, procStartTime(launcherPid), procGroup(launcherPid))) {
+        killGroup(pseudo, 'SIGTERM');
+        if (!['exit', 'dead', 'nopid'].includes(reason)) await waitDead(launcherPid, budgetMs(aborting ? SIGNAL_GRACE_MS : KILL_GRACE_MS, finalizeBy));
+        if (launcherVerified(launcherPid, launcherStart, procStartTime(launcherPid), procGroup(launcherPid))) killGroup(pseudo, 'SIGKILL');
+      }
+      readNew('out'); readNew('err');
+      fs.closeSync(fds.out); fs.closeSync(fds.err);
+      dropSecrets(dir);
+      const closed = closeTab(tabId, Math.max(500, budgetMs(HERDR_TIMEOUT_MS, finalizeBy)));
+      if (closed) dropTemp(dir); else keepRecordOnly(dir, tabId);
+      if (launcherPid !== null) noteChildPgid('exit', launcherPid);
+      if (current === pseudo) current = null;
+      for (const [label, buf] of [['stdout', out], ['stderr', err]]) {
+        if (buf.dropped) log(`cross-ai: child ${label} passed ${CAPTURE_MAX_BYTES} bytes; kept the newest ${buf.bytes}`);
+      }
+      let code = null, signal = null;
+      if (rc?.bad) log(redactSecrets(`cross-ai: host: rc file is not an exit code: ${rc.bad}`));
+      else if (rc) { code = rc.code; signal = rc.signal; }
+      // shortcut: the launcher died without writing rc; the real signal is unknown, reported as SIGKILL.
+      else if (reason === 'dead') signal = 'SIGKILL';
+      else if (reason === 'nopid') log(`cross-ai: host: the launcher wrote no pid within ${HOST_PID_GRACE_MS} ms; not rerun`);
+      else if (launcherPid !== null) signal = 'SIGTERM';
+      resolve({ code, signal, timedOut, limited, spawnErr: null, stdout: Buffer.concat(out.chunks).toString('utf8'), stderr: Buffer.concat(err.chunks).toString('utf8') });
+    };
+    const tick = () => {
+      if (settled) return;
+      try {
+        readNew('out'); readNew('err');
+        const pidText = readOr(made.files.pid, '');
+        if (launcherPid === null && /^\d+\n?$/.test(pidText)) {
+          launcherPid = Number(pidText); launcherStart = procStartTime(launcherPid);
+          const group = procGroup(launcherPid);
+          verified = launcherVerified(launcherPid, launcherStart, launcherStart, group);
+          if (verified) { pseudo = { pid: launcherPid, kill: (sig) => { try { process.kill(launcherPid, sig); } catch { /* gone */ } } }; current = pseudo; }
+          else log(`cross-ai: host: launcher ${launcherPid} is not a verified group leader; not signalled`);
+          noteChildPgid('spawn', launcherPid);
+          record = { ...record, launcher_pid: launcherPid, launcher_pgid: group, launcher_start: launcherStart };
+          writeCycleState(made.files.run, record);
+        }
+        const rc = parseRc(readOr(made.files.rc, ''));
+        if (rc !== null) { finalize('exit', rc); return; }
+        if (launcherPid !== null && !pidAlive(launcherPid)) { const late = parseRc(readOr(made.files.rc, '')); finalize(late ? 'exit' : 'dead', late); }
+        else if (launcherPid === null && Date.now() > pidDeadline) finalize('nopid');
+      } catch (e) { log(`cross-ai: host: poll failed (${e.code || e.message})`); finalize('dead'); }
+    };
+    currentFinalize = finalize;
+    timer = setTimeout(() => { timedOut = true; finalize('timeout'); }, budgetMs(capMs, limit));
+    poller = setInterval(tick, HOST_POLL_MS);
+  });
+}
+function hostFailedNote(host, reason, rerun) {
+  log(`cross-ai: host: ${reason}; ${rerun ? 'the lane runs headless' : 'the lane may have started, so it is not rerun'}`);
+  host.failed = true; host.entry.state = 'ignored'; host.entry.reason = 'host_failed';
+  for (const line of reportLines([host.entry])) log(line);
+}
+
 function parsePiListingIds(stdout) {
   if (typeof stdout !== 'string') return null;
   let envelope = null;
@@ -5113,7 +5314,7 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
     watchChunk(cli, 'stderr', errRelay, state, text);
     errTail = (errTail + text).slice(-INPUT_CAP);
   };
-  const r = await runChild(bin, argv, {
+  const childOpts = {
     cwd, env, input, capMs: budgetMs(opts.capMs ?? Number.POSITIVE_INFINITY, childLimit),
     limit: childLimit,
     onStdout: (d) => {
@@ -5121,7 +5322,16 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
       watchChunk(cli, 'stdout', outRelay, state, outDecoder.write(d));
     },
     onStderr: (d) => onErrText(errDecoder.write(d)),
-  });
+  };
+  let r = null;
+  if (opts.host && !opts.host.failed) {
+    const hosted = await hostedChild(bin, argv, { ...childOpts, host: opts.host, promptArg: opts.promptArg });
+    if (hosted.hostFailed) {
+      hostFailedNote(opts.host, hosted.hostFailed, hosted.rerun);
+      if (!hosted.rerun) r = { code: null, signal: null, timedOut: false, limited: false, spawnErr: null, stdout: '', stderr: '' };
+    } else r = hosted;
+  }
+  if (!r) r = await runChild(bin, argv, childOpts);
   clearInterval(hb);
   if (state.limitTimer) clearTimeout(state.limitTimer);
   const outRest = outDecoder.end();
@@ -5455,7 +5665,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const childLimit = episodeEnd() ? Math.min(runDeadline, episodeEnd()) : runDeadline;
       const route = opts.route || 'unknown';
       const r = await runOnce(binPath, argv, input, env, ctx.cwd, name,
-        { capMs: childCap, limit: childLimit, route, model });
+        { capMs: childCap, limit: childLimit, route, model, host: opts.host, promptArg: rt.argvPrompt ? ctx.promptArg : undefined });
       // Self-test fakes only (FAKE_CALLS): a fake child stalls the post-run git snapshot only
       // while it is alive. A real run never touches the caller's home.
       if (process.env.FAKE_CALLS) {
@@ -6863,6 +7073,45 @@ process.stdin.on('data', (d) => { input += d; }).on('end', () => {
 `);
 }
 
+function writeFakeHerdr(binDir) {
+  writeExe(binDir, HERDR_BIN, "import { spawn } from 'node:child_process';\nimport path from 'node:path';\n", String.raw`
+const home = process.env.HOME || '.';
+const hlog = (line) => fs.appendFileSync(path.join(home, 'herdr.log'), line + '\n');
+const args = process.argv.slice(2);
+hlog('argv ' + JSON.stringify(args));
+const stateFile = path.join(home, 'herdr-state.json');
+let state = { next: 1, tabs: { t0: { label: 'aikit:review:pi:000000000000', pane: 'p0', cwd: home, pgid: null, dir: null, closed: false } } };
+try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { /* new state */ }
+const save = () => fs.writeFileSync(stateFile, JSON.stringify(state));
+const mode = (p) => { try { return (fs.statSync(p).mode & 0o777).toString(8); } catch { return '-'; } };
+const verb = args[0] + ' ' + args[1];
+if (verb === 'tab create') {
+  const id = 't' + state.next, pane = 'p' + state.next++;
+  state.tabs[id] = { label: argOf('--label'), pane, cwd: argOf('--cwd'), pgid: null, dir: null, closed: false };
+  save();
+  console.log(JSON.stringify({ result: { tab: { tab_id: id, label: argOf('--label') }, root_pane: { pane_id: pane } } }));
+} else if (verb === 'pane run') {
+  const tab = Object.values(state.tabs).find((t) => t.pane === args[2]);
+  if (!tab || tab.closed) { console.error('{"error":"fake pane run failure"}'); process.exit(1); }
+  const m = /^sh (\/[A-Za-z0-9._\/-]+)$/.exec(args[3] || '');
+  if (!m) { hlog('typed-line-rejected'); process.exit(1); }
+  const dir = path.dirname(m[1]);
+  hlog('modes dir=' + mode(dir) + ' env=' + mode(path.join(dir, 'env')) + ' prompt=' + mode(path.join(dir, 'prompt')) + ' run=' + mode(path.join(dir, 'run.json')) + ' launch=' + mode(m[1]));
+  const rec = JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8'));
+  hlog('record tab=' + rec.tab_id + ' pane=' + rec.pane_id);
+  const child = spawn('/bin/sh', [m[1]], { cwd: tab.cwd, detached: true, stdio: 'ignore', env: process.env });
+  recordPid('launcher', child.pid); child.unref();
+  tab.pgid = child.pid; tab.dir = dir; tab.closed = process.env.FAKE_HERDR_PRECLOSED === '1'; save();
+} else if (verb === 'tab close') {
+  const tab = state.tabs[args[2]];
+  hlog('close ' + args[2] + ' dir=' + (tab && tab.dir ? (fs.existsSync(tab.dir) ? 'present' : 'gone') : '-') + (tab && tab.closed ? ' already-closed' : ''));
+  if (tab && !tab.closed && tab.pgid) { try { process.kill(-tab.pgid, 'SIGHUP'); } catch { /* gone */ } }
+  if (tab) tab.closed = true;
+  save(); console.log('{"result":{"type":"ok"}}');
+} else { hlog('unknown-verb ' + verb); process.exit(2); }
+`);
+}
+
 const STATUS_HEAD_RE = new RegExp(
   '^(.* action=stop)(?: (route=\\S+ rule=\\S+ pattern=\\S+))?' +
   '(?: (attempts=\\S+ cycles=\\S+))?(?: (session=\\S+ applied=\\S+ ignored=\\S+ unknown=\\S+ escalate=\\S+))?(?: (retry_after_s=\\S+ cycle=\\S+))?(?: upstream=\\S+)?$',
@@ -7300,6 +7549,11 @@ async function blackBoxSelfTest(listOnly = false) {
       if (!fs.existsSync(dst)) fs.symlinkSync(src, dst);
     }
 
+    const herdrDir = path.join(tmp, 'bin-herdr');
+    fs.mkdirSync(herdrDir, { recursive: true });
+    writeFakeHerdr(herdrDir);
+    const hostedPath = [path.join(tmp, 'bin'), herdrDir].join(path.delimiter);
+
     // D-09 self-tests: another CLI's `agent` first on PATH; `script` is what it runs.
     const otherAgentFirst = (c, name, script = '#!/bin/sh\nexit 0\n') => {
       const dir = path.join(c.tmp, name);
@@ -7327,6 +7581,50 @@ async function blackBoxSelfTest(listOnly = false) {
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'SKILL.md'), skillBody(n));
       return dir;
+    };
+    const hostedUsable = (c) => HOST_PATH_SAFE.test(path.resolve(c.env.XDG_STATE_HOME));
+    const hostFailedOnly = (r, c) => r.stderr.includes('cross-ai: setting host=herdr ignored reason=host_failed') && !fs.existsSync(path.join(c.home, 'herdr.log')) ? null : 'expected host_failed and no herdr call';
+    const statusFields = (r) => {
+      const line = r.stderr.split('\n').filter((s) => s.startsWith('AIKIT-XAI ')).at(-1) || '';
+      const fields = Object.fromEntries(line.split(' ').slice(1).map((s) => s.split('=')));
+      const selected = {};
+      for (const key of 'status cli model exit cli_rc out tree route rule pattern attempts cycles session unknown escalate'.split(' ')) selected[key] = fields[key];
+      for (const key of ['applied', 'ignored']) selected[key] = (fields[key] || '-').split(',').filter((s) => s !== 'host' && s !== '-').join(',') || '-';
+      return JSON.stringify(selected);
+    };
+    const hostLogProblem = (c, tabs, closeTail = '') => {
+      const text = readOr(path.join(c.home, 'herdr.log'), '');
+      const lines = text.split('\n');
+      const calls = lines.filter((s) => s.startsWith('argv ')).map((s) => JSON.parse(s.slice(5)));
+      const verbs = calls.map((a) => a.slice(0, 2).join(' '));
+      if (verbs.some((v) => !HERDR_VERBS.includes(v))) return `herdr verbs ${verbs}`;
+      if (calls.some((a) => a.includes('t0') || a.includes('p0'))) return 'the foreign tab t0 was touched';
+      if (verbs.filter((v) => v === 'tab create').length !== tabs) return `tab create count ${verbs.filter((v) => v === 'tab create').length}`;
+      if (text.includes(c.env.AIKIT_XAI_SENTINEL)) return 'a key reached herdr';
+      for (let i = 1; i <= tabs; i++) for (const line of [`record tab=t${i} pane=p${i}`, 'modes dir=700 env=600 prompt=600 run=600 launch=600', `close t${i} dir=present${closeTail}`]) if (!lines.includes(line)) return `herdr log lacks: ${line}`;
+      const dir = path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host');
+      if (fs.existsSync(dir) && fs.readdirSync(dir).length) return `run dirs left: ${fs.readdirSync(dir)}`;
+      return null;
+    };
+    const hostPairCheck = (both, c, extra) => {
+      const lines = (r, prefix) => r.stderr.split('\n').filter((s) => s.startsWith(prefix));
+      if (!both.again.stderr.includes('cross-ai: setting host=none applied')) return 'headless run lacks host=none';
+      if (both.first.stdout !== both.again.stdout) return 'stdout differs';
+      if (JSON.stringify(both.calls1) !== JSON.stringify(both.calls2)) return `lane calls differ: ${both.calls1} | ${both.calls2}`;
+      if (JSON.stringify(lines(both.first, 'cross-ai: argv=')) !== JSON.stringify(lines(both.again, 'cross-ai: argv='))) return 'argv lines differ';
+      const settings = (r) => lines(r, 'cross-ai: setting ').filter((s) => !s.startsWith('cross-ai: setting host='));
+      if (JSON.stringify(settings(both.first)) !== JSON.stringify(settings(both.again))) return 'settings lines differ';
+      if (statusFields(both.first) !== statusFields(both.again)) return `status fields differ: ${statusFields(both.first)} | ${statusFields(both.again)}`;
+      if (both.first.stderr.includes(c.env.AIKIT_XAI_SENTINEL) || both.again.stderr.includes(c.env.AIKIT_XAI_SENTINEL)) return 'a key reached stderr';
+      for (const name of extra.dead || []) for (const pid of recordedPids(c.pidFile)[name] || []) if (pidLingers(pid)) return `${name} ${pid} still alive`;
+      if (!hostedUsable(c)) return hostFailedOnly(both.first, c);
+      if (!both.first.stderr.includes('cross-ai: setting host=herdr applied')) return 'hosted run lacks host=herdr';
+      if (!lines(both.first, 'cross-ai: host herdr tab=t1 label=aikit:execute:pi:').length) return 'no host line';
+      return hostLogProblem(c, 1, extra.closeTail || '');
+    };
+    const hostPair = (name, model, exit, status, extra = {}) => {
+      const base = ['--runtime', 'pi', '--model', model, '--session-id', 'placeholder-sid-' + name, ...(extra.args || [])];
+      return { name, kind: 'runtime', args: [...base, '--host', 'auto'], env: { HERDR_ENV: '1', PATH: hostedPath, ...(extra.env || {}) }, exit, status, second: { args: [...base, '--host', 'none'], exit, status }, check: (both, c) => hostPairCheck(both, c, extra) };
     };
     const cases = [
       {
@@ -14191,6 +14489,31 @@ async function blackBoxSelfTest(listOnly = false) {
           return ctx.calls.some((line) => line.startsWith('copilot')) ? 'copilot was spawned' : null;
         },
       },
+      hostPair('host-ok', 'fake/ok', 0, /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/, { env: { FAKE_HERDR_PRECLOSED: '1' }, closeTail: ' already-closed' }),
+      hostPair('host-auth', 'fake/auth', 69, /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/),
+      hostPair('host-empty', 'fake/empty', 1, /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/),
+      hostPair('host-timeout', 'fake/hang', 124, /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 cli_rc=.* elapsed=\d+s out=\d+ tree=.* action=stop$/, { args: ['--timeout', '2'], dead: ['gc'] }),
+      {
+        name: 'host-env-none', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath, AIKIT_HOST: 'none' }, exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        check: (r, c) => !r.stderr.includes('cross-ai: setting host=none applied') ? 'missing host=none' : fs.existsSync(path.join(c.home, 'herdr.log')) ? 'herdr was called' : null,
+      },
+      {
+        name: 'host-no-herdr', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'auto'],
+        env: { PATH: hostedPath, AIKIT_HOST: 'yes' }, exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        check: (r, c) => !r.stderr.includes('cross-ai: AIKIT_HOST=yes is not auto or none; ignored') ? 'missing invalid host note' : !r.stderr.includes('cross-ai: setting host=auto ignored reason=no_herdr') ? 'missing no_herdr' : fs.existsSync(path.join(c.home, 'herdr.log')) ? 'herdr was called' : null,
+      },
+      {
+        name: 'host-print-argv', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'auto', '--print-argv'],
+        env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r, c) => !r.stderr.includes('cross-ai: setting host=herdr applied') ? 'missing host=herdr' : r.stderr.includes('cross-ai: host herdr tab=') ? 'host tab line present' : fs.existsSync(path.join(c.home, 'herdr.log')) ? 'herdr was called' : null,
+      },
     ];
 
     const unkinded = cases.filter((c) => c.kind !== 'logic' && c.kind !== 'runtime').map((c) => c.name);
@@ -14231,7 +14554,7 @@ async function blackBoxSelfTest(listOnly = false) {
   }
 }
 
-function callOf(o, name, model, newSessionId, skillPlan = null, mcp = null) { return { model, effort: o.effort, context: o.context, sessionId: o.sessionId, newSessionId, sandbox: o.mode === 'exec' && Boolean(o.codexSandbox), configEffort: ownValue(CONFIG.effort, name) ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel, skillPlan, mcp }; }
+function callOf(o, name, model, newSessionId, skillPlan = null, mcp = null) { return { model, effort: o.effort, context: o.context, sessionId: o.sessionId, newSessionId, sandbox: o.mode === 'exec' && Boolean(o.codexSandbox), configEffort: ownValue(CONFIG.effort, name) ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel, skillPlan, mcp, hostSetting: { value: hostSettingValue(o.host, process.env.AIKIT_HOST).value, available: hostAvailable(process.env) } }; }
 
 function logExecLabel(name, rt, mode) {
   if (mode === 'exec' && rt.execLabel && rt.execLabel.state === 'unverified') log(`cross-ai: note: ${name} execute formula is unverified (no live probe record)`);
@@ -14379,6 +14702,8 @@ async function main(argv) {
   if (o.codexSandbox && o.mode !== 'exec') {
     log('cross-ai: --codex-sandbox applies to exec mode only; review already runs read-only');
   }
+  const hostNote = hostSettingValue(o.host, process.env.AIKIT_HOST).note;
+  if (hostNote) log(hostNote);
   if (o.printArgv) {
     const plan = c.model ? planSettings(rt, o.mode, callOf(o, name, c.model, '<sid>', skillPlan, mcp)) : null;
     if (plan?.error) {
@@ -14509,6 +14834,8 @@ async function main(argv) {
   for (const line of skillBlockLines(report)) log(line);
   logExecLabel(c.name, c.rt, o.mode);
   liveSettings.report = report;
+  const hostEntry = report.find((e) => e.name === 'host');
+  const hostPlan = hostEntry && hostEntry.state === 'applied' && hostEntry.value === 'herdr' ? { role: o.mode === 'exec' ? 'execute' : 'review', runtime: c.name, entry: hostEntry, failed: false } : null;
   const sessionEntry = report.find((e) => e.name === 'session');
   liveSettings.sessionId = rt.argvFile ? plan.sessionId : (o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null);
   liveSettings.escalation = { runtime: Boolean(o.escalateRuntime), model: Boolean(o.escalateModel) };
@@ -14542,6 +14869,7 @@ async function main(argv) {
     cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
     route: liveFields.route, retry: resolved.retry, capS: resolved.capS,
     profileFlags,
+    host: hostPlan,
   });
   liveFields.out = r.outBytes || 0;
   liveFields.cli_rc = r.cli_rc ?? '-';
