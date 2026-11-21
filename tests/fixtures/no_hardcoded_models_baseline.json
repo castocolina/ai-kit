@@ -372,6 +372,33 @@
     "keyval vendor/typed-in-model",
     "keyval vendor/x",
     "keyval xai/grok-old",
+    "referee router-env/my-plan-review",
+    "referee router-env/my-plan-review",
+    "referee router-env/my-plan-review",
+    "referee router-env/my-plan-review",
+    "referee router-env/my-plan-review",
+    "referee router-env/my-plan-review",
+    "referee router-env/totally-unknown",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
+    "referee router-env/x",
     "seedrow gpt-5-6-sol",
     "slash openai/gpt-5.6-sol",
     "slash openai/gpt-5.6-sol",
@@ -485,6 +512,17 @@
     "keyval opencode-go/router-env-fast",
     "keyval opencode-go/router-env-plan-review",
     "keyval router-env-coding",
+    "referee router-env/gemini-3-pro-preview",
+    "referee router-env/gemini-3-pro-preview",
+    "referee router-env/router-env-coding",
+    "referee router-env/router-env-coding",
+    "referee router-env/router-env-coding",
+    "referee router-env/router-env-coding",
+    "referee router-env/router-env-plan-review",
+    "referee router-env/router-env-plan-review",
+    "referee router-env/router-env-plan-review",
+    "referee router-env/router-env-plan-review",
+    "referee router-env/some-encoding-model",
     "slash openai/gpt-5-coding-assistant",
     "slash openai/gpt-5-coding-assistant",
     "slash openai/gpt-5.6-sol",
@@ -558,7 +596,17 @@
    "path": "docs/superpowers/specs/2026-09-05-router-name-purpose-heuristic-design.md",
    "cleaned_by": "backlog",
    "hits": [
+    "referee router-env/coding",
+    "referee router-env/gemini-3-pro-preview",
+    "referee router-env/some-encoding-model",
     "slash some-vendor/code-review-7b"
+   ]
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-23-gsd-curated-config-v2-design.md",
+   "cleaned_by": "backlog",
+   "hits": [
+    "referee router-env/my-coding"
    ]
   },
   {
@@ -579,6 +627,29 @@
    "cleaned_by": "backlog",
    "hits": [
     "flag and"
+   ]
+  },
+  {
+   "path": "skills/ai-kit-gsd-curated-config/evals/01-claude-rigorous-cross-ai.md",
+   "cleaned_by": "backlog",
+   "hits": [
+    "referee router-env/my-coding",
+    "referee router-env/my-coding",
+    "referee router-env/my-coding",
+    "referee router-env/my-coding",
+    "referee router-env/my-plan-review",
+    "referee router-env/my-plan-review",
+    "referee router-env/my-plan-review",
+    "referee router-env/my-plan-review"
+   ]
+  },
+  {
+   "path": "skills/ai-kit-gsd-curated-config/evals/02-opencode-routers-no-catalog.md",
+   "cleaned_by": "backlog",
+   "hits": [
+    "referee router-env/my-coding",
+    "referee router-env/my-coding",
+    "referee router-env/my-plan-review"
    ]
   },
   {
@@ -620,6 +691,20 @@
     "seedrow validate-format",
     "seedrow validate-lint",
     "seedrow validate-security"
+   ]
+  },
+  {
+   "path": "skills/ai-kit-spec-config/evals/evals.json",
+   "cleaned_by": "36",
+   "hits": [
+    "referee router-env/my-coding-lite"
+   ]
+  },
+  {
+   "path": "skills/ai-kit-spec-goal-prompt/evals/files/opengsd-mixed/project/planning/config.json",
+   "cleaned_by": "backlog",
+   "hits": [
+    "referee referee-one"
    ]
   },
   {
@@ -668,6 +753,8 @@
     "flag works",
     "keyval event400",
     "keyval event400",
+    "referee router-env/my-coding",
+    "referee router-env/my-coding:high",
     "slash zai-coding-cn/glm-5.3"
    ]
   },
