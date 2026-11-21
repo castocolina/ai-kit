@@ -15,7 +15,7 @@ DATA_USE_KEYS = ("data_use", "data_use_line", "data_use_source", "data_use_read"
 LINE_MAX = 200
 SOURCE_MAX = 300
 _CONTROL_RX = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-_SOURCE_RX = re.compile(r"https://\S{1,292}")
+_SOURCE_RX = re.compile(r"https://[\x21-\x7e]{1,292}")
 _DATE_RX = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 

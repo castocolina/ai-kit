@@ -90,7 +90,9 @@ class TestLaneSettingsValidate(unittest.TestCase):
 
 class TestLaneSettingsNormalise(unittest.TestCase):
     def test_clean_note(self):
-        self.assertEqual(lane_settings.clean_note("a\nb\tc\x1bd"), "abcd")
+        self.assertEqual(lane_settings.clean_note("a\nb\tc\x1bd"), "a b c d")
+        self.assertEqual(lane_settings.clean_note("daily cap\n100 requests"),
+                         "daily cap 100 requests")
         self.assertEqual(lane_settings.clean_note("  about 100 requests a day  "),
                          "about 100 requests a day")
         self.assertEqual(lane_settings.clean_note("x" * 250), "x" * 200)
@@ -144,7 +146,7 @@ class TestLaneSettingsWriter(unittest.TestCase):
         self.assertEqual(err, "")
         self.assertTrue(text.startswith(existing))
         self.assertEqual(tomllib.loads(text)["lanes"]["execute"][0],
-                         {**entry, "usage_limit_note": "a dailycap"})
+                         {**entry, "usage_limit_note": "a daily cap"})
         self.assertEqual(_render(config, text), (text, ""))
 
 
@@ -288,6 +290,10 @@ class TestLaneUsageLimit(_ScratchLayers):
         self.assertEqual(lane_settings.lane_usage_limit({**_lane(), "usage_limited": True,
                                                         "usage_limit_note": "a daily cap"}),
                          (True, "a daily cap"))
+
+    def test_note_removes_terminal_escape(self):
+        entry = {"key": "a", "usage_limited": True, "usage_limit_note": "cap\x1b[31m red"}
+        self.assertNotIn("\x1b", lane_settings.lane_usage_limit(entry).note)
 
     def test_non_boolean_raises_naming_the_key(self):
         with self.assertRaisesRegex(lane_settings.LaneSettingError,

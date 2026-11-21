@@ -28,7 +28,9 @@ def _snapshot(args, deps) -> tuple:
             opencode=detection.OpencodeSeams(deps.popen_fn, deps.urlopen_fn, deps.env_fn()),
         ), True
     snapshot = cache_read_json(args.runtimes_json)
-    return (snapshot if isinstance(snapshot, dict) else None), False
+    if not isinstance(snapshot, dict):
+        return None, False
+    return {**snapshot, "clis": detection.normalize_runtime_keys(snapshot.get("clis"))}, False
 
 
 def _load(args, deps) -> tuple:

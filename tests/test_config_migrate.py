@@ -205,6 +205,13 @@ class TestDefaultDelete(MigrationCase):
         self.assertFalse(os.path.exists(self.local_old))
         self.assertEqual(self.leftovers(), [])
 
+    def test_failed_cleanup_warns_instead_of_raising(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        with mock.patch.object(config_migrate.os, "remove", side_effect=OSError("busy")):
+            self.assertEqual(self.migrate(), "migrated")
+        self.assertIn("could not", self.warnings[-1])
+        self.assertTrue(any("second name" in warning for warning in self.warnings))
+
     def test_no_free_name_keeps_the_old_file(self):
         self.write(self.local_old, LOCAL_ROSTER)
         with mock.patch.object(config_migrate.os, "link", side_effect=FileExistsError):

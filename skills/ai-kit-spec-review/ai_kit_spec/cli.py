@@ -16,6 +16,7 @@ from ai_kit_spec import (
     effort_probe,
     jev_names,
     lane_effort,
+    lane_settings,
     optional_sources,
     propose_cmds,
     provider_check,
@@ -286,7 +287,8 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
     p_quota.add_argument(
         "--role", choices=["review", "execute", "both"], default="review",
         help="which role's lanes to probe: review (default, the review flow), execute, or both "
-             "(the review order, then execute keys not already listed; the --check-only flow)")
+             "(the review order, then execute lanes not already listed; the --check-only flow); "
+             "execute probes its order first, then its other lanes")
 
     p_resolve = sub.add_parser("resolve-reviewers")
     p_resolve.add_argument("--cwd", required=True)
@@ -838,11 +840,16 @@ def _role_lanes(config: dict, names: tuple) -> list:
 
 
 def _probe_role_keys(config: dict, role: str) -> list:
-    """One role's order, or review then unique execute keys for both."""
+    """One role's selectable keys (review: its order; execute: its order, then its other lanes),
+    or review then unique execute keys for both."""
     names = ("review", "execute") if role == "both" else (role,)
     keys = []
     for name in names:
-        for key in role_orders.role_order(config, name):
+        order = role_orders.role_order(config, name)
+        if name == "execute":
+            order = [lane["key"] for lane in lane_settings.selectable_lanes(
+                "execute", _role_lanes(config, ("execute",)), order)]
+        for key in order:
             if key not in keys:
                 keys.append(key)
     return keys
@@ -1037,7 +1044,10 @@ def _display_spec(entry: dict) -> RunnerSpec:
 
 def _preview_notes(entry: dict) -> list[str]:
     if not entry.get("runtime"):
-        return []
+        command = entry.get("command")
+        if entry.get("effort") is None or (isinstance(command, str) and "{effort}" in command):
+            return []
+        return [lane_effort.NO_RUNTIME_IGNORED]
     notes = []
     ignored = _display_spec(entry).ignored
     if ignored:

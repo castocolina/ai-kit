@@ -22,7 +22,7 @@ _REQUIRED_DATA_USE = tuple(name for name in lane_data_use.DATA_USE_KEYS if name 
 
 def clean_note(text: str) -> str:
     """One display line as typed: control characters removed, capped; never parsed."""
-    return _CONTROL_RX.sub("", text).strip()[:NOTE_MAX]
+    return " ".join(_CONTROL_RX.sub(" ", text).split())[:NOTE_MAX].strip()
 
 
 def normalise_lane_settings(entry: dict) -> dict:
@@ -103,7 +103,8 @@ def _bool_setting(entry: dict, name: str) -> bool:
 def lane_usage_limit(entry: dict) -> UsageLimit:
     """36 D-16 / SPEC R12 d: the one reader for the owner's usage-limit flag and note."""
     note = entry.get("usage_limit_note", "")
-    return UsageLimit(_bool_setting(entry, "usage_limited"), note if isinstance(note, str) else "")
+    return UsageLimit(_bool_setting(entry, "usage_limited"),
+                      clean_note(note) if isinstance(note, str) else "")
 
 
 def lane_escalation(entry: dict) -> Escalation:

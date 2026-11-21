@@ -278,7 +278,7 @@ def compute_ladder_keys(request: BuildInjectionRequest, routes=None) -> list:
     """CRITICAL finding (Rounds 4-5 capability escalation): the FULL ordered candidate-key list
     -- via the SAME narrowing/ranking build_dispatch_injection itself walks (_narrow_and_rank,
     above) -- turned into keys via candidates_to_ladder. Deliberately NOT `list(top_n_keys)`: a
-    candidate ranked here but absent from `top_n_keys` (policy.ladder's own configured keys)
+    candidate ranked here but absent from `top_n_keys` (the execute order's configured keys)
     still gets a real, ordered (last-ranked) position, so a caller computing "every candidate
     ranked strictly above the stuck one" (Task 4's SKILL.md escalation rule) never silently misses
     an out-of-ladder candidate the live walk could actually have picked.

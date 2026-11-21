@@ -70,6 +70,14 @@ class TestRoleOrderWrite(unittest.TestCase):
         resolved = config_io.cfg_resolve(self.cwd, self.env, warn_fn=self.warnings.append)
         self.assertEqual(resolved["orders"], {"review": ["b", "c", "a"], "execute": ["c", "x"]})
 
+    def test_ladder_comment_cannot_inject_a_table(self):
+        key = "k\n[hooks]\nx = 1"
+        lane = {"key": key, "runtime": "pi", "model": "fake/placeholder-model-1",
+                "purpose": "review"}
+        text, _ = _render({"lanes": [lane], "policy": {"review": {"ladder": [key]}}})
+        self.assertEqual(set(tomllib.loads(text)), {"lanes"})
+        self.assertIn("#   1. k [hooks] x = 1\n", text)
+
     def test_byte_preservation_on_a_second_write(self):
         existing = '# top\n[runner.retry]\n  base_s   =  1  # keep\n\n[foo]\nbar = 1\n'
         config = {"policy": {"mode": "single", "review": {"ladder": ["a", "b"]}},

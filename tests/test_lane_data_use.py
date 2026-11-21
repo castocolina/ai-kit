@@ -60,6 +60,14 @@ class TestDataUseRecord(unittest.TestCase):
             with self.subTest(override=override):
                 self.assertEqual(lane_data_use.validate_note({**GOOD, **override}), message)
 
+    def test_source_rejects_control_characters(self):
+        entry = {**GOOD, "data_use_source": "https://example.org/a\x1bb"}
+        self.assertEqual(lane_data_use.validate_note(entry),
+                         "data_use_source must be an https:// address of at most 300 characters "
+                         "with no key shape, or none")
+        entry["data_use_source"] = "https://example.org/a"
+        self.assertIsNone(lane_data_use.validate_note(entry))
+
     def test_label_rules(self):
         self.assertEqual(lane_data_use.validate_note({**UNKNOWN, "data_use_label": "verified"}),
                          "data_use_label must be absent when data_use is unknown")

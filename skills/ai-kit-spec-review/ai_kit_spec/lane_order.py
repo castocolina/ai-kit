@@ -124,8 +124,7 @@ def rank(rows: list, purpose: str, weights: dict, judge, zero_keys: set) -> list
     unknown = [pair for pair in scored if lane_pool.is_unknown(pair[0])]
     window = _window(known, zero_keys) if judge is not None else []
     answers = []
-    if window:
-        assert judge is not None
+    if window and judge is not None:
         try:
             answers = list(judge([(purpose, facts_summary(row)) for row, _ in window]))
         except _JUDGE_ERRORS:

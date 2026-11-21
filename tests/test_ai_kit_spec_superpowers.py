@@ -224,7 +224,7 @@ class TestDeriveFilesTouchedSizes(unittest.TestCase):
 
 class TestComputeLadderKeys(unittest.TestCase):
     def test_includes_a_candidate_ranked_outside_policy_ladder(self):
-        # CRITICAL finding (Rounds 4-5 capability escalation): top_n_keys (policy.ladder's own
+        # CRITICAL finding (Rounds 4-5 capability escalation): top_n_keys (the execute order's
         # configured keys) is an INCOMPLETE proxy for the real, full ordered candidate set --
         # codex/terra below is narrowed/ranked by resolve_execute_candidates (no affinity/context
         # rejection) but is absent from top_n_keys entirely; it must still appear here, ranked

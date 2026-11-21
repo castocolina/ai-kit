@@ -960,6 +960,27 @@ class TestEffortWiring(unittest.TestCase):
                         self.assertIn("render-command: advice for claude: " + str(advice),
                                       err.getvalue())
 
+    def test_render_command_no_runtime_effort_notes(self):
+        # A session default never renders (no command); a custom template without {effort} does.
+        entries = [({"key": "s", "model": "m", "command": "tool {prompt}", "effort": "high"},
+                    "render-command: " + lane_effort.NO_RUNTIME_IGNORED),
+                   ({"key": "c", "model": "m", "command": "tool --effort {effort} {prompt}",
+                     "effort": "high"}, "")]
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewers, prompt = os.path.join(tmp, "reviewers.json"), os.path.join(tmp, "prompt.txt")
+            with open(prompt, "w", encoding="utf-8") as handle:
+                handle.write("review")
+            for entry, expected in entries:
+                with self.subTest(entry=entry):
+                    with open(reviewers, "w", encoding="utf-8") as handle:
+                        json.dump([entry], handle)
+                    err = io.StringIO()
+                    with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                        code = main(["render-command", "--reviewers-json", reviewers,
+                                     "--index", "0", "--prompt-file", prompt])
+                    self.assertEqual(code, 0)
+                    self.assertEqual(err.getvalue(), expected + "\n" if expected else "")
+
     def test_effort_help_names_the_ignored_line(self):
         for sub in ("build-command", "dispatch-execute"):
             with self.subTest(sub=sub):

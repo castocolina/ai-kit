@@ -300,8 +300,8 @@ candidates**: review, execute, or both? (`"review"` | `"execute"` | `"both"`.) A
 session-default entry never goes through Step 2.2's catalog/ranking flow — there is no model id
 to look up — so without this question it would get no `purpose` at all, and the writer files an
 entry with no `purpose` under `[[lanes.review]]` only (`split_by_purpose`), silently dropping an
-execute or both answer. That review-only default exists for legacy entries, never for a
-brand-new one. Carry the answer into this entry's `purpose` field at Step 3's write,
+execute or both answer. That fallback for an absent `purpose` exists for legacy entries, never
+for a brand-new one. Carry the answer into this entry's `purpose` field at Step 3's write,
 exactly like a Step 2.2-sourced entry — never leave it unset for a newly-registered one. Carry
 the captured host into the entry as described above — never silently omitted.
 

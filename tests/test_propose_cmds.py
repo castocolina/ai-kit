@@ -149,6 +149,18 @@ class TestProposeLanes(_Scratch):
         self.assertFalse(data["jev"]["found"])
         self.assertEqual(data["ranking"], "scorer")
 
+    def test_legacy_cursor_snapshot_matches_canonical(self):
+        self._write_catalog({_key(1): _entry("placeholder-model-1", runtime="cursor")})
+        row = {"installed": True, "listing": "ok", "models": ["placeholder-model-1"]}
+        self._write_runtimes({"clis": {"cursor": row}})
+        code, canonical, err = self._propose("review")
+        self.assertEqual((code, err), (0, ""))
+        self.assertTrue(canonical["pool"])
+        self._write_runtimes({"clis": {"cursor-agent": row}})
+        code, legacy, err = self._propose("review")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(legacy, canonical)
+
     def test_runtime_filter(self):
         _, data, _ = self._propose("review", "--runtime", "opencode")
         self.assertEqual([x["key"] for x in data["pool"]], [_key(4)])

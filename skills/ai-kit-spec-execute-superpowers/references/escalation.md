@@ -23,9 +23,9 @@ otherwise it is skipped with route `no_formula`: a custom lane runs in review mo
 subagent-driven-development requires rounds 4–5 to "dispatch a fresh implementer on a MORE CAPABLE
 model". Excluding the stuck key and re-walking the ladder does not guarantee that — the next
 survivor may be weaker. The config has no capability-tier field (`strength` is free text, read by
-no resolution logic), so the ladder order (`policy.ladder`, most-preferred first, the same order
-`resolve-injection` walks) is the capability proxy: only a candidate ranked **strictly above** the
-stuck one counts as a bump.
+no resolution logic), so the execute order (`ladder_keys`: the `[lanes.policy.execute]` ladder,
+most-preferred first, then any unlisted execute lane, the same order `resolve-injection` walks) is
+the capability proxy: only a candidate ranked **strictly above** the stuck one counts as a bump.
 
 ## The stuck key is the round-start anchor, never this round's fresh pick
 
@@ -103,7 +103,7 @@ config line in `references/resolution-stops.md`, the `INJECTION_KEY`/`INJECTION_
 `external_cli`) is this round's bumped implementer: dispatch it without reassigning
 `$EXCLUDED_KEYS_JSON`, framed as subagent-driven-development requires: "A prior implementer
 attempted this task [N] times; you own it now. Read the report file for what was tried." Report
-the pick as ranked above the anchor in `policy.ladder`: its greater capability is inferred from
+the pick as ranked above the anchor in the execute order: its greater capability is inferred from
 that order, not verified. This run is the pre-dispatch choice for a fix round, not a recovery
 from a failed dispatch: a dispatch that then fails does not re-enter it (NEVER index; Step 3's
 `"quota"` and `"real_error"` branches decide the stop or the one-shot wake).
@@ -129,6 +129,6 @@ Read `any_quota_recoverable` exactly as `references/resolution-stops.md` does:
   floor (the stuck key is top-ranked), `reasons`/`detail` are empty by design: name the keys in
   `$ESCALATION_EXCLUDE_JSON` instead. For a native stuck dispatch on a non-Claude host, also say
   how to unblock it: put a more capable routable pair above `$ESCALATION_ANCHOR_KEY` in
-  `policy.ladder`, then resume. Switching this session's model does not help: the session default
+  `[lanes.policy.execute]` ladder, then resume. Switching this session's model does not help: the session default
   keeps its ladder key, which the floor still excludes. This stop is the adapter's own
   call, not one of subagent-driven-development's four stop-and-ask conditions.

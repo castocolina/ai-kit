@@ -403,6 +403,14 @@ def _remove_retired(old: str, new_path: str, retiring: str, state: str, warn_fn)
     return state
 
 
+def _discard_link(path: str, warn_fn) -> None:
+    try:
+        os.remove(path)
+    except OSError as exc:
+        warn_fn(f"ai-kit-spec: could not remove {path} ({exc}); it is a second name of the "
+                "old roster, remove it by hand")
+
+
 def _delete_old(old: str, new_path: str, raw: bytes, state: str, warn_fn) -> str:
     """Link, verify and unlink (36 D-10); a swap between samefile and unlink is not caught."""
     stop = _retire_guard(old, new_path, raw, state, warn_fn)
@@ -411,21 +419,22 @@ def _delete_old(old: str, new_path: str, raw: bytes, state: str, warn_fn) -> str
     dest = _link_free(old, RETIRING_SUFFIX)
     if dest is None:
         warn_fn(f"ai-kit-spec: migrated {old} to {new_path} but could not delete the old file "
-                "(no free name or no hard link beside it); the next run finishes it")
+                "(no free name or no hard link beside it); the next run tries again, and if "
+                "this repeats remove it by hand or keep it with render-toml --keep-backup")
         return state
     try:
         same = os.path.samefile(old, dest)
     except FileNotFoundError:
         same = False
     if _read_bytes(dest) != raw or not same:
-        os.remove(dest)
+        _discard_link(dest, warn_fn)
         warn_fn(f"ai-kit-spec: {old} changed during its migration to {new_path}; the old file is "
                 "kept (the new roster wins; remove or rename the old file)")
         return "deferred"
     try:
         os.remove(old)
     except OSError as exc:
-        os.remove(dest)
+        _discard_link(dest, warn_fn)
         warn_fn(f"ai-kit-spec: migrated {old} to {new_path} but could not delete the old file "
                 f"({exc}); the next run finishes it")
         return state

@@ -855,7 +855,8 @@ def _ladder_comment_lines(role: str, ladder: list, double: bool) -> list[str]:
     tail = ("# primary slot; double mode also seats an independent secondary):"
             if double and role == "review" else "# primary slot):")
     return [f"{_LADDER_COMMENT_HEAD}, {role} lanes (first available wins the", tail,
-            *(f"#   {number}. {key}" for number, key in enumerate(ladder, 1))]
+            *(f"#   {number}. {lane_settings.clean_note(str(key))}"
+              for number, key in enumerate(ladder, 1))]
 
 
 def _refresh_ladder_comment(text: str, path: tuple, generated_lines: list) -> str:

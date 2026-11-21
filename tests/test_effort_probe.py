@@ -40,6 +40,7 @@ class TestProbeEffort(unittest.TestCase):
         result = probe(fake)
         self.assertEqual(result["state"], "accepted")
         self.assertEqual(result["label"], "accepted by a call on 2026-11-20")
+        self.assertEqual((result["level"], result["error"], result["reason"]), ("high", None, None))
         self.assertTrue(result["probe"]["available"])
         expected = lane_effort.effort_form("opencode", "fake/placeholder-model-1", "high")
         self.assertEqual(calls[0].model, expected.model)
@@ -50,6 +51,9 @@ class TestProbeEffort(unittest.TestCase):
         fake, calls = runner()
         result = probe(fake, "pi", "fake/placeholder-model-1:high")
         self.assertEqual(result["state"], "inconclusive")
+        self.assertEqual(result["reason"], "the model id already carries effort 'high'; the call "
+                                           "cannot show acceptance of the lane effort")
+        self.assertIsNone(result["label"])
         self.assertFalse(calls)
 
     def test_ignored_makes_no_call(self):
@@ -59,14 +63,22 @@ class TestProbeEffort(unittest.TestCase):
                  ("codex", "placeholder-model-1", "max"), (None, "", "high")]
         for runtime, model, level in cases:
             expected = lane_effort.effort_form(runtime, model, level).ignored
-            self.assertEqual(probe(fake, runtime, model, level)["reason"], expected)
+            result = probe(fake, runtime, model, level)
+            self.assertEqual(result["reason"], expected)
+            self.assertEqual((result["state"], result["probe"], result["label"]),
+                             ("ignored", None, None))
         self.assertFalse(calls)
 
     def test_rejected_keeps_a_clean_first_line(self):
         key = "sk-" + "A" * 24
         fake, _ = runner("real_error", lines=("unsupported effort level\x07 token " + key,
                                              "second line"))
-        self.assertEqual(probe(fake)["error"], "unsupported effort level token [redacted]")
+        result = probe(fake)
+        self.assertEqual(result["error"], "unsupported effort level token [redacted]")
+        self.assertEqual((result["state"], result["reason"]), ("rejected", "real_error"))
+        # A control character glued to the key: redacted before the control is stripped.
+        fake, _ = runner("real_error", lines=("bad\x07" + key,))
+        self.assertEqual(probe(fake)["error"], "bad[redacted]")
 
     def test_runner_lines_are_skipped(self):
         fake, _ = runner("real_error", lines=("cross-ai: start", "AIKIT-XAI status=error",
@@ -79,6 +91,7 @@ class TestProbeEffort(unittest.TestCase):
             result = probe(fake)
             self.assertEqual(result["state"], "inconclusive")
             self.assertEqual(result["reason"], "runner: cross-ai: preflight")
+            self.assertIsNone(result["error"])
 
     def test_truncated_wrapper_detail_is_inconclusive(self):
         fake, _ = runner("real_error", lines=("cross-ai: " + "x" * 90,) * 4 + ("host error",))
@@ -91,12 +104,17 @@ class TestProbeEffort(unittest.TestCase):
 
     def test_no_answer_and_stops_are_inconclusive(self):
         fake, _ = runner(stdout="")
-        self.assertEqual(probe(fake)["reason"], effort_probe.NO_ANSWER_REASON)
+        result = probe(fake)
+        self.assertEqual(result["reason"], effort_probe.NO_ANSWER_REASON)
+        self.assertEqual((result["state"], result["label"]), ("inconclusive", None))
         for reason in ("quota", "auth", "timeout"):
             fake, _ = runner(reason)
             expected = (f"the call stopped on '{reason}', which does not show whether "
                         "the effort is accepted")
-            self.assertEqual(probe(fake)["reason"], expected)
+            result = probe(fake)
+            self.assertEqual(result["reason"], expected)
+            self.assertEqual((result["state"], result["error"], result["label"]),
+                             ("inconclusive", None, None))
 
     def test_no_model_makes_no_call(self):
         fake, calls = runner()
@@ -144,7 +162,13 @@ class TestCheckReviewerEffort(unittest.TestCase):
                 "--effort", "high"]
         code, out, _ = invoke(args, runner_fn=fake)
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(out)["effort_probe"]["state"], "accepted")
+        payload = json.loads(out)
+        self.assertEqual((payload["available"], payload["answered"]), (True, True))
+        outcome = payload["effort_probe"]
+        self.assertEqual(set(outcome), {"state", "level", "label", "error", "reason"})
+        self.assertEqual((outcome["state"], outcome["level"]), ("accepted", "high"))
+        self.assertRegex(outcome["label"], r"^accepted by a call on \d{4}-\d{2}-\d{2}$")
+        self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0].model, "fake/placeholder-model-1:high")
 
     def test_rejected_output_is_redacted(self):
@@ -154,6 +178,7 @@ class TestCheckReviewerEffort(unittest.TestCase):
                 "--effort", "high"]
         _, out, _ = invoke(args, runner_fn=fake)
         self.assertNotIn(key, out)
+        self.assertEqual(json.loads(out)["effort_probe"]["state"], "rejected")
         self.assertIn("[redacted]", json.loads(out)["effort_probe"]["error"])
 
     def test_without_effort_output_unchanged(self):

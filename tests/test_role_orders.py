@@ -303,6 +303,29 @@ class TestProbeQuotaRole(_FileCase):
                                  ("same1", ["placeholder-cli-1", "placeholder-model-5"])])
         self.assertNotIn("names different lanes", err)
 
+    def test_execute_role_also_probes_unlisted_execute_lanes(self):
+        self.write_user('''[[lanes.review]]
+key = "r"
+model = "placeholder-model-1"
+command = "placeholder-cli-1 {model}"
+[[lanes.execute]]
+key = "unlisted"
+model = "placeholder-model-2"
+command = "placeholder-cli-1 {model}"
+[[lanes.execute]]
+key = "listed"
+model = "placeholder-model-3"
+command = "placeholder-cli-1 {model}"
+[lanes.policy.review]
+ladder = ["r"]
+[lanes.policy.execute]
+ladder = ["listed"]
+''')
+        calls, _ = self.probe("--role", "execute")
+        self.assertEqual([key for key, _ in calls], ["listed", "unlisted"])
+        calls, _ = self.probe("--role", "review")
+        self.assertEqual([key for key, _ in calls], ["r"])
+
     def test_both_probes_review_then_execute_once_per_key_and_warns(self):
         self.write_user(PROBE_ROSTER)
         calls, err = self.probe("--role", "both")

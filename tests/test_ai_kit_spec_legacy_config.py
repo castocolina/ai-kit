@@ -433,7 +433,7 @@ class TestLegacyNotes(unittest.TestCase):
 class TestLegacyAdapters(unittest.TestCase):
     def test_superpowers_keeps_the_stored_runtime_for_the_route_walk(self):
         # 18.1-10: assembly no longer masks a host-selectable alias. Both hosts keep the stored
-        # runtime; routing decides native vs review_only per call.
+        # runtime; routing decides native vs no_formula per call.
         from ai_kit_spec_superpowers.dispatch_injection import assemble_candidates
 
         entry, _ = normalize_legacy_entry(

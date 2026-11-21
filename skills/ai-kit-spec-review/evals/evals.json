@@ -19,6 +19,7 @@
       "expected_output": "Treats the file as .planning/phases/02-auth/02-01-PLAN.md, detects the GSD framework and the plan archetype, routes the fix to /gsd-plan-phase with --reviews, never edits the PLAN.md itself, and when the slash command cannot run surfaces the pre-filled command with the report path.",
       "files": ["evals/files/gsd/project/aikit/config.toml", "evals/files/gsd/project/planning/phases/02-auth/02-01-PLAN.md"],
       "assertions": [
+        "Sets the framework to gsd and the archetype to plan, and passes the reviewer the file path only, never the document body",
         "Routes the fix to /gsd-plan-phase with --reviews, never to ai-kit-spec-review-fixer, and does not edit the PLAN.md itself",
         "When the slash command cannot run, the surface message carries the exact command and the report path",
         "When the slash command succeeds, dispatches gsd-plan-checker as the validate step and then re-reviews"
@@ -30,7 +31,7 @@
       "expected_output": "Finds no framework profile, so FRAMEWORK_PROFILE_PATH is none for both the reviewer and the fixer; reviews with the generic archetype checklists, routes the fix to ai-kit-spec-review-fixer, which edits the file directly, and re-reviews until approved.",
       "files": ["evals/files/active/project/aikit/config.toml", "evals/files/active/project/docs/rfcs/0042-rate-limiting.md"],
       "assertions": [
-        "Passes FRAMEWORK_PROFILE_PATH none to both the reviewer and the fixer",
+        "Finds no framework profile without a crash or a hang and passes FRAMEWORK_PROFILE_PATH none to both the reviewer and the fixer",
         "Routes the fix to ai-kit-spec-review-fixer, which edits the document directly with no hand-off command",
         "On approval the surface message is concise and names the RFC file path"
       ]
@@ -41,7 +42,7 @@
       "expected_output": "Asks once to disambiguate, then sets FRAMEWORK_PROFILE_PATH to none, routes every archetype through ai-kit-spec-review-fixer, completes the review and notes in the surface message that the framework was ambiguous and the generic fixer was used. Reviewers come from config-status and the configured lanes, never from a silent no-config fallback.",
       "files": ["evals/files/active/project/aikit/config.toml", "evals/files/active/project/shared/architecture-decision.md"],
       "assertions": [
-        "Asks exactly once before falling back and does not loop on the question",
+        "Asks exactly once before falling back, does not loop on the question, and then sets FRAMEWORK_PROFILE_PATH to none",
         "Notes in the surface message that the framework was ambiguous and the generic fixer was used",
         "Runs config-status before resolving reviewers instead of falling back silently to the session default",
         "Attempts no native-skill and no slash-command routing, and the review still completes instead of aborting because of the ambiguity"

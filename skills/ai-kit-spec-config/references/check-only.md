@@ -59,7 +59,7 @@ but "no writes" means nothing is persisted to ai-kit's caches or config: the thr
 `probe-quota`'s routing step from writing the runtimes cache (a cold or stale cache is rebuilt in
 memory only, and a targeted refresh is never written back). `--no-migrate` reads an old roster read-only: it is used in memory, `migration pending` is printed, and nothing is written.
 
-`--role both` probes the review order, then each execute key not already listed, once per key. A key that names different lanes in the review and execute roles is probed as its review lane, and `probe-quota` prints one line naming the key and saying its execute lane is not probed; relay that line and suggest renaming one of the two lanes. A lane marked `usage_limited = true` is probed like any other. Quota records are reused for an hour only within one quota file; this check passes a throwaway `--quota-path`, so every `--check-only` run spends one probe per probed lane, including part of a usage-limited lane's allowance.
+`--role both` probes the review order, then each execute lane not already listed (the execute order first, then the other execute lanes the execute selector can still pick), once per key. A key that names different lanes in the review and execute roles is probed as its review lane, and `probe-quota` prints one line naming the key and saying its execute lane is not probed; relay that line and suggest renaming one of the two lanes. A lane marked `usage_limited = true` is probed like any other. Quota records are reused for an hour only within one quota file; this check passes a throwaway `--quota-path`, so every `--check-only` run spends one probe per probed lane, including part of a usage-limited lane's allowance.
 
 `probe-quota` has no `--local`/`--global` flag — it always runs the full `cfg_resolve` merge, so
 output holds the keys printed above, from both local and global configs. Report each probed
@@ -68,10 +68,10 @@ output holds the keys printed above, from both local and global configs. Report 
 
 Three edge cases: (1) if `--global` was passed but a local config with `strategy = "local-only"`
 exists, the merge returns only local entries, shadowing the global keys the raw read listed; (2)
-`probe-quota` only probes keys named in a role's order (`[lanes.policy.review]` or `[lanes.policy.execute]` `ladder`, or a shared `[lanes.policy]` `ladder` read for each role's own lanes); (3) a project file whose command-bearing lanes are untrusted is
+`probe-quota` probes a review lane only when the review order names it (`[lanes.policy.review]` `ladder`, or a shared `[lanes.policy]` `ladder` read for the review lanes), and every execute lane; (3) a project file whose command-bearing lanes are untrusted is
 ignored entirely (stderr prints `ignoring untrusted project-local config`), so none of its keys
 are probed. For any raw-read key with no match in probe output, report `available: unknown (not
-probed — absent from both role orders, shadowed by local-only strategy, the local config is
+probed — a review lane absent from the review order, shadowed by local-only strategy, the local config is
 untrusted, a native/session-default entry that is never externally probed, or a permanent skip
 route the probe output names)` rather than silently dropping it or guessing. When the untrusted
 line appears, relay it and print the `trust-local --cwd <project root> --show` command for the
