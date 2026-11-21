@@ -65,8 +65,8 @@
  *   --self-test-list                         print each self-test case as name<TAB>kind (logic or runtime);
  *                                            AIKIT_XAI_SELFTEST_CASES=a,b runs only the named cases
  *
- * CONFIG.effort pins the selected effort per runner: pi --thinking (skipped when the model
- * has a :level suffix) and codex model_reasoning_effort.
+ * CONFIG.effort.<runtime> is the baked default effort beneath the call's --effort, for every
+ * runtime; --print-argv prints how each runtime takes it (cross-ai: setting effort=...).
  *
  * Live outer timeout reads workflow.cross_ai_timeout the way gsd-tools config-get does:
  * .planning[/$GSD_PROJECT][/workstreams/$GSD_WORKSTREAM]/config.json, then the root config
@@ -1363,6 +1363,10 @@ const RUNTIMES = {
     profiles: null,
     reviewExtras: [],
     env: {},
+    forms: {
+      effort: { kind: 'id-bracket', key: 'effort', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--model <model>" with the bracket example "[context=1m,effort=high,fast=false]"' } },
+      provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
+    },
   },
   // opencode 2.3.2 run --help formulas (recorded: tests/fixtures/cli_help/opencode/); partial bare profile: opencode still loads
   // ~/.agents/skills and ~/.config/opencode/skills (opencode docs). --standalone (a global flag) runs a headless run
@@ -1380,13 +1384,17 @@ const RUNTIMES = {
     profiles: null,
     reviewExtras: [],
     env: { OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1' },
+    forms: {
+      effort: { kind: 'id-suffix', key: '#', label: { state: 'verified', source: 'opencode 2.3.2 run --help 2026-11-21: "Model to use in the format provider/model#variant"' } },
+      provider: { kind: 'id-prefix', label: { state: 'verified', source: 'opencode 2.3.2 run --help 2026-11-21: "Model to use in the format provider/model#variant"' } },
+    },
   },
   pi: {
     bins: ['pi'],
     list: { argv: PI_RPC_ARGS, input: PI_RPC_REQUEST, parse: parsePiListingIds },
-    exec: (m, c) => ['-p', '--model', m, ...piThinkingArgs(m, c), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
+    exec: (m, c) => ['-p', '--model', m, ...(c.adds ? c.adds.effort : piThinkingArgs(m, c)), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
       ...(c.profileFlags || [])],
-    review: (m, c) => ['-p', '--model', m, ...piThinkingArgs(m, c), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
+    review: (m, c) => ['-p', '--model', m, ...(c.adds ? c.adds.effort : piThinkingArgs(m, c)), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
       ...(c.profileFlags || [])],
     resume: (m, c, sid, mode) => RUNTIMES.pi[mode](m, c),
     parse: (out) => ({ text: out, sessionId: null, error: null }),
@@ -1401,6 +1409,10 @@ const RUNTIMES = {
     },
     reviewExtras: ['--skill'],
     env: {},
+    forms: {
+      effort: { kind: 'flag', flag: '--thinking', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--thinking <level> Set thinking level: off, minimal, low, medium, high, xhigh, max"' } },
+      provider: { kind: 'id-prefix', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--model <pattern> Model pattern or ID (supports provider/id and optional :<thinking>)"' } },
+    },
   },
   // unverified (outside the default prefer)
   codex: {
@@ -1427,13 +1439,17 @@ const RUNTIMES = {
     profiles: null,
     reviewExtras: [],
     env: {},
+    forms: {
+      effort: { kind: 'config', key: 'model_reasoning_effort', label: { state: 'verified', source: 'codex 0.170.0 exec --help 2026-11-21: "-c, --config <key=value>"; model_reasoning_effort is the runner\'s existing codex effort key' } },
+      provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
+    },
   },
   // read-only enforcement not live-verified
   claude: {
     bins: ['claude'],
     list: null,
     exec: null,
-    review: (m) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'plan'],
+    review: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'plan', ...(c.adds?.effort || [])],
     resume: null,
     parse: (out) => {
       const j = parseJson((out || '').trim());
@@ -1447,6 +1463,10 @@ const RUNTIMES = {
     profiles: null,
     reviewExtras: [],
     env: {},
+    forms: {
+      effort: { kind: 'flag', flag: '--effort', label: { state: 'verified', source: 'claude 2.1.330 --help 2026-11-21: "--effort <level> Effort level for the current session (low, medium, high, xhigh, max)"' } },
+      provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
+    },
   },
   // Flags documented in copilot 1.0.103 `--help` and `help permissions`; error, quota and
   // exit-code shapes unverified (no real copilot run in this phase).
@@ -1456,8 +1476,8 @@ const RUNTIMES = {
     argvPrompt: true,
     errorsUnverified: true,
     modelId: MODEL_ID,
-    exec: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.profileFlags || [])],
-    review: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.profileFlags || [])],
+    exec: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.profileFlags || [])],
+    review: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.profileFlags || [])],
     resume: null,
     parse: (out) => ({ text: out, sessionId: null, error: null }),
     modelSuffix: null,
@@ -1469,8 +1489,128 @@ const RUNTIMES = {
         '--disable-builtin-mcps'],
     },
     reviewExtras: [],
+    forms: {
+      effort: { kind: 'flag', flag: '--reasoning-effort', label: { state: 'verified', source: 'copilot 1.0.112 --help 2026-11-21: "--reasoning-effort <level> Set the reasoning effort level; supported levels depend on the model"' } },
+      provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
+    },
   },
 };
+
+// Settings planner (D-11, D-14): rows carry forms as data; one pure planSettings decides argv additions and the report.
+const SETTING_REASONS = ['no_form', 'id_carries', 'unverified_form', 'mode_forbids', 'no_slot', 'recorded_only', 'no_provider_form', 'bad_value', 'no_herdr', 'host_failed'];
+const SETTING_NAMES = ['model', 'provider', 'role', 'effort', 'context', 'session', 'escalate_runtime', 'escalate_model', 'host', 'skill', 'mcp'];
+const SETTING_STATES = ['applied', 'ignored', 'unknown'];
+
+function bracketValue(model, key) {
+  const match = model.match(/\[([^\]]*)\]$/);
+  if (!match) return null;
+  for (const item of match[1].split(',')) {
+    const at = item.indexOf('=');
+    if (at >= 0 && item.slice(0, at) === key) return item.slice(at + 1);
+  }
+  return null;
+}
+
+function mergeBracket(model, key, value) {
+  const match = model.match(/\[([^\]]*)\]$/);
+  if (!match) return `${model}[${key}=${value}]`;
+  return `${model.slice(0, match.index)}[${match[1] ? `${match[1]},` : ''}${key}=${value}]`;
+}
+
+function cleanSettingValue(name, value) {
+  const text = String(value ?? '-').replace(/[\x00-\x1f\x7f-\x9f]/g, '');
+  // BROAD_RES redacts every UUID, and a session id must stay reusable.
+  return name === 'session' ? redactKeyShapes(text) : redactSecrets(text);
+}
+
+const SETTING_HANDLERS = {
+  model: (plan, row, role, call) => {
+    plan.report.push({ name: 'model', value: call.model, state: 'applied', proof: 'model' });
+  },
+  provider: (plan, row, role, call) => {
+    const slash = call.model.indexOf('/');
+    if (slash <= 0) return;
+    const prefix = call.model.slice(0, slash);
+    if (row.forms?.provider?.kind === 'id-prefix') {
+      plan.provider = prefix;
+      plan.report.push({ name: 'provider', value: prefix, state: 'applied', proof: { slotPrefix: `${prefix}/` } });
+    } else {
+      plan.report.push({ name: 'provider', value: prefix, state: 'unknown', reason: 'no_provider_form' });
+    }
+  },
+  role: (plan, row, role) => {
+    plan.report.push({ name: 'role', value: role === 'exec' ? 'execute' : 'review', state: 'applied', proof: { mode: role } });
+  },
+  effort: (plan, row, role, call) => {
+    const level = call.effort ?? call.configEffort ?? null;
+    if (level === null) return;
+    const form = row.forms?.effort || { kind: 'none' };
+    let reason = null;
+    if (form.kind === 'none') reason = 'no_form';
+    else if (form.label?.state !== 'verified') reason = 'unverified_form';
+    else if (!LEVEL_RE.test(String(level))) reason = 'bad_value';
+    else if (form.kind === 'id-bracket' ? bracketValue(plan.model, form.key) !== null : Boolean(row.modelSuffix && row.modelSuffix.test(plan.model))) reason = 'id_carries';
+    if (reason) {
+      plan.report.push({ name: 'effort', value: level, state: 'ignored', reason });
+      return;
+    }
+    let proof = 'model';
+    if (form.kind === 'flag') proof = plan.adds.effort = [form.flag, level];
+    else if (form.kind === 'config') proof = plan.adds.effort = ['-c', `${form.key}=${level}`];
+    else if (form.kind === 'id-bracket') plan.model = mergeBracket(plan.model, form.key, level);
+    else if (form.kind === 'id-suffix') plan.model = `${plan.model}${form.key}${level}`;
+    plan.report.push({ name: 'effort', value: level, state: 'applied', proof });
+  },
+  escalate_runtime: (plan, row, role, call) => {
+    if (call.escalateRuntime) plan.report.push({ name: 'escalate_runtime', value: 'true', state: 'ignored', reason: 'recorded_only' });
+  },
+  escalate_model: (plan, row, role, call) => {
+    if (call.escalateModel) plan.report.push({ name: 'escalate_model', value: 'true', state: 'ignored', reason: 'recorded_only' });
+  },
+};
+
+// Pure: no fs, env, spawn or clock. role is 'review' | 'exec'. Returns an object so later members (capabilities) fit.
+function planSettings(row, role, call) {
+  const plan = { model: call.model, adds: { session: [], effort: [], context: [], skills: [], mcp: [] }, sessionId: null, resume: false, report: [], provider: null };
+  for (const name of SETTING_NAMES) SETTING_HANDLERS[name]?.(plan, row, role, call);
+  for (const entry of plan.report) if (entry.proof === 'model') entry.proof = { slot: plan.model };
+  return plan;
+}
+
+const MODEL_SLOT_FLAGS = ['--model', '-m'];
+
+// The state comes from the built argv, never from the request (SPEC R13/R14 prohibition).
+function confirmReport(report, argv, promptPrefix = '', builtMode = null) {
+  const hasRun = (run) => argv.some((_, i) => run.every((value, j) => argv[i + j] === value));
+  const index = argv.findIndex((value) => MODEL_SLOT_FLAGS.includes(value));
+  for (const e of report) {
+    if (e.state !== 'applied') continue;
+    const p = e.proof;
+    let ok;
+    if (Array.isArray(p)) ok = hasRun(p);
+    else if (p && Array.isArray(p.runs)) ok = p.runs.every(hasRun);
+    else if (p && 'slot' in p) ok = index >= 0 && argv[index + 1] === p.slot;
+    else if (p && 'slotPrefix' in p) ok = index >= 0 && (argv[index + 1] || '').startsWith(p.slotPrefix);
+    else if (p && 'mode' in p) ok = p.mode === builtMode;
+    else if (p && typeof p.unprovable === 'string' && p.unprovable) ok = true;
+    else if (typeof e.proofPrompt === 'string') ok = promptPrefix.includes(e.proofPrompt);
+    else throw new Error(`settings report entry ${e.name} has no proof`);
+    if (!ok) throw new Error(`settings report claims ${e.name}=${e.value} applied but the built argv does not carry it`);
+  }
+  return report;
+}
+
+function statusGroup(report, sessionId, escalation) {
+  const group = (state) => report.filter((e) => e.state === state).map((e) =>
+    ['skill', 'mcp'].includes(e.name) ? `${e.name}:${redactKeyShapes(String(e.value))}` : e.name).join(',') || '-';
+  const session = typeof sessionId === 'string' && SESSION_ID_RE.test(sessionId) ? redactKeyShapes(sessionId) : '-';
+  const flags = [escalation.runtime && 'runtime', escalation.model && 'model'].filter(Boolean).join(',') || '-';
+  return `session=${session} applied=${group('applied')} ignored=${group('ignored')} unknown=${group('unknown')} escalate=${flags}`;
+}
+
+function reportLines(report) {
+  return report.map((e) => `cross-ai: setting ${e.name}=${cleanSettingValue(e.name, e.value)} ${e.state}${e.reason ? ` reason=${e.reason}` : ''}${e.form ? ` form=${e.form}` : ''}`);
+}
 
 // CONFIG.effort.pi pins thinking unless the model spec already carries a :level suffix
 // (without either, pi runs the user's default, xhigh on some machines).
@@ -1480,7 +1620,8 @@ function piThinkingArgs(model, ctx) {
 
 function withCodexKnobs(argv, ctx) {
   const out = [...argv];
-  if (ctx.codexEffort) out.push('-c', `model_reasoning_effort=${ctx.codexEffort}`);
+  // The run path still passes ctx.codexEffort and ctx.piThinking without adds.
+  if (ctx.adds) out.push(...ctx.adds.effort); else if (ctx.codexEffort) out.push('-c', `model_reasoning_effort=${ctx.codexEffort}`);
   if (ctx.codexServiceTier) out.push('-c', `service_tier=${ctx.codexServiceTier}`);
   return out;
 }
@@ -11650,6 +11791,51 @@ async function blackBoxSelfTest(listOnly = false) {
         async check (r, ctx) { const b = await runCaseProcess({ args: ['--print-argv', '--runtime', 'codex', '--model', 'fake-ok-codex', '--codex-effort', 'ultra'] }, ctx); const line = (x) => (x.stdout || '').split('\n').find((s) => s.startsWith('codex\t')) || ''; return b.status === 0 && line(r).includes('model_reasoning_effort=max') && line(b).includes('model_reasoning_effort=ultra') ? null : 'codex levels'; },
       },
       {
+        name: 'planner-effort-no-form', kind: 'logic', pure: () => {
+          const row = { forms: { effort: { kind: 'none', label: { state: 'unknown', source: 'test' } } } };
+          const p = planSettings(row, 'exec', { model: 'fake-ok', effort: 'high' });
+          if (JSON.stringify(p.report.map(e => [e.name, e.value, e.state, e.reason || null])) !== JSON.stringify([['model','fake-ok','applied',null],['role','execute','applied',null],['effort','high','ignored','no_form']]) || p.adds.effort.length || p.model !== 'fake-ok') return 'no form';
+          row.forms.effort = { kind: 'flag', flag: '--effort', label: { state: 'unverified', source: 'test' } };
+          if (planSettings(row, 'exec', { model: 'fake-ok', effort: 'high' }).report.at(-1).reason !== 'unverified_form') return 'unverified';
+          row.forms.effort.label.state = 'verified';
+          const bad = planSettings(row, 'exec', { model: 'fake-ok', configEffort: 'Bad' });
+          if (bad.report.at(-1).reason !== 'bad_value' || bad.adds.effort.length) return 'bad value';
+          if (SETTING_REASONS.join(',') !== 'no_form,id_carries,unverified_form,mode_forbids,no_slot,recorded_only,no_provider_form,bad_value,no_herdr,host_failed' || SETTING_NAMES.join(',') !== 'model,provider,role,effort,context,session,escalate_runtime,escalate_model,host,skill,mcp' || SETTING_STATES.join(',') !== 'applied,ignored,unknown') return 'lists';
+          return bad.report.every(e => SETTING_STATES.includes(e.state) && (!e.reason || SETTING_REASONS.includes(e.reason))) ? null : 'state';
+        },
+      },
+      {
+        name: 'planner-confirm-report', kind: 'logic', pure: () => {
+          const entry = (proof) => [{ name: 'effort', value: 'high', state: 'applied', proof }];
+          const fails = (r, a, mode = 'exec') => { try { confirmReport(r, a, '', mode); return false; } catch { return true; } };
+          const e = entry(['--effort', 'high']);
+          if (confirmReport(e, ['-p', '--effort', 'high'], '', 'exec') !== e || !fails(e, ['-p', '--effort', 'low']) || !fails(e, ['--effort', 'x', 'high'])) return 'flag';
+          if (fails(entry({ slot: 'b' }), ['--model', 'b', 'x']) || fails(entry({ slot: 'b' }), ['-m', 'b']) || !fails(entry({ slot: 'b' }), ['--model', 'a', 'x', 'b'])) return 'slot';
+          if (fails(entry({ slotPrefix: 'fake/' }), ['--model', 'fake/ok']) || !fails(entry({ slotPrefix: 'fake/ok/' }), ['--model', 'fake/other'])) return 'prefix';
+          if (!fails(entry({ mode: 'review' }), [], 'exec') || fails(entry({ runs: [['exec', 'resume'], ['s-1', '-']] }), ['exec', 'resume', 's-1', '-']) || !fails(entry({ runs: [['exec', 'resume'], ['s-1', '-']] }), ['exec', 'resume'])) return 'mode or runs';
+          if (!fails([{ name: 'effort', state: 'applied' }], []) || fails([{ state: 'ignored' }, { state: 'unknown' }], [])) return 'missing proof';
+          for (const row of [RUNTIMES.pi, RUNTIMES.claude]) if (planSettings(row, 'review', { model: 'fake-ok', effort: 'high' }).report.some(x => x.state === 'applied' && !x.proof)) return 'planner proof';
+          return null;
+        },
+      },
+      {
+        name: 'planner-status-group', kind: 'logic', pure: () => {
+          const key = 'sk-' + 'a'.repeat(16);
+          const report = ['model', 'role', 'effort'].map(name => ({ name, state: 'applied' }));
+          report.push({ name: 'skill', value: 'placeholder-skill-1', state: 'applied' }, { name: 'escalate_runtime', state: 'ignored' }, { name: 'provider', state: 'unknown' });
+          if (statusGroup(report, 'abc-1', { runtime: true, model: false }) !== 'session=abc-1 applied=model,role,effort,skill:placeholder-skill-1 ignored=escalate_runtime unknown=provider escalate=runtime') return 'group';
+          if (statusGroup([], null, {}) !== 'session=- applied=- ignored=- unknown=- escalate=-') return 'empty';
+          const redacted = statusGroup([{ name: 'skill', value: key, state: 'applied' }, { name: 'mcp', value: key, state: 'applied' }], 'bad id', { runtime: true, model: true });
+          return redacted === 'session=- applied=skill:<redacted>,mcp:<redacted> ignored=- unknown=- escalate=runtime,model' ? null : 'redaction';
+        },
+      },
+      {
+        name: 'planner-report-lines', kind: 'logic', pure: () => {
+          const r = reportLines([{ name: 'effort', value: '\x07' + 'sk-' + 'a'.repeat(16), state: 'ignored', reason: 'bad_value' }, { name: 'session', value: '00000000-0000-4000-8000-000000000001', state: 'applied' }, { name: 'skill', value: 'placeholder-skill-1', state: 'applied', form: 'path' }]);
+          return JSON.stringify(r) === JSON.stringify(['cross-ai: setting effort=<redacted> ignored reason=bad_value', 'cross-ai: setting session=00000000-0000-4000-8000-000000000001 applied', 'cross-ai: setting skill=placeholder-skill-1 applied form=path']) ? null : 'lines';
+        },
+      },
+      {
         name: 'cursor-mode-plan',
         kind: 'logic',
         args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'x', '--mode', 'review', '--cursor-mode', 'plan'],
@@ -12861,21 +13047,25 @@ async function main(argv) {
     log('cross-ai: --codex-sandbox applies to exec mode only; review already runs read-only');
   }
   if (o.printArgv) {
+    const plan = c.model ? planSettings(rt, o.mode, { model: c.model, effort: o.effort, configEffort: effort[name] ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel }) : null;
     const ctx = {
       cwd: process.cwd(), sid: '<sid>', outFile: '<tmp>/last-message.md',
-      codexEffort: knobs.codexEffort, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
-      piThinking: knobs.piThinking, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
+      adds: plan ? plan.adds : undefined, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
+      codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
       profileFlags, promptArg: '<prompt>',
     };
     const formula = rt[o.mode];
     const argvOut = (c.model && typeof formula === 'function')
-      ? withExtra(name, formula(c.model, ctx)) : null;
+      ? withExtra(name, formula(plan.model, ctx)) : null;
     process.stdout.write(`${name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(argvOut) : 'NO MODEL'}\n`);
-    if (c.model && argvOut) {
-      const rung1 = sameSessionArgv(name, rt, c.model, ctx, '<sid>', o.mode);
+    if (plan && argvOut) {
+      confirmReport(plan.report, argvOut, '', o.mode);
+      for (const line of reportLines(plan.report)) log(line);
+      log(`cross-ai: model-id ${redactKeyShapes(String(plan.model).replace(/[\x00-\x1f\x7f-\x9f]/g, ''))}`);
+      const rung1 = sameSessionArgv(name, rt, plan.model, ctx, '<sid>', o.mode);
       if (rung1) log(`cross-ai: rung1 ${name} argv=${JSON.stringify(rung1.argv)}`);
       else log(`cross-ai: rung1 ${name} unavailable`);
-      const rung2 = newSessionArgv(name, rt, c.model, ctx, o.mode, '<prompt>');
+      const rung2 = newSessionArgv(name, rt, plan.model, ctx, o.mode, '<prompt>');
       log(`cross-ai: rung2 ${name} argv=${JSON.stringify(rung2.argv)}`);
     }
     return reportAndFinish('ok', {
