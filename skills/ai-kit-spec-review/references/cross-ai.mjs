@@ -1361,6 +1361,7 @@ process.on('uncaughtException', (e) => {
 const CLAUDE_EXEC_PROBE_RECORD = null;
 // SPEC R6: the live record of the whole execute formula and its resume; null keeps it unverified, with a note on every execute call.
 const CLAUDE_EXEC_FORMULA_RECORD = null;
+const MCP_SERVER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const SKILL_PROSE = { label: { state: 'verified', source: 'runner: the SKILL.md text inlined before the prompt (stdin, or the copilot -p argument)' } };
 function skillsNone(source) { return { name: { form: null, label: { state: 'unknown', source } }, path: { flag: null, label: { state: 'unknown', source } }, prose: SKILL_PROSE }; }
 const RUNTIMES = {
@@ -1382,6 +1383,7 @@ const RUNTIMES = {
     reviewExtras: [],
     env: {},
     forms: {
+      mcp: null,
       skills: skillsNone('cursor-agent 2026.11.13 help 2026-11-21: no skill form'),
       context: { kind: 'bracket', key: 'context', valueKind: 'label', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--model <model>" with the bracket example "[context=1m,effort=high,fast=false]"; meaning per model unverified' } },
       session: { style: 'minted', resumeFlag: '--resume', label: { state: 'unverified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--resume [chatId] Select a session to resume"; resume not live-probed' } },
@@ -1406,6 +1408,7 @@ const RUNTIMES = {
     reviewExtras: [],
     env: { OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1' },
     forms: {
+      mcp: null,
       skills: skillsNone('opencode 2.3.2 help 2026-11-21: no skill form'),
       context: { kind: 'none', valueKind: null, label: { state: 'unknown', source: 'opencode 2.3.2 run --help 2026-11-21: no context form' } },
       session: { style: 'minted', resumeFlag: '--session', label: { state: 'unverified', source: 'opencode 2.3.2 run --help 2026-11-21: "Session ID to continue, or to create if it does not exist"; caller-chosen id shapes unverified (a ses_ id was accepted live on 2026-11-16)' } },
@@ -1434,6 +1437,7 @@ const RUNTIMES = {
     reviewExtras: ['--skill'],
     env: {},
     forms: {
+      mcp: null,
       skills: { name: { form: null, reason: 'mode_forbids', label: { state: 'unknown', source: 'pi 1.5.2 help 2026-11-21: no load-by-name form; the formulas pass --no-skills' } }, path: { flag: '--skill', label: { state: 'verified', source: 'pi 1.5.2 help 2026-11-21: "--skill <path> Load a skill file or directory (can be used multiple times)"' } }, prose: SKILL_PROSE },
       context: { kind: 'none', valueKind: null, label: { state: 'unknown', source: 'pi 1.5.2 --help 2026-11-21: no context form' } },
       session: { style: 'chosen', flag: '--session-id', label: { state: 'unverified', source: 'pi 1.5.2 --help 2026-11-21: "--session-id <id> Use the current directory existing session with the ID, creating it otherwise"; resume not live-probed' } },
@@ -1467,6 +1471,7 @@ const RUNTIMES = {
     reviewExtras: [],
     env: {},
     forms: {
+      mcp: { flag: null, prefix: '', after: [], label: { state: 'unverified', source: 'codex 0.170.0 help 2026-11-21: a generic -c key=value override whose help names no MCP key; it would put server values on argv' } },
       skills: skillsNone('codex 0.170.0 help 2026-11-21: no skill form'),
       context: { kind: 'config', key: 'model_context_window', valueKind: 'tokens', label: { state: 'verified', source: 'codex 0.170.0 exec --help 2026-11-21: "-c, --config <key=value>"; a zero-token config parse rejected a non-integer model_context_window as "expected i64" (2026-11-16); its effect on a model window is unverified' } },
       session: { style: 'minted', resumeFlag: null, noResume: ['review', 'sandbox'], label: { state: 'unverified', source: 'codex 0.170.0 exec --help 2026-11-21: "resume Resume a previous session by id"; exec resume has no read-only sandbox form; resume not live-probed' } },
@@ -1479,8 +1484,8 @@ const RUNTIMES = {
   claude: {
     bins: ['claude'],
     list: null,
-    exec: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'bypassPermissions', ...(c.adds?.effort || []), ...(c.adds?.skills || [])],
-    review: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'plan', ...(c.adds?.effort || []), ...(c.adds?.skills || [])],
+    exec: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'bypassPermissions', ...(c.adds?.effort || []), ...(c.adds?.skills || []), ...(c.adds?.mcp || [])],
+    review: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'plan', ...(c.adds?.effort || []), ...(c.adds?.skills || []), ...(c.adds?.mcp || [])],
     resume: (m, c, sid, mode) => [...RUNTIMES.claude[mode](m, c), '--resume', sid],
     permissionLabel: CLAUDE_EXEC_PROBE_RECORD === null ? { state: 'unverified', source: 'claude permission flag: no live probe record (37-SPIKE.md Q3b)' } : { state: 'verified', source: CLAUDE_EXEC_PROBE_RECORD },
     execLabel: CLAUDE_EXEC_FORMULA_RECORD === null ? { state: 'unverified', source: 'claude execute formula: no live record of the exact formula and its resume (37-SPIKE.md Q3)' } : { state: 'verified', source: CLAUDE_EXEC_FORMULA_RECORD },
@@ -1497,6 +1502,7 @@ const RUNTIMES = {
     reviewExtras: [],
     env: {},
     forms: {
+      mcp: { flag: '--mcp-config', prefix: '', after: ['--strict-mcp-config'], label: { state: 'verified', source: 'claude 2.1.330 help 2026-11-21: "--mcp-config <configs...> Load MCP servers from JSON files or strings" and "--strict-mcp-config Only use MCP servers from --mcp-config"' } },
       skills: { name: { form: '/<name>', label: { state: 'unverified', source: 'claude 2.1.330 help 2026-11-21: "Skills still resolve via /skill-name" appears only in the bare-mode text' } }, path: { flag: '--add-dir', label: { state: 'unverified', source: 'claude 2.1.330 help 2026-11-21: "--add-dir <directories...> More directories Claude can access" names no skill loading' } }, prose: SKILL_PROSE },
       context: { kind: 'id-suffix', valueKind: null, label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: no model-context flag; the [1m] model suffix is not in the help' } },
       session: { style: 'minted', resumeFlag: '--resume', label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: "-r, --resume [value] Resume a conversation by session ID or name"; resume not live-probed' } },
@@ -1512,8 +1518,8 @@ const RUNTIMES = {
     argvPrompt: true,
     errorsUnverified: true,
     modelId: MODEL_ID,
-    exec: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.adds?.context || []), '--session-id', c.sid, ...(c.profileFlags || []), ...(c.adds?.skills || [])],
-    review: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.adds?.context || []), '--session-id', c.sid, ...(c.profileFlags || []), ...(c.adds?.skills || [])],
+    exec: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.adds?.context || []), '--session-id', c.sid, ...(c.profileFlags || []), ...(c.adds?.skills || []), ...(c.adds?.mcp || [])],
+    review: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.adds?.context || []), '--session-id', c.sid, ...(c.profileFlags || []), ...(c.adds?.skills || []), ...(c.adds?.mcp || [])],
     resume: null,
     parse: (out) => ({ text: out, sessionId: null, error: null }),
     modelSuffix: null,
@@ -1526,6 +1532,7 @@ const RUNTIMES = {
     },
     reviewExtras: [],
     forms: {
+      mcp: { flag: '--additional-mcp-config', prefix: '@', after: [], label: { state: 'verified', source: 'copilot 1.0.112 help 2026-11-21: "--additional-mcp-config <json> Additional MCP servers configuration as JSON string or file path (prefix with @)"; augments the user servers, no strict form' } },
       skills: { name: { form: null, label: { state: 'unverified', source: 'copilot 1.0.112 skill help 2026-11-21: discovery roots only, no load-by-name form' } }, path: { flag: '--add-dir', root: '.github/skills', label: { state: 'unverified', source: 'copilot 1.0.112 help 2026-11-21: "--add-dir <directory> Allow file access to a directory and load its .github/skills" as trusted configuration; layout effect untested' } }, prose: SKILL_PROSE },
       context: { kind: 'flag', flag: '--context', valueKind: 'enum', values: ['default', 'long_context'], label: { state: 'verified', source: 'copilot 1.0.112 --help 2026-11-21: "--context <tier> Set the context window tier (overrides persisted setting) [possible values: default, long_context]"' } },
       session: { style: 'chosen', flag: '--session-id', label: { state: 'unverified', source: 'copilot 1.0.112 --help 2026-11-21: "--session-id <id> Resume an existing session or task by ID, or set the UUID for a new session"; resume not live-probed' } },
@@ -1656,6 +1663,10 @@ const SETTING_HANDLERS = {
   skill: (plan, row, role, call) => {
     if (call.skillPlan) { plan.adds.skills.push(...call.skillPlan.adds); plan.report.push(...call.skillPlan.report); }
   },
+  mcp: (plan, row, role, call) => {
+    const mp = planMcp(row, role, call.mcp);
+    plan.adds.mcp.push(...mp.adds); plan.report.push(...mp.report);
+  },
 };
 
 function fillArgvFile(list, model, ctx) {
@@ -1669,6 +1680,7 @@ function argvFileRow(declared) {
   const formula = (m, c) => fillArgvFile(declared.argv.slice(1), m, c);
   const forms = Object.fromEntries(Object.keys(RUNTIMES.claude.forms || {}).map((k) => [k, ARGV_FILE_NO_FORM]));
   forms.skills = { ...skillsNone('argv file lane: no skill slot'), name: { form: null, reason: 'no_slot', label: { state: 'unknown', source: 'argv file lane: no skill slot' } } };
+  forms.mcp = { flag: null, prefix: '', after: [], reason: 'no_slot', label: { state: 'unknown', source: 'argv file lane: no MCP slot' } };
   return { argvFile: true, slots: declared.slots, argvRest: declared.argv.slice(1), bins: [declared.argv[0]], list: null, exec: formula, review: formula, resume: null, parse: (out) => ({ text: out, sessionId: null, error: null }), modelSuffix: null, modelId: null, profiles: null, reviewExtras: [], env: {}, errorsUnverified: true, forms };
 }
 
@@ -5591,6 +5603,34 @@ function readCallFile(flag, relPath, opts = {}) {
   } finally { fs.closeSync(fd); }
 }
 
+function loadMcpConfig(o) {
+  if (o.mcpConfig === null) return null;
+  const { abs, text } = readCallFile('--mcp-config', o.mcpConfig, { mode: 0o077 });
+  const shown = redactSecrets(redactSecrets(o.mcpConfig).replace(/[\x00-\x1f\x7f-\x9f]/g, ''));
+  let doc;
+  try { doc = strictJson(text); } catch (e) {
+    throw new Error(e.message.startsWith('duplicate key') ? `--mcp-config holds a duplicate key (key not shown): ${shown}` : `--mcp-config is not valid JSON (content not shown): ${shown}`);
+  }
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (!isObj(doc)) throw new Error('--mcp-config: the top level must be a JSON object');
+  const names = isObj(doc.mcpServers) ? jsonKeys(doc.mcpServers) : [];
+  if (!names.length) throw new Error('--mcp-config: mcpServers must be a non-empty object');
+  for (const [i, name] of names.entries()) if (!MCP_SERVER_RE.test(name)) throw new Error(`--mcp-config: server name ${i + 1} (in file order) must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`);
+  return { file: abs, servers: names };
+}
+
+function planMcp(row, role, mcp) {
+  if (!mcp) return { adds: [], report: [] };
+  const form = row.forms?.mcp ?? null;
+  let reason = null;
+  if ((row.profiles?.[role] || []).includes('--no-mcp')) reason = 'mode_forbids';
+  else if (!form || form.label.state === 'unknown') reason = form?.reason || 'no_form';
+  else if (form.label.state === 'unverified') reason = form.reason || 'unverified_form';
+  const adds = reason ? [] : [form.flag, `${form.prefix || ''}${mcp.file}`, ...(form.after || [])];
+  const report = mcp.servers.map((value) => reason ? { name: 'mcp', value, state: 'ignored', reason } : { name: 'mcp', value, state: 'applied', proof: adds });
+  return { adds, report };
+}
+
 function skillFrontmatterName(text) {
   const front = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
   return front ? (/^name:[ \t]*["']?([^"'\r\n]*?)["']?[ \t]*$/m.exec(front[1])?.[1] ?? null) : null;
@@ -5656,10 +5696,13 @@ function planSkills(row, skills) {
 function skillBlockLines(report) { return report.filter((e) => e.name === 'skill' && e.form === 'prose').map((e) => `cross-ai: skill-block ${e.value} bytes=${Buffer.byteLength(e.proofPrompt)} sha256=${e.sha256}`); }
 function composePrompt(prefix, prepended, raw, preamble) { return prefix + (prepended === null ? raw : `${prepended.replace(/^(?:<!--[^\n]*-->\r?\n)+/, '')}\n\n${raw}`) + preamble; }
 
-// JSON.parse keeps the last duplicate key; a call file must not hold one (SPEC R14 adjacency). Callers print "<flag> is not strict JSON: <message>".
+const JSON_KEY_ORDER = new WeakMap();
+function jsonKeys(obj) { return JSON_KEY_ORDER.get(obj) || Object.keys(obj); }
+
+// JSON.parse keeps the last duplicate key; a call file must not hold one (SPEC R14 adjacency).
 function strictJson(text) {
   const value = JSON.parse(text);
-  const stack = [];
+  const stack = [], records = [];
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (c === '"') {
@@ -5669,12 +5712,22 @@ function strictJson(text) {
       if (frame && frame.wantKey) {
         const key = JSON.parse(text.slice(start, i + 1));
         if (frame.keys.has(key)) throw new SyntaxError(`duplicate key ${JSON.stringify(key)}`);
-        frame.keys.add(key); frame.wantKey = false;
+        frame.keys.add(key); frame.order.push(key); frame.key = key; frame.wantKey = false;
       }
-    } else if (c === '{') stack.push({ keys: new Set(), wantKey: true });
-    else if (c === '[') stack.push(null);
-    else if (c === '}' || c === ']') stack.pop();
-    else if (c === ',') { const frame = stack[stack.length - 1]; if (frame) frame.wantKey = true; }
+    } else if (c === '{') {
+      const parent = stack[stack.length - 1];
+      const objectPath = stack.length === 0 ? [] : parent?.path != null ? [...parent.path, parent.key] : null;
+      stack.push({ keys: new Set(), wantKey: true, order: [], path: objectPath, key: null });
+    } else if (c === '[') stack.push(null);
+    else if (c === '}' || c === ']') {
+      const frame = stack.pop();
+      if (frame && frame.path !== null) records.push([frame.path, frame.order]);
+    } else if (c === ',') { const frame = stack[stack.length - 1]; if (frame) frame.wantKey = true; }
+  }
+  for (const [objectPath, order] of records) {
+    let target = value;
+    for (const key of objectPath) target = target == null ? undefined : Object.getOwnPropertyDescriptor(target, key)?.value;
+    if (target !== null && typeof target === 'object') JSON_KEY_ORDER.set(target, order);
   }
   return value;
 }
@@ -6497,6 +6550,7 @@ const model = argOf('--model');
 const mode = model.startsWith('fake-') ? model.slice(5) : '';
 log('copilot ' + mode);
 const seen = process.env.FAKE_COPILOT_SEEN;
+const mcpCount = (file) => { try { return Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers || {}).length; } catch { return -1; } };
 recordSession('copilot', argOf('--session-id'), argOf('-p'));
 const tokenNames = ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'];
 let stdinFifo = false;
@@ -6514,6 +6568,7 @@ if (seen) {
     argv: process.argv.slice(2), prompt: argOf('-p'),
     promptBytes: Buffer.byteLength(argOf('-p')), stdinFifo, stdinBytes, stdinError,
     tokens, allowAll: process.env.COPILOT_ALLOW_ALL !== undefined,
+    mcpCount: argOf('--additional-mcp-config') ? mcpCount(argOf('--additional-mcp-config').slice(1)) : null,
   }));
 }
 if (process.env.FAKE_SKILL_EDIT) fs.appendFileSync(process.env.FAKE_SKILL_EDIT, 'edited\n');
@@ -6525,7 +6580,7 @@ if (mode === 'event400') {
   process.stderr.write('[400]: event: error\n');
   process.exit(1);
 }
-fs.appendFileSync('a.txt', 'ok-line\n');
+if (mode !== 'readonly') fs.appendFileSync('a.txt', 'ok-line\n');
 process.stderr.write('copilot: using token ' + process.env[tokens[0]] + '\n');
 process.stdout.write('# Summary\nok');
 `);
@@ -6534,9 +6589,10 @@ process.stdout.write('# Summary\nok');
 function writeFakeClaude(binDir) {
   writeExe(binDir, 'claude', "import { spawnSync } from 'node:child_process';\n", String.raw`
 log('claude ' + argOf('--model'));
+const mcpCount = (file) => { try { return Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers || {}).length; } catch { return -1; } };
 let input = '';
 process.stdin.on('data', (d) => { input += d; }).on('end', () => {
-  if (process.env.FAKE_CLAUDE_SEEN) fs.writeFileSync(process.env.FAKE_CLAUDE_SEEN, JSON.stringify({ argv: process.argv.slice(2), stdin: input }));
+  if (process.env.FAKE_CLAUDE_SEEN) fs.writeFileSync(process.env.FAKE_CLAUDE_SEEN, JSON.stringify({ argv: process.argv.slice(2), stdin: input, mcpCount: argOf('--mcp-config') ? mcpCount(argOf('--mcp-config')) : null }));
   const given = argOf('--resume');
   recordSession('claude', given, input);
   if (argOf('--model') === 'fake-auth') {
@@ -13413,6 +13469,48 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
+        name: 'mcp-review-lanes-applied',
+        kind: 'logic',
+        env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* tree=clean action=stop$/,
+        setup: (c) => {
+          c.key = 'sk-' + 'Q'.repeat(40);
+          c.mcpFile = path.join(c.tmp, 'mcp-review.json');
+          fs.writeFileSync(c.mcpFile, JSON.stringify({ mcpServers: {
+            'placeholder-server-b': { command: 'placeholder-cmd', args: ['--token', c.key], env: { PLACEHOLDER_TOKEN: c.key } },
+            'placeholder-server-a': { url: 'https://example.invalid/mcp', headers: { Authorization: `Bearer ${c.key}` } },
+          } }));
+          fs.chmodSync(c.mcpFile, 0o600);
+          for (const [rel, content] of [['.claude.json', '{"mcpServers":{}}\n'], ['.copilot/mcp-config.json', '{"mcpServers":{}}\n'], ['.cursor/mcp.json', '{"mcpServers":{}}\n'], ['.pi/agent/mcp.json', '{"mcpServers":{}}\n'], ['.codex/config.toml', '# synthetic\n'], ['.config/opencode/opencode.jsonc', '{}\n']]) {
+            const file = path.join(c.home, rel); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, content);
+          }
+          c.hostBefore = hostFilesDigest(c.home);
+          c.env.FAKE_CLAUDE_SEEN = path.join(c.tmp, 'claude-mcp-seen');
+          c.env.FAKE_COPILOT_SEEN = path.join(c.tmp, 'copilot-mcp-seen');
+          c.args = ['--runtime', 'claude', '--mode', 'review', '--model', 'fake-ok', '--mcp-config', c.mcpFile];
+          return null;
+        },
+        check: async (r, c) => {
+          const seen = JSON.parse(fs.readFileSync(c.env.FAKE_CLAUDE_SEEN, 'utf8'));
+          if (JSON.stringify(seen.argv.slice(-3)) !== JSON.stringify(['--mcp-config', c.mcpFile, '--strict-mcp-config']) || seen.mcpCount !== 2) return 'claude MCP argv or count';
+          const lines = r.stderr.split('\n');
+          const settings = lines.filter((line) => line.startsWith('cross-ai: setting mcp='));
+          if (JSON.stringify(settings) !== JSON.stringify(['cross-ai: setting mcp=placeholder-server-b applied', 'cross-ai: setting mcp=placeholder-server-a applied'])) return 'MCP report order';
+          const tokens = Object.fromEntries((lines.filter((line) => line.startsWith('AIKIT-XAI ')).pop() || '').split(' ').slice(1).map((t) => t.split('=')));
+          if (!tokens.applied?.includes('mcp:placeholder-server-b') || !tokens.applied?.includes('mcp:placeholder-server-a')) return 'status MCP';
+          for (const value of [c.key, 'placeholder-cmd', 'example.invalid']) if ((r.stdout + r.stderr + JSON.stringify(seen.argv)).includes(value)) return 'claude value leaked';
+          if (hostFilesDigest(c.home) !== c.hostBefore) return 'claude host files changed';
+          const copilot = await runCaseProcess({ args: ['--runtime', 'copilot', '--mode', 'review', '--model', 'fake-readonly', '--mcp-config', c.mcpFile] }, c);
+          if (copilot.reason || copilot.status !== 0) return 'copilot failed';
+          const other = JSON.parse(fs.readFileSync(c.env.FAKE_COPILOT_SEEN, 'utf8'));
+          const at = other.argv.indexOf('--additional-mcp-config');
+          if (at < 0 || other.argv[at + 1] !== '@' + c.mcpFile || other.argv.indexOf('--disable-builtin-mcps') < 0 || other.argv.indexOf('--disable-builtin-mcps') >= at || other.mcpCount !== 2) return 'copilot MCP argv or count';
+          if (copilot.stderr.includes(c.key)) return 'copilot value leaked';
+          return hostFilesDigest(c.home) === c.hostBefore ? null : 'copilot host files changed';
+        },
+      },
+      {
         name: 'skill-prose-claude-stdin',
         kind: 'logic',
         exit: 0,
@@ -13956,7 +14054,7 @@ async function blackBoxSelfTest(listOnly = false) {
   }
 }
 
-function callOf(o, name, model, newSessionId, skillPlan = null) { return { model, effort: o.effort, context: o.context, sessionId: o.sessionId, newSessionId, sandbox: o.mode === 'exec' && Boolean(o.codexSandbox), configEffort: ownValue(CONFIG.effort, name) ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel, skillPlan }; }
+function callOf(o, name, model, newSessionId, skillPlan = null, mcp = null) { return { model, effort: o.effort, context: o.context, sessionId: o.sessionId, newSessionId, sandbox: o.mode === 'exec' && Boolean(o.codexSandbox), configEffort: ownValue(CONFIG.effort, name) ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel, skillPlan, mcp }; }
 
 function logExecLabel(name, rt, mode) {
   if (mode === 'exec' && rt.execLabel && rt.execLabel.state === 'unverified') log(`cross-ai: note: ${name} execute formula is unverified (no live probe record)`);
@@ -14006,8 +14104,8 @@ async function main(argv) {
     return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   const rt = declared || RUNTIMES[name];
-  let skills, skillPlan;
-  try { skills = loadSkills(o); skillPlan = planSkills(rt, skills); } catch (e) {
+  let skills, skillPlan, mcp;
+  try { skills = loadSkills(o); skillPlan = planSkills(rt, skills); mcp = loadMcpConfig(o); } catch (e) {
     log(`cross-ai: ${redactSecrets(redactSecrets(String(e.message)).replace(/[\x00-\x1f\x7f-\x9f]/g, ''))}`);
     return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
@@ -14061,7 +14159,7 @@ async function main(argv) {
     log('cross-ai: --codex-sandbox applies to exec mode only; review already runs read-only');
   }
   if (o.printArgv) {
-    const plan = c.model ? planSettings(rt, o.mode, callOf(o, name, c.model, '<sid>', skillPlan)) : null;
+    const plan = c.model ? planSettings(rt, o.mode, callOf(o, name, c.model, '<sid>', skillPlan, mcp)) : null;
     if (plan?.error) {
       log(`cross-ai: ${plan.error}`);
       return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
@@ -14177,7 +14275,7 @@ async function main(argv) {
     }
   }
   // SPEC R2: one plan per call; lines print after the review-argv check and before the listing preflight and the spawn.
-  const plan = planSettings(c.rt, o.mode, callOf(o, c.name, c.model, crypto.randomUUID(), skillPlan));
+  const plan = planSettings(c.rt, o.mode, callOf(o, c.name, c.model, crypto.randomUUID(), skillPlan, mcp));
   if (plan.error) {
     log(`cross-ai: ${plan.error}`);
     return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
