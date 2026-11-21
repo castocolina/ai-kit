@@ -7,7 +7,7 @@ import shlex
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from . import cross_ai, cross_ai_build, plan_io, presets, roles, skills
+from . import cross_ai, plan_io, presets, roles, skills
 
 _LIST_KEYS_PREFIXES = ("agent_skills.",)
 LIST_KEYS = (
@@ -229,12 +229,9 @@ def _plan_set_script_model(
     _assert_runner_target(call, runner_id)
     model = raw
     label = f"{SCRIPT_MODEL_PREFIX}{runner_id}"
-    problem = cross_ai.model_id_problem(label, model)
+    problem = cross_ai.runner_floor_problem(label, model)
     if problem:  # force-immune: the id lands in the runner's CLI argv
         raise PlanEditError(problem)
-    grammar = cross_ai_build.runner_model_problem(label, runner_id, model)
-    if grammar:  # force-immune: the runner would refuse the id at run time
-        raise PlanEditError(grammar)
     plan = copy.deepcopy(call.plan)
     artifact = _script_artifact(plan)
     config = artifact.setdefault("config", {})

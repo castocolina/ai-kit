@@ -30,7 +30,6 @@ execute_cli_error: Callable[[str], str | None] | None
 runtime_id: Callable[[str], str] | None
 project_runner_command: Callable[..., str | None] | None
 RunnerSpec: Callable[..., Any] | None
-model_id_ok: Callable[[str, str], bool] | None
 HOOK_TOKEN_RE: Any
 
 try:
@@ -39,7 +38,6 @@ try:
     from ai_kit_spec.runner_dispatch import (
         HOOK_TOKEN_RE,
         RunnerSpec,
-        model_id_ok,
         project_runner_command,
     )
 except ImportError:
@@ -55,24 +53,10 @@ except ImportError:
     runtime_id = None
     project_runner_command = None
     RunnerSpec = None
-    model_id_ok = None
     HOOK_TOKEN_RE = None
 
 # Closed reviewer slugs. Unknown names are rejected before any config write.
 REVIEWER_SLUGS = ("claude", "cursor", "opencode")
-
-
-def runner_model_problem(label: str, runner_id: str, model: str) -> str | None:
-    """The runner's own per-runtime grammar (25.1 D-14), or None when the sibling is absent.
-
-    Without the sibling the shared charset check still applies and the runner refuses the id at
-    run time."""
-    if model_id_ok is None or model_id_ok(runner_id, model):
-        return None
-    return (
-        f"{label}: {runner_id} model id {model!r} does not match the runner's "
-        f"{runner_id} grammar"
-    )
 
 
 def reviewer_slug(cli) -> str | None:
@@ -117,7 +101,7 @@ def _runner_hook(cli, model) -> str | None:
 def unsafe_hook_token(cli, model) -> bool:
     """True when the sibling is present but the hook cannot carry `model` (a shell or glob
     character, which GSD's unquoted hook would split or expand); `no_builder` is the absent
-    sibling. A grammar mismatch is `runner_model_problem`'s, not this check's."""
+    sibling. The model id floor is cross_ai.runner_floor_problem's, not this check's."""
     del cli
     if HOOK_TOKEN_RE is None:
         return False

@@ -17,6 +17,7 @@ from . import (
     claude_md_detect,
     config_backup,
     critical_agents,
+    cross_ai,
     cross_ai_build,
     cross_ai_script,
     frontend_detect,
@@ -274,11 +275,10 @@ def _model_refusal(cli_name, model) -> tuple[str, str] | None:
         return "unsafe_hook_token", (
             f"--model {model!r} is not a safe hook token "
             "(GSD splits and globs the hook unquoted)")
-    runtime = cross_ai_build.runtime_id(cli_name) if cross_ai_build.runtime_id else cli_name
-    grammar = cross_ai_build.runner_model_problem("--model", runtime, model)
-    if grammar:
+    floor = cross_ai.runner_floor_problem("--model", model)
+    if floor:
         # The runner exits 2 on every call with this id (25.1 CR-01).
-        return "unsupported_model_id", grammar
+        return "unsupported_model_id", floor
     return None
 
 

@@ -12,7 +12,7 @@ import posixpath
 import re
 import shlex
 
-from . import cross_ai, cross_ai_build, gsd_catalog, host, presets, roles, skill_scan
+from . import cross_ai, gsd_catalog, host, presets, roles, skill_scan
 from . import skills as skills_mod
 from .plan_schema import PLAN_SCHEMA_VERSION, canonical_json, inventory_digest
 
@@ -1132,9 +1132,7 @@ def _model_row_problem(runner_id: str, model) -> str | None:
     if not isinstance(model, str) or not model:
         return f"artifacts[0].config.models.{runner_id}: expected non-empty str"
     label = f"artifacts[0].config.models.{runner_id}"
-    return cross_ai.model_id_problem(label, model) or cross_ai_build.runner_model_problem(
-        label, runner_id, model
-    )
+    return cross_ai.runner_floor_problem(label, model)
 
 
 def _choice_row_problem(runtime, runner_id: str, models, row) -> str | None:

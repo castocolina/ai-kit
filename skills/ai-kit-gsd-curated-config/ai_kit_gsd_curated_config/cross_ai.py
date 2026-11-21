@@ -41,6 +41,20 @@ def model_id_problem(label: str, value) -> str | None:
     if isinstance(value, str) and MODEL_ID_RE.fullmatch(value):
         return None
     return f"{label}: model id {value!r} must match {MODEL_ID_RE.pattern}"
+
+
+# The runner's MODEL_ID_FLOOR (37 D-06) without anchors: one optional trailing [k=v,...]
+# bracket; pinned to the template by a test.
+RUNNER_MODEL_FLOOR_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\[[A-Za-z0-9._=,-]+\])?")
+
+
+def runner_floor_problem(label: str, value) -> str | None:
+    if isinstance(value, str) and RUNNER_MODEL_FLOOR_RE.fullmatch(value):
+        return None
+    return (f"{label}: model id {value!r} must match the runner floor "
+            f"{RUNNER_MODEL_FLOOR_RE.pattern}")
+
+
 SCRIPT_PATH = ".planning/scripts/cross-ai.mjs"
 TEMPLATE_NAME = "cross-ai.mjs"
 TEMPLATE_VERSION = 9

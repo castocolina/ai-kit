@@ -1442,15 +1442,11 @@
    "path": "tests/test_ai_kit_spec_runner_dispatch.py",
    "cleaned_by": "backlog",
    "hits": [
-    "keyval glm",
     "keyval gpt",
     "keyval gpt",
     "keyval gpt",
     "keyval gpt",
     "keyval gpt[effort=high]",
-    "keyval m[e=1]",
-    "keyval m[e=1]",
-    "keyval m[e=1]",
     "keyval opus",
     "keyval other/m",
     "keyval x/y",
@@ -1806,7 +1802,6 @@
    "path": "tests/test_curated_config_script.py",
    "cleaned_by": "36",
    "hits": [
-    "flag glm-4.6",
     "flag producer"
    ]
   },

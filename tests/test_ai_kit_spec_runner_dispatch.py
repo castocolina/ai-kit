@@ -5,7 +5,6 @@ import errno
 import io
 import json
 import os
-import re
 import signal
 import sys
 import tempfile
@@ -25,15 +24,10 @@ from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS, ResolvedReviewer
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.model_catalog import CATALOG_SCHEMA_VERSION
 from ai_kit_spec.runner_dispatch import (
-    CURSOR_MODEL_ID_SRC,
-    MODEL_ID_SRC,
-    OPENCODE_MODEL_ID_SRC,
-    PI_MODEL_ID_SRC,
     CustomSpec,
     RunnerSeams,
     RunnerSpec,
     build_runner_argv,
-    model_id_ok,
     parse_status_line,
     review_spec,
     run_custom_command,
@@ -41,7 +35,6 @@ from ai_kit_spec.runner_dispatch import (
     run_runner_tiers,
     runner_flags,
 )
-from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
 _STATUS = (
     "AIKIT-XAI status={status} cli={cli} model={model} exit={exit} cli_rc=0 "
@@ -154,9 +147,12 @@ class TestProjectRunnerCommand(unittest.TestCase):
         assert review_cmd is not None
         self.assertNotIn("codex-sandbox", review_cmd)
 
-    def test_unsupported_runtime_is_none(self):
-        spec = RunnerSpec("claude", "opus", "exec", 0)
-        self.assertIsNone(rd.project_runner_command(spec))
+    def test_any_runtime_gets_a_hook(self):
+        for runtime in ("claude", "placeholder-cli-1"):
+            spec = RunnerSpec(runtime, "placeholder-model-1", "exec", 0)
+            self.assertEqual(rd.project_runner_command(spec),
+                             f"node .planning/scripts/cross-ai.mjs --runtime {runtime} "
+                             "--model placeholder-model-1 --role execute --host auto")
 
     def test_unsafe_model_tokens_are_none(self):
         for model in ("has space", "quo'te", "dol$lar", "star*", "paren("):
@@ -164,17 +160,17 @@ class TestProjectRunnerCommand(unittest.TestCase):
                 spec = RunnerSpec("opencode", model, "exec", 0)
                 self.assertIsNone(rd.project_runner_command(spec))
 
-    def test_model_outside_the_runner_grammar_is_none(self):
-        # 25.1 CR-01: the runner exits 2 on these, so no hook may carry them.
-        for runtime, model in (("pi", "glm-4.6"), ("opencode", "gpt-5")):
-            with self.subTest(runtime=runtime, model=model):
-                self.assertIsNone(rd.project_runner_command(RunnerSpec(runtime, model, "exec", 0)))
+    def test_unusual_model_shapes_get_a_hook(self):
+        for runtime in ("pi", "opencode"):
+            with self.subTest(runtime=runtime):
+                self.assertIsNotNone(rd.project_runner_command(
+                    RunnerSpec(runtime, "placeholder-model-1", "exec", 0)))
 
     def test_bracket_model_is_never_a_hook_token(self):
-        # GSD globs the unquoted hook: `gpt-6[effort=high]` would match a file `gpt-6e`.
+        # GSD globs the unquoted hook, so a bracket expression is unsafe.
         for runtime in ("cursor", "opencode"):
             with self.subTest(runtime=runtime):
-                spec = RunnerSpec(runtime, "gpt-6[effort=high]", "exec", 0)
+                spec = RunnerSpec(runtime, "placeholder-model-1[effort=high]", "exec", 0)
                 self.assertIsNone(rd.project_runner_command(spec))
 
 
@@ -249,69 +245,26 @@ class TestBuildRunnerArgv(unittest.TestCase):
         self.assertNotIn("--route-", bare)
 
 
-def _template_regex(name: str) -> str:
-    template = resolve_cross_ai_template_path()
-    assert template is not None
-    with open(template, encoding="utf-8") as handle:
-        source = handle.read()
-    match = re.search(rf"const {name} = (/.*?/);", source)
-    assert match is not None, name
-    return match.group(1)
-
-
-class TestModelIdCharsetParity(unittest.TestCase):
-    def test_sources_match_the_template(self):
-        self.assertEqual(MODEL_ID_SRC, _template_regex("MODEL_ID"))
-        self.assertEqual(CURSOR_MODEL_ID_SRC, _template_regex("CURSOR_MODEL_ID"))
-        self.assertEqual(PI_MODEL_ID_SRC, _template_regex("PI_MODEL_ID"))
-        self.assertEqual(OPENCODE_MODEL_ID_SRC, _template_regex("OPENCODE_MODEL_ID"))
-
-    def test_model_id_ok_uses_the_runtime_grammar(self):
-        self.assertFalse(model_id_ok("pi", "glm"))
-        self.assertFalse(model_id_ok("opencode", "glm"))
-        # 25.1 WR-05: pi resolves the whole id first and splits only a known thinking level,
-        # so a colon inside the model part (Ollama tags, `:free`) is part of the id.
-        self.assertTrue(model_id_ok("pi", "fake/ok:free"))
-        self.assertTrue(model_id_ok("pi", "ollama/qwen3:8b"))
-        self.assertTrue(model_id_ok("pi", "ollama/qwen3:8b:high"))
-        self.assertFalse(model_id_ok("pi", "ollama/:8b"))
-        self.assertTrue(model_id_ok("pi", "router-env/my-coding:high"))
-        self.assertTrue(model_id_ok("opencode", "fake/ok#fast"))
-
-    def test_bare_pi_id_names_the_grammar_and_never_spawns(self):
-        popen = _ScriptedPopen([])
+class TestRunnerOwnsTheModelFloor(unittest.TestCase):
+    def _reaches(self, runtime, model):
+        popen = _ScriptedPopen([_FakeProc([_status_line(cli=runtime, model=model)])])
         lines: list[str] = []
-        result = run_runner(_spec(runtime="pi", model="glm"), "hi", _seams(popen, lines, []))
-        self.assertEqual(result.reason, "configuration")
-        self.assertEqual(popen.argvs, [])
-        self.assertTrue(any("is not a valid pi model id" in line for line in lines))
-        self.assertTrue(any(PI_MODEL_ID_SRC in line for line in lines))
-
-    def _refused(self, model):
-        popen = _ScriptedPopen([])
-        lines: list[str] = []
-        result = run_runner(_spec(model=model), "hi", _seams(popen, lines, []))
-        self.assertEqual(result.reason, "configuration")
-        self.assertEqual(popen.argvs, [])
-        self.assertTrue(any("is not a valid opencode model id" in line for line in lines))
-
-    def test_leading_dash_refused(self):
-        self._refused("-x")
-
-    def test_space_refused(self):
-        self._refused("a b")
-
-    def test_bracket_refused_for_opencode_accepted_for_cursor(self):
-        popen = _ScriptedPopen([_FakeProc([_status_line(cli="cursor", model="m[e=1]")])])
-        lines: list[str] = []
-        refused = run_runner(_spec(model="m[e=1]"), "hi", _seams(popen, lines, []))
-        self.assertEqual(refused.reason, "configuration")
-        self.assertEqual(popen.argvs, [])
-        accepted = run_runner(
-            _spec(runtime="cursor", model="m[e=1]"), "hi", _seams(popen, lines, [])
-        )
-        self.assertIsNone(accepted.reason)
+        run_runner(_spec(runtime=runtime, model=model), "hi", _seams(popen, lines, []))
         self.assertEqual(len(popen.argvs), 1)
+        self.assertEqual(popen.argvs[0][popen.argvs[0].index("--model") + 1], model)
+        self.assertFalse(any("is not a valid" in line for line in lines))
+
+    def test_unusual_pi_shape_reaches_the_runner(self):
+        self._reaches("pi", "placeholder-model-1")
+
+    def test_leading_dash_reaches_the_runner(self):
+        self._reaches("opencode", "-x")
+
+    def test_space_reaches_the_runner(self):
+        self._reaches("opencode", "a b")
+
+    def test_bracket_reaches_the_runner(self):
+        self._reaches("opencode", "placeholder-model-2[e=1]")
 
 
 class TestParseStatusLine(unittest.TestCase):

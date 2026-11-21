@@ -12,7 +12,7 @@ import os
 import re
 from typing import NamedTuple
 
-from . import cross_ai, cross_ai_build, gsd_catalog
+from . import cross_ai, gsd_catalog
 
 HEADER_RE = re.compile(
     rb"^// ai-kit-cross-ai generator=ai-kit-gsd-curated-config "
@@ -219,7 +219,7 @@ def _publish(write_path: str, data: bytes) -> None:
 
 
 def _drop_refused_models(config: dict) -> list[str]:
-    """Drop each kept `CONFIG.models` id the new runner's grammar refuses (25.1 WR-05).
+    """Drop each kept `CONFIG.models` id the runner's model id floor refuses (37 D-06).
 
     The runner would exit 2 on every call with it; without it the call names `no_model`."""
     models = config.get("models")
@@ -227,8 +227,8 @@ def _drop_refused_models(config: dict) -> list[str]:
         return []
     notes = []
     for runner_id, model in list(models.items()):
-        problem = isinstance(model, str) and cross_ai_build.runner_model_problem(
-            "kept CONFIG.models", runner_id, model)
+        problem = isinstance(model, str) and cross_ai.runner_floor_problem(
+            "kept CONFIG.models", model)
         if problem:
             del models[runner_id]
             notes.append(f"{problem}; dropped it, pick a new {runner_id} model")
@@ -237,7 +237,7 @@ def _drop_refused_models(config: dict) -> list[str]:
 
 def _upgrade_config(template: bytes, existing: bytes, scrub_env) -> tuple[dict, str]:
     """The existing CONFIG wins; a file that is not ours keeps the template's. Also the note
-    naming each kept model the new grammar refuses (dropped)."""
+    naming each kept model the floor refuses (dropped)."""
     try:
         kept = template_config(existing)
     except ValueError:

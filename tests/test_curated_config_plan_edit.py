@@ -36,9 +36,10 @@ def _read_bytes(path: str) -> bytes:
 
 
 def _run_plan_set(plan_path, inv_path, key, value, *, force=False):
-    flags = ["plan-set", key, value, "--plan", plan_path, "--inventory", inv_path]
+    flags = ["plan-set", "--plan", plan_path, "--inventory", inv_path]
     if force:
         flags.append("--force")
+    flags.extend(["--", key, value])
     out, err = io.StringIO(), io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
         code = cli.main(flags)
@@ -743,14 +744,17 @@ class TestPlanValidator(unittest.TestCase):
         assert problem is not None
         self.assertIn("runtime", problem)
 
-    def test_saved_pi_model_outside_the_runner_grammar_refused(self):
-        """D-14: a saved model id the runner would refuse is refused at plan time."""
+    def test_saved_model_outside_the_floor_refused_and_an_unusual_shape_kept(self):
         plan = self._golden_plan()
-        plan["artifacts"][0]["config"]["models"]["pi"] = "glm"
+        models = plan["artifacts"][0]["config"]["models"]
+        models["pi"] = "placeholder-model-1"
+        self.assertIsNone(plan_io.validate_plan(plan))
+        models["cursor"] = "placeholder-model-1[effort=high]"
+        self.assertIsNone(plan_io.validate_plan(plan))
+        models["pi"] = "-placeholder-model-1"
         problem = plan_io.validate_plan(plan)
-        self.assertIsNotNone(problem)
         assert problem is not None
-        self.assertIn("pi grammar", problem)
+        self.assertIn("must match the runner floor", problem)
 
     def test_trusted_root_abs_without_existing(self):
         plan = self._golden_plan()
@@ -1018,10 +1022,14 @@ class TestScriptPseudoKeys(unittest.TestCase):
             )
             self.assertEqual(cmd.get("status"), "needs_choice")
 
-    def test_model_set_adds_any_installed_runner_and_checks_its_grammar(self):
-        """D-14: a menu entry needs no prefer membership, and the runner grammar applies."""
+    def test_model_set_adds_any_installed_runner_and_checks_the_floor(self):
+        """A menu entry needs no prefer membership, and the runner floor applies."""
         with tempfile.TemporaryDirectory() as tmp:
-            inv_path, plan_path, _inv, _plan = self._setup_partial(tmp)
+            inv_path, plan_path, inv, plan = self._setup_partial(tmp)
+            inv["candidates"].append(cand("placeholder-model-1", runtime="pi", is_host=False))
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                json.dump(inv, handle)
+            _save_plan(plan_path, inv, plan)
             code, _, err = _run_plan_set(
                 plan_path, inv_path, "script:cross-ai.model.opencode", "openai/gpt-5.6-sol"
             )
@@ -1031,12 +1039,16 @@ class TestScriptPseudoKeys(unittest.TestCase):
             art = reloaded["artifacts"][0]
             self.assertEqual(art["config"]["models"]["opencode"], "openai/gpt-5.6-sol")
             self.assertNotIn("opencode", art["choices"])
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "script:cross-ai.model.pi", "placeholder-model-1"
+            )
+            self.assertEqual(code, 0, err)
             raw = _read_bytes(plan_path)
             code, _, err = _run_plan_set(
-                plan_path, inv_path, "script:cross-ai.model.pi", "glm", force=True
+                plan_path, inv_path, "script:cross-ai.model.pi", "-placeholder-model-1", force=True
             )
             self.assertEqual(code, 2)
-            self.assertIn("pi grammar", err)
+            self.assertIn("must match", err)
             self.assertEqual(_read_bytes(plan_path), raw)
 
     def test_old_prefer_key_refused(self):

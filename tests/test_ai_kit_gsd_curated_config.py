@@ -752,9 +752,11 @@ class TestBuildExecutionCommandRunner(unittest.TestCase):
         assert command is not None
         self.assertTrue(command.endswith("--codex-sandbox workspace-write"))
 
-    def test_claude_returns_none(self):
+    def test_claude_maps_to_the_runner_command(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertIsNone(cross_ai_build.build_execution_command("claude", "opus", tmp))
+            command = cross_ai_build.build_execution_command("claude", "placeholder-model-1", tmp)
+        self.assertEqual(command, "node .planning/scripts/cross-ai.mjs --runtime claude "
+                         "--model placeholder-model-1 --role execute --host auto")
 
 
 class TestReviewerSlug(unittest.TestCase):

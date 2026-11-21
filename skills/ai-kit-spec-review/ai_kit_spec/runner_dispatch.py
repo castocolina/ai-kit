@@ -21,7 +21,6 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from ai_kit_spec.cache import cache_read_json
-from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.error_classifier import classify_error, reason_for_status
 from ai_kit_spec.lane_settings import lane_escalation
@@ -48,21 +47,6 @@ _STDERR_TAIL_LINES = 64  # lines kept in memory; the result keeps their last _ST
 _POLL_SLICE_S = 0.2
 _STATUS_PREFIX = "AIKIT-XAI "
 
-# The template's regex sources verbatim (cross-ai.mjs MODEL_ID / CURSOR_MODEL_ID /
-# PI_MODEL_ID / OPENCODE_MODEL_ID).
-MODEL_ID_SRC = "/^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/"
-CURSOR_MODEL_ID_SRC = "/^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\\[[A-Za-z0-9._=,-]+\\])?$/"
-PI_MODEL_ID_SRC = "/^[A-Za-z0-9][A-Za-z0-9._@+-]*\\/[A-Za-z0-9][A-Za-z0-9._:\\/@+-]*$/"
-OPENCODE_MODEL_ID_SRC = (
-    "/^[A-Za-z0-9][A-Za-z0-9._@+-]*\\/[A-Za-z0-9][A-Za-z0-9._:\\/@+-]*"
-    "(?:#[A-Za-z0-9._-]+)?$/"
-)
-_MODEL_ID_SRC = {
-    "cursor": CURSOR_MODEL_ID_SRC,
-    "pi": PI_MODEL_ID_SRC,
-    "opencode": OPENCODE_MODEL_ID_SRC,
-}
-
 PREVIEW_TIMEOUT_S = 30
 MODEL_ID_PREFIX = "cross-ai: model-id "
 SETTING_LINE_RE = re.compile(
@@ -78,17 +62,6 @@ _STDERR_OPEN_LINE = (
 _TRAILER_IGNORE_LINE = (
     "ai-kit-spec: ignoring a runner status line that does not match this run"
 )
-
-
-def model_id_ok(runtime: str, model: str) -> bool:
-    """True when `model` matches the grammar the runner itself accepts for `runtime`."""
-    src = _MODEL_ID_SRC.get(runtime, MODEL_ID_SRC)
-    return re.fullmatch(src[1:-1], model) is not None
-
-
-def model_id_src(runtime: str) -> str:
-    """The grammar source `run_runner` names when it refuses `runtime`'s model id."""
-    return _MODEL_ID_SRC.get(runtime, MODEL_ID_SRC)
 
 
 class RunnerSpec(NamedTuple):
@@ -215,14 +188,12 @@ EXEC_NOTES = {"pi": PI_EXEC_NOTE, "copilot": COPILOT_EXEC_NOTE}
 
 
 def project_runner_command(spec: RunnerSpec) -> str | None:
-    """The project-local hook string, or None when a token is unsafe or unsupported.
+    """The project-local hook string, or None when a token is unsafe (D-06).
 
     GSD expands the value unquoted (word splitting and globbing), so the tokens are joined
     with single spaces and never quoted; any token outside the allowlist, a cursor bracket
-    model included, returns None instead of a command. So does a model id outside the
-    runtime's runner grammar: the runner would refuse every call with exit 2."""
-    if spec.runtime not in SUPPORTED_EXECUTE_CLIS or not model_id_ok(spec.runtime, spec.model):
-        return None
+    model included, returns None. The runner itself answers an unknown runtime or a model id
+    below its floor with exit 2 and a named line."""
     tokens = ["node", PROJECT_RUNNER_PATH, *runner_flags(spec)]
     if not all(HOOK_TOKEN_RE.fullmatch(token) for token in tokens):
         return None
@@ -673,12 +644,6 @@ def run_runner(spec: RunnerSpec, prompt: str, seams: RunnerSeams | None = None) 
     runner_path = active.runner_path_fn()
     if not runner_path:
         return _unavailable([], _NO_TEMPLATE_LINE, active)
-    if not model_id_ok(spec.runtime, spec.model):
-        active.print_fn(
-            f"ai-kit-spec: model id {spec.model} is not a valid {spec.runtime} model id"
-            f" (must match {model_id_src(spec.runtime)})"
-        )
-        return RunnerResult(None, "", None, "configuration", False, [], "")
     if spec.route is None:
         spec = spec._replace(route=active.route_fn(spec.runtime, spec.model, active.env_fn()))
     argv = build_runner_argv(spec, runner_path, node)

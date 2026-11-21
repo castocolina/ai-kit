@@ -15,6 +15,7 @@ import tempfile
 import time
 import unittest
 import unittest.mock
+from pathlib import Path
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "skills", "ai-kit-gsd-curated-config"))
@@ -22,6 +23,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "skills", "ai-kit-spec-review"))
 
 from ai_kit_gsd_curated_config import cli, cross_ai, cross_ai_script
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
+from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
 TEMPLATE_PATH = os.path.join(
     REPO_ROOT, "skills", "ai-kit-spec-review", "references", "cross-ai.mjs"
@@ -51,6 +53,24 @@ def _artifact(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+class TestRunnerFloor(unittest.TestCase):
+    def test_floor_matches_the_template(self):
+        path = resolve_cross_ai_template_path()
+        assert path is not None
+        match = re.search(r"const MODEL_ID_FLOOR = /\^(.*)\$/;", Path(path).read_text())
+        assert match is not None
+        self.assertEqual(cross_ai.RUNNER_MODEL_FLOOR_RE.pattern, match.group(1))
+
+    def test_floor_problem_texts(self):
+        for value in ("placeholder-model-1", "fake/placeholder-model-1:high",
+                      "placeholder-model-1[effort=high]"):
+            self.assertIsNone(cross_ai.runner_floor_problem("L", value))
+        for value in ("-placeholder-model-1", "a b", "a[x=1][y=2]", ""):
+            self.assertEqual(cross_ai.runner_floor_problem("L", value),
+                             f"L: model id {value!r} must match the runner floor "
+                             + cross_ai.RUNNER_MODEL_FLOOR_RE.pattern)
 
 
 class TestRender(unittest.TestCase):
@@ -382,11 +402,10 @@ class TestEnsureRunner(unittest.TestCase):
             self.assertNotIn("prefer", upgraded)
             self.assertEqual(upgraded["backoffS"], [30, 60])
 
-    def test_upgrade_drops_a_kept_model_the_new_grammar_refuses(self):
-        # 25.1 WR-05: template 7 accepted a bare pi id; the new runner exits 2 on it.
+    def test_upgrade_drops_a_kept_model_the_floor_refuses(self):
         with tempfile.TemporaryDirectory() as tmp:
             old = _old_pristine(self.template, {
-                "runtime": "pi", "models": {"pi": "glm-4.6", "opencode": "p/ok"},
+                "runtime": "pi", "models": {"pi": "-placeholder-model-1", "opencode": "fake/ok"},
             })
             target = os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
             os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -394,12 +413,26 @@ class TestEnsureRunner(unittest.TestCase):
                 handle.write(old)
             plan = cross_ai_script.plan_runner_upgrade(tmp, self.template, HOST_SIGNAL_ENV_VARS)
             self.assertEqual(plan.kind, "change")
-            self.assertIn("'glm-4.6'", plan.note)
+            self.assertIn("'-placeholder-model-1'", plan.note)
             self.assertIn("dropped", plan.note)
             cross_ai_script.write_script(plan)
             with open(target, "rb") as handle:
                 upgraded = cross_ai_script.template_config(handle.read())
-            self.assertEqual(upgraded["models"], {"opencode": "p/ok"})
+            self.assertEqual(upgraded["models"], {"opencode": "fake/ok"})
+
+    def test_upgrade_keeps_an_unusual_shape(self):
+        models = {"pi": "placeholder-model-1", "cursor": "placeholder-model-1[effort=high]"}
+        with tempfile.TemporaryDirectory() as tmp:
+            old = _old_pristine(self.template, {"runtime": "pi", "models": models})
+            target = os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(old)
+            plan = cross_ai_script.plan_runner_upgrade(tmp, self.template, HOST_SIGNAL_ENV_VARS)
+            cross_ai_script.write_script(plan)
+            with open(target, "rb") as handle:
+                upgraded = cross_ai_script.template_config(handle.read())
+            self.assertEqual(upgraded["models"], models)
 
     def test_upgrade_keeps_existing_runtime(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -725,8 +758,8 @@ class TestApplyExecutionHookToken(unittest.TestCase):
             self.assertEqual(summary["notes"], [])
             self.assertNotIn(PI_EXEC_NOTE, err.getvalue())
 
-    def test_model_outside_the_runner_grammar_degrades_before_any_render(self):
-        # 25.1 CR-01: `glm-4.6` is hook-safe, but the runner refuses a bare pi id with exit 2.
+    def test_model_outside_the_floor_degrades_before_any_render(self):
+        # A leading dash is hook-safe, but below the runner floor.
         from tests.test_ai_kit_gsd_curated_config import (
             _make_fake_install,
             _which_stub,
@@ -740,7 +773,7 @@ class TestApplyExecutionHookToken(unittest.TestCase):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 code = cli.main(
                     ["apply-execution", "--project-dir", project, "--cli", "pi",
-                     "--model", "glm-4.6"],
+                     "--model=-placeholder-model-1"],
                     which_fn=_which_stub(), run_fn=run,
                     env_fn=lambda: {"CLAUDE_CONFIG_DIR": install},
                 )
@@ -748,8 +781,16 @@ class TestApplyExecutionHookToken(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(summary["degraded_reason"], "unsupported_model_id")
             self.assertFalse(summary["cross_ai_command_written"])
-            self.assertIn("grammar", err.getvalue())
+            self.assertIn("must match the runner floor", err.getvalue())
             self.assertFalse(os.path.exists(os.path.join(project, ".planning")))
+
+
+class TestHookPrecedence(unittest.TestCase):
+    def test_unsafe_hook_token_comes_first(self):
+        for value in ("placeholder-model-1[effort=high]", "has space"):
+            refusal = cli._model_refusal("cursor", value)
+            assert refusal is not None
+            self.assertEqual(refusal[0], "unsafe_hook_token")
 
 
 class TestReadTarget(unittest.TestCase):
