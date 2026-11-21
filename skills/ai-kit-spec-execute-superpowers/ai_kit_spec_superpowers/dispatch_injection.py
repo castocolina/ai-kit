@@ -106,7 +106,7 @@ class QuotaExhaustedError(RuntimeError):
       - "timeout": the probe itself hung/timed out -- a broken invocation, not a rate limit.
       - "configuration": a missing/malformed command template -- a config problem.
       - "dispatch_unavailable": the CLI binary itself could not be invoked (OSError).
-      - a route name (bad_model, review_only, not_installed, no_inventory, unknown_runtime,
+      - a route name (bad_model, no_formula, not_installed, no_inventory, unknown_runtime,
         no_model): the per-call route walk skipped this candidate. Permanent, like every reason
         below except "quota" -- waiting never changes which host this process runs on or which
         model a runtime lists.
@@ -318,7 +318,8 @@ def _skip_route(candidate: dict, decision: str, tried: list, reasons: dict) -> N
     """A skip route is permanent: recorded under the route name, never picked, one stderr line."""
     tried.append(candidate["key"])
     reasons[candidate["key"]] = decision
-    print(skip_note(f"{candidate['key']} for execution", decision), file=sys.stderr)
+    print(skip_note(f"{candidate['key']} for execution", decision, candidate.get("runtime")),
+          file=sys.stderr)
 
 
 def _walk_ladder_for_injection(

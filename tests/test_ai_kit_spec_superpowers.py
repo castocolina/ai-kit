@@ -380,9 +380,9 @@ class TestBuildDispatchInjection(unittest.TestCase):
         self.assertIn("skipping gemini/main for execution: route unknown_runtime",
                       stderr.getvalue())
 
-    def test_claude_off_its_native_route_is_recorded_as_review_only(self):
+    def test_claude_off_its_native_route_is_recorded_as_no_formula(self):
         # D-15 screen order: a purpose-unset claude candidate is exempt from the execute screen.
-        # Off its native route the walk records review_only, a permanent skip, and continues.
+        # Off its native route the walk records no_formula, a permanent skip, and continues.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
             {
@@ -408,12 +408,12 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 ),
                 options=dispatch_injection.BuildInjectionOptions(
                     quota={},
-                    routes={"claude-cli/opus-5": "review_only", "codex/terra": "subprocess"},
+                    routes={"claude-cli/opus-5": "no_formula", "codex/terra": "subprocess"},
                 ),
             )
         self.assertEqual(result["mode"], "external_cli")
         self.assertEqual(result["runtime"], "codex")
-        self.assertIn("skipping claude-cli/opus-5 for execution: route review_only",
+        self.assertIn("skipping claude-cli/opus-5 for execution: route no_formula",
                       stderr.getvalue())
         self.assertNotIn("cannot be an execution CLI", stderr.getvalue())
 
@@ -478,7 +478,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
                     cache_read_json_fn=lambda path: {},
                     cache_write_json_fn=lambda path, data: None,
                     refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
-                    route_all_fn=lambda entries, _ctx: {"claude-cli/opus-5": "review_only"},
+                    route_all_fn=lambda entries, _ctx: {"claude-cli/opus-5": "no_formula"},
                     env_fn=lambda: {"HOME": tmp, "XDG_CACHE_HOME": tmp},
                     stdout=out,
                 )
@@ -537,11 +537,11 @@ class TestBuildDispatchInjection(unittest.TestCase):
                     cache_write_json_fn=lambda path, data: None,
                     refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                     route_all_fn=lambda entries, _ctx: {
-                        "g": "review_only", "c": "subprocess"},
+                        "g": "no_formula", "c": "subprocess"},
                     stdout=out,
                 )
         self.assertEqual(rc, 0)
-        self.assertEqual(stderr.getvalue().count("skipping g for execution: route review_only"), 1)
+        self.assertEqual(stderr.getvalue().count("skipping g for execution: route no_formula"), 1)
 
     def test_no_surviving_candidates_raises_value_error(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
@@ -1594,7 +1594,7 @@ def _route_all_recording(calls):
             if _routed_native(entry, ctx.host):
                 routes[entry["key"]] = "native"
             elif runtime == "claude" or entry.get("command"):
-                routes[entry["key"]] = "review_only"
+                routes[entry["key"]] = "no_formula"
             elif model == "missing":
                 routes[entry["key"]] = "bad_model"
             elif model == "unchecked":
@@ -1673,7 +1673,7 @@ class TestResolveInjectionRouting(unittest.TestCase):
         self.assertEqual(result["mode"], "external_cli")
         self.assertEqual(result["key"], "cx")
         self.assertEqual(result["runtime"], "codex")
-        self.assertIn("skipping c-opus for execution: route review_only", stderr)
+        self.assertIn("skipping c-opus for execution: route no_formula", stderr)
 
     def test_bad_model_after_refresh_is_permanent(self):
         candidates = [
@@ -1718,15 +1718,15 @@ class TestResolveInjectionRouting(unittest.TestCase):
         self.assertEqual(result["key"], "c-opus")
         self.assertEqual(refreshed, [["cx"]])
 
-    def test_screen_order_records_review_only_unless_purpose_is_execute(self):
+    def test_screen_order_records_no_formula_unless_purpose_is_execute(self):
         full = {"key": "c-full", "runtime": "claude", "model": "claude-opus-5-5",
                 "vendor": "anthropic", "task_affinity": None, "context_limit": None}
         rc, stdout, stderr, _refreshed, _calls = self._run([full], {"CLAUDECODE": "1"})
         self.assertEqual(rc, 0, stderr)
         result = json.loads(stdout)
-        self.assertEqual(result["reasons"], {"c-full": "review_only"})
+        self.assertEqual(result["reasons"], {"c-full": "no_formula"})
         self.assertNotIn("cannot be an execution CLI", stderr)
-        self.assertIn("skipping c-full for execution: route review_only", stderr)
+        self.assertIn("skipping c-full for execution: route no_formula", stderr)
 
         explicit = dict(full, purpose="execute")
         rc, stdout, stderr, _refreshed, _calls = self._run([explicit], {"CLAUDECODE": "1"})

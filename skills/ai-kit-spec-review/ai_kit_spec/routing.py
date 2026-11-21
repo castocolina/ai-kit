@@ -23,6 +23,8 @@ from ai_kit_spec.detection import (
     claude_runtime_fields,
     claude_runtime_is_current,
     detect_current_runtime,
+    exec_formula_source,
+    has_exec_formula,
     list_runtime_models,
     normalize_runtime_keys,
     resolve_runtime_binary,
@@ -33,7 +35,7 @@ from ai_kit_spec.model_catalog import cache_catalog_path
 REFRESH_FLOOR_S = 60
 
 SKIP_ROUTES = frozenset({
-    "bad_model", "no_inventory", "not_installed", "unknown_runtime", "no_model", "review_only",
+    "bad_model", "no_inventory", "not_installed", "unknown_runtime", "no_model", "no_formula",
 })
 
 # Routes worth a quota probe: something will actually be spawned for them.
@@ -135,7 +137,7 @@ def _is_custom(entry: RouteInput) -> bool:
 def _route_shape(entry: RouteInput, mode: str) -> str | None:
     """Routes decided before any inventory lookup, or None to keep going."""
     if _is_custom(entry):
-        return "review_only" if mode == "exec" else "custom"
+        return "no_formula" if mode == "exec" else "custom"
     runtime = entry.runtime
     # An out-of-table runtime is a visible skip even without a model (D-20).
     if runtime is not None and (not isinstance(runtime, str) or runtime not in RUNTIMES):
@@ -174,8 +176,9 @@ def route(entry: RouteInput, host: str, mode: str, inventory: Inventory) -> str:
         return "unknown_runtime"
     if host_can_select(runtime, entry.model, host):
         return "native"
-    if mode == "exec" and RUNTIMES[runtime].review_only:
-        return "review_only"
+    # 36 R7: the runner has no formula for this mode; a runner-less row keeps its inventory route.
+    if mode == "exec" and RUNTIMES[runtime].runner and not has_exec_formula(RUNTIMES[runtime]):
+        return "no_formula"
     return _route_inventory(entry, inventory)
 
 
@@ -221,9 +224,20 @@ def host_context(mode: str, env: dict, seams: RuntimesSeams, persist=True) -> Ro
     return RouteContext(detect_current_runtime(env), mode, env, seams, persist)
 
 
-def skip_note(subject: str, decision: str) -> str:
-    """The visible line for a skip route (D-20, D-22)."""
-    return f"ai-kit-spec: skipping {subject}: route {decision}"
+def no_formula_detail(runtime: str | None) -> str:
+    """Why a lane routed no_formula (36 SPEC R7): the runtime and the formula source,
+    or the custom-lane fact."""
+    row = RUNTIMES.get(runtime) if isinstance(runtime, str) else None
+    if row is None:
+        return "a custom command lane runs in review mode only"
+    return f"the runner has no exec formula for {runtime} ({exec_formula_source(row)})"
+
+
+def skip_note(subject: str, decision: str, runtime: str | None = None) -> str:
+    """The visible line for a skip route (D-20, D-22); a no_formula skip names the
+    missing formula (36 SPEC R7)."""
+    line = f"ai-kit-spec: skipping {subject}: route {decision}"
+    return f"{line}: {no_formula_detail(runtime)}" if decision == "no_formula" else line
 
 
 def unverified_note(subject: str, runtime, model) -> str:
