@@ -1542,6 +1542,18 @@ const RUNTIMES = {
   },
 };
 
+// R9: provenance of each formula and listing, from the recorded help under tests/fixtures/cli_help (labels only; nothing decides on them).
+const FORMULA_LABELS = Object.fromEntries([
+  ['claude', '2.1.330', '2026-11-21', ['exec', 'review', 'resume']],
+  ['codex', '0.170.0', '2026-11-21', ['exec', 'review', 'resume', 'listing']],
+  ['copilot', '1.0.112', '2026-11-21', ['exec', 'review']],
+  ['cursor', '2026.11.13', '2026-11-21', ['exec', 'review', 'resume', 'listing']],
+  ['opencode', '2.3.2', '2026-11-20', ['exec', 'review', 'resume', 'listing']],
+  ['pi', '1.5.2', '2026-11-21', ['exec', 'review', 'resume', 'listing']],
+].map(([id, version, recorded, facts]) => [id, Object.fromEntries(facts.map((fact) => [fact, {
+  state: 'verified', source: `verified: ${id} ${version} help recorded ${recorded} (tests/fixtures/cli_help/${id}/)`,
+}]))]));
+
 // SPEC R4: the only placeholders a declared argv file may hold; the prompt always goes on stdin.
 const ARGV_FILE_PLACEHOLDERS = ['{model}', '{effort}', '{session}'];
 const ARGV_FILE_NO_FORM = Object.freeze({ kind: 'none', style: 'none', flag: null, key: null, valueKind: null, label: Object.freeze({ state: 'unknown', source: 'declared by --argv-file' }) });
@@ -4631,6 +4643,13 @@ function runChild(bin, argv, opts = {}) {
     child.on('error', (e) => { spawnErr = e; finalize('error'); });
     child.on('exit', (c, s) => { code = c; signal = s; finalize('exit'); });
   });
+}
+
+// Hosted lane (SPEC R12, D-22 to D-28): herdr is called only by the transport in this block.
+const HERDR_BIN = 'herdr';
+// D-23/D-28: availability is HERDR_ENV=1 plus a herdr on PATH, read without calling herdr.
+function hostAvailable(env, whichFn = which) {
+  return env.HERDR_ENV === '1' && Boolean(env.PATH) && Boolean(whichFn(HERDR_BIN, env.PATH));
 }
 
 function parsePiListingIds(stdout) {
@@ -14060,6 +14079,46 @@ function logExecLabel(name, rt, mode) {
   if (mode === 'exec' && rt.execLabel && rt.execLabel.state === 'unverified') log(`cross-ai: note: ${name} execute formula is unverified (no live probe record)`);
 }
 
+// --describe reports the template generation from the header that the render keeps.
+function ownTemplateVersion() {
+  const head = readOr(fileURLToPath(import.meta.url), '').slice(0, 512);
+  const match = head.match(/^\/\/ ai-kit-cross-ai generator=\S+ template=(\d+) /m);
+  return match ? Number(match[1]) : null;
+}
+
+// Sorted keys at every depth (SPEC R9 ordering): the golden file stays stable.
+function describeValue(value) {
+  if (Array.isArray(value)) return value.map(describeValue);
+  if (value instanceof RegExp) return value.source;
+  if (typeof value === 'function') return undefined;
+  if (value && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, describeValue(value[key])]));
+  }
+  return value;
+}
+
+// SPEC R9 / D-10: what Python reads instead of mirroring the rows. No classes key (0b-10): 38.1 adds it.
+function describeJson(env) {
+  const runtimes = {};
+  // 0b-12: forms are copied keyed by setting, so a later row field shows up with no change here.
+  for (const id of Object.keys(RUNTIMES).sort()) {
+    const row = RUNTIMES[id];
+    const label = (f) => typeof row[f] !== 'function' ? { state: 'unknown', source: 'no formula in the runner' } :
+      FORMULA_LABELS[id]?.[f] ?? { state: 'unverified', source: 'unverified: no label recorded' };
+    const entry = {
+      formulas: { exec: typeof row.exec === 'function', review: typeof row.review === 'function', resume: typeof row.resume === 'function' },
+      formula_labels: { exec: label('exec'), review: label('review'), resume: label('resume') },
+      listing: row.list ? row.list.argv : null,
+      listing_label: !row.list ? { state: 'unknown', source: 'no listing in the runner' } :
+        FORMULA_LABELS[id]?.listing ?? { state: 'unverified', source: 'unverified: no label recorded' },
+      source: typeof row.source === 'string' && row.source ? row.source : 'unverified',
+    };
+    for (const [setting, form] of Object.entries(row.forms || {})) entry[setting] = form;
+    runtimes[id] = entry;
+  }
+  return { schema: 1, template_version: ownTemplateVersion(), settings: [...SETTING_NAMES], reasons: [...SETTING_REASONS], states: [...SETTING_STATES], runtimes, host: { available: hostAvailable(env) } };
+}
+
 async function main(argv) {
   runStartedMs = Date.now();
   finished = false;
@@ -14076,6 +14135,10 @@ async function main(argv) {
   OVERLAY_IDS = new Set();
   // The self-test never reads the owner's real overlay; each case builds its own.
   if (o.selfTest) return blackBoxSelfTest(o.selfTestList);
+  if (o.describe) {
+    process.stdout.write(`${JSON.stringify(describeValue(describeJson(process.env)), null, 2)}\n`);
+    return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
+  }
   TABLE = mergeCatalog(PATTERNS, loadOverlay(process.env));
   if (o.classifyOnly !== null) return runClassifyOnly(o.classifyOnly);
   childPgidFile = o.childPgidFile;
