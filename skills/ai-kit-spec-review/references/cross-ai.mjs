@@ -29,7 +29,19 @@
  *   --route-<cli> router|unknown             confirmed route of that CLI (wins over CONFIG)
  *   --classify-only <path>                   classify a JSON case file and exit (no spawn,
  *                                            no write, stdin ignored; path relative to cwd)
+ *   --role review|execute                    documented mode; --mode is an alias; disagreement is a usage error
  *   --mode exec|review                       exec = full permissions (default); review = read-only
+ *   --effort <level>                         generic effort, shape ^[a-z][a-z0-9_-]{0,15}$
+ *   --context <label>                        context label
+ *   --escalate-runtime                       carried, never acted on
+ *   --escalate-model                         carried, never acted on
+ *   --session-id <id>                        session id
+ *   --host auto|none                         hosting choice
+ *   --skill-path <dir>                       repeatable skill path
+ *   --skill-name <name>                      repeatable skill name
+ *   --mcp-config <file>                      MCP configuration path
+ *   --argv-file <path>                       command argv path
+ *   --describe                               describe runner capabilities
  *   --tools-profile exec|review|none         named tool set from the runtime's table row
  *                                            (review accepts review or none)
  *   --timeout <s>                            inner deadline (lowers default; never above derived inner)
@@ -45,7 +57,7 @@
  *   --child-pgid-file <path>                 append spawn <pid> / exit <pid>
  *                                            per detached child, for a
  *                                            supervising caller's cleanup
- *   --codex-effort minimal|low|medium|high|xhigh   overrides CONFIG.effort.codex
+ *   --codex-effort <level>                   alias of --effort (both given with different values: usage error)
  *   --codex-service-tier <id>                codex -c service_tier=
  *   --cursor-mode ask|plan                   review mode only (replaces cursor --mode)
  *   --self-test                              hermetic black-box checks (no real CLIs); its ceilings scale
@@ -5250,10 +5262,76 @@ async function rung2Gate(cwd, beforeSig, prompt, midSig) {
   return { stop: false, input: `${RESUME_MSG}\n\n${prompt}` };
 }
 
+// One cap for every file a call names (argv file, SKILL.md body, MCP file); equals INPUT_CAP (SPEC R4, R13, R14).
+const FILE_READ_MAX = 65536;
+
+// Strict reader for files a call names: read once, non-blocking open, same file as checked, regular file, size-capped, strict UTF-8, no BOM.
+function readCallFile(flag, relPath, opts = {}) {
+  const { cwdOnly = false, mode = 0, cwd = process.cwd() } = opts;
+  const unreadable = () => new Error(`${flag} unreadable: ${relPath}`);
+  let abs, pre, fd;
+  try { abs = fs.realpathSync(path.resolve(cwd, relPath)); } catch { throw unreadable(); }
+  if (cwdOnly) {
+    let rel;
+    try { rel = path.relative(fs.realpathSync(cwd), abs); } catch { throw unreadable(); }
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`${flag} must name a file inside the working directory: ${relPath}`);
+  }
+  try { pre = fs.statSync(abs); } catch { throw unreadable(); }
+  try { fd = fs.openSync(abs, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK); } catch { throw unreadable(); }
+  try {
+    const st = fs.fstatSync(fd);
+    if (st.dev !== pre.dev || st.ino !== pre.ino) throw new Error(`${flag} changed while it was opened: ${relPath}`);
+    if (!st.isFile()) throw new Error(`${flag} must name a regular file: ${relPath}`);
+    if (mode && (st.mode & mode)) throw new Error(`${flag} must not be accessible by group or others (mode ${(st.mode & 0o777).toString(8).padStart(3, '0')}): ${relPath}`);
+    const buf = Buffer.alloc(FILE_READ_MAX + 1);
+    let n = 0;
+    while (n < buf.length) { const count = fs.readSync(fd, buf, n, buf.length - n, null); if (!count) break; n += count; }
+    if (n > FILE_READ_MAX) throw new Error(`${flag} is over ${FILE_READ_MAX} bytes: ${relPath}`);
+    const bytes = buf.subarray(0, n);
+    let text;
+    try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch { throw new Error(`${flag} is not valid UTF-8: ${relPath}`); }
+    if (text.startsWith('\uFEFF')) throw new Error(`${flag} starts with a byte-order mark: ${relPath}`);
+    return { abs, bytes, text };
+  } finally { fs.closeSync(fd); }
+}
+
+// JSON.parse keeps the last duplicate key; a call file must not hold one (SPEC R14 adjacency). Callers print "<flag> is not strict JSON: <message>".
+function strictJson(text) {
+  const value = JSON.parse(text);
+  const stack = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      const start = i++;
+      while (text[i] !== '"') { if (text[i] === '\\') i++; i++; }
+      const frame = stack[stack.length - 1];
+      if (frame && frame.wantKey) {
+        const key = JSON.parse(text.slice(start, i + 1));
+        if (frame.keys.has(key)) throw new SyntaxError(`duplicate key ${JSON.stringify(key)}`);
+        frame.keys.add(key); frame.wantKey = false;
+      }
+    } else if (c === '{') stack.push({ keys: new Set(), wantKey: true });
+    else if (c === '[') stack.push(null);
+    else if (c === '}' || c === ']') stack.pop();
+    else if (c === ',') { const frame = stack[stack.length - 1]; if (frame) frame.wantKey = true; }
+  }
+  return value;
+}
+
 const CODEX_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
 const PI_THINKING = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const CURSOR_MODES = new Set(['ask', 'plan']);
 const ROUTE_VALUES = new Set(['router', 'unknown']);
+// D-07 level token.
+const LEVEL_RE = /^[a-z][a-z0-9_-]{0,15}$/;
+// D-15 context label.
+const CONTEXT_RE = /^[a-z0-9][a-z0-9._-]{0,15}$/;
+// SPEC R7 session id.
+const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+// SPEC R13 skill name.
+const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+// C0, DEL and C1 control characters.
+const CONTROL_CHAR_RE = /[\x00-\x1f\x7f-\x9f]/;
 
 function parseArgs(argv) {
   const o = {
@@ -5262,7 +5340,10 @@ function parseArgs(argv) {
     printArgv: false, preamble: true, selfTest: false, selfTestList: false, classifyOnly: null,
     codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
+    role: null, effort: null, context: null, escalateRuntime: false, escalateModel: false,
+    sessionId: null, host: null, skillPaths: [], skillNames: [], mcpConfig: null, argvFile: null, describe: false,
   };
+  let modeFlag = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]; const v = () => { if (i + 1 >= argv.length) throw new Error(`${a} needs a value`); return argv[++i]; };
     if (a === '--runtime') o.runtime = v();
@@ -5288,7 +5369,7 @@ function parseArgs(argv) {
       if (!ROUTE_VALUES.has(route)) throw new Error(`${a} must be router or unknown`);
       o.routes[a.slice(8)] = route;
     } else if (a === '--classify-only') o.classifyOnly = v();
-    else if (a === '--mode') { o.mode = v(); if (!['exec', 'review'].includes(o.mode)) throw new Error('--mode must be exec or review'); }
+    else if (a === '--mode') { o.mode = v(); if (!['exec', 'review'].includes(o.mode)) throw new Error('--mode must be exec or review'); modeFlag = o.mode; }
     else if (a === '--timeout') { o.timeout = Number(v()); if (!(o.timeout > 0)) throw new Error('--timeout must be > 0'); }
     else if (a === '--outer-timeout') {
       o.outerTimeout = Number(v());
@@ -5304,7 +5385,7 @@ function parseArgs(argv) {
     } else if (a === '--child-pgid-file') o.childPgidFile = v();
     else if (a === '--codex-effort') {
       o.codexEffort = v();
-      if (!CODEX_EFFORTS.has(o.codexEffort)) throw new Error('--codex-effort must be minimal|low|medium|high|xhigh');
+      if (!LEVEL_RE.test(o.codexEffort)) throw new Error(`${a} must match ${LEVEL_RE.source}`);
     } else if (a === '--codex-service-tier') {
       o.codexServiceTier = v();
       if (!/^[A-Za-z0-9_-]+$/.test(o.codexServiceTier)) throw new Error('--codex-service-tier must match [A-Za-z0-9_-]+');
@@ -5313,7 +5394,29 @@ function parseArgs(argv) {
       if (!CURSOR_MODES.has(o.cursorMode)) throw new Error('--cursor-mode must be ask or plan');
     } else if (a === '--self-test') o.selfTest = true;
     else if (a === '--self-test-list') { o.selfTest = true; o.selfTestList = true; }
+    else if (a === '--role') { o.role = v(); if (!['review', 'execute'].includes(o.role)) throw new Error('--role must be review or execute'); }
+    else if (a === '--effort') { o.effort = v(); if (!LEVEL_RE.test(o.effort)) throw new Error(`${a} must match ${LEVEL_RE.source}`); }
+    else if (a === '--context') { o.context = v(); if (!CONTEXT_RE.test(o.context)) throw new Error(`${a} must match ${CONTEXT_RE.source}`); }
+    else if (a === '--escalate-runtime') o.escalateRuntime = true;
+    else if (a === '--escalate-model') o.escalateModel = true;
+    else if (a === '--session-id') { o.sessionId = v(); if (!SESSION_ID_RE.test(o.sessionId)) throw new Error(`${a} must match ${SESSION_ID_RE.source}`); }
+    else if (a === '--host') { o.host = v(); if (!['auto', 'none'].includes(o.host)) throw new Error('--host must be auto or none'); }
+    else if (a === '--skill-name') { const n = v(); if (!SKILL_NAME_RE.test(n)) throw new Error(`${a} must match ${SKILL_NAME_RE.source}`); o.skillNames.push(n); }
+    else if (['--skill-path', '--mcp-config', '--argv-file'].includes(a)) {
+      const p = v();
+      if (p === '' || CONTROL_CHAR_RE.test(p)) throw new Error(`${a} must be a non-empty path without control characters`);
+      if (a === '--skill-path') o.skillPaths.push(p);
+      else if (a === '--mcp-config') o.mcpConfig = p;
+      else o.argvFile = p;
+    } else if (a === '--describe') o.describe = true;
     else throw new Error(`unknown argument: ${a}`);
+  }
+  if (o.effort !== null && o.codexEffort !== null && o.effort !== o.codexEffort) throw new Error('--effort and --codex-effort disagree');
+  if (o.effort === null) o.effort = o.codexEffort;
+  if (o.role !== null) {
+    const fromRole = o.role === 'execute' ? 'exec' : 'review';
+    if (modeFlag !== null && modeFlag !== fromRole) throw new Error('--role and --mode disagree');
+    o.mode = fromRole;
   }
   if (o.mode === 'exec' && o.cursorMode) throw new Error('--cursor-mode is review-only');
   const known = Object.keys(RUNTIMES).join(', ');
@@ -11408,12 +11511,143 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       })),
       {
+        // A level is shape-checked (LEVEL_RE): an uppercase level is refused.
         name: 'codex-effort-bogus',
         kind: 'logic',
-        args: ['--codex-effort', 'bogus', '--prefer', 'codex', '--model-codex', 'x'],
+        args: ['--codex-effort', 'Bogus', '--prefer', 'codex', '--model-codex', 'x'],
         config: { prefer: ['codex'] },
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'reader-call-file-cap', kind: 'logic', pure: () => {
+          const { root, work } = migrationScratch();
+          const msg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+          try {
+            const file = path.join(work, 'f.json'); fs.writeFileSync(file, 'a'.repeat(65536));
+            const r = readCallFile('--argv-file', 'f.json', { cwd: work, cwdOnly: true });
+            if (r.abs !== fs.realpathSync(file) || r.bytes.length !== 65536 || r.text.length !== 65536) return 'cap boundary';
+            fs.writeFileSync(file, 'a'.repeat(65537));
+            return msg(() => readCallFile('--argv-file', 'f.json', { cwd: work, cwdOnly: true })) === '--argv-file is over 65536 bytes: f.json' ? null : 'cap overflow';
+          } finally { fs.rmSync(root, { recursive: true, force: true }); }
+        },
+      },
+      {
+        name: 'reader-call-file-utf8', kind: 'logic', pure: () => {
+          const { root, work } = migrationScratch();
+          const msg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+          try {
+            fs.writeFileSync(path.join(work, 'bad.json'), Buffer.from([0x5b, 0xff, 0x5d]));
+            fs.writeFileSync(path.join(work, 'bom.json'), Buffer.from([0xef, 0xbb, 0xbf, 0x5b, 0x5d]));
+            const bytes = Buffer.from('["é"]'); fs.writeFileSync(path.join(work, 'ok.json'), bytes);
+            if (msg(() => readCallFile('--argv-file', 'bad.json', { cwd: work })) !== '--argv-file is not valid UTF-8: bad.json') return 'invalid UTF-8';
+            if (msg(() => readCallFile('--argv-file', 'bom.json', { cwd: work })) !== '--argv-file starts with a byte-order mark: bom.json') return 'BOM';
+            const r = readCallFile('--argv-file', 'ok.json', { cwd: work });
+            return r.bytes.equals(bytes) && r.text === '["é"]' ? null : 'UTF-8 roundtrip';
+          } finally { fs.rmSync(root, { recursive: true, force: true }); }
+        },
+      },
+      {
+        name: 'reader-call-file-place', kind: 'logic', pure: () => {
+          const { root, work } = migrationScratch();
+          const msg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+          try {
+            fs.writeFileSync(path.join(root, 'outside.json'), '[]'); fs.symlinkSync(path.join(root, 'outside.json'), path.join(work, 'link.json'));
+            fs.mkdirSync(path.join(work, 'dir'));
+            for (const p of ['../outside.json', 'link.json']) if (msg(() => readCallFile('--argv-file', p, { cwd: work, cwdOnly: true })) !== `--argv-file must name a file inside the working directory: ${p}`) return `outside ${p}`;
+            if (msg(() => readCallFile('--argv-file', 'dir', { cwd: work })) !== '--argv-file must name a regular file: dir') return 'directory';
+            if (msg(() => readCallFile('--argv-file', 'nope.json', { cwd: work })) !== '--argv-file unreadable: nope.json') return 'missing';
+            if (readCallFile('--argv-file', '../outside.json', { cwd: work }).text !== '[]') return 'outside allowed';
+            const file = path.join(work, 'm.json'); fs.writeFileSync(file, '{}');
+            for (const mode of [0o640, 0o620, 0o604, 0o602]) {
+              fs.chmodSync(file, mode);
+              if (msg(() => readCallFile('--mcp-config', 'm.json', { cwd: work, mode: 0o077 })) !== `--mcp-config must not be accessible by group or others (mode ${mode.toString(8)}): m.json`) return `mode ${mode.toString(8)}`;
+            }
+            fs.chmodSync(file, 0o600);
+            return readCallFile('--mcp-config', 'm.json', { cwd: work, mode: 0o077 }).text === '{}' ? null : 'private mode';
+          } finally { fs.rmSync(root, { recursive: true, force: true }); }
+        },
+      },
+      {
+        name: 'reader-call-file-fifo', kind: 'runtime', pure: () => {
+          const { root, work } = migrationScratch();
+          const msg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+          try {
+            if (spawnSync('mkfifo', [path.join(work, 'pipe.json')]).status !== 0) return 'mkfifo unavailable';
+            const t0 = Date.now(); const result = msg(() => readCallFile('--argv-file', 'pipe.json', { cwd: work, cwdOnly: true })); const took = Date.now() - t0;
+            return result === '--argv-file must name a regular file: pipe.json' && took < scaledMs(2000) ? null : 'FIFO refusal';
+          } finally { fs.rmSync(root, { recursive: true, force: true }); }
+        },
+      },
+      {
+        name: 'reader-call-file-swap', kind: 'logic', pure: () => {
+          const { root, work } = migrationScratch(); const saved = fs.openSync;
+          const msg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+          try {
+            fs.writeFileSync(path.join(work, 'f.json'), 'first'); fs.writeFileSync(path.join(work, 'other.json'), 'second');
+            fs.openSync = (...args) => { fs.renameSync(path.join(work, 'other.json'), path.join(work, 'f.json')); return saved(...args); };
+            const result = msg(() => readCallFile('--argv-file', 'f.json', { cwd: work, cwdOnly: true })); fs.openSync = saved;
+            if (result !== '--argv-file changed while it was opened: f.json') return 'swap';
+            return readCallFile('--argv-file', 'f.json', { cwd: work }).text === 'second' ? null : 'stable read';
+          } finally { fs.openSync = saved; fs.rmSync(root, { recursive: true, force: true }); }
+        },
+      },
+      {
+        name: 'reader-strict-json', kind: 'logic', pure: () => {
+          const { root } = migrationScratch();
+          const msg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+          try {
+            for (const [text, key] of [['{"a":1,"a":2}', 'a'], ['{"x":{"b":1,"b":2}}', 'b'], ['{"a":1,"\\u0061":2}', 'a']]) if (msg(() => strictJson(text)) !== `duplicate key "${key}"`) return `duplicate ${key}`;
+            for (const text of ['[{"a":1},{"a":2}]', '{"a":{"a":1}}', '{"s":"}{\\\"","t":["{"]}']) if (JSON.stringify(strictJson(text)) !== JSON.stringify(JSON.parse(text))) return 'valid JSON';
+            return msg(() => strictJson('{"a":1,}')) ? null : 'invalid JSON';
+          } finally { fs.rmSync(root, { recursive: true, force: true }); }
+        },
+      },
+      ...[
+        ['vocab-role-mode-disagree', ['--role', 'review', '--mode', 'exec'], '--role and --mode disagree'],
+        ['vocab-role-mode-disagree-exec', ['--mode', 'review', '--role', 'execute'], '--role and --mode disagree'],
+        ['vocab-role-bad', ['--role', 'exec'], '--role must be review or execute'],
+        ['vocab-effort-disagree', ['--effort', 'high', '--codex-effort', 'low'], '--effort and --codex-effort disagree'],
+        ['vocab-effort-empty', ['--effort', ''], `--effort must match ${LEVEL_RE.source}`],
+        ['vocab-effort-upper', ['--effort', 'High'], `--effort must match ${LEVEL_RE.source}`],
+        ['vocab-effort-dash', ['--effort', '-high'], `--effort must match ${LEVEL_RE.source}`],
+        ['vocab-effort-space', ['--effort', 'hi gh'], `--effort must match ${LEVEL_RE.source}`],
+        ['vocab-effort-17', ['--effort', 'a'.repeat(17)], `--effort must match ${LEVEL_RE.source}`],
+        ['vocab-effort-control', ['--effort', 'hi\x07'], `--effort must match ${LEVEL_RE.source}`],
+        ['vocab-codex-effort-upper', ['--codex-effort', 'High'], `--codex-effort must match ${LEVEL_RE.source}`],
+        ['vocab-context-upper', ['--context', '1M'], `--context must match ${CONTEXT_RE.source}`],
+        ['vocab-context-empty', ['--context', ''], `--context must match ${CONTEXT_RE.source}`],
+        ['vocab-session-129', ['--session-id', 'a'.repeat(129)], `--session-id must match ${SESSION_ID_RE.source}`],
+        ['vocab-session-empty', ['--session-id', ''], `--session-id must match ${SESSION_ID_RE.source}`],
+        ['vocab-session-dash', ['--session-id', '-x'], `--session-id must match ${SESSION_ID_RE.source}`],
+        ['vocab-host-bad', ['--host', 'herdr'], '--host must be auto or none'],
+        ['vocab-escalate-valued', ['--escalate-runtime', 'yes'], 'unknown argument: yes'],
+        ['vocab-skill-name-65', ['--skill-name', 'a'.repeat(65)], `--skill-name must match ${SKILL_NAME_RE.source}`],
+        ['vocab-skill-path-empty', ['--skill-path', ''], '--skill-path must be a non-empty path without control characters'],
+        ['vocab-skill-path-control', ['--skill-path', 'a\nb'], '--skill-path must be a non-empty path without control characters'],
+        ['vocab-mcp-config-empty', ['--mcp-config', ''], '--mcp-config must be a non-empty path without control characters'],
+        ['vocab-argv-file-empty', ['--argv-file', ''], '--argv-file must be a non-empty path without control characters'],
+      ].map(([name, extra, message]) => ({ name, kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', ...extra], exit: 2, status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/, check: (r) => ((r.stderr || '').split('\n').includes(`cross-ai: ${message}`) ? null : `stderr lacks the line: ${message}`) })),
+      {
+        name: 'vocab-role-alias', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--role', 'review', '--mode', 'review'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        async check (r, ctx) {
+          const run = (extra) => runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', ...extra] }, ctx);
+          const line = (x) => (x.stdout || '').split('\n').find((s) => s.startsWith('pi\t'));
+          const b = await run(['--mode', 'review']); const c = await run(['--role', 'execute']); const d = await run(['--mode', 'exec']);
+          return b.status === 0 && c.status === 0 && d.status === 0 && line(r) === line(b) && line(r)?.includes('"--no-mcp"') && line(c) === line(d) && !line(c)?.includes('"--no-mcp"') ? null : 'role alias mismatch';
+        },
+      },
+      {
+        name: 'vocab-boundaries-pass', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--effort', 'a', '--context', '1', '--session-id', 'a', '--skill-name', 'a'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        async check (_r, ctx) { const r = await runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--effort', 'a'.repeat(16), '--context', '1' + 'a'.repeat(15), '--session-id', 'a'.repeat(128), '--skill-name', 'a'.repeat(64)] }, ctx); return r.status === 0 ? null : 'upper boundaries'; },
+      },
+      {
+        name: 'vocab-stored-only', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--context', '1m', '--escalate-runtime', '--escalate-model', '--host', 'none', '--skill-name', 'placeholder-skill-1'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        async check (r, ctx) { const b = await runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok'] }, ctx); const line = (x) => (x.stdout || '').split('\n').find((s) => s.startsWith('pi\t')); return b.status === 0 && line(r) === line(b) ? null : 'stored flags changed argv'; },
+      },
+      {
+        name: 'vocab-codex-effort-level', kind: 'logic', args: ['--print-argv', '--runtime', 'codex', '--model', 'fake-ok-codex', '--codex-effort', 'max'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        async check (r, ctx) { const b = await runCaseProcess({ args: ['--print-argv', '--runtime', 'codex', '--model', 'fake-ok-codex', '--codex-effort', 'ultra'] }, ctx); const line = (x) => (x.stdout || '').split('\n').find((s) => s.startsWith('codex\t')) || ''; return b.status === 0 && line(r).includes('model_reasoning_effort=max') && line(b).includes('model_reasoning_effort=ultra') ? null : 'codex levels'; },
       },
       {
         name: 'cursor-mode-plan',
