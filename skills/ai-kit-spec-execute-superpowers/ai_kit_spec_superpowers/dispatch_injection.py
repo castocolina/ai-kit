@@ -21,6 +21,7 @@ from ai_kit_spec.execute_selection import (
     screen_execute_clis,
 )
 from ai_kit_spec.quota import entry_reason, resolve_ladder_pick
+from ai_kit_spec.role_orders import role_order
 from ai_kit_spec.routing import (
     SKIP_ROUTES,
     Inventory,
@@ -163,9 +164,9 @@ def compute_resume_exclusions(tried: list, reasons: dict, prior_excluded_keys: l
 
 
 def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tuple:
-    """Reads the SAME shared candidate roster that the GSD flow's assemble_candidates reads
-    (the flat view of config.toml's [lanes] roles, D-24) -- the "superpowers has no config
-    surface" constraint (Global Constraints) is about a superpowers-specific config file like
+    """Reads the execute lanes of config.toml (36 D-04), falling back to the flat view only when
+    the resolved dict has no execute list. The "superpowers has no config surface" constraint
+    (Global Constraints) is about a superpowers-specific config file like
     GSD's .planning/config.json, which genuinely doesn't exist; it is not about this shared
     roster, which every ai-kit-spec-execute-* adapter reads identically. Duplicated here (not
     imported from the GSD flow's adapter) to keep the two sibling adapters independent -- neither
@@ -174,7 +175,7 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
     `KeyError`."""
     resolved = cfg_resolve_fn(cwd, env)
     candidates = []
-    for r in resolved.get("reviewers", []):
+    for r in resolved.get("execute", resolved.get("reviewers", [])):
         if "key" not in r:
             continue
         candidates.append({
@@ -185,7 +186,7 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
             "purpose": r.get("purpose"),
             "effort": r.get("effort"), "service_tier": r.get("service_tier"),
         })
-    top_n_keys = resolved.get("policy", {}).get("ladder", [])
+    top_n_keys = role_order(resolved, "execute")
     return candidates, top_n_keys
 
 

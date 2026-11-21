@@ -2,7 +2,7 @@ import os
 import shlex
 import sys
 
-from ai_kit_spec import config_migrate, toml_splice, trust
+from ai_kit_spec import config_migrate, role_orders, toml_splice, trust
 from ai_kit_spec.detection import RUNTIMES, runtime_id
 
 try:
@@ -679,12 +679,22 @@ def _combine_role(local_view: dict, global_view: dict, role: str, local_only: bo
     return merged
 
 
+def _combine_roles(local_view: dict, global_view: dict, local_only: bool, policy: dict,
+                   emit_warn) -> dict:
+    """Each role's merged lanes and order (36 D-04)."""
+    review = _combine_role(local_view, global_view, "review", local_only)
+    execute = _combine_role(local_view, global_view, "execute", local_only)
+    return {"review": review, "execute": execute,
+            "orders": role_orders.role_orders(policy, {"review": review, "execute": execute},
+                                              emit_warn)}
+
+
 def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None,
                 migrate: bool = True) -> dict:
     """Combine an already-trusted (or empty) project [lanes] table with the user layer, honoring
     the local `strategy`. Shared by cfg_resolve and `trust-local --show`, so the consent display
     renders the same merged entries dispatch would run. Returns the flat `reviewers` view plus the
-    `review` and `execute` lists (D-24)."""
+    `review` and `execute` lists (D-24), and `orders`, each role's priority order (36 D-04)."""
     emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
     # A local-only project never consults the user file, so it is never read (B-WR-01).
     local_only = bool(local) and local.get("strategy") == "local-only"
@@ -697,12 +707,8 @@ def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None,
     _emit_legacy_note(cfg_global_path(env), global_notes, emit_warn)
     _emit_legacy_note(f"merged lanes ({local_path or 'local'}, {cfg_global_path(env)})",
                       notes, emit_warn)
-    return {
-        "policy": policy,
-        "reviewers": merged,
-        "review": _combine_role(local_view, global_view, "review", local_only),
-        "execute": _combine_role(local_view, global_view, "execute", local_only),
-    }
+    return {"policy": policy, "reviewers": merged,
+            **_combine_roles(local_view, global_view, local_only, policy, emit_warn)}
 
 
 _VALID_PURPOSE = {"review", "execute", "both"}
