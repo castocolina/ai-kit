@@ -3,7 +3,7 @@ phase: 37
 cycle: 1
 reviewers: [referee-one]
 reviewed_at: 2026-11-21T07:52:30-03:00
-plans_reviewed: [37-01-PLAN.md, 37-02-PLAN.md, 37-03-PLAN.md, 37-04-PLAN.md, 37-05-PLAN.md, 37-06-PLAN.md, 37-07-PLAN.md, 37-08-PLAN.md, 37-09-PLAN.md, 37-10-PLAN.md, 37-11-PLAN.md, 37-12-PLAN.md, 37-13-PLAN.md, 37-14-PLAN.md, 37-15-PLAN.md, 37-16-PLAN.md, 37-17-PLAN.md, 37-18-PLAN.md, 37-19-PLAN.md, 37-20-PLAN.md, 37-21-PLAN.md, 37-22-PLAN.md, 37-23-PLAN.md, 37-24-PLAN.md]
+plans_reviewed: [37-01-PLAN.md, 37-02-PLAN.md, 37-03-PLAN.md, 37-04-PLAN.md, 37-05-PLAN.md, 37-06-PLAN.md, 37-07-PLAN.md, 37-08-PLAN.md, 37-09-PLAN.md, 37-10-PLAN.md, 37-11-PLAN.md, 37-12-PLAN.md, 37-13-PLAN.md, 37-14-PLAN.md, 37-15-PLAN.md, 37-16-PLAN.md, 37-17-PLAN.md, 37-18-PLAN.md, 37-19-PLAN.md, 37-20-PLAN.md, 37-21-PLAN.md, 37-22-PLAN.md, 37-23-PLAN.md, 37-24-PLAN.md, 37-26-PLAN.md]
 models:
   referee-one: "router-env/my-referee-one"
 model_sources:
@@ -1180,3 +1180,80 @@ All four requested plan IDs are covered above. The cited 0b items assigned to th
 **Status: Issues Found — revise and re-review.**
 
 No files were changed, no scratch files were created, and no test suites or make targets were run. The repository plans were untracked and differed from the supplied 37-22 text during this review; reconciling that version drift is the principal execution risk.
+
+
+## Plan 37-26 review (referee-one, one cycle, 2026-11-21)
+
+### Review conditions (37-26)
+
+- 37-26 (curated-config's closed effort set) was added after cycle 1 of the other plans; it had one review cycle of its
+  own, referee-one only (opencode, `router-env/my-referee-one`), with the cycle 1 drivers reused in
+  `tmp/p37-review-26/` (locked note: the `RUNNER_IDS` gates stay an owner-recorded deferral). Exit 0 in 88 s,
+  08:11-08:12. One fix pass applied the accepted findings; each carries a `Review c1 (...)` line in the plan's
+  must_haves.truths. No second cycle (orchestrator instruction).
+
+### 37-26 triage
+
+- HIGH, plan absent from the roadmap schedule: accepted; ROADMAP.md lists 37-26 in wave 13 and says 26 plans.
+- HIGH, the token refusal echoed the stored value (`{level!r}`) to CLI stderr: accepted; the message names the field and
+  the pattern only, and the exact-text test proves the value is not echoed. The suggested CLI planted-secret test is not
+  added (the exact message already excludes the value).
+- MEDIUM, the final `EFFORT_LEVELS` scan over `tests` contradicts the negative `hasattr` assert: accepted; the scan covers
+  `skills tools` only.
+- MEDIUM, modes outside the effort ladder get no pin: accepted in part; the policy (no order, no pin, the runtime keeps
+  its default) is stated in the `exec_effort` docstring and tested with `["off"]`; no order is invented.
+- MEDIUM, no render-to-runner test: rejected; the render copies `config.effort` verbatim (cross_ai_script.py:106, pinned
+  by tests/test_curated_config_script.py:84-87) and plan 37-06's self-test pins `CONFIG.effort` for a new runtime.
+- MEDIUM, executor budget: recorded as a risk (small edits, no full-groups commit).
+
+### referee-one (37-26)
+
+Using the plan-review checklist and Ponytail to check 37-26 against its dependencies and the source, without modifying files or running tests.
+## 37-26
+
+### Summary
+
+**Issues found; revise before execution.** The plan addresses a real D-07 gap and reuses the existing curated-config selection and validation paths. Its central edits are specific, but the phase roadmap does not schedule the new plan, one final acceptance check cannot pass as written, and the proposed selection and error-reporting paths have untested edge cases.
+
+### Strengths
+
+- **The dependency direction is sound.** The plan waits for 37-14 and 37-16 (`.planning/phases/37-shared-runner-options-and-session-ids/37-26-PLAN.md:5–6`), while 37-03 introduces the runner’s token regex and 37-06 makes `CONFIG.effort` a default for every runtime (`.planning/phases/37-shared-runner-options-and-session-ids/37-03-PLAN.md:129–135`; `.planning/phases/37-shared-runner-options-and-session-ids/37-06-PLAN.md:29–31`).
+- **The validation boundary is explicit.** The replacement rejects non-strings and malformed tokens while retaining the model-presence check (`.planning/phases/37-shared-runner-options-and-session-ids/37-26-PLAN.md:154–171`). The existing plan validator reaches that function before validating artifact targets (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/plan_io.py:1054–1065`).
+- **The same-wave file lists do not overlap.** 37-26 edits curated-config files and its tests; 37-17 edits the runner and its describe test/fixture (`.planning/phases/37-shared-runner-options-and-session-ids/37-26-PLAN.md:7–14`; `.planning/phases/37-shared-runner-options-and-session-ids/37-17-PLAN.md:5–10`).
+
+### Concerns
+
+- **HIGH — The new plan is absent from the phase schedule.** 37-26 declares wave 13 and its dependencies (`.planning/phases/37-shared-runner-options-and-session-ids/37-26-PLAN.md:3–6`), but `.planning/ROADMAP.md:818` still says 25 plans, and its wave-13 list contains only 37-17 (`.planning/ROADMAP.md:859–863`). No later plan names 37-26 as a dependency; for example, 37-18 depends on 37-17 and 37-16 (`.planning/phases/37-shared-runner-options-and-session-ids/37-18-PLAN.md:5–6`). A roadmap- or dependency-driven run can therefore close without the curated-config fix.
+
+- **HIGH — The proposed validation error can disclose secrets.** The replacement interpolates an arbitrary invalid `level` with `{level!r}` (`.planning/phases/37-shared-runner-options-and-session-ids/37-26-PLAN.md:163–169`). Plan files are read from disk and validation errors propagate through `_load_doc` (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/plan_io.py:379–392`) to CLI stderr (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cli.py:598–600`). A pasted API key, including one nested in a non-string JSON value, can therefore be printed despite the plan’s “never print or write a secret” rule (`37-26-PLAN.md:86`).
+
+- **MEDIUM — Final verification contradicts the test the plan requires.** The new test explicitly contains `hasattr(cross_ai, "EFFORT_LEVELS")` (`.planning/phases/37-shared-runner-options-and-session-ids/37-26-PLAN.md:255–261`), while the final verification requires `rg -n "EFFORT_LEVELS|cannot pin effort" skills tools tests` to print nothing (`37-26-PLAN.md:365–366`). It will find that test line even after the implementation is correct. This final check is also outside the objective and tasks that the stated executor receives.
+
+- **MEDIUM — “Every runner” selection is not proved for host-listed modes outside the ladder.** The proposed `exec_effort` calls `roles.clamp_effort` and returns `None` unless its result is in the model’s modes (`.planning/phases/37-shared-runner-options-and-session-ids/37-26-PLAN.md:140–149`). `_nearest_effort` only orders tokens in `EFFORT_LADDER` (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/roles.py:15,65–83`); for a model listing only `["off"]` or another valid token outside that ladder, `clamp_effort("medium", modes)` returns `"medium"` and the proposed function silently drops the effort. The planned test uses only recognized ladder entries (`37-26-PLAN.md:214–223`). This falls short of the plan’s claim that a model with modes gets a clamped pin, though manually stored valid tokens would still pass validation.
+
+- **MEDIUM — The test stops at the artifact, not the rendered runner.** Task 1 asserts the `config.effort` dictionary (`.planning/phases/37-shared-runner-options-and-session-ids/37-26-PLAN.md:214–223`), while the actual boundary is the rendered `CONFIG.effort`; the renderer copies that field in `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_script.py:93–106`. Existing 37-06 coverage exercises a configured default, but 37-26 does not connect its newly selected cursor/opencode effort through rendering to the runner report or argv. A regression at that handoff could satisfy its tests.
+
+- **MEDIUM — The executor budget is a material risk.** The plan names six substantive source/test/doc files plus a possible baseline edit (`.planning/phases/37-shared-runner-options-and-session-ids/37-26-PLAN.md:7–14`), runs nine test modules and four repository-wide gates (`37-26-PLAN.md:307–308,331–339`), and must also wait for commit hooks (`37-26-PLAN.md:88`). That exceeds the review request’s “about five files” warning threshold; no timing evidence establishes that the whole plan, including hooks, fits the 1,800-second cap.
+
+### Suggestions
+
+- Add 37-26 to `.planning/ROADMAP.md` wave 13 and update the plan count; make phase closeout explicitly require its completion or summary.
+- Do not echo arbitrary invalid values in validation errors. Add a planted-secret test through `load_plan` and the CLI error path, while preserving a useful field-and-pattern diagnostic.
+- Restrict the final `EFFORT_LEVELS` scan to production code, or explicitly exclude the negative test; put the check in a task or objective so the executor receives it.
+- Define and test the intended behavior for valid, host-listed modes outside the ordering ladder, including `off` and a new token. Do not invent an ordering for an unfamiliar level without stating that policy.
+- Add a scratch render-and-dry-run test for at least one newly supported runtime, asserting the stored pin reaches `CONFIG.effort` and produces the expected setting report/argv.
+- Measure the selected test and hook path, or split the gates/documentation work if it cannot reliably fit the lane cap.
+
+##### Ponytail findings
+
+- **LOW — Task 1 is needed and mostly reuses existing code.** D-07 requires removal of the refusal; the proposed edit uses `roles.clamp_effort` and the existing `script_artifact` path (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/roles.py:111–113`; `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai.py:370–388`). The two production callers are identified, but the rendered-runner handoff and unfamiliar-mode behavior need the checks above.
+- **LOW — Task 2 is needed and proportionate.** The existing skill text explicitly limits pinning to pi and codex (`skills/ai-kit-gsd-curated-config/SKILL.md:126–133`). The later judge loop’s material-change rule covers this skill (`.planning/phases/37-shared-runner-options-and-session-ids/37-24-PLAN.md:25–27`).
+- **MEDIUM — Task 3 adds no feature, but its execution cost needs proof.** The four gates follow repository policy; they are not speculative abstraction. Their combined cost, together with hooks, is the unresolved lane-time risk above. Existing test modules are reused, so no generated Makefile or pre-commit test listing change is needed.
+
+### Risk assessment
+
+**HIGH** until scheduling and secret-safe error handling are fixed. The implementation scope is otherwise focused, but the contradictory verification and incomplete selection-to-runner coverage could prevent unattended completion or conceal a functional gap.
+
+### Status: Issues Found — fix and re-invoke
+
+**Not checked:** I did not run tests or make targets, modify files, or perform an exhaustive phase-wide audit of the other 25 plans. Same-wave analysis is limited to 37-17 and 37-26; concurrent edits to the runner could still make 37-26’s template-reading test timing-sensitive.

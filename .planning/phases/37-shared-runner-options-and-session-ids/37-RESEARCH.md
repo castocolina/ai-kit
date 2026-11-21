@@ -345,6 +345,7 @@ carries; the `Carried by` line names the plan.
   the file keeps `exec: null` and stops 37-10 with a report.
 - **Accepted assumptions:** A1 (`k` = 1000, `m` = 1000000), A2 (`FILE_READ_MAX = 65536`), A5 (claude `minted`, D-03), A6
   (`--role` emitted by Python, D-02), A7.
+- **Plan 37-26 (added 2026-11-21).** Curated-config's own closed effort set (`cross_ai.EFFORT_LEVELS`, used by `exec_effort` and `plan_io._validate_effort`) goes in 37-26 (wave 13, after 37-14 and 37-16); the `RUNNER_IDS` gates stay an owner-recorded deferral.
 - **Other SKILL.md files.** D-16: `skills/ai-kit-cross-ai/SKILL.md` is the one SKILL.md that changes. 37-22 edits another
   SKILL.md only where a sentence there becomes false, and lists it so it joins the judge loop of 37-24.
 
