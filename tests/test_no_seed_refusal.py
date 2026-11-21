@@ -4,6 +4,7 @@ This module scans Python sources; plan 36-28 adds the Markdown scan."""
 import os
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -17,6 +18,9 @@ from ai_kit_spec.execute_selection import screen_execute_clis
 REPO = Path(__file__).resolve().parents[1]
 SOURCE_ROOTS = ("skills", "tools")
 OLD_FLAG_RX = re.compile(r"\breview_only\b")
+_MD_SCAN_ROOT = Path(__file__).resolve().parents[1]
+SEED_FLAG_TOKEN = "review_only"
+MD_EXTRA = ("AGENTS.md", "README.md", "docs/config/design.md")
 
 
 def python_sources(root: Path) -> list[str]:
@@ -27,6 +31,30 @@ def python_sources(root: Path) -> list[str]:
 
 def flag_lines(text: str) -> list[int]:
     return [n for n, line in enumerate(text.splitlines(), 1) if OLD_FLAG_RX.search(line)]
+
+
+def seed_flag_markdown_hits(root: Path) -> list[str]:
+    paths = sorted(p for p in (root / "skills").rglob("*.md") if "__pycache__" not in p.parts)
+    paths.extend(root / name for name in MD_EXTRA if (root / name).is_file())
+    return [f"{path.relative_to(root).as_posix()}:{number}"
+            for path in paths
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            if SEED_FLAG_TOKEN in line]
+
+
+class TestNoSeedFlagInMarkdown(unittest.TestCase):
+    def test_no_markdown_names_the_seed_flag(self):
+        self.assertEqual(seed_flag_markdown_hits(_MD_SCAN_ROOT), [])
+
+    def test_markdown_scan_is_not_vacuous(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skill = root / "skills" / "x"
+            (skill / "references").mkdir(parents=True)
+            (skill / "SKILL.md").write_text("skip route review_only here\n", encoding="utf-8")
+            (skill / "references" / "a.md").write_text("a review-only note\n", encoding="utf-8")
+            (root / "AGENTS.md").write_text("clean\n", encoding="utf-8")
+            self.assertEqual(seed_flag_markdown_hits(root), ["skills/x/SKILL.md:1"])
 
 
 class TestNoSeedFlagReader(unittest.TestCase):

@@ -101,7 +101,8 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 
 - The `RUNTIMES` table in `skills/ai-kit-spec-review/ai_kit_spec/detection.py`
   is the single source of truth for runtime ids, binaries, host signals,
-  listing, native selectors and the review-only flag. `KNOWN_CLIS` derives
+  listing, native selectors, the exec-formula mirror of the runner and the
+  seed advice text (shown to the owner, never a refusal). `KNOWN_CLIS` derives
   from it. `detect_installed_clis()` (binary-on-PATH) and
   `detect_current_runtime()` (which CLI hosts *this* process) stay different
   questions — never conflate them.

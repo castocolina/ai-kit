@@ -13,6 +13,13 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 from ai_kit_spec import cli, config_migrate, lane_data_use, lane_settings
 
 REPO = Path(__file__).resolve().parents[1]
+README = REPO / "README.md"
+DESIGN = REPO / "docs" / "config" / "design.md"
+AGENTS = REPO / "AGENTS.md"
+REVIEW_ROW = "| [`ai-kit-spec-review`](skills/ai-kit-spec-review/SKILL.md) |"
+CONFIG_ROW = "| [`ai-kit-spec-config`](skills/ai-kit-spec-config/SKILL.md) |"
+ADAPTER_ROW = ("| [`ai-kit-spec-execute-superpowers`]"
+               "(skills/ai-kit-spec-execute-superpowers/SKILL.md) |")
 SKILL_DIR = REPO / "skills" / "ai-kit-spec-config"
 SKILL = SKILL_DIR / "SKILL.md"
 HEADLESS = SKILL_DIR / "references" / "headless.md"
@@ -100,6 +107,10 @@ def section(text, heading) -> str:
             break
         result.append(line)
     return "\n".join(result)
+
+
+def row(text, prefix) -> str:
+    return next((line for line in text.splitlines() if line.startswith(prefix)), "")
 
 
 def link_problems(path) -> list[str]:
@@ -342,6 +353,49 @@ class TestConfigFileText(unittest.TestCase):
             self.assertIn(phrase, self.text)
         self.assertTrue(config_migrate.keep_backup_from_env({KEEP_ENV: '1'}))
         self.assertFalse(config_migrate.keep_backup_from_env({}))
+
+
+class TestConfigDocsText(unittest.TestCase):
+    def setUp(self):
+        self.readme = README.read_text(encoding="utf-8")
+        self.design = DESIGN.read_text(encoding="utf-8")
+        self.agents = AGENTS.read_text(encoding="utf-8")
+
+    def test_readme_skill_rows(self):
+        review = row(self.readme, REVIEW_ROW)
+        for phrase in ("config-status", "no exec formula"):
+            self.assertIn(phrase, review)
+        self.assertNotIn("review-only", review)
+        config = row(self.readme, CONFIG_ROW)
+        for phrase in ("propose-lanes", "[lanes.policy.review]", "data-use note"):
+            self.assertIn(phrase, config)
+        self.assertIn("config-status", row(self.readme, ADAPTER_ROW))
+
+    def test_readme_config_section(self):
+        text = section(self.readme, "## ai-kit configuration")
+        for phrase in ("[lanes.policy.review]", "[lanes.policy.execute]", "config-status",
+                       "--keep-backup", KEEP_ENV, ".retiring"):
+            self.assertIn(phrase, text)
+        self.assertNotIn("stays recoverable as", text)
+
+    def test_agents_names_the_seed_advice(self):
+        self.assertIn("seed advice text", self.agents)
+        self.assertNotIn("review-only flag", self.agents)
+
+    def test_design_record_tables_and_keys(self):
+        text = section(self.design, "## Tables")
+        for key in ("[lanes.policy.review]", "[lanes.policy.execute]", "config-status",
+                    "propose-lanes", *lane_settings.MODEL_BOUND):
+            self.assertIn(f"`{key}`", text)
+        self.assertNotIn("Phase 36", text)
+
+    def test_design_record_migration_default(self):
+        text = section(self.design, "## Environment-only settings")
+        for phrase in (f"`{KEEP_ENV}`", "keep_backup_from_env", ".retiring"):
+            self.assertIn(phrase, text)
+        for heading in ("## Assignments", "## Inventory"):
+            self.assertEqual(
+                section(self.design, heading).count("deleted after the value check"), 2)
 
 
 if __name__ == "__main__":
