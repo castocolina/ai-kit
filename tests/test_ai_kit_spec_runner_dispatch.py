@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-k
 from ai_kit_spec import detection, execute_dispatch, lane_effort, quota, reviewer_dispatch
 from ai_kit_spec import runner_dispatch as rd
 from ai_kit_spec.cli import main
-from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS, ResolvedReviewer
+from ai_kit_spec.commands import ResolvedReviewer
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.model_catalog import CATALOG_SCHEMA_VERSION
 from ai_kit_spec.runner_dispatch import (
@@ -758,6 +758,7 @@ def _runner_result(stdout="### Status: Approved\n", returncode=0, reason=None,
 
 
 _EFFORT_RUNTIMES = ("codex", "pi", "cursor", "opencode", "claude", "copilot")
+_EXEC_RUNTIMES = ("codex", "copilot", "cursor", "opencode", "pi")
 
 
 def _base_id(runtime):
@@ -809,7 +810,7 @@ class TestEffortWiring(unittest.TestCase):
             reviewer_dispatch.ReviewerDispatchSpec(entry, "review this", [600], {}), seams)
         quota.probe_reviewer_quota(ResolvedReviewer("k", base, "", runtime, None, extra),
                                    seams=quota.ProbeSeams(runner_fn=fake))
-        if runtime in SUPPORTED_EXECUTE_CLIS:
+        if runtime in _EXEC_RUNTIMES:
             with tempfile.TemporaryDirectory() as target:
                 candidate = {"runtime": runtime, "model": base, **extra}
                 execute_dispatch.dispatch_execute(
@@ -824,7 +825,7 @@ class TestEffortWiring(unittest.TestCase):
                 _check_effort_spec(self, self._paths(runtime, True)[0], runtime, _base_id(runtime))
 
     def test_dispatch_execute_forms(self):
-        for runtime in SUPPORTED_EXECUTE_CLIS:
+        for runtime in _EXEC_RUNTIMES:
             with self.subTest(runtime=runtime):
                 _check_effort_spec(self, self._paths(runtime, True)[2], runtime, _base_id(runtime))
 

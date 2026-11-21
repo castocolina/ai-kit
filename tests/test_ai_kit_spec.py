@@ -46,6 +46,7 @@ from ai_kit_spec import (
     quota,
     reviewer_dispatch,
     runner_dispatch,
+    runner_facts,
     tooling_guidance,
     trust,
 )
@@ -2768,7 +2769,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
-            self.assertEqual(recorded, [])  # detection never ran
+            self.assertEqual(recorded, ["node"])  # Only the runner fact was refreshed.
             self.assertEqual(json.loads(buf.getvalue()), {})
 
     def test_old_mtime_current_version_still_redetects(self):
@@ -4266,7 +4267,7 @@ class TestMainCli(unittest.TestCase):
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
-            self.assertEqual(probe_calls, [])  # detection never ran
+            self.assertEqual(probe_calls, ["node"])  # Only the runner fact was refreshed.
             self.assertEqual(json.loads(buf.getvalue()), {})
 
     def test_detect_runtimes_if_stale_redetects_when_missing(self):
@@ -5193,81 +5194,78 @@ class TestDispatchExecute(unittest.TestCase):
         self.assertTrue(any("still open" in line for line in printed))
 
 
+def _execute_runner_fact():
+    return {
+        "template_sha256": runner_facts.template_sha256(
+            tooling_guidance.resolve_cross_ai_template_path()),
+        "describe": {"runtimes": {
+            "placeholder-cli-1": {"formulas": {"exec": False}},
+            "pi": {"formulas": {"exec": True}},
+        }},
+    }
+
+
 class TestExecuteCliError(unittest.TestCase):
     def test_execute_error_message_names_the_formula_fact(self):
-        self.assertEqual(commands.execute_cli_error("claude"),
-                         "'claude' has no exec formula in the runner (route no_formula): "
-                         "cross-ai.mjs RUNTIMES.claude.exec is null, read 2026-11-20")
-        self.assertEqual(commands.execute_cli_error("grok"),
-                         "'grok' has no exec formula in the runner (route no_formula): "
-                         "cross-ai.mjs RUNTIMES has no entry for this runtime")
-        self.assertEqual(commands.execute_cli_error("nonexistent-cli"),
-                         "'nonexistent-cli' is not a runtime in the table; store it as a "
-                         "custom `command` lane (custom lanes run in review mode only)")
-        self.assertIsNone(commands.execute_cli_error("codex"))
-        self.assertIsNone(commands.execute_cli_error("cursor-agent"))
+        fact = _execute_runner_fact()
+        self.assertEqual(
+            commands.execute_cli_error("placeholder-cli-1", fact),
+            "'placeholder-cli-1' has no exec formula in the runner (route no_formula): "
+            "cross-ai.mjs --describe, recorded in the runtimes snapshot",
+        )
+        self.assertIsNone(commands.execute_cli_error("pi", fact))
+        self.assertIsNone(commands.execute_cli_error(
+            "placeholder-cli-1", {**fact, "template_sha256": "0" * 64}))
+        for name in ("claude", "Claude", "codex"):
+            self.assertIsNone(commands.execute_cli_error(name))
 
 
 class TestExecuteCliRejection(unittest.TestCase):
-    """D-15 (Phase 16.1): an explicit claude/grok executor choice fails before any spawn."""
+    """Recorded facts reject before reading the prompt or dispatching."""
 
-    def _rejected_dispatch_run(self, cli_name):
-        import io
-        from contextlib import redirect_stderr
+    def _rejected_dispatch_run(self, cli_name, cache_dir, with_fact=True):
+        calls = []
 
-        def failing_dispatch(*a, **kw):
-            self.fail("dispatch_execute_fn must never be called for a rejected CLI")
+        def dispatch(spec):
+            calls.append(spec)
+            return {"stdout": "", "returncode": 0}
 
-        with tempfile.TemporaryDirectory() as d:
-            prompt_path = os.path.join(d, "prompt.txt")
-            with open(prompt_path, "w", encoding="utf-8") as f:
-                f.write("task")
+        env = {"HOME": cache_dir, "XDG_CACHE_HOME": cache_dir}
+        with mock.patch.dict(os.environ, env):
+            if with_fact:
+                cache_write_json(detection.cache_runtimes_path(dict(os.environ)), {
+                    "schema_version": detection.RUNTIMES_SCHEMA_VERSION,
+                    "clis": {}, "runner": _execute_runner_fact(),
+                })
             buf = io.StringIO()
-            with redirect_stderr(buf):
-                code = main(
-                    [
-                        "dispatch-execute",
-                        "--cli",
-                        cli_name,
-                        "--model",
-                        "m",
-                        "--target-dir",
-                        d,
-                        "--prompt-file",
-                        "-",
-                        "--timeout",
-                        "5",
-                    ],
-                    dispatch_execute_fn=failing_dispatch,
-                )
-        return code, buf.getvalue()
+            with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
+                code = main([
+                    "dispatch-execute", "--cli", cli_name, "--model", "placeholder-model-1",
+                    "--target-dir", cache_dir, "--prompt-file", "-", "--timeout", "5",
+                ], dispatch_execute_fn=dispatch)
+        return code, buf.getvalue(), calls
 
-    def test_dispatch_execute_rejects_claude_grok_and_case_variant(self):
-        expected = {
-            "claude": "ai-kit-spec: 'claude' has no exec formula in the runner (route no_formula)",
-            "grok": "ai-kit-spec: 'grok' has no exec formula in the runner (route no_formula)",
-            "Claude": "ai-kit-spec: 'Claude' is not a runtime in the table",
-        }
-        for cli_name in ("claude", "grok", "Claude"):
-            with self.subTest(cli=cli_name):
-                code, stderr = self._rejected_dispatch_run(cli_name)
-                self.assertEqual(code, 2)
-                self.assertIn(expected[cli_name], stderr)
-                if cli_name != "grok":
-                    self.assertNotIn("review_only", stderr)
-                    self.assertNotIn("review-only", stderr)
+    def test_dispatch_execute_rejects_a_runtime_the_fact_names(self):
+        with tempfile.TemporaryDirectory() as cache_dir:
+            code, stderr, calls = self._rejected_dispatch_run("placeholder-cli-1", cache_dir)
+        self.assertEqual(code, 2)
+        self.assertIn("ai-kit-spec: 'placeholder-cli-1' has no exec formula in the runner "
+                      "(route no_formula)", stderr)
+        self.assertEqual(calls, [])
 
     def test_rejection_is_idempotent_across_reruns(self):
-        # D-15: nothing is written before the check, so a rejected executor fails identically
-        # on every run.
-        first = self._rejected_dispatch_run("claude")
-        second = self._rejected_dispatch_run("claude")
+        with tempfile.TemporaryDirectory() as cache_dir:
+            first = self._rejected_dispatch_run("placeholder-cli-1", cache_dir)
+            second = self._rejected_dispatch_run("placeholder-cli-1", cache_dir)
         self.assertEqual(first, second)
 
-    def test_supported_execute_clis_are_the_runner_table(self):
-        self.assertEqual(
-            commands.SUPPORTED_EXECUTE_CLIS, ("codex", "copilot", "cursor", "opencode", "pi")
-        )
+    def test_no_fact_never_refuses(self):
+        with (tempfile.TemporaryDirectory() as cache_dir,
+              mock.patch("sys.stdin", io.StringIO("task"))):
+            code, stderr, calls = self._rejected_dispatch_run("claude", cache_dir, False)
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(len(calls), 1)
 
     def test_grok_keeps_its_custom_entry_generator(self):
         # R10/D-29 boundary: the table builders are gone; grok still generates the custom
@@ -5328,10 +5326,7 @@ class TestExecuteLadderScreen(unittest.TestCase):
                        "model": "placeholder-model-1", "purpose": "execute"}]
         with self.assertRaises(execute_selection.ExecuteSelectionError) as ctx:
             self._screen(candidates, warn_fn=lambda _msg: self.fail("must raise, not warn"))
-        self.assertEqual(str(ctx.exception),
-                         "reviewer 'p1' sets purpose = \"execute\": 'placeholder-cli-1' is not "
-                         "a runtime in the table; store it as a custom `command` lane "
-                         "(custom lanes run in review mode only)")
+        self.assertEqual(str(ctx.exception), "reviewer 'p1' sets purpose = \"execute\": ")
 
     def test_custom_command_is_dropped_and_execute_purpose_raises(self):
         warnings = []

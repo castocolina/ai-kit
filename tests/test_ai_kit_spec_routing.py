@@ -17,7 +17,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import routing
+from ai_kit_spec import routing, runner_facts
 from ai_kit_spec.cache import cache_read_json, cache_write_json
 from ai_kit_spec.cli import main
 from ai_kit_spec.config_io import cfg_render_lanes, cfg_resolve, cfg_write_toml
@@ -28,6 +28,7 @@ from ai_kit_spec.detection import (
     claude_runtime_fields,
 )
 from ai_kit_spec.runner_dispatch import RunnerResult
+from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
 
 def _ok(argv, **_kwargs):
@@ -44,7 +45,9 @@ def _scratch_env(root):
 
 
 def _snapshot(clis):
-    return {"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": clis}
+    return {"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": clis,
+            "runner": {"template_sha256": runner_facts.template_sha256(
+                resolve_cross_ai_template_path()), "describe": {"runtimes": {}}}}
 
 
 def _read(path):
@@ -308,20 +311,20 @@ class TestRouting(unittest.TestCase):
             (_entry(None, ""), "opencode", "review", listed, "native"),
             (_entry("claude", "opus"), "claude", "review", listed, "native"),
             (_entry("claude", "claude-opus-5-5"), "claude", "review", listed, "subprocess"),
-            (_entry("claude", "claude-opus-5-5"), "claude", "exec", listed, "no_formula"),
+            (_entry("claude", "claude-opus-5-5"), "claude", "exec", listed, "subprocess"),
             (_entry("claude", CLAUDE_MODEL_ALIASES[0]), "claude", "exec", listed, "native"),
             (_entry("opencode", "zen/x"), "opencode", "review", listed, "subprocess"),
             (_entry("claude", "opus"), "codex", "review", listed, "subprocess"),
-            (_entry("claude", "opus"), "codex", "exec", listed, "no_formula"),
+            (_entry("claude", "opus"), "codex", "exec", listed, "subprocess"),
             (_entry("codex", "gpt-x"), "unknown", "review", listed, "subprocess"),
             (_entry("grok", "grok-4"), "opencode", "review", _inventory(["grok"], {}),
-             "no_inventory"),
+             "unverified"),
             (_entry("codex", "gpt-x"), "opencode", "review",
              _inventory(["codex"], {"codex": None}), "unverified"),
             (_entry("opencode", "zen/x"), "claude", "review",
              _inventory(["opencode"], {"opencode": ()}), "bad_model"),
-            (_entry("gemini", "g"), "claude", "review", listed, "unknown_runtime"),
-            (_entry("gemini", ""), "claude", "review", listed, "unknown_runtime"),
+            (_entry("gemini", "g"), "claude", "review", listed, "unverified"),
+            (_entry("gemini", ""), "claude", "review", listed, "no_model"),
             ({"key": "k", "runtime": ["codex"], "model": ""}, "claude", "review",
              listed, "unknown_runtime"),
             (_entry("codex", ""), "claude", "review", listed, "no_model"),
@@ -344,7 +347,7 @@ class TestRouting(unittest.TestCase):
         self.assertEqual(
             routing.skip_note("k for execution", "no_formula", "claude"),
             "ai-kit-spec: skipping k for execution: route no_formula: the runner has no "
-            "exec formula for claude (cross-ai.mjs RUNTIMES.claude.exec is null, read 2026-11-20)",
+            "exec formula for claude (cross-ai.mjs --describe, recorded in the runtimes snapshot)",
         )
         self.assertEqual(
             routing.skip_note("k for execution", "no_formula"),
@@ -353,7 +356,10 @@ class TestRouting(unittest.TestCase):
         )
         self.assertIn("no_formula", routing.SKIP_ROUTES)
         self.assertNotIn("review" + "_only", routing.SKIP_ROUTES)
-        listed = _inventory(["opencode", "codex", "claude"], {})
+        self.assertNotIn("no_inventory", routing.SKIP_ROUTES)
+        fact = {"template_sha256": runner_facts.template_sha256(resolve_cross_ai_template_path()),
+                "describe": {"runtimes": {"claude": {"formulas": {"exec": False}}}}}
+        listed = routing.Inventory(frozenset({"opencode", "codex", "claude"}), {}, fact)
         entry = routing.RouteInput("claude", CLAUDE_MODEL_ALIASES[1])
         for _ in range(2):
             self.assertEqual(routing.route(entry, "codex", "exec", listed), "no_formula")

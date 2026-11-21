@@ -22,6 +22,7 @@ from ai_kit_spec import (
     provider_check,
     role_orders,
     routing,
+    runner_facts,
     secret_shapes,
     toml_splice,
     trust,
@@ -526,6 +527,9 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
     # bounded refresh cannot drift.
     if (args.if_stale and not args.extra_runtime
             and routing.runtimes_cache_is_fresh(args.if_stale, deps.env_fn())):
+        cached = cache_read_json(args.if_stale) or {}
+        if runner_facts.refresh_fact(cached, deps.which_fn, deps.run_fn):
+            cache_write_json(args.if_stale, cached)
         print(json.dumps({}))  # fresh — caller should treat this as "nothing to do"
         return 0
     snapshot = build_runtimes_snapshot(which_fn=deps.which_fn, run_fn=deps.run_fn,
@@ -533,6 +537,7 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
                                         opencode=OpencodeSeams(deps.popen_fn, deps.urlopen_fn,
                                                                deps.env_fn()))
     snapshot["clis"].update(detect_unlisted_runtimes(args.extra_runtime, deps.which_fn))
+    runner_facts.refresh_fact(snapshot, deps.which_fn, deps.run_fn)
     save_path = args.if_stale or args.save
     if save_path:
         cache_write_json(save_path, snapshot)
@@ -1228,10 +1233,10 @@ def _cmd_check_code_index_alternative(args: argparse.Namespace, deps: CliDeps) -
     return 0
 
 def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
-    # D-15 hardening: an explicit claude/grok executor choice is rejected before the prompt
-    # is read or any dispatch function is called -- nothing is spawned, ever.
+    # 37 R9: a recorded runner fact that says no exec formula fails before the prompt
+    # is read or any dispatch function is called.
     rid = runtime_id(args.runtime)
-    rejection = execute_cli_error(rid)
+    rejection = execute_cli_error(rid, runner_facts.stored_fact(dict(os.environ)))
     if rejection:
         print(f"ai-kit-spec: {rejection}", file=sys.stderr)
         return 2
