@@ -39,6 +39,87 @@ The `purpose` of an entry decides its role:
 
 Every key is kept, `purpose` included. A lane is never shared across roles: a lane that serves both roles is two entries, and changing one never changes the other. The order of entries inside a role is their priority order, and a write keeps that order.
 
+## Example: the JSON the wizard passes to render-toml
+
+An example only: the keys are the ones the wizard writes; the ids and values are placeholders, and YYYY-MM-DD stands for the date of the run. Each role has its own order under policy; a lane carries only the settings the owner chose, and a flag appears only when it is true.
+
+```json
+{
+  "policy": {
+    "mode": "single",
+    "timeout_tiers": [
+      600,
+      1200,
+      1800
+    ],
+    "review": {
+      "ladder": [
+        "review-main",
+        "review-second",
+        "review-third"
+      ]
+    },
+    "execute": {
+      "ladder": [
+        "execute-free",
+        "execute-main"
+      ]
+    }
+  },
+  "lanes": [
+    {
+      "key": "review-main",
+      "runtime": "codex",
+      "model": "placeholder-model-1",
+      "purpose": "review",
+      "effort": "high",
+      "escalate_runtime": true,
+      "escalate_model": true
+    },
+    {
+      "key": "review-second",
+      "runtime": "pi",
+      "model": "placeholder-model-2",
+      "purpose": "review"
+    },
+    {
+      "key": "review-third",
+      "runtime": "codex",
+      "model": "placeholder-model-5",
+      "purpose": "review"
+    },
+    {
+      "key": "execute-free",
+      "runtime": "opencode",
+      "model": "fake/placeholder-model-3",
+      "purpose": "execute",
+      "effort": "high",
+      "effort_source": "accepted by a call on YYYY-MM-DD",
+      "usage_limited": true,
+      "usage_limit_note": "about 100 requests a day",
+      "pool": "fake:free",
+      "data_use": "may_be_kept_or_trained",
+      "data_use_line": "The provider's page says prompts may be kept and used for training.",
+      "data_use_source": "https://example.com/data-use",
+      "data_use_read": "YYYY-MM-DD",
+      "data_use_label": "reported",
+      "data_use_confirmed": true
+    },
+    {
+      "key": "execute-main",
+      "runtime": "codex",
+      "model": "placeholder-model-4",
+      "purpose": "execute"
+    }
+  ]
+}
+```
+
+- effort is the lane's effort level in the runtime's own form; effort_source is present only when the level was learned by an accepted test call.
+- escalate_runtime and escalate_model are stored opt-in flags: runtime escalation steps to the next lane of the role with another runtime, model escalation to the next lane with the same runtime and another model; no run reads them yet.
+- usage_limited is the owner's yes that the lane has a usage cap, with an optional one-line usage_limit_note; pool names the lane's free tier (<provider>:free) and is written on every zero-price lane. A flagged lane falls back to the first lane of its role, in the role's order, that is neither flagged nor in the same pool; no run reads this yet.
+- The data-use record of a free lane has five required keys, data_use, data_use_line, data_use_source, data_use_read and data_use_confirmed (always true), plus data_use_label only when data_use is not unknown. render-toml writes a lane with a pool only together with that record; a lane the owner declined or skipped is not written.
+
 ## Trust
 
 Trust covers the project file's command-bearing lane entries. **Command-bearing** (the same definition as the skill's Step 4 and `trust.command_lanes_bytes`): an entry with a `command`, or an entry whose `key` equals the `key` of a `command` entry in this file or in the user config (the user config only without `strategy = "local-only"`), in any role. Such an entry's fields fill the command's placeholders, so a `runtime` entry that overrides a user command entry counts. A plain (runtime, model) pair with its own key is not command-bearing.
