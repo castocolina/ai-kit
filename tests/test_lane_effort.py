@@ -1,28 +1,20 @@
 """36-05: lane_effort forms, write checks and offered levels (SPEC R4)."""
 
 import os
-import re
 import sys
 import unittest
-from pathlib import Path
 
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import lane_effort, runner_dispatch
-from ai_kit_spec.detection import RUNTIMES
 from ai_kit_spec.lane_effort import (
-    EffortForm,
     LevelOffer,
-    effort_form,
     effort_problem,
     effort_source_label,
-    has_effort_path,
     listed_ids,
     offered_levels,
     write_problems,
 )
-from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
 CAT = {"fake/placeholder-model-1": {"runtimes": {"codex": {
     "model_id": "placeholder-model-1",
@@ -38,99 +30,6 @@ def row(runtime, ident, levels):
     return {"fake/placeholder-model-1": {"runtimes": {
         runtime: {"model_id": ident, "efforts": levels}
     }}}
-
-
-class TestEffortForm(unittest.TestCase):
-    def test_no_effort_passes_nothing(self):
-        for rt in ("codex", "pi", "cursor", "opencode", "claude", "copilot"):
-            with self.subTest(rt=rt):
-                self.assertEqual(
-                    effort_form(rt, "placeholder-model-1", None),
-                    EffortForm("placeholder-model-1", (), None),
-                )
-
-    def test_runtime_forms(self):
-        cases = [
-            ("codex", "placeholder-model-1", "placeholder-model-1", ("--codex-effort", "high")),
-            ("pi", "fake/placeholder-model-1", "fake/placeholder-model-1:high", ()),
-            ("opencode", "fake/placeholder-model-1", "fake/placeholder-model-1#high", ()),
-            ("cursor", "placeholder-model-1", "placeholder-model-1[effort=high]", ()),
-            ("cursor", "placeholder-model-1[context=1m]",
-             "placeholder-model-1[context=1m,effort=high]", ()),
-        ]
-        for rt, ident, expected, flags in cases:
-            with self.subTest(rt=rt, ident=ident):
-                self.assertEqual(effort_form(rt, ident, "high"), EffortForm(expected, flags, None))
-
-    def test_carried_effort(self):
-        for rt, ident in (("pi", "fake/placeholder-model-1:high"),
-                          ("opencode", "fake/placeholder-model-1#high"),
-                          ("cursor", "placeholder-model-1[context=1m,effort=high]")):
-            with self.subTest(rt=rt):
-                self.assertEqual(effort_form(rt, ident, "high"), EffortForm(ident, (), None))
-                self.assertEqual(
-                    effort_form(rt, ident, "low").ignored,
-                    "ignored: the model id already carries effort 'high'; "
-                    "lane effort 'low' not applied",
-                )
-
-    def test_closed_sets_ignored(self):
-        self.assertIn("closed set minimal|low|medium|high|xhigh",
-                      effort_form("codex", "placeholder-model-1", "max").ignored or "")
-        self.assertIn("not 'ultra'",
-                      effort_form("pi", "fake/placeholder-model-1", "ultra").ignored or "")
-
-    def test_no_path_runtimes(self):
-        for rt in ("codex", "pi", "cursor", "opencode"):
-            self.assertTrue(has_effort_path(rt))
-        for rt in ("claude", "copilot", "placeholder-cli-1", None):
-            self.assertFalse(has_effort_path(rt))
-            if rt:
-                self.assertEqual(effort_form(rt, "placeholder-model-1", "high").ignored,
-                                 f"ignored: the runner has no effort flag for {rt}")
-
-    def test_bad_shape_and_no_runtime(self):
-        for rt, value in (("opencode", "High"), ("opencode", ""), ("pi", 3)):
-            self.assertIn("does not match",
-                          effort_form(rt, "placeholder-model-1", value).ignored or "")
-        key = "sk-" + "A" * 24
-        line = effort_form("opencode", "placeholder-model-1", "x\x07" + key).ignored
-        assert line is not None
-        self.assertIn("[redacted]", line)
-        self.assertNotIn(key, line)
-        self.assertNotIn("\x07", line)
-        line = effort_form(
-            "opencode", "placeholder-model-1", "sk-" + "A" * 10 + "\x07" + "A" * 14
-        ).ignored
-        assert line is not None
-        self.assertNotIn("A" * 24, line)
-        self.assertIn("[redacted]", line)
-        self.assertEqual(effort_form(None, "", "high").ignored, lane_effort.NO_RUNTIME_IGNORED)
-
-    def test_listed_pi_id_keeps_its_suffix(self):
-        ident = "fake/placeholder-model-1:high"
-        for level in ("low", "high"):
-            self.assertEqual(effort_form("pi", ident, level, frozenset({ident})).model,
-                             ident + ":" + level)
-        ident = "fake/placeholder-model-1#high"
-        self.assertIsNotNone(effort_form("opencode", ident, "low", frozenset({ident})).ignored)
-
-    def test_composed_ids_pass_the_runner_grammar(self):
-        for rt, ident in (("pi", "fake/placeholder-model-1"),
-                          ("opencode", "fake/placeholder-model-1"),
-                          ("cursor", "placeholder-model-1")):
-            self.assertTrue(runner_dispatch.model_id_ok(rt, effort_form(rt, ident, "high").model))
-
-    def test_runner_has_no_closed_effort_set(self):
-        path = resolve_cross_ai_template_path()
-        assert path is not None
-        text = Path(path).read_text(encoding="utf-8")
-        self.assertNotIn("const CODEX_EFFORTS", text)
-        self.assertNotIn("const PI_THINKING", text)
-        suffix = RUNTIMES["pi"].model_suffix
-        assert suffix is not None
-        for level in lane_effort.RUNNER_PI_LEVELS:
-            self.assertIsNotNone(re.search(suffix, ":" + level))
 
 
 class TestEffortProblem(unittest.TestCase):
@@ -151,10 +50,10 @@ class TestEffortProblem(unittest.TestCase):
             self.assertIn("needs a table runtime", effort_problem(
                 {"key": "k", "effort": "high", **extra}) or "")
 
-    def test_closed_sets_refused(self):
+    def test_levels_are_tokens_not_sets(self):
         for rt, value in (("codex", "max"), ("pi", "ultra")):
-            self.assertIn("cannot be passed", effort_problem(
-                {"key": "k", "runtime": rt, "effort": value}) or "")
+            self.assertIsNone(effort_problem(
+                {"key": "k", "runtime": rt, "effort": value}))
 
     def test_effort_source(self):
         label = effort_source_label("2026-11-20")
@@ -168,11 +67,11 @@ class TestEffortProblem(unittest.TestCase):
 
 
 class TestOfferedLevels(unittest.TestCase):
-    def test_catalog_levels_with_runner_refusal(self):
+    def test_catalog_levels_in_order(self):
         offer = offered_levels("codex", "placeholder-model-1", CAT, None)
-        self.assertEqual(offer.levels, ("minimal", "low", "medium", "high", "xhigh"))
+        self.assertEqual(offer.levels, ("minimal", "low", "medium", "high", "xhigh", "max"))
         self.assertEqual(offer.source, "catalog")
-        self.assertEqual(offer.refused[0][0], "max")
+        self.assertEqual(offer.refused, ())
 
     def test_snapshot_fallback_in_host_order(self):
         self.assertEqual(offered_levels("pi", "fake/placeholder-model-2", {}, SNAP),
@@ -187,10 +86,15 @@ class TestOfferedLevels(unittest.TestCase):
         self.assertEqual(offered_levels("pi", ident, row("pi", ident, ["high", "medium"]),
                                         SNAP).levels, ("medium", "high"))
 
-    def test_unknown_and_no_path(self):
+    def test_unknown_and_every_runtime_offered(self):
         for rt in ("opencode", "claude", "copilot"):
             self.assertEqual(offered_levels(rt, "fake/placeholder-model-9", CAT, SNAP),
                              LevelOffer((), None, ()))
+
+        for rt in ("claude", "copilot"):
+            self.assertEqual(offered_levels(rt, "placeholder-model-1",
+                             row(rt, "placeholder-model-1", ["high"]), None),
+                             LevelOffer(("high",), "catalog", ()))
 
     def test_suffix_stripped_and_name_words(self):
         self.assertEqual(offered_levels("pi", "fake/placeholder-model-2:high", {}, SNAP).levels,
@@ -208,9 +112,9 @@ class TestWriteProblems(unittest.TestCase):
         self.assertEqual(write_problems([lane], catalog, None),
                          ["k: effort 'high' is not in the model's list (xhigh) [catalog]"])
 
-    def test_runner_refused_level_named(self):
+    def test_listed_level_beyond_old_sets_is_written(self):
         lane = {"key": "k", "runtime": "codex", "model": "placeholder-model-1", "effort": "max"}
-        self.assertIn("cannot be passed", write_problems([lane], CAT, None)[0])
+        self.assertEqual(write_problems([lane], CAT, None), [])
 
     def test_unknown_support_and_skips(self):
         lanes = [{"runtime": "opencode", "model": "fake/placeholder-model-9", "effort": "high"},

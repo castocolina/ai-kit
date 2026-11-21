@@ -3,15 +3,23 @@
 Stores nothing; the wizard writes effort and effort_source after an accepted call.
 """
 
-from ai_kit_spec import secret_shapes
+import tempfile
+
+from ai_kit_spec import lane_effort, secret_shapes
 from ai_kit_spec.commands import ResolvedReviewer
-from ai_kit_spec.lane_effort import effort_form, effort_source_label
+from ai_kit_spec.lane_effort import effort_source_label
 from ai_kit_spec.quota import ProbeSeams, probe_reviewer_quota
+from ai_kit_spec.runner_dispatch import preview_setting, print_argv_lines, review_spec
 from ai_kit_spec.usability import sanitize_error
 
 REJECTING_REASONS = ("real_error", "configuration")
 NO_ANSWER_REASON = "the call answered with no text, so acceptance is not shown"
 NO_MODEL_REASON = "the lane has no model, so no call was made"
+NO_PREVIEW_REASON = ("the runner preview did not run (node or the runner template is missing), "
+                     "so the effort form is unknown")
+NO_SETTING_REASON = "the runner preview printed no effort setting line"
+CARRIED_REASON = ("the model id already carries an effort (runner: id_carries); "
+                  "the call cannot show acceptance of the lane effort")
 # The runner's own log and status lines and run_runner's lines, never the host's.
 WRAPPER_LINE_PREFIXES = ("cross-ai:", "AIKIT-XAI ", "ai-kit-spec:")
 
@@ -47,19 +55,34 @@ def _classify(result: dict, effort: str, today: str) -> dict:
         f"the call stopped on '{reason}', which does not show whether the effort is accepted"))
 
 
+def _preview_outcome(resolved, effort, preview_fn) -> dict | None:
+    with tempfile.TemporaryDirectory(prefix="aikit-probe-") as cwd:
+        lines = preview_fn(review_spec(resolved.runtime, resolved.model,
+                                       {**resolved.extra, "effort": effort}, 30, cwd=cwd))
+    if lines is None:
+        return _outcome("inconclusive", effort, reason=NO_PREVIEW_REASON)
+    state = preview_setting(lines, "effort")
+    if state is None or state[0] not in ("applied", "ignored"):
+        return _outcome("inconclusive", effort, reason=NO_SETTING_REASON)
+    if state == ("ignored", "id_carries"):
+        return _outcome("inconclusive", effort, reason=CARRIED_REASON)
+    if state[0] == "ignored":
+        return _outcome("ignored", effort, reason=(
+            f"ignored: the runner reports effort '{effort}' ignored (reason={state[1]})"))
+    return None
+
+
 def probe_effort(resolved: ResolvedReviewer, effort: str, today: str,
-                 seams: ProbeSeams | None = None) -> dict:
+                 seams: ProbeSeams | None = None, preview_fn=None) -> dict:
     """One test call with the effort set; state accepted, rejected, inconclusive or ignored.
     `probe` holds the raw probe result (None when no call ran)."""
-    form = effort_form(resolved.runtime, resolved.model, effort)
-    if form.ignored:
-        return _outcome("ignored", effort, reason=form.ignored)
+    if not isinstance(resolved.runtime, str) or not resolved.runtime:
+        return _outcome("ignored", effort, reason=lane_effort.NO_RUNTIME_IGNORED)
     if not resolved.model:
         return _outcome("inconclusive", effort, reason=NO_MODEL_REASON)
-    if form.model == resolved.model and not form.flags:
-        return _outcome("inconclusive", effort, reason=(
-            f"the model id already carries effort '{effort}'; the call cannot show acceptance "
-            "of the lane effort"))
+    stop = _preview_outcome(resolved, effort, preview_fn or print_argv_lines)
+    if stop is not None:
+        return stop
     result = probe_reviewer_quota(resolved._replace(extra={**resolved.extra, "effort": effort}),
                                   seams=seams)
     return _classify(result, effort, today)

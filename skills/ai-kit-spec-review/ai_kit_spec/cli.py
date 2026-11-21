@@ -44,7 +44,6 @@ from ai_kit_spec.catalog_labels import now_iso
 from ai_kit_spec.commands import (
     ResolvedReviewer,
     build_grok_command,
-    build_reviewer_model_id,
     execute_cli_error,
     render_reviewer_command,
     split_command_template,
@@ -116,6 +115,8 @@ from ai_kit_spec.routing import RuntimesSeams
 from ai_kit_spec.runner_dispatch import (
     RunnerSpec,
     build_runner_argv,
+    preview_model_id,
+    print_argv_lines,
     review_spec,
     run_custom_command,
     run_runner,
@@ -298,9 +299,8 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
 
 
 
-_EFFORT_HELP = ("the lane's effort level: codex gets --codex-effort; pi, cursor and opencode "
-                "carry it in the model id (:level, [effort=...], #variant); any other runtime "
-                "passes nothing and prints an 'ignored:' line naming the reason")
+_EFFORT_HELP = ("the lane's effort level, passed to the runner as --effort; the runner "
+                "applies it in the runtime's own form or reports it ignored with a reason")
 
 
 def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
@@ -1052,9 +1052,6 @@ def _preview_notes(entry: dict) -> list[str]:
             return []
         return [lane_effort.NO_RUNTIME_IGNORED]
     notes = []
-    ignored = _display_spec(entry).ignored
-    if ignored:
-        notes.append(ignored)
     advice = advice_line(entry["runtime"])
     if advice is not None:
         notes.append(f"advice for {entry['runtime']}: {advice}")
@@ -1172,8 +1169,6 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
         })
         argv = build_runner_argv(spec, "<runner>", "node")
         print(json.dumps({"kind": "runner", "argv": argv}))
-        if spec.ignored:
-            print(f"build-command: {spec.ignored}", file=sys.stderr)
         print(f"build-command: a config.toml lane stores runtime and model for {rid}; "
               f"the runner builds this argv at dispatch", file=sys.stderr)
         return 0
@@ -1186,10 +1181,36 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
           f"hand-written command", file=sys.stderr)
     return 1
 
+def _with_fast(base: str, fast: str) -> str:
+    # The runner has no fast setting; this is cursor's own bracket key.
+    # The runner composes effort and context.
+    if base.endswith("]") and "[" in base:
+        return f"{base[:-1]},fast={fast}]"
+    return f"{base}[fast={fast}]"
+
+
 def _cmd_build_model_id(args: argparse.Namespace, deps: CliDeps) -> int:
-    fast = {"true": True, "false": False, None: None}[args.fast]
-    print(build_reviewer_model_id(runtime_id(args.runtime), args.base_model, effort=args.effort,
-                                   fast=fast, context=args.context))
+    rid = runtime_id(args.runtime)
+    base = args.base_model
+    if args.fast is not None:
+        if rid == "cursor":
+            base = _with_fast(base, args.fast)
+        else:
+            print("build-model-id: --fast applies to cursor only; ignored", file=sys.stderr)
+    lines = print_argv_lines(RunnerSpec(rid, base, "review", 30, effort=args.effort,
+                                        context=args.context))
+    if lines is None:
+        print("build-model-id: the runner preview did not run "
+              "(node or the runner template is missing)", file=sys.stderr)
+        return 1
+    for line in lines:
+        if line.startswith("cross-ai: setting "):
+            print(f"build-model-id: {line}", file=sys.stderr)
+    model = preview_model_id(lines)
+    if model is None:
+        print("build-model-id: the runner printed no model-id line", file=sys.stderr)
+        return 1
+    print(model)
     return 0
 
 def _cmd_group_models(args: argparse.Namespace, deps: CliDeps) -> int:

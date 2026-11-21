@@ -24,7 +24,6 @@ from ai_kit_spec.cache import cache_read_json
 from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.error_classifier import classify_error, reason_for_status
-from ai_kit_spec.lane_effort import effort_form
 from ai_kit_spec.lane_settings import lane_escalation
 from ai_kit_spec.model_catalog import cache_catalog_path, split_catalog_meta
 from ai_kit_spec.routing import strip_model_suffix
@@ -64,6 +63,13 @@ _MODEL_ID_SRC = {
     "opencode": OPENCODE_MODEL_ID_SRC,
 }
 
+PREVIEW_TIMEOUT_S = 30
+MODEL_ID_PREFIX = "cross-ai: model-id "
+SETTING_LINE_RE = re.compile(
+    r"^cross-ai: setting (?P<name>[a-z_]+)=\S* (?P<state>applied|ignored|unknown)"
+    r"(?: reason=(?P<reason>[a-z_]+))?"
+)
+
 _NO_NODE_LINE = "ai-kit-spec: subprocess dispatch needs Node (node not found on PATH)"
 _NO_TEMPLATE_LINE = "ai-kit-spec: runner template not found"
 _STDERR_OPEN_LINE = (
@@ -96,8 +102,6 @@ class RunnerSpec(NamedTuple):
     cursor_mode: str | None = None
     codex_sandbox: str | None = None  # the sandbox mode; None is workspace-write
     route: str | None = None  # a confirmed catalog route; None defers to the runner
-    # An effort the runtime cannot take: the line run_runner prints (36 D-05).
-    ignored: str | None = None
     context: str | None = None
     session_id: str | None = None
     escalate_runtime: bool = False
@@ -112,16 +116,16 @@ class RunnerSpec(NamedTuple):
 
 def spec_with_effort(runtime: str, model: str, mode: str, timeout_s: int,
                      knobs: dict) -> RunnerSpec:
-    """Compose effort before constructing the spec so trailer checks see the runner's id.
+    """Pass the bare model and effort to the runner, which composes and reports its form.
 
     Escalation flags are read only through lane_settings.lane_escalation (SPEC R1, R10).
     """
-    form = effort_form(runtime, model, knobs.get("effort"))
     escalation = lane_escalation(knobs)
+    effort = knobs.get("effort")
     return RunnerSpec(
-        runtime, form.model, mode, timeout_s, cwd=knobs.get("cwd"),
-        effort=form.flags[1] if form.flags else None, service_tier=knobs.get("service_tier"),
-        cursor_mode=knobs.get("cursor_mode"), ignored=form.ignored,
+        runtime, model, mode, timeout_s, cwd=knobs.get("cwd"),
+        effort=None if effort is None else str(effort), service_tier=knobs.get("service_tier"),
+        cursor_mode=knobs.get("cursor_mode"),
         escalate_runtime=escalation.runtime, escalate_model=escalation.model,
         # No lane key holds a context label or a session id yet (Phases 40 and 41 adopt them).
         context=None, session_id=None,
@@ -321,6 +325,44 @@ class RunnerSeams(NamedTuple):
     runner_path_fn: Callable[[], str | None] = resolve_cross_ai_template_path
     env_fn: Callable[[], dict] = lambda: dict(os.environ)
     route_fn: Callable[[str, str, dict], str | None] = resolve_route
+
+
+def print_argv_lines(spec: RunnerSpec, seams: RunnerSeams | None = None,
+                     run_fn: Callable[..., Any] = subprocess.run) -> list[str] | None:
+    """The runner's own dry run for one spec (D-01): stdout and stderr lines of --print-argv,
+    or None when node or the template is missing or the call fails to start. No model call."""
+    active = seams or RunnerSeams()
+    node = active.which_fn("node")
+    template = active.runner_path_fn()
+    if not node or not template:
+        return None
+    try:
+        proc = run_fn([node, template, *runner_flags(spec), "--print-argv"],
+                      stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                      timeout=PREVIEW_TIMEOUT_S, cwd=spec.cwd,
+                      env=child_env(env=active.env_fn()), check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    stdout: str = proc.stdout or ""
+    stderr: str = proc.stderr or ""
+    return stdout.splitlines() + stderr.splitlines()
+
+
+def preview_model_id(lines) -> str | None:
+    """Return the first model id printed by the runner."""
+    return next((line[len(MODEL_ID_PREFIX):].strip() for line in lines
+                 if line.startswith(MODEL_ID_PREFIX)), None)
+
+
+def preview_setting(lines, name: str) -> tuple[str, str | None] | None:
+    """Return the first matching setting's state and optional reason."""
+    for line in lines:
+        match = SETTING_LINE_RE.match(line)
+        if match and match.group("name") == name:
+            return match.group("state"), match.group("reason")
+    return None
 
 
 def _start_stderr_relay(stream, seams: RunnerSeams) -> tuple[threading.Thread, _RelayState]:
@@ -625,9 +667,6 @@ def _runner_reason(result: RunnerResult, spec: RunnerSpec, seams: RunnerSeams) -
 def run_runner(spec: RunnerSpec, prompt: str, seams: RunnerSeams | None = None) -> RunnerResult:
     """Runs one candidate through the runner template. No node or template fails closed."""
     active = seams or RunnerSeams()
-    # Before the node check: no path drops a set effort without a line (SPEC R4).
-    if spec.ignored:
-        active.print_fn(f"ai-kit-spec: {spec.ignored}")
     node = active.which_fn("node")
     if not node:
         return _unavailable([], _NO_NODE_LINE, active)

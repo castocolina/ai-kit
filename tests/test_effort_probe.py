@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
@@ -29,44 +30,72 @@ def runner(reason=None, stdout="Hello world!", lines=()):
     return fake, calls
 
 
-def probe(fake, runtime="opencode", model="fake/placeholder-model-1", effort="high"):
+def preview(state, reason=None):
+    def show(spec):
+        return [f"cross-ai: setting effort={spec.effort} {state}"
+                + (f" reason={reason}" if reason else ""), f"cross-ai: model-id {spec.model}"]
+    return show
+
+
+APPLIED_PREVIEW = preview("applied")
+
+
+def probe(fake, runtime: str | None = "opencode", model="fake/placeholder-model-1", effort="high",
+          preview_fn=APPLIED_PREVIEW):
     return effort_probe.probe_effort(ResolvedReviewer("k", model, "", runtime, None, {}),
-                                     effort, "2026-11-20", quota.ProbeSeams(runner_fn=fake))
+                                     effort, "2026-11-20", quota.ProbeSeams(runner_fn=fake),
+                                     preview_fn=preview_fn)
 
 
 class TestProbeEffort(unittest.TestCase):
     def test_accepted_labels_the_date(self):
         fake, calls = runner()
-        result = probe(fake)
+        def show(spec):
+            self.assertTrue(os.path.isdir(spec.cwd))
+            self.assertIsNone(spec.context)
+            self.assertIsNone(spec.session_id)
+            self.assertEqual(spec.model, "fake/placeholder-model-1")
+            self.assertEqual(spec.effort, "high")
+            return preview("applied")(spec)
+        result = probe(fake, preview_fn=show)
         self.assertEqual(result["state"], "accepted")
         self.assertEqual(result["label"], "accepted by a call on 2026-11-20")
-        self.assertEqual((result["level"], result["error"], result["reason"]), ("high", None, None))
-        self.assertTrue(result["probe"]["available"])
-        expected = lane_effort.effort_form("opencode", "fake/placeholder-model-1", "high")
-        self.assertEqual(calls[0].model, expected.model)
-        self.assertEqual(calls[0].mode, "review")
         self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].model, "fake/placeholder-model-1")
+        self.assertEqual(calls[0].effort, "high")
 
     def test_same_level_carried_is_not_certified(self):
         fake, calls = runner()
-        result = probe(fake, "pi", "fake/placeholder-model-1:high")
-        self.assertEqual(result["state"], "inconclusive")
-        self.assertEqual(result["reason"], "the model id already carries effort 'high'; the call "
-                                           "cannot show acceptance of the lane effort")
-        self.assertIsNone(result["label"])
+        result = probe(fake, "pi", "fake/placeholder-model-1:high",
+                       preview_fn=preview("ignored", "id_carries"))
+        self.assertEqual((result["state"], result["reason"]),
+                         ("inconclusive", effort_probe.CARRIED_REASON))
         self.assertFalse(calls)
 
     def test_ignored_makes_no_call(self):
         fake, calls = runner()
-        cases = [("claude", "placeholder-model-1", "high"),
-                 ("copilot", "placeholder-model-1", "high"),
-                 ("codex", "placeholder-model-1", "max"), (None, "", "high")]
-        for runtime, model, level in cases:
-            expected = lane_effort.effort_form(runtime, model, level).ignored
-            result = probe(fake, runtime, model, level)
-            self.assertEqual(result["reason"], expected)
-            self.assertEqual((result["state"], result["probe"], result["label"]),
-                             ("ignored", None, None))
+        for runtime in ("claude", "copilot"):
+            result = probe(fake, runtime, "placeholder-model-1",
+                           preview_fn=preview("ignored", "no_form"))
+            self.assertEqual(result["state"], "ignored")
+            self.assertEqual(result["reason"],
+                "ignored: the runner reports effort 'high' ignored (reason=no_form)")
+        result = probe(fake, None, "", preview_fn=self.fail)
+        self.assertEqual(result["reason"], lane_effort.NO_RUNTIME_IGNORED)
+        self.assertFalse(calls)
+
+    def test_no_preview_is_inconclusive(self):
+        fake, calls = runner()
+        result = probe(fake, preview_fn=lambda _: None)
+        self.assertEqual((result["state"], result["reason"]),
+                         ("inconclusive", effort_probe.NO_PREVIEW_REASON))
+        self.assertFalse(calls)
+
+    def test_no_setting_line_is_inconclusive(self):
+        fake, calls = runner()
+        result = probe(fake, preview_fn=lambda _: [])
+        self.assertEqual((result["state"], result["reason"]),
+                         ("inconclusive", effort_probe.NO_SETTING_REASON))
         self.assertFalse(calls)
 
     def test_rejected_keeps_a_clean_first_line(self):
@@ -127,7 +156,7 @@ class TestProbeEffort(unittest.TestCase):
             seams = quota.ProbeSeams(
                 runner_fn=fake, env_fn=lambda: {"HOME": root, "XDG_CACHE_HOME": root + "/cache"})
             resolved = ResolvedReviewer("k", "fake/placeholder-model-1", "", "pi", None, {})
-            effort_probe.probe_effort(resolved, "high", "2026-11-20", seams)
+            effort_probe.probe_effort(resolved, "high", "2026-11-20", seams, preview("applied"))
             self.assertEqual(os.listdir(root), [])
 
 
@@ -139,6 +168,11 @@ def invoke(args, **kwargs):
 
 
 class TestCheckReviewerEffort(unittest.TestCase):
+    def setUp(self):
+        active = patch.object(effort_probe, "print_argv_lines", side_effect=preview("applied"))
+        active.start()
+        self.addCleanup(active.stop)
+
     def test_effort_with_catalog_path_exits_2(self):
         self.check_guard(["--effort", "high"])
 
@@ -169,7 +203,8 @@ class TestCheckReviewerEffort(unittest.TestCase):
         self.assertEqual((outcome["state"], outcome["level"]), ("accepted", "high"))
         self.assertRegex(outcome["label"], r"^accepted by a call on \d{4}-\d{2}-\d{2}$")
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].model, "fake/placeholder-model-1:high")
+        self.assertEqual(calls[0].model, "fake/placeholder-model-1")
+        self.assertEqual(calls[0].effort, "high")
 
     def test_rejected_output_is_redacted(self):
         key = "sk-" + "A" * 24
@@ -213,13 +248,12 @@ class TestRenderTomlEffort(unittest.TestCase):
         self.assertIn(lane_effort.write_problems([self.lane], self.catalog, None)[0], err)
         self.assertFalse(target.exists())
 
-    def test_runner_refused_level_refused(self):
+    def test_listed_max_level_writes(self):
         self.catalog["fake/placeholder-model-1"]["runtimes"]["codex"]["efforts"].append("max")
         cache_write_json(cache_catalog_path(self.env), self.catalog)
         lane = {**self.lane, "effort": "max"}
-        code, _, err = self.run_render(lane)
-        self.assertEqual(code, 1)
-        self.assertIn(lane_effort.write_problems([lane], self.catalog, None)[0], err)
+        code, _, _ = self.run_render(lane)
+        self.assertEqual(code, 0)
 
     def test_unknown_support_and_listed_level_write(self):
         lane = {**self.lane, "runtime": "opencode", "model": "fake/placeholder-model-1",

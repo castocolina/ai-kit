@@ -812,47 +812,21 @@ def _base_id(runtime):
 
 
 def _check_effort_spec(test, spec, runtime, base):
-    expected = lane_effort.effort_form(runtime, base, "high")
-    test.assertEqual(spec.model, expected.model)
-    test.assertEqual(spec.ignored, expected.ignored)
+    test.assertEqual(spec.runtime, runtime)
+    test.assertEqual(spec.model, base)
+    test.assertEqual(spec.effort, "high")
     flags = runner_flags(spec)
-    if runtime == "codex":
-        test.assertEqual(flags[flags.index("--effort") + 1], "high")
-    elif expected.ignored:
-        test.assertNotIn("high", flags)
-        test.assertTrue(expected.ignored.startswith("ignored: "))
-        test.assertIn(runtime, expected.ignored)
-    else:
-        test.assertNotEqual(spec.model, base)
+    test.assertEqual(flags[flags.index("--effort") + 1], "high")
 
 
 class TestEffortWiring(unittest.TestCase):
-    def test_composed_pi_model_keeps_the_trailer(self):
+    def test_bare_pi_model_keeps_the_trailer(self):
         spec = review_spec("pi", _base_id("pi"), {"effort": "high"}, 30)
         popen = _ScriptedPopen([_FakeProc([_status_line(cli="pi", model=spec.model)])])
         result = run_runner(spec, "hello", _seams(popen, [], []))
         self.assertIsNotNone(result.status)
         self.assertIsNone(result.reason)
         self.assertEqual(popen.argvs[0][popen.argvs[0].index("--model") + 1], spec.model)
-
-    def test_run_runner_prints_the_ignored_line_first(self):
-        spec = review_spec("copilot", _base_id("copilot"), {"effort": "high"}, 30)
-        lines = []
-        popen = _ScriptedPopen([_FakeProc([_status_line(cli="copilot", model=spec.model)])])
-        run_runner(spec, "hello", _seams(popen, lines, []))
-        self.assertEqual(lines[0], "ai-kit-spec: " + str(spec.ignored))
-        self.assertNotIn("high", popen.argvs[0])
-
-    def test_ignored_line_prints_without_node(self):
-        spec = review_spec("copilot", _base_id("copilot"), {"effort": "high"}, 30)
-        lines = []
-        popen = _ScriptedPopen([])
-        seams = _seams(popen, lines, [])._replace(which_fn=lambda _: None)
-        result = run_runner(spec, "hello", seams)
-        self.assertEqual(lines[0], "ai-kit-spec: " + str(spec.ignored))
-        self.assertTrue(lines[1].startswith("ai-kit-spec: subprocess dispatch needs Node"))
-        self.assertEqual(result.reason, "dispatch_unavailable")
-        self.assertEqual(popen.argvs, [])
 
     def test_no_effort_prints_nothing(self):
         spec = review_spec("opencode", _base_id("opencode"), None, 30)
@@ -865,7 +839,6 @@ class TestEffortWiring(unittest.TestCase):
                            {"effort": "high", "service_tier": "priority"}, 30)
         self.assertEqual(spec.effort, "high")
         self.assertEqual(spec.service_tier, "priority")
-        self.assertIsNone(spec.ignored)
         _check_effort_spec(self, spec, "codex", _base_id("codex"))
 
     def _paths(self, runtime, effort):
@@ -912,7 +885,6 @@ class TestEffortWiring(unittest.TestCase):
             with self.subTest(runtime=runtime):
                 for spec in self._paths(runtime, False):
                     self.assertEqual(spec.model, _base_id(runtime))
-                    self.assertIsNone(spec.ignored)
                     self.assertNotIn("--effort", runner_flags(spec))
 
     def test_build_command_forms(self):
@@ -923,13 +895,9 @@ class TestEffortWiring(unittest.TestCase):
                     code = main(["build-command", "--runtime", runtime, "--effort", "high"])
                 self.assertEqual(code, 0)
                 argv = json.loads(out.getvalue())["argv"]
-                expected = lane_effort.effort_form(runtime, "{model}", "high")
-                self.assertEqual(argv[argv.index("--model") + 1], expected.model)
-                if expected.ignored:
-                    self.assertIn("build-command: " + expected.ignored, err.getvalue())
-                    self.assertNotIn("high", argv)
-                if runtime == "codex":
-                    self.assertEqual(argv[argv.index("--effort") + 1], "high")
+                self.assertEqual(argv[argv.index("--model") + 1], "{model}")
+                self.assertEqual(argv[argv.index("--effort") + 1], "high")
+                self.assertNotIn("build-command: ignored", err.getvalue())
 
     def test_render_command_forms_and_advice(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -950,10 +918,9 @@ class TestEffortWiring(unittest.TestCase):
                         code = main(args, which_fn=lambda _: None)
                     self.assertEqual(code, 0)
                     argv = json.loads(out.getvalue())
-                    expected = lane_effort.effort_form(runtime, base, "high")
-                    self.assertEqual(argv[argv.index("--model") + 1], expected.model)
-                    if expected.ignored:
-                        self.assertIn("render-command: " + expected.ignored, err.getvalue())
+                    self.assertEqual(argv[argv.index("--model") + 1], base)
+                    self.assertEqual(argv[argv.index("--effort") + 1], "high")
+                    self.assertNotIn("render-command: ignored", err.getvalue())
                     if runtime == "claude":
                         advice = detection.advice_line(runtime)
                         self.assertIsNotNone(advice)
@@ -988,7 +955,7 @@ class TestEffortWiring(unittest.TestCase):
                 with redirect_stdout(out), self.assertRaises(SystemExit):
                     main([sub, "--help"])
                 text = " ".join(out.getvalue().split())
-                self.assertIn("'ignored:' line", text)
+                self.assertIn("reports it ignored with a reason", text)
                 self.assertNotIn("silently ignore", text)
 
 
@@ -1036,8 +1003,8 @@ class TestDispatchReviewerRunner(unittest.TestCase):
         self.assertEqual(code, 0, err.getvalue())
         spec = seen["spec"]
         self.assertEqual(spec.runtime, "opencode")
-        self.assertEqual(spec.model, "fake/placeholder-model-1#high")
-        self.assertIsNone(spec.ignored)
+        self.assertEqual(spec.model, "fake/placeholder-model-1")
+        self.assertEqual(spec.effort, "high")
         self.assertEqual(spec.mode, "review")
         self.assertEqual(spec.timeout_s, 600)
         self.assertIsNone(spec.cwd)

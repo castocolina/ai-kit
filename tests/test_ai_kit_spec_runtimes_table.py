@@ -441,14 +441,6 @@ class TestLegacyEntryPoints(unittest.TestCase):
         self.assertIsNotNone(rejection)
         assert rejection is not None
         self.assertTrue(rejection.startswith("'claude' "), rejection)
-        self.assertEqual(
-            commands.build_reviewer_model_id("cursor", "m", effort="high"),
-            commands.build_reviewer_model_id("cursor-agent", "m", effort="high"),
-        )
-        self.assertEqual(
-            commands.build_reviewer_model_id("cursor", "m", effort="high"),
-            "m[effort=high]",
-        )
 
     def test_cli_runtime_flag_matches_the_legacy_alias(self):
         legacy = io.StringIO()

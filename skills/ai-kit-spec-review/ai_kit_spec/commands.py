@@ -80,37 +80,6 @@ def execute_cli_error(cli) -> str | None:
             f"{exec_formula_source(row)}")
 
 
-def build_cursor_agent_model_id(base_model: str, effort=None, fast=None, context=None) -> str:
-    """cursor's own per-call effort/fast/context tuning lives in the --model
-    argument itself via bracket-parameter overrides (confirmed live, --help:
-    "Parameterized models accept quoted bracket overrides, e.g.
-    'claude-opus-4-8[context=1m,effort=high, fast=false]'"), not a separate
-    runner flag — this builds that string for the reviewer entry's own
-    `model` field instead. Returns `base_model` unchanged when no overrides
-    are given, so calling this is always safe even with nothing to override."""
-    overrides = []
-    if effort:
-        overrides.append(f"effort={effort}")
-    if fast is not None:
-        overrides.append(f"fast={'true' if fast else 'false'}")
-    if context:
-        overrides.append(f"context={context}")
-    if not overrides:
-        return base_model
-    return f"{base_model}[{','.join(overrides)}]"
-
-
-def build_reviewer_model_id(cli: str, base_model: str, effort=None, fast=None,
-                             context=None) -> str:
-    """The `model` field itself. Only cursor encodes effort/fast/context as
-    bracket overrides on the model id; every other runtime takes its knobs as
-    runner flags, so this returns base_model unchanged for them rather than
-    raising."""
-    if runtime_id(cli) == "cursor":
-        return build_cursor_agent_model_id(base_model, effort=effort, fast=fast, context=context)
-    return base_model
-
-
 def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> list[str]:
     """Fill a custom reviewer's `command` template and return the argv list to run, with no
     shell (D-21). Table-runtime entries have no command: the runner builds their argv, so this

@@ -60,9 +60,7 @@ from ai_kit_spec.cache import (
 from ai_kit_spec.cli import main
 from ai_kit_spec.commands import (
     ResolvedReviewer,
-    build_cursor_agent_model_id,
     build_grok_command,
-    build_reviewer_model_id,
     render_reviewer_command,
 )
 from ai_kit_spec.config_io import (
@@ -3161,26 +3159,6 @@ class TestBuildGrokCommand(unittest.TestCase):
         )
 
 
-class TestBuildReviewerModelId(unittest.TestCase):
-    def test_cursor_agent_adds_bracket_overrides(self):
-        model_id = build_cursor_agent_model_id(
-            "claude-opus-4-8", effort="high", fast=False, context="1m"
-        )
-        self.assertEqual(model_id, "claude-opus-4-8[effort=high,fast=false,context=1m]")
-
-    def test_cursor_agent_no_overrides_returns_base_model_unchanged(self):
-        self.assertEqual(build_cursor_agent_model_id("claude-opus-4-8"), "claude-opus-4-8")
-
-    def test_dispatches_via_cli_name(self):
-        self.assertEqual(
-            build_reviewer_model_id("cursor-agent", "gpt-5.3-codex", effort="low"),
-            "gpt-5.3-codex[effort=low]",
-        )
-
-    def test_non_cursor_cli_returns_base_model_unchanged(self):
-        self.assertEqual(build_reviewer_model_id("codex", "gpt-5.2", effort="high"), "gpt-5.2")
-
-
 class TestRenderReviewerCommand(unittest.TestCase):
     def test_fills_model_and_prompt(self):
         resolved = ResolvedReviewer(
@@ -4700,38 +4678,6 @@ class TestMainCli(unittest.TestCase):
         self.assertEqual(out.getvalue(), "")
         self.assertIn("hand-written command", err.getvalue())
         self.assertIn("gemini", err.getvalue())
-
-    def test_build_model_id_applies_cursor_agent_overrides(self):
-        import io
-        from contextlib import redirect_stdout
-
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            code = main(
-                [
-                    "build-model-id",
-                    "--cli",
-                    "cursor-agent",
-                    "--base-model",
-                    "glm-5.2-high",
-                    "--fast",
-                    "true",
-                ]
-            )
-        self.assertEqual(code, 0)
-        self.assertEqual(buf.getvalue().strip(), "glm-5.2-high[fast=true]")
-
-    def test_build_model_id_non_cursor_cli_returns_base_model(self):
-        import io
-        from contextlib import redirect_stdout
-
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            code = main(
-                ["build-model-id", "--cli", "codex", "--base-model", "gpt-5.2", "--effort", "high"]
-            )
-        self.assertEqual(code, 0)
-        self.assertEqual(buf.getvalue().strip(), "gpt-5.2")
 
     def test_group_models_reads_the_named_clis_models_from_a_runtimes_snapshot(self):
         import io
