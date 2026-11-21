@@ -72,6 +72,25 @@ _LABEL_CODEX = (
 _LABEL_CLAUDE = "live-verified (01.2) via the process's own env dump."
 
 
+class ExecFormula(NamedTuple):
+    """The runner's exec entry for one runtime (36 D-08): the leading argv tokens its
+    --print-argv prints in exec mode, or None when the runner's exec entry is null.
+    tests/test_ai_kit_spec_exec_formula_e2e.py fails on drift; Phase 37 deletes this mirror.
+    """
+
+    head: tuple[str, ...] | None
+    source: str
+
+
+class Advice(NamedTuple):
+    """Seed advice the wizard and the preview show, labelled unverified; no branch reads it
+    (36 SPEC R7).
+    """
+
+    text: str
+    source: str
+
+
 class Runtime(NamedTuple):
     binaries: tuple[str, ...]
     host_signals: tuple[tuple[str, str], ...]
@@ -82,6 +101,8 @@ class Runtime(NamedTuple):
     model_suffix: str | None = None
     multi_provider: bool = False
     runner: bool = True
+    exec_formula: ExecFormula | None = None
+    advice: Advice | None = None
 
 
 # Insertion order is host precedence. grok is a row, never a detected host (D-03).
@@ -93,6 +114,8 @@ RUNTIMES: dict[str, Runtime] = {
         (("PI_CODING_AGENT", _LABEL_PI),),
         list_argv=PI_RPC_ARGS,
         model_suffix=r":(?:off|minimal|low|medium|high|xhigh|max)$",
+        exec_formula=ExecFormula(
+            ("-p", "--model"), "cross-ai.mjs RUNTIMES.pi.exec, read 2026-11-20"),
     ),
     "opencode": Runtime(
         ("opencode",),
@@ -100,6 +123,8 @@ RUNTIMES: dict[str, Runtime] = {
         list_argv=("models",),
         model_suffix=r"#[^#/]+$",
         multi_provider=True,
+        exec_formula=ExecFormula(
+            ("run", "--model"), "cross-ai.mjs RUNTIMES.opencode.exec, read 2026-11-20"),
     ),
     "cursor": Runtime(
         ("cursor-agent", "agent"),
@@ -107,12 +132,18 @@ RUNTIMES: dict[str, Runtime] = {
         list_argv=("models",),
         model_suffix=r"\[[^\]]*\]$",
         multi_provider=True,
+        exec_formula=ExecFormula(
+            ("-p", "--output-format", "json", "--model"),
+            "cross-ai.mjs RUNTIMES.cursor.exec, read 2026-11-20"),
     ),
     "codex": Runtime(
         ("codex",),
         (("CODEX_THREAD_ID", _LABEL_CODEX), ("CODEX_VERSION", _LABEL_CODEX)),
         scrub_signals=("CODEX_SANDBOX",),
         list_argv=("debug", "models"),
+        exec_formula=ExecFormula(
+            ("exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "-C"),
+            "cross-ai.mjs RUNTIMES.codex.exec, read 2026-11-20"),
     ),
     "claude": Runtime(
         ("claude",),
@@ -120,9 +151,16 @@ RUNTIMES: dict[str, Runtime] = {
         scrub_signals=("CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"),
         native_selectors=("fable", "opus", "sonnet", "haiku"),
         review_only=True,
+        exec_formula=ExecFormula(
+            None, "cross-ai.mjs RUNTIMES.claude.exec is null, read 2026-11-20"),
+        advice=Advice("usually the main agent in this host", "seed row"),
     ),
     # copilot has no known host signal (unverified) and its runner rows are unverified.
-    "copilot": Runtime(("copilot",), (), runner=True),
+    "copilot": Runtime(
+        ("copilot",), (), runner=True,
+        exec_formula=ExecFormula(
+            ("-p", "<prompt>", "-s", "--no-ask-user", "--model"),
+            "cross-ai.mjs RUNTIMES.copilot.exec, read 2026-11-20")),
     "grok": Runtime(
         ("grok",),
         (),
@@ -132,6 +170,29 @@ RUNTIMES: dict[str, Runtime] = {
 }
 
 KNOWN_CLIS = tuple(RUNTIMES)
+
+
+def has_exec_formula(row: Runtime) -> bool:
+    """True when the runner has an exec formula for this row (36 D-08): the one predicate
+    the execute set and routing read.
+    """
+    return row.exec_formula is not None and row.exec_formula.head is not None
+
+
+NO_RUNNER_ENTRY = "cross-ai.mjs RUNTIMES has no entry for this runtime"
+
+
+def exec_formula_source(row: Runtime) -> str:
+    """The source label a no-formula refusal cites (36 SPEC R7)."""
+    return row.exec_formula.source if row.exec_formula is not None else NO_RUNNER_ENTRY
+
+
+def advice_line(runtime: str) -> str | None:
+    """The seed advice line for a preview or the wizard, or None; display only (36 SPEC R7)."""
+    row = RUNTIMES.get(runtime)
+    if row is None or row.advice is None:
+        return None
+    return f"{row.advice.text} [{row.advice.source}, unverified]"
 
 # 16 D-04: the host's own `--model` flag resolves these selectors (from its help and
 # documentation). Hardcoded because the host has no list-models command; these are its

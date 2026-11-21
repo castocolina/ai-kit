@@ -78,7 +78,7 @@ class TestRuntimeTable(unittest.TestCase):
             ["pi", "opencode", "cursor", "codex", "claude", "copilot", "grok"],
         )
         self.assertEqual(detection.KNOWN_CLIS, tuple(detection.RUNTIMES))
-        self.assertTrue(detection.RUNTIMES["claude"].review_only)
+        self.assertFalse(detection.has_exec_formula(detection.RUNTIMES["claude"]))
         self.assertFalse(detection.RUNTIMES["grok"].runner)
         self.assertEqual(detection.RUNTIMES["cursor"].model_suffix, r"\[[^\]]*\]$")
 
@@ -139,6 +139,37 @@ class TestRuntimeTable(unittest.TestCase):
         )
         for env, expected in pairs:
             self.assertEqual(detection.detect_current_runtime(env), expected)
+
+
+class TestExecFormulaTable(unittest.TestCase):
+    def test_advice_line_is_labelled_unverified(self):
+        self.assertEqual(detection.advice_line("claude"),
+                         "usually the main agent in this host [seed row, unverified]")
+        self.assertIsNone(detection.advice_line("codex"))
+        self.assertIsNone(detection.advice_line("placeholder-cli-1"))
+
+    def test_exec_formula_source(self):
+        self.assertEqual(detection.exec_formula_source(detection.RUNTIMES["claude"]),
+                         "cross-ai.mjs RUNTIMES.claude.exec is null, read 2026-11-20")
+        row = detection.Runtime(("placeholder-cli-1",), ())
+        self.assertEqual(detection.exec_formula_source(row), detection.NO_RUNNER_ENTRY)
+        self.assertEqual(detection.NO_RUNNER_ENTRY,
+                         "cross-ai.mjs RUNTIMES has no entry for this runtime")
+
+    def test_formula_set_is_the_execute_set(self):
+        actual = tuple(sorted(rid for rid, row in detection.RUNTIMES.items()
+                              if detection.has_exec_formula(row)))
+        self.assertEqual(actual, commands.SUPPORTED_EXECUTE_CLIS)
+        self.assertEqual(actual, ("codex", "copilot", "cursor", "opencode", "pi"))
+
+    def test_runner_rows_carry_a_formula(self):
+        for rid, row in detection.RUNTIMES.items():
+            if row.runner:
+                self.assertIsNotNone(row.exec_formula, rid)
+        formula = detection.RUNTIMES["claude"].exec_formula
+        assert formula is not None
+        self.assertIsNone(formula.head)
+        self.assertFalse(detection.has_exec_formula(detection.RUNTIMES["claude"]))
 
 
 class TestCatalogRuntimeMigration(unittest.TestCase):
@@ -409,7 +440,7 @@ class TestLegacyEntryPoints(unittest.TestCase):
         rejection = commands.execute_cli_error("claude")
         self.assertIsNotNone(rejection)
         assert rejection is not None
-        self.assertIn("cannot be an execution CLI", rejection)
+        self.assertTrue(rejection.startswith("'claude' "), rejection)
         self.assertEqual(
             commands.build_reviewer_model_id("cursor", "m", effort="high"),
             commands.build_reviewer_model_id("cursor-agent", "m", effort="high"),
