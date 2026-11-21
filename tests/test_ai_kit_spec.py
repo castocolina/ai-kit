@@ -4656,7 +4656,7 @@ class TestMainCli(unittest.TestCase):
         self.assertIn("codex", argv)
         self.assertIn("--model", argv)
         self.assertIn("{model}", argv)
-        self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
+        self.assertEqual(argv[argv.index("--effort") + 1], "high")
         self.assertIn("a config.toml lane stores runtime and model", err.getvalue())
         self.assertIn("codex", err.getvalue())
 

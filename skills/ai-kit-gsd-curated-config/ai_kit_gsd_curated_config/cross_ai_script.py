@@ -18,9 +18,9 @@ HEADER_RE = re.compile(
     rb"^// ai-kit-cross-ai generator=ai-kit-gsd-curated-config "
     rb"template=(\d+) sha256=(?P<sha>[0-9a-f]{64}|UNSTAMPED)$"
 )
-# A floor, not the current version: template 8 is the first that accepts --runtime/--model and
-# the retry config. Template 7 has neither; templates 3-6 can still fall back.
-_READY_TEMPLATE = 8
+# A floor, not the current version: template 9 is the first that accepts the phase-37 call
+# vocabulary (--role, --effort, --host, ...) the builders emit. Template 8 and older are not ready.
+_READY_TEMPLATE = 9
 _CONFIG_START = b"// <config>"
 _CONFIG_END = b"// </config>"
 _CONFIG_MARKER = b"const CONFIG = "

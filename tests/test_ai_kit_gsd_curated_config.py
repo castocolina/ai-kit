@@ -743,7 +743,7 @@ class TestBuildExecutionCommandRunner(unittest.TestCase):
         self.assertEqual(
             command,
             "node .planning/scripts/cross-ai.mjs --runtime cursor "
-            "--model auto --mode exec",
+            "--model auto --role execute --host auto",
         )
 
     def test_codex_ends_with_the_sandbox_flag(self):

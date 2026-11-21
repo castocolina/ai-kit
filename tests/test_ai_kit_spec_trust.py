@@ -151,7 +151,7 @@ class TestTrustLifecycle(TrustEnvTestCase):
         self.write_local(b'[lanes]\nstrategy = "local-only"\n[[lanes.review]]\nkey = "c"\n'
                          b'runtime = "codex"\nmodel = "gpt"\neffort = "high"\n')
         argv = self.show_lines()[0]["argv"]
-        self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
+        self.assertEqual(argv[argv.index("--effort") + 1], "high")
 
     def test_show_renders_placeholder_hidden_flag_and_executable(self):
         # A-CR-01: a placeholder must never hide what runs -- the consent display shows the

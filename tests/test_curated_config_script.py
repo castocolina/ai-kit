@@ -63,7 +63,7 @@ class TestRender(unittest.TestCase):
         shipped = cross_ai_script.template_version(self.template)
         self.assertEqual(cross_ai.TEMPLATE_VERSION, shipped)
         self.assertEqual(cross_ai_script._READY_TEMPLATE, shipped)
-        self.assertEqual(shipped, 8)
+        self.assertEqual(shipped, 9)
 
     def test_project_paths_match_the_runner_dispatch_paths(self):
         # PT-07: the GSD hook names files this module renders.
@@ -586,7 +586,23 @@ class TestEnsureRunnerStates(unittest.TestCase):
             with open(target, "rb") as handle:
                 self.assertEqual(handle.read(), data)
 
-    def test_edited_template_8_kept_and_ready(self):
+    def test_edited_template_8_writes_new_and_is_not_ready(self):
+        # Template 8 rejects --role, --effort and --host, which the builders now emit.
+        with tempfile.TemporaryDirectory() as tmp:
+            data = re.sub(rb"template=\d+", b"template=8",
+                          _current_pristine(self.template), count=1) + b"\n"
+            target = self._runner(tmp)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(data)
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual(code, 1)
+            self.assertFalse(result["ready"])
+            self.assertEqual(result["runner"], "new-as-.new")
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), data)
+
+    def test_edited_current_template_kept_and_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = _current_pristine(self.template) + b"\n"
             target = self._runner(tmp)

@@ -99,8 +99,7 @@ def build_execute_guidance(spec: ExecuteDispatchSpec, seams: ExecuteSeams) -> st
 def _runner_spec(candidate: dict, spec: ExecuteDispatchSpec) -> RunnerSpec:
     """One exec-mode runner spec; runner_flags adds codex's OS write confinement (D-27)."""
     return spec_with_effort(candidate["runtime"], candidate["model"], "exec", spec.timeout,
-                            {"cwd": spec.target_dir, "effort": candidate.get("effort"),
-                             "service_tier": candidate.get("service_tier")})
+                            {**candidate, "cwd": spec.target_dir})
 
 
 def _refuse_candidate(candidate: dict, target_dir: str) -> str:

@@ -623,13 +623,6 @@
    ]
   },
   {
-   "path": "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_script.py",
-   "cleaned_by": "backlog",
-   "hits": [
-    "flag and"
-   ]
-  },
-  {
    "path": "skills/ai-kit-gsd-curated-config/evals/01-claude-rigorous-cross-ai.md",
    "cleaned_by": "backlog",
    "hits": [

@@ -360,6 +360,9 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
     p_build_cmd = sub.add_parser("build-command")
     p_build_cmd.add_argument("--runtime", "--cli", dest="runtime", required=True,
                               help="runtime id, e.g. opencode, cursor")
+    p_build_cmd.add_argument("--role", choices=["review", "execute"], default="review",
+                              help="the lane role; execute builds the exec-mode flags "
+                                   "(default review)")
     p_build_cmd.add_argument("--effort", default=None, help=_EFFORT_HELP)
     p_build_cmd.add_argument("--service-tier", default=None)
     p_build_cmd.add_argument("--mode", default=None,
@@ -1162,7 +1165,8 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
     rid = runtime_id(args.runtime)
     row = RUNTIMES.get(rid)
     if row is not None and row.runner:
-        spec = spec_with_effort(rid, "{model}", "review", 600, {
+        spec = spec_with_effort(rid, "{model}",
+                                "exec" if args.role == "execute" else "review", 600, {
             "effort": args.effort, "service_tier": args.service_tier,
             "cursor_mode": args.mode if rid == "cursor" else None,
         })

@@ -141,7 +141,7 @@ class TestProjectRunnerCommand(unittest.TestCase):
         self.assertEqual(
             rd.project_runner_command(spec),
             "node .planning/scripts/cross-ai.mjs --runtime opencode "
-            "--model router-env/my-coding --mode exec",
+            "--model router-env/my-coding --role execute --host auto",
         )
 
     def test_codex_sandbox_only_in_exec_mode(self):
@@ -184,8 +184,8 @@ class TestBuildRunnerArgv(unittest.TestCase):
         argv = build_runner_argv(spec, "/runner/cross-ai.mjs", "node")
         self.assertEqual(argv, [
             "node", "/runner/cross-ai.mjs", "--runtime", "opencode", "--model",
-            "fake/ok", "--mode", "review", "--timeout", "600", "--outer-timeout", "630",
-            "--no-preamble",
+            "fake/ok", "--role", "review", "--host", "auto", "--timeout", "600",
+            "--outer-timeout", "630", "--no-preamble",
         ])
 
     def test_codex_exec_knobs(self):
@@ -194,7 +194,7 @@ class TestBuildRunnerArgv(unittest.TestCase):
             service_tier="priority", codex_sandbox="workspace-write",
         )
         flags = runner_flags(spec)
-        self.assertIn("--codex-effort", flags)
+        self.assertEqual(flags[flags.index("--effort") + 1], "high")
         self.assertIn("--codex-service-tier", flags)
         self.assertEqual(flags[flags.index("--codex-sandbox") + 1], "workspace-write")
 
@@ -231,7 +231,7 @@ class TestBuildRunnerArgv(unittest.TestCase):
                 )
                 self.assertEqual(argv[argv.index("--route-pi") + 1], route)
                 self.assertEqual(argv[:8], ["node", "/runner/cross-ai.mjs", "--runtime", "pi",
-                                            "--model", "fake/ok", "--mode", "review"])
+                                            "--model", "fake/ok", "--role", "review"])
 
     def test_no_route_leaves_the_argv_unchanged(self):
         argv = build_runner_argv(_spec(), "/runner/cross-ai.mjs", "node")
@@ -817,7 +817,7 @@ def _check_effort_spec(test, spec, runtime, base):
     test.assertEqual(spec.ignored, expected.ignored)
     flags = runner_flags(spec)
     if runtime == "codex":
-        test.assertEqual(flags[flags.index("--codex-effort") + 1], "high")
+        test.assertEqual(flags[flags.index("--effort") + 1], "high")
     elif expected.ignored:
         test.assertNotIn("high", flags)
         test.assertTrue(expected.ignored.startswith("ignored: "))
@@ -913,7 +913,7 @@ class TestEffortWiring(unittest.TestCase):
                 for spec in self._paths(runtime, False):
                     self.assertEqual(spec.model, _base_id(runtime))
                     self.assertIsNone(spec.ignored)
-                    self.assertNotIn("--codex-effort", runner_flags(spec))
+                    self.assertNotIn("--effort", runner_flags(spec))
 
     def test_build_command_forms(self):
         for runtime in _EFFORT_RUNTIMES:
@@ -929,7 +929,7 @@ class TestEffortWiring(unittest.TestCase):
                     self.assertIn("build-command: " + expected.ignored, err.getvalue())
                     self.assertNotIn("high", argv)
                 if runtime == "codex":
-                    self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
+                    self.assertEqual(argv[argv.index("--effort") + 1], "high")
 
     def test_render_command_forms_and_advice(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1107,7 +1107,7 @@ class TestDispatchReviewerRunner(unittest.TestCase):
         self.assertEqual(code, 0)
         argv = json.loads(out.getvalue())
         self.assertEqual(argv[argv.index("--timeout") + 1], "900")
-        self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
+        self.assertEqual(argv[argv.index("--effort") + 1], "high")
 
     def test_skip_route_and_model_less_entry_raise_and_spawn_nothing(self):
         def never(*_args):

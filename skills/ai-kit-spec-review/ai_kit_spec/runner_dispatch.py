@@ -25,6 +25,7 @@ from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.error_classifier import classify_error, reason_for_status
 from ai_kit_spec.lane_effort import effort_form
+from ai_kit_spec.lane_settings import lane_escalation
 from ai_kit_spec.model_catalog import cache_catalog_path, split_catalog_meta
 from ai_kit_spec.routing import strip_model_suffix
 from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
@@ -97,16 +98,33 @@ class RunnerSpec(NamedTuple):
     route: str | None = None  # a confirmed catalog route; None defers to the runner
     # An effort the runtime cannot take: the line run_runner prints (36 D-05).
     ignored: str | None = None
+    context: str | None = None
+    session_id: str | None = None
+    escalate_runtime: bool = False
+    escalate_model: bool = False
+    # D-23: ai-kit calls host by default; the runner's own default stays none.
+    host: str | None = "auto"
+
+    @property
+    def role(self) -> str:
+        return "execute" if self.mode == "exec" else "review"
 
 
 def spec_with_effort(runtime: str, model: str, mode: str, timeout_s: int,
                      knobs: dict) -> RunnerSpec:
-    """Compose effort before constructing the spec so trailer checks see the runner's id."""
+    """Compose effort before constructing the spec so trailer checks see the runner's id.
+
+    Escalation flags are read only through lane_settings.lane_escalation (SPEC R1, R10).
+    """
     form = effort_form(runtime, model, knobs.get("effort"))
+    escalation = lane_escalation(knobs)
     return RunnerSpec(
         runtime, form.model, mode, timeout_s, cwd=knobs.get("cwd"),
         effort=form.flags[1] if form.flags else None, service_tier=knobs.get("service_tier"),
         cursor_mode=knobs.get("cursor_mode"), ignored=form.ignored,
+        escalate_runtime=escalation.runtime, escalate_model=escalation.model,
+        # No lane key holds a context label or a session id yet (Phases 40 and 41 adopt them).
+        context=None, session_id=None,
     )
 
 
@@ -114,11 +132,8 @@ def review_spec(runtime: str, model: str, extra: dict | None, timeout_s: int,
                 cwd: str | None = None) -> RunnerSpec:
     """One review-mode spec from an entry's per-candidate knobs (`extra`). The probe, the
     review and the argv display all build theirs here, so they never disagree."""
-    knobs = extra or {}
-    return spec_with_effort(runtime, model, "review", timeout_s, {
-        "cwd": cwd, "effort": knobs.get("effort"), "service_tier": knobs.get("service_tier"),
-        "cursor_mode": knobs.get("cursor_mode"),
-    })
+    knobs = {**(extra or {}), "cwd": cwd}
+    return spec_with_effort(runtime, model, "review", timeout_s, knobs)
 
 
 class RunnerResult(NamedTuple):
@@ -210,16 +225,29 @@ def project_runner_command(spec: RunnerSpec) -> str | None:
     return " ".join(tokens)
 
 
+# SPEC R1: one fixed order for every runtime; an unset setting emits nothing.
+_SETTING_FLAGS = (
+    ("effort", "--effort", "value"),
+    ("context", "--context", "value"),
+    ("session_id", "--session-id", "value"),
+    ("escalate_runtime", "--escalate-runtime", "bool"),
+    ("escalate_model", "--escalate-model", "bool"),
+    ("host", "--host", "value"),
+)
+
+
 def runner_flags(spec: RunnerSpec) -> list[str]:
     """The runner flags one `RunnerSpec` turns into. Never a shell string."""
-    flags = [
-        "--runtime", spec.runtime, "--model", spec.model, "--mode", spec.mode,
-    ]
+    flags = ["--runtime", spec.runtime, "--model", spec.model, "--role", spec.role]
     if spec.route in ("router", "unknown"):
         flags += [f"--route-{spec.runtime}", spec.route]
+    for attr, flag, kind in _SETTING_FLAGS:
+        value = getattr(spec, attr)
+        if kind == "bool" and value is True:
+            flags.append(flag)
+        elif kind == "value" and value is not None:
+            flags.extend([flag, value])
     if spec.runtime == "codex":
-        if spec.effort:
-            flags += ["--codex-effort", spec.effort]
         if spec.service_tier:
             flags += ["--codex-service-tier", spec.service_tier]
         if spec.runtime in OS_SANDBOXED_EXEC and spec.mode == "exec":
