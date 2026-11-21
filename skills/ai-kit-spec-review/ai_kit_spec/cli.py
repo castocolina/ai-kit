@@ -13,7 +13,9 @@ from ai_kit_spec import (
     catalog_fetch,
     config_migrate,
     config_status,
+    effort_probe,
     jev_names,
+    lane_effort,
     optional_sources,
     propose_cmds,
     provider_check,
@@ -300,6 +302,9 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
     p_merge.add_argument("reports", nargs="+", help="key=path/to/report.md")
 
     p_toml = sub.add_parser("render-toml")
+    p_toml.add_argument("--catalog-path", default=None, help="model catalog for the effort check")
+    p_toml.add_argument("--runtimes-json", default=None,
+                        help="runtimes snapshot for the effort check")
     p_toml.add_argument(
         "--json-config", required=True, help="path to a JSON file shaped like the TOML config"
     )
@@ -452,6 +457,9 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
                           help="custom entry only (never with --runtime): the command template")
     p_check.add_argument("--extra-json", default=None,
                           help="JSON object of extra {placeholder} fields the template needs")
+    p_check.add_argument("--effort", default=None,
+                         help="probe effort with the test call; stores nothing; "
+                              "never with --catalog-path")
     p_check.add_argument(
         "--catalog-path", default=None,
         help="record the result as runtimes[<runtime>].usability of this catalog (35 D-10)",
@@ -913,12 +921,33 @@ def _render_toml_refusal(out: str, doc: dict, replace: bool) -> str | None:
     return None
 
 
+def _effort_write_problems(config: dict, env: dict, catalog_path: str | None,
+                           runtimes_path: str | None) -> list[str]:
+    """36 D-05 / SPEC R4: refuse unlisted or unpassable efforts, not unknown support."""
+    lanes = config.get("lanes")
+    if not isinstance(lanes, list):
+        return []
+    return lane_effort.write_problems(
+        lanes, cache_read_json(catalog_path or cache_catalog_path(env)),
+        cache_read_json(runtimes_path or cache_runtimes_path(env)))
+
+
 def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
     env = deps.env_fn()
     if args.keep_backup:
         env = {**env, config_migrate.KEEP_BACKUP_ENV: "1"}
     with open(args.json_config, encoding="utf-8") as f:
         config = json.load(f)
+    for path in (args.catalog_path, args.runtimes_json):
+        if path and cache_read_json(path) is None:
+            print(f"render-toml: cannot read {path}", file=sys.stderr)
+            return 2
+    problems = (_effort_write_problems(config, env, args.catalog_path, args.runtimes_json)
+                if isinstance(config, dict) else [])
+    for problem in problems:
+        print(f"render-toml: {problem}", file=sys.stderr)
+    if problems:
+        return 1
     existing, doc = _checked_target(args.out) if args.out else ("", {})
     if args.out:
         refusal = _render_toml_refusal(args.out, doc, args.replace)
@@ -1198,10 +1227,21 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
 
 def _cmd_check_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     extra = json.loads(args.extra_json) if args.extra_json else {}
+    if args.catalog_path and (args.effort is not None or
+                              (isinstance(extra, dict) and "effort" in extra)):
+        print("check-reviewer: an effort probe cannot be combined with --catalog-path",
+              file=sys.stderr)
+        return 2
     rid = None if args.runtime is None else runtime_id(args.runtime)
     resolved = ResolvedReviewer(key=args.key, model=args.model, vendor=args.vendor,
                                  runtime=rid, command=args.reviewer_command, extra=extra)
-    result = probe_reviewer_quota(resolved, seams=deps.probe_seams())
+    if args.effort is not None:
+        outcome = effort_probe.probe_effort(
+            resolved, args.effort, now_iso()[:10], deps.probe_seams())
+        result = dict(outcome.pop("probe") or {})
+        result["effort_probe"] = outcome
+    else:
+        result = probe_reviewer_quota(resolved, seams=deps.probe_seams())
     if args.catalog_path and rid:
         record = usability.record_for(result, rid, now_iso())
         if record is not None:
