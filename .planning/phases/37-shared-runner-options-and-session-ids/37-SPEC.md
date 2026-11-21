@@ -2,7 +2,7 @@
 
 **Created:** 2026-11-16
 **Ambiguity score:** 0.15 (gate: ≤ 0.20)
-**Requirements:** 11 locked; 12 locked after the 2026-11-16 re-run 2 (R12, optional herdr hosting)
+**Requirements:** 11 locked; 12 locked after the 2026-11-16 re-run 2 (R12, optional herdr hosting) *(amended 2026-11-21, plan time, owner requests of 2026-11-19 and the grok directive of 2026-11-20, 37 D-31 to D-34: 14 locked; R13 (lane skills, runner side) and R14 (lane MCP servers, runner side) added under RUN-01; R1 to R12 unchanged; the grok mentions below are superseded history)*
 
 ## Goal
 
@@ -45,10 +45,12 @@ hardcoding guard and Phase 36's per-lane `effort` and escalation keys are inputs
   "the runner never calls herdr" below with "the runner calls herdr only through one optional transport" (R12, D-22).
 
 **Live facts checked for this spec (2026-11-16, this machine; claude 2.1.325, opencode 2.3.0, pi 1.5.2, cursor-agent
-2026.11.13, codex 0.169.0, copilot 1.0.112, grok 1.0.52):**
+2026.11.13, codex 0.169.0, copilot 1.0.112, grok 1.0.52 *(grok superseded 2026-11-21, owner directive 2026-11-20: not a
+cross-AI target; history only)*):**
 
 - Today's runner (template 8, 12,840 lines; the rendered copy `.planning/scripts/cross-ai.mjs` is a pristine render,
-  `tools/check_dogfood.py --skip-no-write` printed `ok`): `--runtime grok` fails with `unknown runtime: grok (known:
+  `tools/check_dogfood.py --skip-no-write` printed `ok`): `--runtime grok` *(superseded 2026-11-21: grok is not a target; the
+  example stays as history of the parse gate)* fails with `unknown runtime: grok (known:
   cursor, opencode, pi, codex, claude, copilot)`; `--codex-effort max` fails with `must be minimal|low|medium|high|xhigh`;
   `--effort` and `--session-id` are `unknown argument`; `--runtime claude --mode exec` fails with `claude is review-only
   (no exec formula)`; `--model 'bad model'` fails the superset id charset at parse; `--print-argv` prints rung 1 (resume)
@@ -57,13 +59,14 @@ hardcoding guard and Phase 36's per-lane `effort` and escalation keys are inputs
   model_reasoning_effort=<x>`; pi `--thinking <off|minimal|low|medium|high|xhigh|max>` or a `:level` suffix on the
   model; cursor-agent a bracket on the model id (`[context=..,effort=..,fast=..]`, its own example); opencode
   `provider/model#variant` in `--model`; copilot `--reasoning-effort <none|minimal|low|medium|high|xhigh|max>` ("supported
-  levels depend on the model"); grok `--reasoning-effort` (alias `--effort`; grok has no runner formula).
+  levels depend on the model"); grok `--reasoning-effort` (alias `--effort`; grok has no runner formula) *(superseded
+  2026-11-21: grok is not a target; no form is recorded for it)*.
 - Session forms in each host's own `--help`: pi `--session-id <id>` ("use the current directory's existing session with
   the ID, creating it otherwise"); copilot `--session-id <id>` ("resume an existing session or task by ID, or set the
   UUID for a new session"); claude `--session-id <uuid>` (a valid UUID for the conversation) and `--resume <id>`;
   opencode `--session <id>` ("session ID to continue, or to create if it does not exist"; the accepted id shape is
   unverified); cursor-agent `--resume [chatId]`; codex `exec resume <SESSION_ID>` (its resume form has no `--sandbox`
-  flag); grok `--session-id` and `--resume`. Resume behavior itself (that a second call continues the first) is
+  flag); grok `--session-id` and `--resume` *(superseded 2026-11-21: grok is not a target; no session row for it)*. Resume behavior itself (that a second call continues the first) is
   verified by help text only; a live probe per installed host is unverified until recorded.
 - Execute-permission flags of claude: `--permission-mode` (choices acceptEdits, auto, bypassPermissions, manual,
   dontAsk, plan) and `--dangerously-skip-permissions` ("recommended only for sandboxes with no internet access");
@@ -101,6 +104,49 @@ closed after each run; the probe scripts and outputs are under `tmp/spec-discuss
   exit 1 and a JSON event `{"type":"error","error":{"type":"provider.free-limit","status":429,"retryAfterMs":24229000,...}}` and the
   message `Free usage limit reached. Connect a provider or subscribe ... or switch models.` (about 6 h 44 min, longer than the
   4-hour hard tier). Phase 38.1's note that no free lane had reached its limit is therefore out of date (handoff to 38.1, 40).
+
+**Amended 2026-11-21 (plan time).** Sources: the owner's requests of 2026-11-19 (skills handed to cross-AI lanes; MCP servers
+for review and execution lanes) and the owner's directive of 2026-11-20 (grok is not a cross-AI target; Phase 39.1 removes the
+runtime, RUN-15), recorded in the run's request notes; owner-directed, so decided here, not asked (37 D-31 to D-34 in
+`37-CONTEXT.md`). Phase 37 builds only the runner side; which skills and servers a lane gets, by role and task kind, stays Phase
+39's (REV-03, REV-05).
+
+- R13 is added: the runner records, per host, how a lane can be handed a skill (by name, by path, or as inlined prose), each
+  form with a source label, delivers what the caller passes in the best form the host has, and reports each skill like any
+  setting. R14 is added: the runner passes MCP servers from a run-scoped file the caller writes, through the host's
+  per-invocation form only, and reports each server. Both extend RUN-01 (a dated note there); the REQUIREMENTS total is unchanged.
+- Live help facts for R13 and R14, read on 2026-11-21 from the installed hosts' own `--help` (read-only, no model call, no host
+  config file read; claude 2.1.330, codex 0.170.0, opencode 2.3.2, pi 1.5.2, copilot 1.0.112, cursor-agent 2026.11.13):
+  - Skills. pi `--skill <path>` ("Load a skill file or directory (can be used multiple times)") beside `--no-skills` ("Disable
+    skills discovery and loading"); that an explicit `--skill` still loads under `--no-skills` is from pi's own docs (Phase 39's
+    live facts). claude: "Skills still resolve via /skill-name" appears only inside the `--bare` text, and `--add-dir`
+    ("More directories Claude can access") and `--plugin-dir` (a plugin, not a skill) name no skill loading. copilot:
+    `--add-dir <directory>` "load its .github/skills and .github/agents as trusted configuration", and `copilot skill --help`
+    lists discovery roots (`.github/skills/`, `.agents/skills/`, `.claude/skills/`, `~/.copilot/skills/`, `~/.agents/skills/`)
+    with no per-invocation load-by-name form. cursor-agent (`--add-dir` a workspace root, `--plugin-dir` a plugin), codex
+    (`--add-dir` a writable directory) and opencode (`run --file` attaches a file to the message) name no skill form. Prose
+    needs no host form: the runner already sends the prompt on stdin (copilot: as the `-p` argument, under the existing
+    `ARGV_PROMPT_MAX` check); claude and pi also list `--append-system-prompt`, recorded as a fact and not used.
+  - MCP servers. claude `--mcp-config <configs...>` ("Load MCP servers from JSON files or strings") and `--strict-mcp-config`
+    ("Only use MCP servers from --mcp-config, ignoring all other MCP configurations"); copilot `--additional-mcp-config <json>`
+    ("JSON string or file path (prefix with @) ... augments config from ~/.copilot/mcp-config.json for this session"), plus
+    `--disable-mcp-server`, `--enable-mcp-server` and `--disable-builtin-mcps`; pi `--no-mcp` only turns MCP off, and `pi mcp
+    --help` says servers come from `~/.pi/agent/mcp.json` and, in trusted projects, `.pi/mcp.json` (the runner passes
+    `--no-approve`); cursor-agent `--approve-mcps` only approves servers from `.cursor/mcp.json` or `~/.cursor/mcp.json` (its
+    `mcp --help`); codex has an `mcp` subcommand and a generic `-c key=value` override of `~/.codex/config.toml` whose help names
+    no MCP key; opencode has an `mcp` subcommand and no flag on `run`. The help facts of the owner's note of 2026-11-19 (claude
+    2.1.328, codex 0.170.0, opencode 2.3.2, pi 1.5.2, copilot 1.0.112, cursor-agent 2026.11.13) hold unchanged on these versions.
+  - Existing runner behavior these touch (template on this branch): pi's exec and review formulas pass `--no-skills`, its review
+    and `none` profiles add `--no-mcp`, and `reviewExtras` already admits `--skill` from `CONFIG.extraArgs`; cursor's exec formula
+    passes `--approve-mcps`, so an execute lane approves every server in the user's cursor config today; copilot's review profile
+    passes `--disable-builtin-mcps`; opencode's env sets `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1`.
+- Grok is not a cross-AI target (owner directive 2026-11-20): the grok host in the live-facts lists above and the grok example in
+  R4 are superseded history, marked in place. This phase adds no grok work: no help fixture, form, probe, session row, test or
+  list entry, including in any recorded-help fixture list that a later unit's amendment to this phase names. Existing grok code
+  (the detection row, `build_grok_command`, the runner's one mention, `cursor-agents/grok-worker.md`) is left alone; Phase 39.1
+  removes the runtime (RUN-15).
+- Free-lane pools (Phase 36 wrote `pool = "<provider>:free"` on zero-price lanes, 36 D-20 to D-22): this phase's text names no
+  pool and adds none; the runner treats a pooled lane like any other.
 
 **Findings (existing code paths that gate on a table; this phase removes the runner-side ones):**
 
@@ -178,7 +224,8 @@ closed after each run; the probe scripts and outputs are under `tmp/spec-discuss
 4. **An unknown runtime with a declared command, and a named reason without one (RUN-01)**.
    - Current: a runtime outside the runner's table is refused at parse and in `resolveRuntime`, a `--prefer`, `--model-<cli>`
      or `--route-<cli>` naming one is refused, `--classify-only` refuses an unknown cli, and a claude or grok lane has no way
-     in at all.
+     in at all *(grok superseded 2026-11-21: not a target; an argv-file lane serves any unknown command, and no grok test,
+     fixture or example is added)*.
    - Target: no parse-time refusal cites the table. `--runtime <id>` for an id with no formula needs `--argv-file <path>`:
      a JSON array of argv strings (read like `--prepend-file`, relative to the cwd, capped in size, parsed with a strict
      reader) in which `{model}`, `{effort}` and `{session}` are the only placeholders; the prompt goes on stdin. The runner
@@ -328,13 +375,81 @@ closed after each run; the probe scripts and outputs are under `tmp/spec-discuss
       `--print-argv` prints the `host` line without calling herdr; a locking test pins `host`, `no_herdr`, `host_failed` in the
       closed list.
 
+13. **A lane is handed the skills the caller names, in the best form its host has (RUN-01; added 2026-11-21, plan time, owner
+    request of 2026-11-19, 37 D-31, D-32)**: the runner records how each host takes a skill and delivers what the call passes.
+    - Current: the runner has no skill input; pi's formulas pass `--no-skills` and only a hand-set `CONFIG.extraArgs` entry can add
+      `--skill` (admitted by `reviewExtras`); no row records how a host takes a skill, and execute lanes get none.
+    - Target: two repeatable call flags, `--skill-path <dir>` (a skill directory holding `SKILL.md`, resolved through symlinks,
+      with no control character in the path; the repository-or-skill-root check is the caller's validator, Phase 39 R8) and
+      `--skill-name <name>` (a skill the caller's table says is installed on this lane's
+      host; name shape `^[a-z0-9][a-z0-9-]{0,63}$`). The runner never chooses a skill (Phase 39 does) and never scans a host. Each
+      runtime row gains a `skills` field with three forms, each with a source label (verified with the host version, date and help
+      line; documented with its source; or unknown) and a state (`verified`, fed; `unverified`, recorded and not fed; `unknown`,
+      no form): `name` (the host loads an installed skill when the prompt names it), `path` (a flag loads a skill file or directory
+      for this call) and `prose` (the skill's `SKILL.md` text inlined). Seed rows from the 2026-11-21 help read: pi path `--skill
+      <dir>` verified, name unknown and in any case reported `mode_forbids` (its formulas pass `--no-skills`); claude name `/<name>` unverified (help states it only
+      inside the `--bare` text), path unverified (`--add-dir` names no skill loading); copilot name unverified (help lists
+      discovery roots, no load-by-name form), path unverified (`--add-dir <dir>` loads `<dir>/.github/skills`, which needs a
+      directory layout whose effect is untested); cursor-agent, codex and opencode name and path unknown. Prose is the runner's own
+      form on every runtime: one delimited block per skill (its name, path and sha256, the `SKILL.md` body byte-equal) placed
+      before the `--prepend-file` content and the prompt, in call order; on copilot it rides the `-p` argument under the existing
+      `ARGV_PROMPT_MAX` check. Per skill (a name and a path whose directory name or frontmatter `name` match are one skill) the
+      runner applies the first form in the owner's order name, path, prose that the row has `verified` and the input supplies:
+      a name only with `--skill-name`, a path or prose only with `--skill-path`. Two new setting names join R2's list, `skill`
+      and (R14) `mcp`; each skill prints one line, `cross-ai: setting skill=<name> applied form=<name|path|prose>` or `ignored
+      reason=<code>` with the closed reasons `no_form` (unknown form), `unverified_form`, `mode_forbids` and, on an `--argv-file`
+      lane, `no_slot` for a name (prose still applies there, on stdin). The state is computed after the argv and the prompt prefix
+      are built, from them, never from the request; `--print-argv` prints the same lines, and Phase 39's capabilities line reads
+      them. `--describe` lists each row's three forms with label and state. A missing directory, a directory without `SKILL.md`,
+      a path with a control character, a body that is not strict UTF-8 or over the size cap (one cap, set by the plan, for every
+      file the runner reads for a call: the argv file, a skill body, the MCP file), and a name of the wrong shape are usage
+      errors (exit 2) naming the flag. A form flips to `verified` only through a recorded help line, a
+      documented source or the planning spike, with the help fixtures of this phase covering every flag a form uses.
+    - Acceptance: `--print-argv` tests per runtime and role: pi with `--skill-path` adds `--skill <dir>` and reports `applied
+      form=path`; claude, copilot, cursor-agent, codex and opencode with `--skill-path` leave the argv unchanged, put the delimited
+      block in the prompt and report `applied form=prose`; a `--skill-name` alone reports `ignored` with `unverified_form` (claude,
+      copilot), `mode_forbids` (pi) or `no_form` (the others) and adds nothing; a name and a matching path on pi report one line
+      with `form=path`; an `--argv-file` lane reports `no_slot` for a name and `form=prose` for a path; the inlined block is
+      byte-equal to the file body; each usage error is named; a copilot prompt pushed over `ARGV_PROMPT_MAX` by a block gets the
+      existing refusal; the locking test of R2 covers the two new names; the help-fixture test fails when a `verified` form's flag
+      is missing from that host's recorded help.
+
+14. **A lane gets the MCP servers the caller names, only through its host's per-invocation form (RUN-01; added 2026-11-21, plan
+    time, owner request of 2026-11-19, 37 D-33)**: the runner never enables a server on its own and never edits a host's config.
+    - Current: nothing enables a server for a lane; host-config servers load or not by each formula's flags (pi review `--no-mcp`,
+      copilot review `--disable-builtin-mcps`, cursor exec `--approve-mcps`, the rest the host's default), and no line reports it.
+    - Target: one call flag, `--mcp-config <file>`: a run-scoped JSON file the caller writes (`{"mcpServers": {<name>: {...}}}`),
+      read once (strict UTF-8 JSON, the size cap of R13, a regular file not readable by group or others because it may
+      hold a key; server names of shape `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`) and never written. Without the flag no server is
+      added and every argv is byte-equal to the R1 to R12 argv. Each runtime row gains an `mcp` field: the per-invocation form with
+      a source label and state, or none. Seed rows from the 2026-11-21 help read: claude `--mcp-config <file> --strict-mcp-config`
+      verified (strict, so only the given servers load; the variadic `--mcp-config` is always followed by another flag);
+      copilot `--additional-mcp-config @<absolute file>` verified (it augments the user's own copilot servers; no strict form);
+      codex `unverified` (a generic `-c` override exists, no MCP key in its help, and it would put server arguments on argv);
+      pi, cursor-agent and opencode none (a config file only: pi's own `mcp.json`, cursor's `mcp.json`, opencode's config). Only
+      the file path reaches argv, never the JSON (copilot's JSON-string form is not used). Each server prints one line,
+      `cross-ai: setting mcp=<name> applied` or `ignored reason=<code>`: `no_form` (a host with a config file only), `unverified_form`
+      (codex), `mode_forbids` (a review profile that turns MCP off, pi `--no-mcp`), `no_slot` (an `--argv-file` lane). The state is
+      read from the final argv; a review lane keeps its confinement flags and the tree check, whatever tool changed the tree. The
+      runner never prints a server's command, arguments, environment, URL or headers (names only, redacted), never writes or reads
+      a host config file, and never adds an approval flag a formula lacks. Which servers a task kind needs (a docs or browser
+      server for a frontend task, the code index for exploration), read-only by default, is the caller's choice (Phase 39).
+    - Acceptance: `--print-argv` tests: claude review and execute with a two-server file add `--mcp-config <file>
+      --strict-mcp-config` and report both `applied`; copilot adds `--additional-mcp-config @<file>` and keeps
+      `--disable-builtin-mcps` in review; pi exec reports `no_form`, pi review `mode_forbids`, codex `unverified_form`, cursor-agent
+      and opencode `no_form`, each with an unchanged argv; no flag gives byte-equal argv; a group-readable file, a non-object,
+      a bad server name, invalid UTF-8 and an oversize file are named usage errors; a planted key shape in a server's `env` or
+      `args` appears in no stderr line, status line or argv; a test with a fake host config directory shows it untouched.
+
 ## Boundaries
 
 **In scope:**
 - The call vocabulary and the settings report (R1, R2), effort forms in the runner (R3), unknown runtimes with a declared
   command and the named refusal (R4), the model id floor (R5), the claude execute formula (R6), session ids (R7), the sync test (R8),
   `--describe` and removing the Python table mirrors (R9), escalation flags carried (R10), skill text, docs, the runner's example
-  cleanup and the judge bar (R11), the optional herdr hosting transport (R12, added 2026-11-16).
+  cleanup and the judge bar (R11), the optional herdr hosting transport (R12, added 2026-11-16). *(amended 2026-11-21, plan
+  time: also the per-host skill forms and the delivery of the skills a call names (R13), and the per-invocation MCP server
+  forms and the delivery of the servers a call names (R14).)*
 
 **Out of scope:**
 - The idle watchdog, run lock, tree baseline, plan-versus-commits check, the Phase 25 cleanup, removing the self-test from
@@ -349,6 +464,9 @@ closed after each run; the probe scripts and outputs are under `tmp/spec-discuss
   per-plan transport chooser (Phase 42 and calling skills); the run lock, the start-of-run sweep of leftover tabs and the naming
   and ownership policy beyond the label of R12 (Phase 38); the error class of a free lane's usage limit (Phase 38.1); lane switching
   on it (Phase 40); the written config (no hosting key, Phase 36 D-19).
+- *(added 2026-11-21, plan time)* Choosing which skills or MCP servers a lane gets by role and task kind, the role table, the
+  host scan and lens selection, the window check of inlined text and the capabilities line (Phase 39); writing or editing any
+  host's own MCP or skill configuration (never); a grok fixture, form, probe or test (never: Phase 39.1 removes the runtime).
 
 ## Constraints
 
@@ -383,10 +501,14 @@ closed after each run; the probe scripts and outputs are under `tmp/spec-discuss
 - [ ] `ai-kit-cross-ai` meets the judge bar; docs updated; the guard passes on rewritten files; `make test` passes (R11).
 - [ ] With herdr available a lane runs in a tab the runner opens and closes, with the same result as headless; without herdr, with
       `--host none` or with `AIKIT_HOST=none` the headless path is unchanged and tested (R12, added 2026-11-16).
+- [ ] *(added 2026-11-21)* Each skill a call names reaches the lane by name, path or inlined prose in the first form its host has
+      verified, each host's forms carry a source label, and every skill line says the form applied or the reason it was not (R13).
+- [ ] *(added 2026-11-21)* Each MCP server a call names reaches the lane only through its host's per-invocation form, is
+      reported applied or ignored with a reason, no server value is printed and no host config is touched (R14).
 
 ## Edge Coverage
 
-**Coverage:** 58/58 applicable edges resolved · 0 unresolved (58 engine rows from `edge_floor.py floor`; the 8 R12 rows were added 2026-11-16, re-run 2)
+**Coverage:** 72/72 applicable edges resolved · 0 unresolved (72 engine rows from `edge_floor.py floor`; the 8 R12 rows were added 2026-11-16, re-run 2; the 14 R13 and R14 rows were added 2026-11-21, plan time)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -448,10 +570,24 @@ closed after each run; the probe scripts and outputs are under `tmp/spec-discuss
 | precision | R12 | ✅ covered | (added 2026-11-16, re-run 2) `rc` holds one decimal integer 0-255 or a signal name; anything else is read as a crash with the file's first line redacted, never coerced |
 | idempotency | R12 | ✅ covered | (added 2026-11-16, re-run 2) Two calls make two run tokens, two directories and two tabs; closing an already closed tab (owner closed it) is a no-op that is not an error |
 | concurrency | R12 | ✅ covered | (added 2026-11-16, re-run 2) Parallel lanes each open their own tab and directory and share nothing; a runner killed by a signal closes its tab in the signal path, and one killed hard leaves a recorded tab id that Phase 38's sweep closes |
+| boundary | R13 | ✅ covered | (added 2026-11-21, plan time) A skill name of 1 and of 64 characters passes and one of 65 is a usage error; a `SKILL.md` at the size cap is inlined and one byte over is a usage error; a copilot prompt that a block brings to exactly `ARGV_PROMPT_MAX` passes and one byte over gets the existing refusal |
+| adjacency | R13 | ✅ covered | (added 2026-11-21, plan time) A `--skill-name` and a `--skill-path` whose directory name or frontmatter `name` match are one skill with one line and one form; two paths that resolve to one directory apply once; names compare exactly |
+| empty | R13 | ✅ covered | (added 2026-11-21, plan time) No skill flag leaves the argv and the prompt byte-equal and prints no `skill` line; an empty flag value, a directory without `SKILL.md` and an empty `SKILL.md` are usage errors naming the flag |
+| encoding | R13 | ✅ covered | (added 2026-11-21, plan time) The path and the body are read as strict UTF-8 (invalid bytes and a BOM refused, as R4); the inlined body is byte-equal to the file and its sha256 is taken over the file's bytes |
+| ordering | R13 | ✅ covered | (added 2026-11-21, plan time) Skills apply in call order; prose blocks come before the `--prepend-file` content and the prompt; path flags follow call order in the argv; `skill` lines print in call order after the fixed setting names |
+| precision | R13 | ✅ covered | (added 2026-11-21, plan time) Sizes are counted in bytes; the body is never trimmed, re-wrapped or normalized; the delimited block's sha256 is exact, so a reader can check it against the file |
+| concurrency | R13 | ✅ covered | (added 2026-11-21, plan time) Each skill file is read once at start, so an edit during the call has no effect (as `--prepend-file`); the runner writes nothing, so parallel calls share nothing |
+| boundary | R14 | ✅ covered | (added 2026-11-21, plan time) A server name of 1 and of 64 characters passes and one of 65 is a usage error; a file at the size cap is read and one byte over is a usage error |
+| adjacency | R14 | ✅ covered | (added 2026-11-21, plan time) Server names compare exactly as JSON keys and a duplicate key is refused by the strict reader; a server that is also in the host's own config is the host's business on copilot (it augments) and absent on claude (strict), and the line reports what the argv carries |
+| empty | R14 | ✅ covered | (added 2026-11-21, plan time) No flag leaves every argv byte-equal and prints no `mcp` line; a file without `mcpServers`, or with an empty `mcpServers`, is a usage error naming the file |
+| encoding | R14 | ✅ covered | (added 2026-11-21, plan time) The file is read as strict UTF-8 JSON (a BOM refused); names are ASCII by their shape; values are never printed, so their encoding stays the host's concern |
+| ordering | R14 | ✅ covered | (added 2026-11-21, plan time) `mcp` lines print in the file's key order; claude's `--mcp-config <file>` is always followed by `--strict-mcp-config`, so the variadic option ends at a flag, pinned by a golden argv |
+| precision | R14 | ✅ covered | (added 2026-11-21, plan time) The host gets the caller's file itself by its absolute path (copilot with the `@` prefix), never a re-serialised copy, so no value is reformatted |
+| concurrency | R14 | ✅ covered | (added 2026-11-21, plan time) The file and its mode are read once at start; the runner never writes it or any host config, so parallel calls (each with its own run-scoped file) share nothing; a test shows a fake host config directory untouched |
 
 ## Prohibitions (must-NOT)
 
-**Coverage:** 13/13 applicable prohibitions resolved · 0 unresolved *(was 9/9; four rows added 2026-11-16, re-run 2)*
+**Coverage:** 17/17 applicable prohibitions resolved · 0 unresolved *(was 9/9; four rows added 2026-11-16, re-run 2; four rows added 2026-11-21, plan time)*
 
 | Prohibition (must-NOT statement) | Requirement | Status | Verification / Reason |
 |----------------------------------|-------------|--------|------------------------|
@@ -468,6 +604,10 @@ closed after each run; the probe scripts and outputs are under `tmp/spec-discuss
 | MUST NOT close, read or type into a tab or pane the runner did not open, and MUST NOT leave the tab it opened *(added 2026-11-16, re-run 2)* | R12 | resolved | verification: test — a second tab in the fake is untouched; the opened tab is closed on every exit path |
 | MUST NOT read herdr's screen text, agent status or wait output as a verdict or liveness signal, or rerun a lane that already started *(added 2026-11-16, re-run 2)* | R12 | resolved | verification: test — a fake whose screen shows success while `rc` says failure ends failed; a fake that fails after typing spawns nothing twice |
 | MUST NOT put an environment value, a key shape or the prompt on herdr's command line, in the typed line or in any file readable by another user *(added 2026-11-16, re-run 2)* | R12 | resolved | verification: test — the fake records every herdr argv and the file modes; a planted key shape appears in none |
+| MUST NOT feed a skill or MCP form whose state is not `verified`, and MUST NOT report a skill or server `applied` that the final argv or the sent prompt does not carry *(added 2026-11-21, plan time)* | R13, R14 | resolved | verification: test — unverified and unknown forms leave the argv unchanged and print their reason; the state is computed from the built argv and prompt |
+| MUST NOT write, edit or read any host's own MCP or skill settings file (a skill directory the call names is read, never written), choose a skill or server for a lane, or add an approval flag a formula lacks *(added 2026-11-21, plan time)* | R13, R14 | resolved | verification: test — a fake host config directory is byte-equal after every call; golden argv per runtime and role with and without the flags |
+| MUST NOT print an MCP server's command, arguments, environment, URL or headers, or put the MCP JSON on argv *(added 2026-11-21, plan time)* | R14 | resolved | verification: test — a planted key shape in a server's `env`, `args` or `headers` appears in no stderr line, status line or argv; only the file path is passed |
+| MUST NOT add a grok help fixture, form, probe, session row, test or list entry *(added 2026-11-21, plan time, owner directive 2026-11-20)* | R1-R14 | resolved | verification: review — the phase verification counts added lines naming grok outside `.planning/` (as Phase 36's did) and finds none beyond expected-message edits of existing tests |
 
 ## Ambiguity Report
 
@@ -506,8 +646,14 @@ diff.
 | 2 | Boundary Keeper | Does the runner host an interactive agent TUI too? | caller_transport_later_phase, typesafe 0.98 (laya none_of_these low 0.43) | No: Phase 42's transport chooser (R12, D-27) |
 | 2 | Simplifier | How is hosting switched off? | laya none_of_these 0.83 (confident, no option); second opinion typesafe config_key low 0.67 | **Own reasoning:** flag value and `AIKIT_HOST`, no config key (R12, D-23, ledger, needs owner confirmation) |
 | 2 | Failure Analyst | How does the lane's environment reach the pane? | laya none_of_these low 0.56; typesafe tab_env_arguments low 0.65 | **Own reasoning, jev overridden (low):** command-line arguments show in the process table; a 0600 file in a 0700 per-run directory (R12, D-25, ledger) |
+| 3 (plan time, 2026-11-21) | Researcher | How does each installed host take a skill and an MCP server per call? | none; live `--help` of six hosts and their `skill`/`mcp` subcommand helps, read-only | Facts in the 2026-11-21 amendment of Background; only pi's `--skill` and claude's and copilot's MCP flags are fed (R13, R14) |
+| 3 | Boundary Keeper | Where do skills and MCP servers for lanes split between the runner and Phase 39? | none (owner-directed) | Owner request: the runner records forms, delivers what the call passes and reports it; choosing by role and task kind stays Phase 39 (R13, R14, D-31, D-33) |
+| 3 | Simplifier | Who falls back from name to path to prose? | none (owner-directed order) | **Own reasoning:** the runner, since it alone knows the host forms and a GSD hook has no Python layer; the caller passes a name when its table says the host has the skill (R13, D-32, ledger) |
+| 3 | Failure Analyst | How does a server reach a host with only a config file? | none (owner-directed) | Owner rule: never edit the host's config; reported `ignored` `no_form`, file path only on argv, values never printed (R14, D-33) |
+| 3 | Boundary Keeper | What happens to grok in this phase? | none (owner directive 2026-11-20) | Mentions superseded in place; no grok work; existing code left for Phase 39.1 (D-34) |
 
 ---
 
 *Phase: 37-shared-runner-options-and-session-ids*
 *Spec created: 2026-11-16*
+*Amended: 2026-11-21 (plan time: R13 lane skills, R14 lane MCP servers, grok not a target)*

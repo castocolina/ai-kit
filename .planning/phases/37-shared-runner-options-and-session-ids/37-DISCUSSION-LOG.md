@@ -113,3 +113,80 @@ One ladder request, six items, summaries only (no code, config values or keys).
 
 None. Every claim is from the installed `herdr` and `opencode` help and the live probes (scripts and outputs under
 `tmp/spec-discuss-35-39/`, not committed).
+
+# Update 2026-11-21 (plan time, owner-directed amendments)
+
+**Input:** `37-SPEC.md` (committed in `a111f5a`, R1 to R12 kept verbatim) and the 2026-11-16 CONTEXT (D-01 to D-29 kept; D-30 is
+added by a later unit's carried amendment, so the new decisions start at D-31). Three owner inputs from the run's request notes:
+skills handed to cross-AI lanes (2026-11-19), MCP servers for review and execution lanes (2026-11-19), grok is not a cross-AI
+target (2026-11-19, confirmed as a directive 2026-11-20). Added R13, R14 and D-31 to D-34.
+**Mode:** plan-time amendment in an autonomous run; owner-directed items are decided, not asked; no jev round and no analyzer
+(the owner's words fix the design; one own-reasoning item, ledgered); live help read of the installed hosts; best design over
+smallest diff.
+**Areas analyzed:** the per-host skill forms (name, path, prose) and who falls back; the per-host MCP forms and the
+config-file-only hosts; the report of both; the split with Phase 39; grok mentions; pool wording; couplings with 38, 38.1 and 39.
+
+## Decisions
+
+| Item | Source | Outcome |
+|---|---|---|
+| runner side versus Phase 39 | owner request 2026-11-19 | D-31: the runner records forms, delivers and reports; Phase 39 chooses |
+| skill forms and order | owner request 2026-11-19 (order name, path, prose) | D-32, R13 |
+| who applies the fallback | none (owner gave the order, not the place) | **Own reasoning:** the runner, which alone knows the forms; a GSD hook has no Python layer (D-32, ledger) |
+| MCP forms and rules | owner request 2026-11-19 (only when needed, read-only by default, never the real host config, no secrets printed) | D-33, R14 |
+| grok | owner directive 2026-11-20 | D-34: five SPEC lines superseded in place, no grok work, code left for Phase 39.1 |
+| pools | 36 D-20 to D-22 | No pool is named in this phase's text; nothing to align |
+
+## Live facts that changed the plan
+
+Read on 2026-11-21 from each installed host's own `--help` and its `skill`/`mcp` subcommand help (read-only, no model call, no
+host config read; outputs in the run folder `tmp/run-2026-11-19/p37-help/`, not committed). Versions: claude 2.1.330, codex 0.170.0, opencode 2.3.2,
+pi 1.5.2, copilot 1.0.112, cursor-agent 2026.11.13.
+
+| Host | Skill form (label) | MCP per-invocation form (label) |
+|---|---|---|
+| pi | path `--skill <path>` (help; loading under `--no-skills` from pi's docs) | none: `--no-mcp` only; `pi mcp` reads `~/.pi/agent/mcp.json` and a trusted project's `.pi/mcp.json` (help) |
+| claude | name `/<name>` stated only inside the `--bare` text (help, indirect: unverified); `--add-dir`, `--plugin-dir` name no skill loading | `--mcp-config <configs...>` and `--strict-mcp-config` (help) |
+| copilot | `--add-dir <dir>` loads `<dir>/.github/skills` (help, needs a layout: unverified); `copilot skill` lists discovery roots, no load-by-name flag | `--additional-mcp-config <json or @file>`, augments the user's copilot servers (help) |
+| cursor-agent | none (`--add-dir` workspace root, `--plugin-dir` plugin) | none: `--approve-mcps` only approves servers from `.cursor/mcp.json` or `~/.cursor/mcp.json` (help) |
+| codex | none (`--add-dir` writable directory) | none verified: `-c key=value` overrides `~/.codex/config.toml`, no MCP key named (help) |
+| opencode | none (`run --file` attaches a file to the message) | none: `mcp` subcommand only, no flag on `run` (help) |
+
+- The owner's note of 2026-11-19 holds on these versions (claude moved from 2.1.328 to 2.1.330 with the same MCP flags).
+- The runner template on this branch already passes `--no-skills` in pi's formulas, `--no-mcp` in pi's review profile,
+  `--approve-mcps` in cursor's exec formula and `--disable-builtin-mcps` in copilot's review profile; these shape the
+  `mode_forbids` cases and stay unchanged (D-33).
+- Phase 39's SPEC (on its unit branch) already planned `--skill-path` as a runner setting (39 R6, D-11) and inlining in its
+  composer (39 R5, D-10); this phase takes over both runner-side parts (D-31).
+
+## Handoffs (couplings for later units; amended when each unit is reached)
+
+- **Phase 38** (SPEC and CONTEXT on its unit branch): no statement found that D-31 to D-34 contradict. The R13 and R14 self-test
+  cases move with the harness to its sibling file.
+- **Phase 38.1**: (1) its carried amendments to this phase's files name grok: the R2 bullet's host list in `37-SPEC.md`, the D-15
+  refinement and D-30's recorded-help fixture list in `37-CONTEXT.md` (D-30 asks for `tests/fixtures/cli_help/grok.txt`); mark each
+  superseded and drop the grok fixture; (2) its own SPEC live-facts line (`grok 1.0.52`) and its CONTEXT line `opencode, pi and grok
+  none` get the same dated mark; (3) D-30's help-fixture test covers the new flags of R13 and R14 (`--skill`, `--mcp-config`,
+  `--strict-mcp-config`, `--additional-mcp-config`); (4) D-30 says this phase's plan executes it, but the D-30 text exists only on the
+  38.1 and 39 branches: carry it down to this unit before 37 is planned, as `c6cedee` did for 36; (5) this phase names no pool, so
+  38.1's own adoption of the `provider:free` form needs nothing here.
+- **Phase 39**: (1) R6 and D-11 (`--skill-path` as a runner setting) are now this phase's R13, same flag and forms, plus
+  `--skill-name` and the runner's prose form; (2) R5 and D-10 keep lens selection, lens notes and the window check, and count the
+  inlined bytes from the runner's `form=prose` report instead of inlining in the composer (same delimited format); (3) D-02's
+  capabilities `skills` and `mcp` read this phase's `skill` and `mcp` lines; `host_config` stays its reading of the argv;
+  (4) REV-05's table chooses servers by task kind (read-only by default) and writes the run-scoped MCP file this phase reads;
+  (5) the repository-or-skill-root check stays its validator (39 D-11's plain-Node copy in the runner is its choice); (6) its ROADMAP
+  code anchor "`--skill-path` setting" and its execute-lane skill delivery (owner request: execute lanes too, by task kind) go
+  into its own amendment; (7) its D-19 says this phase's CONTEXT carries a handoff for `--skill-path`: that line is on the 39 branch
+  only and now reads against D-31.
+
+## Corrections Made
+
+- `37-SPEC.md`: header count, an amendment paragraph in Background, R13 and R14, Boundaries in and out of scope, two acceptance
+  lines, 14 engine edge rows (floor 72, `check` ok), four prohibition rows, five Interview Log rows, the footer; five grok lines
+  marked superseded. `37-CONTEXT.md`: a refined spec-lock note and D-31 to D-34 with handoffs and open questions. REQUIREMENTS RUN-01
+  and ROADMAP Phase 37 criterion 9 gain dated notes; the requirement total stays 193.
+
+## External Research
+
+None. Every claim is from the installed hosts' own help, the runner template and the planning files.

@@ -369,7 +369,13 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   `--escalate-runtime`, `--escalate-model`, `--session-id`; the runner composes each runtime's effort form and checks a
   level's shape only; every named setting prints applied, ignored or unknown with a reason from a closed list; a runtime
   with no formula runs from a declared argv file and otherwise gets a named refusal; a model id passes a universal safety
-  floor with an advisory for unusual shapes; the Python mirrors give way to the runner's `--describe`)*
+  floor with an advisory for unusual shapes; the Python mirrors give way to the runner's `--describe`)* *(amended 2026-11-21,
+  plan time, 37 D-31 to D-34, owner requests of 2026-11-19 and directive of 2026-11-20: the settings also cover the skills and MCP
+  servers a call names: the runner records per host how a lane takes a skill (by name, by path or as inlined prose) and an MCP
+  server (the host's per-invocation form only), each form with a source label from the host's own help (2026-11-21: only pi's
+  `--skill` and claude's and copilot's MCP flags are fed), delivers a skill in the first verified form in the order name, path,
+  prose, and reports each skill and server applied or ignored with a reason; it never picks them (Phase 39, REV-03, REV-05),
+  never edits a host's config and never prints a server's values; grok is not a target)*
 - [ ] **RUN-02**: The runner accepts a session id and prints the one it used, so a lane can resume across rounds.
   *(amended 2026-11-16, 37 D-03: one `--session-id` flag, `session=` in the status line, chosen or minted per runtime row,
   a rejected id fails visibly)*

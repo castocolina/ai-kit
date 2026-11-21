@@ -25,6 +25,14 @@ Downstream agents MUST read `37-SPEC.md` before planning or implementing. Requir
 new one, in scope for this phase's runner. Out of scope beside the earlier list: an interactive agent TUI, a TUI app, an e2e run and
 pane reuse across calls (Phase 42 and calling skills), the run lock and the sweep of leftover tabs (Phase 38).
 
+**Refined 2026-11-21 (plan time, D-31 to D-34; owner requests of 2026-11-19 and the grok directive of 2026-11-20):** 14
+requirements are locked; R13 (the skills a call names reach the lane by name, path or inlined prose, each host's forms labeled)
+and R14 (the MCP servers a call names reach the lane only through the host's per-invocation form) are added under RUN-01, R1 to
+R12 are unchanged, and every grok mention in `37-SPEC.md` is superseded history. Out of scope beside the earlier lists: choosing
+skills or servers by role and task kind, the role table and the window check of inlined text (Phase 39), and any grok work
+(Phase 39.1 removes the runtime). This note sits here, not in the `Gathered` line, because a later unit's carried amendment
+rewrites that line and the restack must not conflict.
+
 **In scope:** the call vocabulary (R1); the settings report (R2); effort forms in the runner (R3); unknown runtimes and the
 argv file (R4); the model id floor (R5); claude's execute formula (R6); session ids (R7); the sync test (R8); `--describe`
 and removing the Python mirrors (R9); escalation flags carried (R10); skill text, docs, the runner example cleanup and the
@@ -267,6 +275,68 @@ choosing effort by task (42).
   **Phase 41**: executor lanes run hosted by default through the builder; the fix-round resume uses `session=` as before.
   **Phase 42**: owns the interactive-agent, TUI-app and e2e transports and the per-plan pane reuse; it reads this phase's protocol
   (label grammar, run directory files, `rc` as the verdict) rather than inventing a second one (D-27).
+
+### Added 2026-11-21 (plan time; owner requests of 2026-11-19 on lane skills and lane MCP servers, owner directive of 2026-11-20 on grok)
+
+Owner-directed, so decided here and not asked; no jev round (the owner's words fix the design). Numbered after D-30, which a
+later unit's carried amendment adds to this file. Live facts: `37-SPEC.md` Background, amendment of 2026-11-21.
+
+- **D-31: The runner side of lane skills and lane MCP servers lives here; choosing them stays Phase 39's.** The runner records
+  how each host takes a skill or a server, delivers what the call passes, and reports it like every setting; it never scans a
+  host, never picks a skill or server by role or task kind, and never reads or writes a host's settings. Phase 39 keeps the
+  role table (REV-05), lens selection (REV-03), the window check and the capabilities line (REV-04), and reads this phase's
+  report. This takes over Phase 39 R6 (`--skill-path` as a runner setting, with the same pi form and the same `unverified_form`
+  for the `--add-dir` hosts) and moves the inlining of a skill's text from Phase 39's composer into the runner, in Phase 39 D-10's
+  format (a delimited block with path and sha256, byte-equal body), because a GSD hook route has no Python layer (the argument of
+  D-01) and the per-host form is fixed host knowledge kept in one place (D-11, 39 D-02). Owner request (2026-11-19).
+- **D-32: Skills: `--skill-path <dir>` and `--skill-name <name>`, three labeled forms per host, the owner's order name, path,
+  prose.** Each row's `skills` field holds a `name`, `path` and `prose` form with a source label and a state (`verified` fed,
+  `unverified` recorded and reported `unverified_form`, `unknown` reported `no_form`). Seeds from the 2026-11-21 help read: pi path
+  `--skill <dir>` verified (its formulas keep `--no-skills`, so a name is `mode_forbids`); claude name `/<name>` and path
+  unverified; copilot name and path (`--add-dir` with a `.github/skills` layout) unverified; cursor-agent, codex and opencode
+  unknown; prose is the runner's own form everywhere (stdin, or copilot's `-p` argument under `ARGV_PROMPT_MAX`). The caller
+  passes a name only when its table says the host has the skill; a name and a path for one skill give one line and one form.
+  `skill=<name>` lines carry `form=` when applied. **Own reasoning** on who falls back (the runner, which alone knows the forms;
+  the owner gave the order). Ledger. The spike of D-17 may flip claude's name form or an `--add-dir` form to `verified`, with the
+  help line or probe record as its label; nothing else flips a state.
+- **D-33: MCP servers: `--mcp-config <file>`, the per-invocation form only, values never printed.** The caller writes a
+  run-scoped JSON file (group- and world-unreadable); the runner reads it once, passes only its path, prints only server names
+  (redacted), and adds no server without the flag. Forms from the 2026-11-21 help read: claude `--mcp-config <file>
+  --strict-mcp-config` and copilot `--additional-mcp-config @<file>` verified; codex `unverified_form` (a generic `-c` override
+  whose help names no MCP key and which would put server arguments on argv); pi, cursor-agent and opencode `no_form` (config file
+  only; writing a project-local `.pi/mcp.json` or `.cursor/mcp.json` would change the checkout and the user's project, so it is
+  never done). A review profile that turns MCP off keeps doing so (`mode_forbids`), and the tree check still fails a review lane
+  whose tree changed. Existing formula flags stay as they are (cursor exec `--approve-mcps`, pi exec without `--no-mcp`): the
+  owner's "never remove an existing feature" rail; Phase 39's capabilities line shows those host-config servers as `host_config`
+  or `unknown`. Owner request (2026-11-19) and owner rules (only when the task needs it, read-only by default, never the user's
+  real host config, no secrets printed).
+- **D-34: Grok is not a target here.** The five grok lines of `37-SPEC.md` are marked superseded in place; no grok help fixture,
+  form, probe, session row, test or list entry is added, including in a recorded-help fixture list a later unit's carried
+  amendment names (38.1 D-30 lists grok for `tests/fixtures/cli_help/`; that entry is superseded too, handed to 38.1 below).
+  Existing grok code stays (the run's rail); Phase 39.1 removes the runtime (RUN-15). This file had no grok mention on this
+  branch when amended. Owner directive (2026-11-20).
+
+Handoffs added 2026-11-21 (the full list with the facts is in `37-DISCUSSION-LOG.md`, update of 2026-11-21):
+
+- **Phase 38**: no statement contradicts D-31 to D-34; the new self-test cases for R13 and R14 move with the harness to its
+  sibling file.
+- **Phase 38.1**: its amendments to this phase's files (the R2 bullet's host list, the D-15 refinement, D-30's fixture list)
+  and its own SPEC and CONTEXT name grok; each is superseded in its unit (no grok fixture). D-30's help-fixture test covers the new
+  skill and MCP flags. 37 names no pool, so 38.1's adoption of `provider:free` pools needs nothing here.
+- **Phase 39**: R6 and D-11 move to this phase's R13 (same flag, same forms, plus `--skill-name` and the prose form); R5 and
+  D-10 keep lens selection, notes and the window check but read the runner's `form=` instead of inlining; the capabilities
+  line's `skills` and `mcp` read this phase's lines; REV-05's table chooses servers by task kind and writes the run-scoped MCP
+  file; the repository-or-skill-root check of a skill path stays its validator (39 D-11's plain-Node copy is its choice); its
+  ROADMAP code anchor "`--skill-path` setting" moves here.
+
+Open questions for the phase researcher (added 2026-11-21):
+
+- Does claude resolve `/<name>` for an installed skill in `-p` mode, and does copilot load a skill from an `--add-dir`
+  directory's `.github/skills` (the D-17 spike, one cheap call each)?
+- Does an unattended cursor execute lane block on an approval prompt without `--approve-mcps` (the owner's "only when needed"
+  rule against the existing flag)? Record before anyone proposes dropping it.
+- Do claude's plan mode and copilot's review profile still let the given MCP servers' tools run, and which wins on copilot when a
+  given server name also exists in the user's copilot config?
 
 ### Open questions for the phase researcher
 
