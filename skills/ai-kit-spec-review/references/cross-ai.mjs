@@ -4652,6 +4652,155 @@ function hostAvailable(env, whichFn = which) {
   return env.HERDR_ENV === '1' && Boolean(env.PATH) && Boolean(whichFn(HERDR_BIN, env.PATH));
 }
 
+// D-22 / 0b-6: the only herdr commands the runner runs; Phase 38 adds tab list.
+const HERDR_VERBS = Object.freeze(['tab create', 'pane run', 'tab close']);
+const HERDR_TIMEOUT_MS = 5000;
+
+// The one herdr spawn site (arch rule): a verb outside HERDR_VERBS throws.
+function herdrCall(verb, args, timeoutMs = HERDR_TIMEOUT_MS) {
+  if (!HERDR_VERBS.includes(verb)) throw new Error(`herdr verb ${verb} is not one of ${HERDR_VERBS.join(', ')}`);
+  const r = spawnSync(HERDR_BIN, [...verb.split(' '), ...args], { encoding: 'utf8', timeout: Math.max(1, timeoutMs), stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+  let detail = null;
+  if (r.error) detail = r.error.code === 'ETIMEDOUT' ? 'timeout' : `spawn ${r.error.code || r.error.message}`;
+  else if (r.signal) detail = `signal ${r.signal}`;
+  else if (r.status !== 0) detail = `exit ${r.status}`;
+  return { ok: detail === null, stdout: r.stdout || '', stderr: r.stderr || '', detail };
+}
+
+// SPEC R12 precision: one integer 0-255 or a signal name; anything else is a crash, never coerced.
+function parseRc(text) {
+  const body = String(text ?? '').replace(/\n$/, '');
+  if (body === '') return null;
+  if (/^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/.test(body)) return { code: Number(body), signal: null };
+  if (/^SIG[A-Z0-9]{2,8}$/.test(body)) return { code: null, signal: body };
+  return { code: null, signal: null, bad: body.split('\n')[0].replace(/[\x00-\x1f\x7f-\x9f]/g, '').slice(0, 80) };
+}
+
+function hostStartProblem(dir) {
+  if (!HOST_PATH_SAFE.test(dir)) return 'state home path holds a character outside [A-Za-z0-9._/-]';
+  const tool = HOST_TOOLS.find((item) => !isExec(item));
+  return tool ? `${tool} is not executable` : null;
+}
+
+// D-24 to D-27: the hosted-lane protocol (pinned by tests/fixtures/runner_host_protocol.json).
+const HOST_LABEL_PREFIX = 'aikit';
+const HOST_PATH_SAFE = /^[A-Za-z0-9._\/-]+$/;
+const HOST_FILES = Object.freeze({ run: 'run.json', launcher: 'launch.sh', env: 'env', prompt: 'prompt', out: 'out', err: 'err', pid: 'pid', rc: 'rc' });
+const HOST_TOOLS = Object.freeze(['/bin/sh', '/usr/bin/env', '/bin/rm', '/bin/mv', '/bin/cat']);
+const HOST_SETSID = '/usr/bin/setsid';
+const RUN_RECORD_VERSION = 1;
+
+// Run time and self-test both use it (moved from the self-test helpers for the hosted lane).
+function pidAlive(pid) {
+  try { process.kill(pid, 0); } catch { return false; }
+  try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, 'utf8')); } catch { return true; }
+}
+
+function shQuote(value) {
+  const text = String(value);
+  if (text.includes('\0')) throw new Error('argv element holds a NUL byte');
+  return "'" + text.replace(/'/g, "'\\''") + "'";
+}
+
+function hostToken() {
+  return crypto.randomBytes(6).toString('hex');
+}
+
+function hostLabel(role, runtime, token) {
+  return `${HOST_LABEL_PREFIX}:${role}:${runtime}:${token}`;
+}
+
+function hostRunDir(home, token) {
+  return path.join(home, 'ai-kit', 'spec', 'host', token);
+}
+
+function writePrivate(file, text) {
+  const fd = fs.openSync(file, 'wx', 0o600);
+  try { fs.writeFileSync(fd, text); } finally { fs.closeSync(fd); }
+}
+
+// Field 22 (start ticks), parsed after the last ')' so a command name with spaces cannot shift it (0b-3).
+function procStartTime(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/);
+    return /^\d+$/.test(fields[19]) ? fields[19] : '-';
+  } catch { return '-'; }
+}
+
+function procGroup(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/);
+    return /^\d+$/.test(fields[2]) ? Number(fields[2]) : null;
+  } catch { return null; }
+}
+
+function hostTypedLine(files) {
+  return 'sh ' + files.launcher;
+}
+
+function hostEnvText(env) {
+  const lines = [];
+  let skipped = 0;
+  for (const [name, value] of Object.entries(env)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) lines.push(`export ${name}=${shQuote(value)}`);
+    else skipped++;
+  }
+  return { text: lines.join('\n') + '\n', skipped };
+}
+
+// 0b-2: clean environment in its own group, env file, prompt fd or variable, delete both, pid; rc is renamed into place after out and err close.
+function buildLauncher(lane, files, token) {
+  const stdinPrompt = lane.input !== null;
+  const argvPrompt = lane.promptArg !== undefined && lane.promptArg !== null;
+  const at = argvPrompt ? lane.argv.indexOf(lane.promptArg) : -1;
+  if (argvPrompt && at < 0) throw new Error('argv prompt element not found');
+  const q = shQuote;
+  const quotedArgv = lane.argv.map(q);
+  const command = [q(lane.bin), ...quotedArgv.map((el, i) => (i === at ? '"$aikit_prompt"' : el))].join(' ');
+  const lines = [
+    '#!/bin/sh',
+    `[ "\${AIKIT_HOST_CLEAN:-}" = ${q(token)} ] || { [ -x /usr/bin/setsid ] && exec /usr/bin/env -i AIKIT_HOST_CLEAN=${q(token)} /usr/bin/setsid /bin/sh "$0"; exec /usr/bin/env -i AIKIT_HOST_CLEAN=${q(token)} /bin/sh "$0"; }`,
+    'unset AIKIT_HOST_CLEAN',
+    `. ${q(files.env)}`,
+  ];
+  if (stdinPrompt) lines.push(`exec 3< ${q(files.prompt)}`);
+  if (argvPrompt) lines.push(`aikit_prompt=$(/bin/cat ${q(files.prompt)}; printf x); aikit_prompt=\${aikit_prompt%x}`);
+  lines.push(`/bin/rm -f ${q(files.env)}${stdinPrompt || argvPrompt ? ' ' + q(files.prompt) : ''}`);
+  lines.push(`printf '%s\\n' "$$" > ${q(files.pid + '.tmp')} && /bin/mv ${q(files.pid + '.tmp')} ${q(files.pid)}`);
+  lines.push(`printf 'AIKIT-HOST-START %s\\n' ${q(token)}`);
+  lines.push(`cd ${q(lane.cwd)} && ${command}${stdinPrompt ? ' <&3 3<&-' : ' < /dev/null'} >> ${q(files.out)} 2>> ${q(files.err)}`);
+  lines.push('rc=$?');
+  if (stdinPrompt) lines.push('exec 3<&-');
+  if (argvPrompt) lines.push('unset aikit_prompt');
+  lines.push('if [ "$rc" -gt 128 ] && sig=$(kill -l "$rc" 2>/dev/null); then rc="SIG$sig"; fi');
+  lines.push(`printf '%s\\n' "$rc" > ${q(files.rc + '.tmp')} && /bin/mv ${q(files.rc + '.tmp')} ${q(files.rc)}`);
+  lines.push(`printf 'AIKIT-HOST-DONE %s rc=%s\\n' ${q(token)} "$rc"`);
+  return lines.join('\n') + '\n';
+}
+
+// 0b-3: run.json first, then env and prompt; the tab comes after (plan 37-20).
+function writeRunDir(home, token, lane) {
+  const dir = hostRunDir(home, token);
+  const files = Object.fromEntries(Object.entries(HOST_FILES).map(([key, name]) => [key, path.join(dir, name)]));
+  const label = hostLabel(lane.role, lane.runtime, token);
+  const launcher = buildLauncher(lane, files, token);
+  let checkout;
+  try { checkout = fs.realpathSync(lane.cwd); } catch { checkout = lane.cwd; }
+  const record = { version: RUN_RECORD_VERSION, token, runner_pid: process.pid, runner_start: procStartTime(process.pid), host_name: os.hostname(), checkout_root: checkout, role: lane.role, runtime: lane.runtime, label, tab_id: null, pane_id: null, launcher_pid: null, launcher_pgid: null, launcher_start: null, created_ms: Date.now() };
+  writeCycleState(files.run, record);
+  const envText = hostEnvText(lane.env || {});
+  writePrivate(files.env, envText.text);
+  const prompted = lane.input !== null || (lane.promptArg !== undefined && lane.promptArg !== null);
+  if (lane.input !== null) writePrivate(files.prompt, String(lane.input ?? ''));
+  else if (prompted) writePrivate(files.prompt, String(lane.promptArg));
+  writePrivate(files.launcher, launcher);
+  writePrivate(files.out, '');
+  writePrivate(files.err, '');
+  return { dir, files, label, record, prompted, envSkipped: envText.skipped };
+}
+
 function parsePiListingIds(stdout) {
   if (typeof stdout !== 'string') return null;
   let envelope = null;
@@ -5097,6 +5246,11 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   // The first attempt spawns the argv the settings report was confirmed against (SPEC R2, R7).
   const first = opts.resume && opts.sessionId ? sameSessionArgv(name, rt, model, ctx, opts.sessionId, mode, prompt) : null;
   let argv = first ? first.argv : withExtra(name, rt[mode](model, ctx));
+  // SPEC R12 encoding: no argv element may hold a NUL byte, hosted or headless (a spawn would throw).
+  if (argv.some((el) => String(el).includes('\0'))) {
+    log(`cross-ai: argv for ${name} holds a NUL byte; refused`);
+    return { ok: false, status: 'usage', exit: 2, cli_rc: '-', outBytes: 0 };
+  }
   const initialProblem = reviewProblem(argv, first ? opts.sessionId : null);
   if (initialProblem) return refuseReview(initialProblem);
   let input = first ? first.input : (rt.argvPrompt ? null : prompt);
@@ -6778,11 +6932,6 @@ function statusTail(stderr) {
 }
 
 function sessionRows(ctx) { return readOr(ctx.env.FAKE_SESSIONS, '').trim().split('\n').filter(Boolean).map((l) => l.split(' ')); }
-
-function pidAlive(pid) {
-  try { process.kill(pid, 0); } catch { return false; }
-  try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, 'utf8')); } catch { return true; }
-}
 
 // Self-test load scaling (D-10): every ceiling is multiplied by one factor read once per run
 // (load per CPU clamped to 1..4); floors and the real run limits are never scaled.
@@ -14032,6 +14181,15 @@ async function blackBoxSelfTest(listOnly = false) {
         name: 'claude-exec-no-model', kind: 'logic',
         args: ['--runtime', 'claude', '--role', 'execute'], exit: 2,
         status: /^AIKIT-XAI status=no_model cli=claude .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'argv-nul-refused', kind: 'logic',
+        args: ['--runtime', 'copilot', '--model', 'fake-ok'], stdin: 'a\u0000b\n', exit: 2,
+        status: /^AIKIT-XAI status=usage cli=copilot model=fake-ok exit=2 cli_rc=- elapsed=\d+s out=\d+ tree=clean action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('cross-ai: argv for copilot holds a NUL byte; refused')) return 'no NUL refusal line';
+          return ctx.calls.some((line) => line.startsWith('copilot')) ? 'copilot was spawned' : null;
+        },
       },
     ];
 
