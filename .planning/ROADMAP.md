@@ -815,7 +815,69 @@ Plans:
   8. Where herdr is available a lane runs in a tab the runner opens and closes, with the same argv, settings report, session id, status line and exit code as the headless run; without herdr, with `--host none` or with `AIKIT_HOST=none` the headless path is unchanged and tested; the runner touches only the tab it opened and reads its lane's own files, never herdr's screen text or agent status, as the result. *(added 2026-11-16, re-run 2, 37 D-22 to D-29, owner directive "herdr hosting": a second transport next to the direct spawn, `--host auto|none` default none with the builders emitting `auto`, a 0700 run directory with a 0600 env file, `tab create`, `pane run` and `tab close` only; interactive agent TUIs, TUI apps, e2e runs and pane reuse stay with Phase 42 and the calling skills)*
   9. A skill a call names reaches a review or execute lane by name, by path or as inlined prose, in the first form its host has verified, and an MCP server a call names reaches the lane only through the host's per-invocation form; each host's forms carry a source label from its own help, every skill and server is printed as applied or ignored with the reason, no server value is printed and no host config is edited. *(added 2026-11-21, plan time, 37 D-31 to D-34, owner requests of 2026-11-19: `--skill-path`, `--skill-name` and `--mcp-config <run-scoped file>`; verified 2026-11-21: pi `--skill`, claude `--mcp-config` with `--strict-mcp-config`, copilot `--additional-mcp-config`; every other form unverified or unknown and not fed; which skills and servers a lane gets stays Phase 39's; grok is not a target, owner directive 2026-11-20)*
 
-**Plans**: TBD
+**Plans**: 25 plans in 19 waves *(planned 2026-11-21; 37-01, the live spike, and 37-24, the judge loop with the final `make test`, are orchestrator actions; plans of one wave run one after another in the one checkout)*
+**Wave 1**
+- [ ] 37-01-PLAN.md (wave 1): live spike (D-17), help capture refresh and `37-SPIKE.md` (orchestrator action)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 37-02-PLAN.md (wave 2): recorded help fixtures for six hosts, the command-aware flag test, every new test module as a stub
+- [ ] 37-03-PLAN.md (wave 2): parse the whole call vocabulary and the strict call-file readers
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 37-04-PLAN.md (wave 3): settings planner v1 (reasons, names, effort forms, report lines, `model-id`)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 37-05-PLAN.md (wave 4): settings planner v2 (context forms with `bad_value`, session forms)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 37-06-PLAN.md (wave 5): planner wired into real runs, the status-line group, escalation reported
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 37-07-PLAN.md (wave 6): session ids at run time
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 37-08-PLAN.md (wave 7): table gates become facts (model-id floor, named refusal, any runtime name)
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 37-09-PLAN.md (wave 8): `--argv-file` lane
+
+**Wave 9** *(blocked on Wave 8 completion)*
+- [ ] 37-10-PLAN.md (wave 9): claude execute and resume formulas, labeled unverified
+- [ ] 37-11-PLAN.md (wave 9): template-versus-render sync test
+
+**Wave 10** *(blocked on Wave 9 completion)*
+- [ ] 37-12-PLAN.md (wave 10): Python call vocabulary, builder parity, template version 9
+
+**Wave 11** *(blocked on Wave 10 completion)*
+- [ ] 37-13-PLAN.md (wave 11): lane skills by name, path or inlined prose
+- [ ] 37-14-PLAN.md (wave 11): Python effort composers removed; previews read the runner
+
+**Wave 12** *(blocked on Wave 11 completion)*
+- [ ] 37-15-PLAN.md (wave 12): lane MCP servers through `--mcp-config`
+- [ ] 37-16-PLAN.md (wave 12): Python model-id grammar mirror removed
+
+**Wave 13** *(blocked on Wave 12 completion)*
+- [ ] 37-17-PLAN.md (wave 13): `--describe` and its golden file
+
+**Wave 14** *(blocked on Wave 13 completion)*
+- [ ] 37-18-PLAN.md (wave 14): runner facts in the runtimes snapshot; routing reads them; `exec_formula` mirror removed
+- [ ] 37-19-PLAN.md (wave 14): herdr launcher, run directory and `run.json`, arch rule
+
+**Wave 15** *(blocked on Wave 14 completion)*
+- [ ] 37-20-PLAN.md (wave 15): hosted transport over `runChild`
+
+**Wave 16** *(blocked on Wave 15 completion)*
+- [ ] 37-21-PLAN.md (wave 16): `ai-kit-cross-ai` SKILL.md, launch-and-wait samples, three-way reason lock
+- [ ] 37-25-PLAN.md (wave 16): hosted-lane failure-path cases
+
+**Wave 17** *(blocked on Wave 16 completion)*
+- [ ] 37-22-PLAN.md (wave 17): dispatch and runner docs, READMEs, hardcoding baseline shrink
+
+**Wave 18** *(blocked on Wave 17 completion)*
+- [ ] 37-23-PLAN.md (wave 18): live copy re-render, `make check-dogfood`, shard time re-record, grok scan
+
+**Wave 19** *(blocked on Wave 18 completion)*
+- [ ] 37-24-PLAN.md (wave 19): judge loop and the final `make test` gate (orchestrator action)
 
 ### Phase 38: Runner hardening and run safety
 
@@ -1200,7 +1262,7 @@ Plans:
 | 34. jev backends by host and Laya calibration | 10/10 | Complete    | 2026-11-16 |
 | 35. Model discovery and catalog | 28/28 | In Progress | - |
 | 36. spec-config as the hub | 29/29 | In Progress | - |
-| 37. Shared runner options and session ids | 0/TBD | Not started | - |
+| 37. Shared runner options and session ids | 0/25 | Planned | - |
 | 38. Runner hardening and run safety | 0/TBD | Not started | - |
 | 38.1. Runner error classification and retry policy | 0/TBD | Not started | - |
 | 39. Lane capability blocks and lens skills | 0/TBD | Not started | - |

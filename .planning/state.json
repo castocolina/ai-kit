@@ -91,7 +91,7 @@
     {
       "number": "37",
       "name": "Shared runner options and session ids",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "number": "38",
@@ -201,8 +201,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (verify)",
-    "reason": "Phase 17 of 40 · 38% · ready to verify"
+    "label": "Advance to the next step",
+    "reason": "Phase 18 of 40 · 38% · executing"
   },
-  "updated_at": "2026-11-21T07:33:28.293Z"
+  "updated_at": "2026-11-21T11:00:00.005Z"
 }

@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 36
-current_phase_name: spec-config as the hub
-status: verifying
+current_phase: 37
+current_phase_name: Shared runner options and session ids
+status: executing
 stopped_at: Completed 36-29-PLAN.md
-last_updated: "2026-11-21T07:33:31.834Z"
+last_updated: "2026-11-21T10:59:59.992Z"
 last_activity: 2026-11-20
 last_activity_desc: Phase 35 execution started
-state_head: 7e2539d38e5b755367e40cc424a0735f5183abcf
+state_head: 345fdce3df6808b9097a6f40352ba448da8a2be5
 progress:
   total_phases: 40
   completed_phases: 15
-  total_plans: 181
+  total_plans: 206
   completed_plans: 181
   percent: 38
 ---
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 36 (spec-config as the hub) — READY TO EXECUTE
+Phase: 37 (Shared runner options and session ids) — READY TO EXECUTE
 Plan: 28 of 28
-Status: Phase complete — ready for verification
+Status: Ready to execute
 Last activity: 2026-11-20 — Phase 35 execution started
 
 Progress: [████░░░░░░] 38%
