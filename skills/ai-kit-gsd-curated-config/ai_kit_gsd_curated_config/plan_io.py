@@ -1066,17 +1066,20 @@ def _validate_artifact_config(config, choices, status, plan_host: str) -> str | 
 
 
 def _validate_effort(effort, models: dict) -> str | None:
-    """Optional per-runner effort pin (WR-06): only runners that can pin it, on a set model."""
+    """Optional per-runner effort pin (WR-06): a level token (37 D-07) on a runner with a model.
+
+    Any runner may pin it: the runner composes the runtime's own form or reports it ignored."""
     if not isinstance(effort, dict):
         return "artifacts[0].config.effort: expected object"
     for runner_id, level in effort.items():
-        levels = cross_ai.EFFORT_LEVELS.get(runner_id)
-        if levels is None:
-            return f"artifacts[0].config.effort: {runner_id!r} cannot pin effort"
         if runner_id not in models:
             return f"artifacts[0].config.effort: id {runner_id!r} has no model"
-        if level not in levels:
-            return f"artifacts[0].config.effort.{runner_id}: expected one of {list(levels)}"
+        if not isinstance(level, str) or not cross_ai.EFFORT_LEVEL_RE.fullmatch(level):
+            # The value is not echoed: a plan file may hold a pasted secret.
+            return (
+                f"artifacts[0].config.effort.{runner_id}: level must be a token matching "
+                f"{cross_ai.EFFORT_LEVEL_RE.pattern}"
+            )
     return None
 
 

@@ -246,7 +246,7 @@ def _plan_set_script_model(
     router_map = config.setdefault("router_backed", {})
     models[runner_id] = model
     router_map[runner_id] = router
-    _set_effort(config, runner_id, cross_ai.exec_effort(runner_id, row) if row else None)
+    _set_effort(config, runner_id, cross_ai.exec_effort(row) if row else None)
     artifact.setdefault("choices", {}).pop(runner_id, None)
     _finish_script_artifact(artifact)
     _sync_artifact_command(plan, artifact)

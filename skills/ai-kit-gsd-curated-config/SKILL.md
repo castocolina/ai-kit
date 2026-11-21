@@ -129,8 +129,8 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
      cursor, opencode and codex; copilot is not a curated runner (`plan-set` refuses it).
      `plan-unset script:cross-ai.model.<runner>` reopens the choice for the selected runtime and
      drops any other runner from the menu.
-     A pi or codex model with reasoning modes also pins its effort (`config.effort`, medium
-     or the nearest mode); the runner passes it as pi `--thinking` / codex effort.
+     A runner model with reasoning modes also pins its effort (`config.effort`, medium or the
+     nearest mode) on any runner; the runner composes that runtime's form or reports it ignored.
    - **pi session steer** (`model_profile_overrides.pi.sonnet`, pi hosts only): the
      candidates are the bare model ids the session provider serves (`PI_PROVIDER`). pi sets
      `PI_PROVIDER` and `PI_MODEL` only for commands the pi agent runs through its own bash tool,

@@ -707,26 +707,38 @@ class TestPlanValidator(unittest.TestCase):
                 entry["status"] = "needs_choice"
         self.assertIsNone(plan_io.validate_plan(plan))
 
-    def test_artifact_effort_rules(self):
-        """WR-06: effort is optional; only pinnable runners, known levels, with a model."""
-        for effort, ok in (
-            ({}, True),
-            ({"pi": "medium"}, True),
-            ({"pi": "max"}, True),
-            ({"pi": "bogus"}, False),
-            ({"cursor": "medium"}, False),
-            ({"codex": "medium"}, False),  # codex has no model in this plan
-            (["medium"], False),
+    def test_artifact_effort_is_a_token_on_a_runner_with_a_model(self):
+        """WR-06 / 37 D-07: effort is optional; any runner with a model, any level token."""
+        for effort, want in (
+            ({}, None),
+            ({"pi": "medium"}, None),
+            ({"pi": "max"}, None),
+            ({"pi": "ultra"}, None),
+            ({"cursor": "medium"}, None),
+            ({"opencode": "xhigh"}, None),
+            ({"codex": "medium"}, "artifacts[0].config.effort: id 'codex' has no model"),
+            (["medium"], "artifacts[0].config.effort: expected object"),
         ):
             with self.subTest(effort=effort):
                 plan = self._golden_plan()
                 plan["artifacts"][0]["config"]["effort"] = effort
                 problem = plan_io.validate_plan(plan)
-                if ok:
+                if want is None:
                     self.assertIsNone(problem)
                 else:
-                    self.assertIsNotNone(problem)
-                    self.assertIn("effort", str(problem))
+                    self.assertIn(want, str(problem))
+
+    def test_artifact_effort_outside_the_token_shape_is_refused(self):
+        """Non-vacuity: every level outside the D-07 shape is refused, the value not echoed."""
+        pattern = cross_ai.EFFORT_LEVEL_RE.pattern
+        for level in ("High", "hi gh", "-low", "a" * 17, "", 3, None):
+            with self.subTest(level=level):
+                plan = self._golden_plan()
+                plan["artifacts"][0]["config"]["effort"] = {"pi": level}
+                self.assertEqual(
+                    plan_io.validate_plan(plan),
+                    f"artifacts[0].config.effort.pi: level must be a token matching {pattern}",
+                )
 
     def test_artifact_bad_path(self):
         plan = self._golden_plan()

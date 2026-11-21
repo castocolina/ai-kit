@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -237,20 +238,22 @@ class TestExecTargets(unittest.TestCase):
         inv["installed_runtimes"] = [runtime]
         return cross_ai.exec_targets(inv, "standard", prefer=(runtime,))[0]
 
-    def test_catalog_pick_pins_effort_on_pi_and_codex(self):
-        """WR-06: the selection's effort target reaches runners that can pin it."""
-        for runtime, runner in (("pi", "pi"), ("codex", "codex")):
+    def test_catalog_pick_pins_effort_on_every_runner(self):
+        """WR-06 / 37 D-07: the selection's effort target reaches every runner."""
+        for runtime in cross_ai.RUNNER_IDS:
             with self.subTest(runtime=runtime):
                 target = self._effort_target(runtime, ["low", "medium", "high"])
                 self.assertEqual(target.effort, "medium")
                 art = cross_ai.script_artifact([target], cross_ai.MIN_TIMEOUT_S)
-                self.assertEqual(art["config"]["effort"], {runner: "medium"})
+                self.assertEqual(art["config"]["effort"], {runtime: "medium"})
         self.assertEqual(self._effort_target("pi", ["high", "xhigh"]).effort, "high")
+        self.assertEqual(self._effort_target("cursor", ["max"]).effort, "max")
 
-    def test_no_effort_without_flag_modes_or_with_variant_id(self):
+    def test_no_effort_without_modes_or_with_variant_id(self):
         cases = (
-            ("cursor", ["low", "medium"], "m-reason"),  # no effort flag in the runner
             ("pi", [], "m-reason"),  # not a reasoning model: pi clamps to off itself
+            ("cursor", [], "m-reason"),  # no modes: the runtime keeps its own default
+            ("cursor", ["off"], "m-reason"),  # no mode on the ladder: nothing to clamp by
             ("pi", ["low", "medium"], "m-reason-low"),  # the id already names the effort
         )
         for runtime, modes, model in cases:
@@ -824,6 +827,24 @@ class TestValues(unittest.TestCase):
             cross_ai.manager_flags_value("--cross-ai-x"),
             "--cross-ai-x --cross-ai",
         )
+
+
+TEMPLATE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "skills", "ai-kit-spec-review", "references", "cross-ai.mjs",
+)
+
+
+class TestEffortLevelToken(unittest.TestCase):
+    """37 D-07: curated-config checks the runner's level shape, never a closed set."""
+
+    def test_level_shape_matches_the_runner(self):
+        with open(TEMPLATE_PATH, encoding="utf-8") as handle:
+            found = re.search(r"^const LEVEL_RE = /\^(.*?)\$/;", handle.read(), re.M)
+        self.assertIsNotNone(found, "the runner template has no LEVEL_RE line")
+        assert found is not None
+        self.assertEqual(cross_ai.EFFORT_LEVEL_RE.pattern, found.group(1))
+        self.assertFalse(hasattr(cross_ai, "EFFORT_LEVELS"))
 
 
 if __name__ == "__main__":

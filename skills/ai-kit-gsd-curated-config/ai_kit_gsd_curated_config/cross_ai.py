@@ -63,12 +63,9 @@ DEFAULT_PREFER = ("pi", "cursor", "opencode")
 RUNNER_IDS = ("pi", "cursor", "opencode", "codex")
 EXEC_DEFAULT_HOSTS = ("claude", "codex")
 EXEC_EFFORT_TARGET = "medium"
-# Runners whose CLI can pin effort, and the levels it accepts: pi --thinking, codex
-# -c model_reasoning_effort (the runner's --codex-effort set).
-EFFORT_LEVELS = {
-    "pi": ("off", "minimal", "low", "medium", "high", "xhigh", "max"),
-    "codex": ("minimal", "low", "medium", "high", "xhigh"),
-}
+# 37 D-07: an effort level is a token of this shape, never a member of a set; it is the
+# runner's LEVEL_RE without anchors, pinned to the template by a test.
+EFFORT_LEVEL_RE = re.compile(r"[a-z][a-z0-9_-]{0,15}")
 CROSS_AI_FLAG = "--cross-ai"
 NO_TARGET_TEXT = "no installed cross-AI target (pi, cursor, opencode)"
 _ROUTER_WHY = "user-curated router (declared purpose: execute)"
@@ -103,16 +100,17 @@ def _declared_routers(pool: list, purpose: str) -> list:
     )
 
 
-def exec_effort(runner_id: str, candidate: dict) -> str | None:
-    """The effort to pin for a catalog pick (WR-06): the selection's target clamped to the
-    model's reasoning modes. None when the runner cannot pin effort, the model reports no
-    modes (pi then clamps to off itself), or the id already names an effort variant."""
-    levels = EFFORT_LEVELS.get(runner_id)
+def exec_effort(candidate: dict) -> str | None:
+    """The effort to pin for a catalog pick (WR-06, 37 D-07): the selection's target clamped
+    to the model's reasoning modes, for every runner (the runner composes the runtime's form or
+    reports it ignored). None when the model reports no modes, none of its modes is on the
+    effort ladder (no order to clamp by; the runtime keeps its own default), or the id already
+    names an effort variant."""
     modes = candidate.get("reasoning_modes") or []
-    if levels is None or not modes or roles.effort_token(candidate["model"]) is not None:
+    if not modes or roles.effort_token(candidate["model"]) is not None:
         return None
     effort = roles.clamp_effort(EXEC_EFFORT_TARGET, modes)
-    return effort if effort in modes and effort in levels else None
+    return effort if effort in modes else None
 
 
 def _pick_for_runner(runner_id: str, cands: list, rigor: str) -> Target:
@@ -124,7 +122,7 @@ def _pick_for_runner(runner_id: str, cands: list, rigor: str) -> Target:
     pick = roles.best_pick(cands, "execution", EXEC_EFFORT_TARGET, ceiling.value)
     if pick is not None:
         why = roles.pick_why(pick, "execution", EXEC_EFFORT_TARGET, ceiling)
-        effort = exec_effort(runner_id, pick.candidate)
+        effort = exec_effort(pick.candidate)
         return Target(
             runner_id, pick.candidate["model"], "catalog-score", why, False, [], effort
         )
