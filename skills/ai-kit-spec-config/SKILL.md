@@ -126,6 +126,19 @@ and an `(unconfirmed: ...)`, `config file only` or `not checked` line is never u
 
 ### Step 1.5 — Catalog
 
+**A pending old roster comes first.** When an old `review-spec.toml` awaits migration in the project's
+`.aikit/` or the user config folder and `$RUNTIMES_JSON` names an installed runtime without a
+`models` list, `fetch-model-catalog` reads the roster to find that runtime's model, and that read
+migrates every pending old roster it reads, project and user alike, whatever target the owner
+picks. In that case settle Step 2.1's write target and replacement gate before this step, and run
+the catalog step only when every pending old roster belongs to the target the owner approved for
+replacement: on "stop", end the run here; on the keep form, run it with
+`AI_KIT_KEEP_MIGRATION_BACKUP=1` in its environment so the old file is kept as
+`review-spec.toml.migrated`. When a pending roster outside that target would be read (for
+example the owner chose a local roster to leave a pending global one alone), do not run
+`fetch-model-catalog`: say that discovery would migrate that roster, and ask the owner for each
+listing-less runtime's model id (or `auto`) instead.
+
 Run the catalog flow and **MANDATORY read** [`references/catalog.md`](references/catalog.md).
 Show the `catalog-report` output and its attribution lines verbatim, then continue to Step 2.
 The review and execute proposal is Step 2.2's `propose-lanes` run over this catalog.
@@ -169,7 +182,7 @@ Read the data-use note once per chosen model from that model's own vendor page; 
 ```bash
 python3 "$TOOLS_PY" infer-vendor --model <model-id>
 ```
-When this prints `{"vendor": null}` (no known prefix — e.g. an `ollama-cloud/*` id, or a genuinely new model this table hasn't seen yet), ask the user directly for the real vendor rather than guessing — this is the one case a human still has to supply the answer, and it should be rare (the table in `ai-kit-spec.py`'s `_MODEL_VENDOR_PREFIXES` already covers every model family confirmed live in the CLI profiles).
+When this prints `{"vendor": null}` (no known prefix — e.g. an `ollama-cloud/*` id, or a genuinely new model this table hasn't seen yet), ask the user directly for the real vendor rather than guessing — this is the one case a human still has to supply the answer, and it should be rare. The lookup is a best-effort prefix table (`_MODEL_VENDOR_PREFIXES` in the review skill's `ai_kit_spec/vendor.py`), not proof that every model family is covered.
 
 #### Step 2.4 — Store the pair and its runner knobs
 
@@ -190,7 +203,10 @@ dispatch. `build-command --runtime <id>` is an optional preview of that argv —
 argv and says that a config.toml lane stores `runtime` and `model`; do not store its output as a
 `command`. How a stored pair is run, waited for and retried is in
 [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md) for runtime/model dispatch; this skill
-only stores the pair, and the runner refuses a model id its runtime's grammar disallows.
+only stores the pair. The runner does not refuse an unusual id shape: it prints a shape note and
+still runs it; it refuses an id only when the runtime's live model listing succeeds and lacks it
+(`bad_model`), and the CLI itself may reject an id. Step 2.5's live test is the check that the
+chosen id works.
 ```bash
 python3 "$TOOLS_PY" build-command --runtime <id> \
   [--effort <e>] [--service-tier <t>] [--mode plan|ask]
@@ -283,8 +299,12 @@ python3 "$TOOLS_PY" detect-current-runtime
 ```
 Capture the printed `host` (`pi` / `opencode` / `cursor` / `codex` / `claude` / `unknown`).
 That value is shown in the prompt below and decides the entry's shape at Step 3. When several
-CLIs are nested, the innermost one wins (pi > opencode > cursor > codex > claude), so a codex or
-opencode session started from Claude Code records that CLI, not claude.
+CLIs are nested, their environment markers accumulate and the command returns the first marker in
+a fixed precedence (pi > opencode > cursor > codex > claude); it does not verify which CLI is the
+immediate parent. A codex or opencode session started from Claude Code records that CLI, not
+claude, but a pi marker left in the environment wins even when another CLI started later. When
+the owner says the printed host is not the active one, explain that precedence and offer a
+session-default entry without a host-specific alias.
 
 **Also ask, explicitly — do not skip this**: whether to register one or more entries that this
 host runs itself (running under: <host>), not any one specific vendor. Substitute the captured
@@ -404,12 +424,17 @@ project `[lanes]` table stays inactive for cross-AI review until trusted; with n
 trust and is active at once. Run
 `python3 "$TOOLS_PY" trust-local --cwd <project root> --show`, where `<project root>` is the
 parent of `.aikit/` — never `.aikit/` itself, which looks for `.aikit/.aikit/config.toml`
-and exits 1. `--show` writes no trust record; it prints one JSON line per project entry that runs
+and exits 1. `--show` records no new consent, but it is not a pure read: like every `trust-local` call it first migrates a pending old `review-spec.toml`, which can carry that roster's existing trust record into the new store, and its merged preview can migrate a pending old roster in the user config folder too. When an old roster is pending in either place, say so before running it. It prints one JSON line per project entry that runs
 as a subprocess (an entry with a `runtime` or a `command`, so more entries than the
-command-bearing ones): `{"key", "argv", "trusted", "path"}`, where `argv` is the exact argument list
-dispatch would run (already merged with the global config per `strategy`) with the prompt
+command-bearing ones): `{"key", "argv", "trusted", "path"}`, where `argv` is the argument list
+a review dispatch would run (already merged with the global config per `strategy`) with the prompt
 shown as the literal `<prompt>` placeholder, or `{"key", "error"}` for an entry that would be
-refused. Show those lines, ask whether to trust the file, and run
+refused. The preview walks the flattened entry view and renders the review invocation: an execute
+entry that shares a key with a review entry can be missing, and a table-runtime execute entry is
+shown with its review argv. Before asking, compare the lines with the file's command-bearing
+entries in both roles; for any entry without its own line, show its `command` text from the file
+and say the preview does not render it. Ask for trust only once every command-bearing entry has
+been shown that way. Show those lines, ask whether to trust the file, and run
 `python3 "$TOOLS_PY" trust-local --cwd <project root>` only after an explicit yes. Trust covers the file's command-bearing lane entries: editing another table, comments or spacing keeps it; changing a command-bearing entry needs a new trust; a file with no command-bearing entry needs none (`trust-local` prints `nothing to trust:`). `trust-local --cwd <project root>
 --revoke` withdraws it, and still works after the file was deleted or moved.
 

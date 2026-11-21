@@ -18,6 +18,7 @@ from pathlib import Path
 
 from tests import goal_prompt_fixtures as fx
 from tests import host_fakes
+from tests.cross_ai_selftest import _real_node_executable
 
 REPO = Path(__file__).resolve().parent.parent
 CLI = REPO / "skills" / "ai-kit-spec-goal-prompt" / "scripts" / "goal_prompt.py"
@@ -223,9 +224,16 @@ class TestStatusSnapshot(unittest.TestCase):
 class TestDogfood(unittest.TestCase):
     def test_detect_on_a_copy_of_this_repo(self):
         # The live .planning/ is never read: detect runs on a copy without it (SPEC R9).
+        # The real node binary goes before the caller's PATH: under the temp HOME a version
+        # manager's shim (Volta) finds no toolchain and runs `node` from PATH, which is itself,
+        # so the runner `--describe` the detect reads would fork without end.
+        node = _real_node_executable()
+        base = os.pathsep.join(filter(None, [node and os.path.dirname(node),
+                                             os.environ.get("PATH", "")]))
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as work:
             env = {
-                "PATH": host_fakes.host_path(host_fakes.write_host_fakes(Path(home) / "host-bin")),
+                "PATH": host_fakes.host_path(
+                    host_fakes.write_host_fakes(Path(home) / "host-bin"), base),
                 "HOME": home,
                 "AI_KIT_REFUSE_REAL_HOME": "1",
             }

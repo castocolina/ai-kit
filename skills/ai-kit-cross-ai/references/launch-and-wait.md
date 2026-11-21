@@ -2,7 +2,8 @@
 
 Per-host patterns for section 2 and section 3 of [`../SKILL.md`](../SKILL.md). Each section below
 is named for the host the caller runs in, never for the target runtime: every example passes the
-owner's `$RUNTIME` and `$MODEL` unchanged. Pick the pattern by what the host can do: a host whose
+owner's `$RUNTIME` and `$MODEL` unchanged, the runner path `$RUNNER` section 2 resolved, and `$ROLE` as section 2 settles it (`review` for a
+review, `execute` only for an authorized change; unresolved means stop before launching). Pick the pattern by what the host can do: a host whose
 background primitive posts a completion notice uses it; any other host uses the foreground wait.
 
 Every lane writes into its own scratch directory, per section 2 of [`../SKILL.md`](../SKILL.md)
@@ -25,7 +26,7 @@ notice fires while the lane still runs. Read the lane's files only after the not
 
 ```bash
 L="$(mktemp -d)"; printf 'lane dir: %s\n' "$L"
-node .planning/scripts/cross-ai.mjs --runtime "$RUNTIME" --model "$MODEL" --role execute \
+node "$RUNNER" --runtime "$RUNTIME" --model "$MODEL" --role "$ROLE" \
   < prompt.md > "$L/lane.out" 2> "$L/lane.err"; echo $? > "$L/lane.rc"
 ```
 
@@ -81,6 +82,6 @@ command instead of scheduling a wake.
 
 ```bash
 L="$(mktemp -d)"; printf 'lane dir: %s\n' "$L"
-node .planning/scripts/cross-ai.mjs --runtime "$RUNTIME" --model "$MODEL" --role execute \
+node "$RUNNER" --runtime "$RUNTIME" --model "$MODEL" --role "$ROLE" \
   < prompt.md > "$L/lane.out" 2> "$L/lane.err"; echo $? > "$L/lane.rc"
 ```

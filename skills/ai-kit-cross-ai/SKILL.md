@@ -40,7 +40,7 @@ Neither the runner nor a caller changes them in response to a failure: a failure
 
 ### Call settings
 
-Settings come from the owner's lane configuration or the calling skill's decision; the runner never chooses one and never checks a value against a list of levels or models.
+Settings come from the owner's lane configuration or the calling skill's decision; the runner never chooses one and never checks an effort value against a list of levels. A model id is checked only by the live preflight: when the runtime's model listing succeeds, an id missing from it ends the call with `bad_model` (exit 69) before any model runs; when the listing fails the runner prints `cross-ai: <runtime> model list unavailable (<reason>); not preflighted` and runs the id as given, and a runtime with no listing command runs it unchecked.
 
 | Flag | Value | Setting |
 |---|---|---|
@@ -60,10 +60,12 @@ Two more flags print facts and call no model: `--print-argv` prints the argv, th
 
 ## 2. Launch
 
-Run the project copy `.planning/scripts/cross-ai.mjs`. A project without one uses the template
-`skills/ai-kit-spec-review/references/cross-ai.mjs`. Before the first launch in a project, check
-the active copy's line-2 header (`sed -n 2p .planning/scripts/cross-ai.mjs`): this contract needs
-`template=9` or later. A lower template, or a `cross-ai.mjs.new` waiting beside it, is not this
+Resolve one runner path, `$RUNNER`, before any check: the project copy
+`.planning/scripts/cross-ai.mjs` when it exists, otherwise the template `references/cross-ai.mjs`
+of the sibling `ai-kit-spec-review` skill (`skills/ai-kit-spec-review/references/cross-ai.mjs` in
+an ai-kit checkout); stop when neither exists. Use that same `$RUNNER` for the header check and
+in every launch, preview and re-invocation. Before the first launch in a project, check its
+line-2 header (`sed -n 2p "$RUNNER"`): this contract needs `template=9` or later. A lower template, or a `cross-ai.mjs.new` waiting beside it, is not this
 contract: stop and route the owner to `ai-kit-gsd-curated-config` `ensure-runner`.
 
 The prompt always goes on stdin; the runner has no prompt flag. For copilot the runner itself
@@ -78,19 +80,23 @@ MANDATORY before the first launch on a host: read
 [`references/launch-and-wait.md`](references/launch-and-wait.md) for that host's background or
 foreground pattern.
 
+`$ROLE` is `review` for a review lane and `execute` only for a change the owner authorized.
+When the request does not settle the role, stop before launching and ask; never default to
+`execute`, which selects the write-capable contract.
+
 ```bash
 L="$(mktemp -d)"; printf 'lane dir: %s\n' "$L"
-node .planning/scripts/cross-ai.mjs --runtime "$RUNTIME" --model "$MODEL" --role execute \
+node "$RUNNER" --runtime "$RUNTIME" --model "$MODEL" --role "$ROLE" \
   < prompt.md > "$L/lane.out" 2> "$L/lane.err"; echo $? > "$L/lane.rc"
 ```
 
 ### A runtime the runner has no formula for
 
-Runtime ids match exactly (`Claude` is not `claude`). For an id the runner has no formula for, pass `--argv-file <path>`: a JSON array of argv strings inside the working tree, at most 65536 bytes, strict UTF-8, read once. `{model}`, `{effort}` and `{session}` are the only placeholders; a setting without its placeholder prints `ignored` with `reason=no_slot`, and the provider is `unknown`. The prompt still goes on stdin, never on argv, and the runner supervises the lane like any other (deadlines, heartbeats, redaction, the review tree check, the status line). Without the file the call ends with exit 2 and `no formula for <id> in the runner; pass --argv-file, or use a runtime it has a formula for`.
+Runtime ids match exactly (`Claude` is not `claude`). For an id the runner has no formula for, pass `--argv-file <path>`: a JSON array of argv strings inside the working tree, at most 65536 bytes, strict UTF-8, read once. `{model}`, `{effort}` and `{session}` are the only placeholders; a setting without its placeholder prints `ignored` with `reason=no_slot`, and the provider is `unknown`. The prompt still goes on stdin, never on argv, and the runner supervises the lane like any other (deadlines, heartbeats, redaction, the review tree check, the status line). Supervision is not containment: the tree check detects a change after the fact and prevents no write, and outside a git work tree it cannot run (`tree=unknown`). A review-role argv-file lane is only as confined as the command in the file, so launch one only with a command the owner approved as read-only, inside a git work tree. Without the file the call ends with exit 2 and `no formula for <id> in the runner; pass --argv-file, or use a runtime it has a formula for`.
 
 ### Hosting in a herdr tab
 
-`--host auto` runs the lane in a herdr tab when herdr is available (`HERDR_ENV=1` and a `herdr` executable on PATH, checked without calling herdr). The argv, settings report, session, classification, exit code and status line are the same as headless. The runner's own default is `none`; ai-kit's Python layer and hook builder pass `--host auto`. Switch hosting off with `--host none` or `AIKIT_HOST=none` (a shell profile makes it persistent); `none` from either source wins, and no config key exists. The `host` line reads `applied` (`herdr` or `none`), or `ignored` with `no_herdr` or `host_failed`, and a hosted lane also prints `cross-ai: host herdr tab=<id> label=<label>`. The run directory is `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/host/<run token>/` (mode 0700): `run.json` first, then the env and prompt files (mode 0600, which the launcher reads and deletes as its first steps), and the launcher's `out`, `err`, `pid` and `rc`. `rc` is the only verdict; herdr's screen text is never read. The runner closes only the tab it opened, by id, on every exit path, then removes the directory. Limits: a `setsid` grandchild survives the tab close (the same limit as a headless process-group kill); fish, nushell, a pane whose shell is not at a prompt, and macOS are unverified.
+`--host auto` runs the lane in a herdr tab when herdr is available (`HERDR_ENV=1` and a `herdr` executable on PATH, checked without calling herdr). The argv, settings report, session, classification, exit code and status line are the same as headless. The runner's own default is `none`; ai-kit's Python layer and hook builder pass `--host auto`. Switch hosting off with `--host none` or `AIKIT_HOST=none` (a shell profile makes it persistent); `none` from either source wins, and no config key exists. The `host` line reads `applied` (`herdr` or `none`), or `ignored` with `no_herdr` or `host_failed`, and a hosted lane also prints `cross-ai: host herdr tab=<id> label=<label>`. The run directory is `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/host/<run token>/` (mode 0700): `run.json` first, then the env and prompt files (mode 0600, which the launcher reads and deletes as its first steps), and the launcher's `out`, `err`, `pid` and `rc`. `rc` is the only verdict; herdr's screen text is never read. On every exit path the runner tries to close only the tab it opened, by id, and removes the directory once herdr confirms the close. When the close is not confirmed it keeps only `run.json` and prints `cross-ai: host: kept <dir>/run.json for tab <id> (close not confirmed)`: the tab may still be open, so report that path and tab id and never claim the cleanup succeeded. Limits: a `setsid` grandchild survives the tab close (the same limit as a headless process-group kill); fish, nushell, a pane whose shell is not at a prompt, and macOS are unverified.
 
 ### Skills and MCP servers for a lane
 
@@ -150,8 +156,10 @@ Exit codes, and what the caller does with each:
 The report's `stopped=` names why the lane ended: `class` (a one-attempt stop), `rungs` or
 `deadline` (the soft series ended; with `retry_after_s=` that is the hard tier), `dirty-tree` (a
 fresh session was refused because the tree changed), `hard-waits` or `cap` (the hard tier is
-spent). A bare exit 75 comes from that dirty-tree gate or from an unwritable state file
-(`cross-ai: cycle state unwritable`).
+spent). A bare exit 75 comes from that dirty-tree gate, from an unwritable state file
+(`cross-ai: cycle state unwritable`), or from a quota stop off a router lane, which ends after
+one call with `stopped=class` and writes no state file. Tell them apart by the report line,
+never by assuming a tree or state-file failure; every bare 75 is an owner stop.
 
 ### Settings report
 
@@ -183,9 +191,9 @@ The reasons, a closed list that `--describe` also prints:
 | `no_provider_form` | the runtime's model id has no provider part |
 | `bad_value` | a context label outside the form's value kind |
 | `no_herdr` | `--host auto` while herdr is not available |
-| `host_failed` | herdr failed before the lane started, so the lane ran headless once |
+| `host_failed` | herdr failed; read the `cross-ai: host:` line: `the lane runs headless` (a confirmed failure before the start, one headless run follows) or `the lane may have started, so it is not rerun` (an unclear start, no rerun); the outcome is the last `AIKIT-XAI` line, never a reason to retry |
 
-An `ignored` or `unknown` line is information, not a failure: the call ran. Report it to the owner when the setting mattered, and never retry the lane elsewhere to get it applied.
+An `ignored` or `unknown` line is information, not a failure. Setting lines describe the resolved invocation and print before the model preflight, so they never prove the model ran: the outcome is the exit code and the last `AIKIT-XAI` line (a `bad_model` exit 69 can follow them with no model call). Report it to the owner when the setting mattered, and never retry the lane elsewhere to get it applied.
 
 ### Status line fields
 
@@ -216,9 +224,10 @@ Wait once, for exactly `retry_after_s` seconds, then re-invoke the same lane, th
 the same model. The runner counts the cycles. This is one one-shot wait per `retry_after_s`,
 never a repeated or fixed-interval job.
 
-On `stopped=hard-waits` or `stopped=cap`, print the `cross-ai: report`, the `cross-ai: upstream`
-lines and the `AIKIT-XAI` line verbatim to the user, mark the lane stopped and schedule nothing
-more. A later call on that lane is refused until the owner deletes the named state file or the
+On `stopped=hard-waits` or `stopped=cap`, print the `cross-ai: report` line and the `AIKIT-XAI`
+line verbatim to the user, plus the `cross-ai: upstream` lines verbatim when the report says
+`upstream=present`. With `upstream=-` there are none: say there is no upstream evidence, and
+never invent the lines or retry to get them. Mark the lane stopped and schedule nothing more. A later call on that lane is refused until the owner deletes the named state file or the
 record goes stale. The refusal names the real state file, whose shape is
 `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/cycles/<root-hash>/<cli>-<router|other>-<model-hash>.json`:
 
@@ -227,8 +236,11 @@ cross-ai: lane stopped=hard-waits at <iso>; delete <state file> to start a new e
 ```
 
 Where Claude Code's `CronCreate` is callable, schedule one one-shot job at `retry_after_s`.
-It fires on whole minutes: pick the first whole minute at or after `retry_after_s` (never earlier;
-the runner refuses an early call anyway) and say so in the notice. A `retry_after_s` under 60 s,
+It fires on whole minutes: pick the first whole minute at or after `retry_after_s` that is not
+`:00` or `:30` (a one-shot job set on the hour or half hour can fire up to 90 s early; no other
+minute is shifted). Confirm the `next run` time the scheduling tool prints before telling the
+owner the wake is set, and say so in the notice; when it cannot be confirmed, use the
+print-and-stop handoff below. A `retry_after_s` under 60 s,
 a session where that tool is unavailable (some subagent and SDK sessions) and every other host
 (none is known to have a one-shot scheduler; unverified) schedule nothing: print `retry_after_s`,
 the state path and the re-invoke command, and stop. Whether the owner runs it is unverified.
@@ -274,3 +286,4 @@ another CLI, another model or another harness to finish the lane.
 
 - Each host's effort, session, context, skill and MCP forms come from that host's own `--help`, kept as recorded help fixtures in this repository; `--describe` prints each form's state and source label.
 - The hosted-lane limits come from live herdr checks: closing the tab ended the launcher and its plain and `nohup` children, while a `setsid` grandchild survived.
+- The one-shot early-fire rule (on `:00` or `:30`, up to 90 s early; other minutes unshifted) comes from Claude Code's scheduled-tasks page, section "When a one-shot task runs early": https://code.claude.com/docs/en/scheduled-tasks#when-a-one-shot-task-runs-early (checked 2026-11-21).

@@ -21,7 +21,7 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from ai_kit_spec.cache import cache_read_json
-from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
+from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS, bounded_run, run_in_own_group
 from ai_kit_spec.error_classifier import classify_error, reason_for_status
 from ai_kit_spec.lane_settings import lane_escalation
 from ai_kit_spec.model_catalog import cache_catalog_path, split_catalog_meta
@@ -299,9 +299,11 @@ class RunnerSeams(NamedTuple):
 
 
 def print_argv_lines(spec: RunnerSpec, seams: RunnerSeams | None = None,
-                     run_fn: Callable[..., Any] = subprocess.run) -> list[str] | None:
+                     run_fn: Callable[..., Any] = run_in_own_group) -> list[str] | None:
     """The runner's own dry run for one spec (D-01): stdout and stderr lines of --print-argv,
-    or None when node or the template is missing or the call fails to start. No model call."""
+    or None when node or the template is missing or the call fails to start. No model call.
+    The real spawn runs in its own process group, killed on a timeout (see run_in_own_group)."""
+    run_fn = bounded_run(run_fn)
     active = seams or RunnerSeams()
     node = active.which_fn("node")
     template = active.runner_path_fn()

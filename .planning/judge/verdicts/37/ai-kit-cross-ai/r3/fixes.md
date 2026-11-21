@@ -1,0 +1,7 @@
+# Loop 37 round 3 fixes: ai-kit-cross-ai
+
+Fix rule (AGENTS.md): round 3 left 3 high findings (referee-one; referee-two 0), so they are fixed in the skill's own files with no further round (decide.py row `fix`). Each claim was checked against the runner template first. The skill's digest is stale by design until its next loop.
+
+- D8-1 (referee-one, high): the hosted-lane cleanup now says the runner tries to close only its own tab and removes the run directory only on a confirmed close; otherwise it keeps `run.json` and prints `cross-ai: host: kept <dir>/run.json for tab <id> (close not confirmed)`, and the caller reports that and never claims the cleanup succeeded (runner `closeTab`/`keepRecordOnly`). File: `skills/ai-kit-cross-ai/SKILL.md` (Hosting in a herdr tab).
+- D8-2 (referee-one, high): the `host_failed` reason row separates a confirmed failure before the start (`the lane runs headless`, one headless run) from an unclear start (`the lane may have started, so it is not rerun`); the outcome is the last `AIKIT-XAI` line, never a retry reason (runner `hostFailedNote`, `rerun`). File: `skills/ai-kit-cross-ai/SKILL.md` (Settings report reasons).
+- D8-3 (referee-one, high): the re-invoke after the last hard wait still runs the task while the cap allows and can succeed; it exits 69 `stopped=hard-waits` only when that call needs the hard tier again with no wait left, `stopped=cap` when the cap would pass first (runner hard handler). File: `skills/ai-kit-cross-ai/references/subprocess-quota-policy.md` (Hard tier).

@@ -355,7 +355,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### Shared runner
 
-- [ ] **RUN-01**: One runner serves open-gsd cross-AI and ai-kit review and execute, taking runtime, provider and
+- [x] **RUN-01**: One runner serves open-gsd cross-AI and ai-kit review and execute, taking runtime, provider and
   model, effort, escalation flags and the role (review or execute) per call, from the config or from the calling
   skill's decision. Every setting a call names is reported as applied or ignored with the reason (a runtime that
   takes no model flag or no effort is never fed one and says so). A runtime table (the `RUNTIMES` tables in
@@ -1119,7 +1119,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | EXE-07 | Phase 42 | Pending |
 | EXE-08 | Phase 41 | Pending |
 | EXE-09 | Phase 41 | Pending |
-| RUN-01 | Phase 37 | Pending |
+| RUN-01 | Phase 37 | Complete |
 | RUN-02 | Phase 37 | Complete |
 | RUN-03 | Phase 38 | Pending |
 | RUN-04 | Phase 38 | Pending |

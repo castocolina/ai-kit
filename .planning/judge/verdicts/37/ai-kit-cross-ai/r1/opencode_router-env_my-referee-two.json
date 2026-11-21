@@ -1,0 +1,184 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=68s out=150918 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_dffd07ae1ffeZ4GmdpgCYsdz43 applied=model,provider,role ignored=- unknown=- escalate=-",
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":18,\"D2\":15,\"D3\":13,\"D4\":14,\"D5\":14,\"D6\":14,\"D7\":10,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":111,\"max_total\":125,\"percent\":88.8,\"grade\":\"B\",\"findings\":[{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/trigger-queries.json\",\"line\":1,\"evidence\":\"16 queries (8 should-trigger, 8 should-not); optimizing-descriptions asks for about 20, with 8-10 on each side and near-misses.\",\"fix\":\"Add four realistic queries, two should-trigger and two near-miss should-not-trigger (for example a session-wake or reviewer-setup prompt that shares runner words but belongs to the neighbour skills), keeping the existing near-misses.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/evals.json\",\"line\":4,\"evidence\":\"Six cases with verifiable assertions and two input files, but no case for the hard-tier wait (exit 75 with retry_after_s=) or the GSD retry/skip/abort answer, which sections 6 and 7 make the fragile path.\",\"fix\":\"Add one eval whose prompt includes an AIKIT-XAI line with exit=75 and retry_after_s=, and assertions that the caller waits once for that many seconds, re-invokes the same runtime and model, and answers abort for every other non-zero exit.\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":26,\"evidence\":\"## When to use restates the description: \\\"When a run, a review or an execution step calls an external AI CLI and acts on the result.\\\"\",\"fix\":\"Delete the section and record the removal; the description already carries WHEN, and the body is invisible until the skill has triggered.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":252,\"evidence\":\"## Pitfalls lists specific facts but several have no why: \\\"Atomic rewrites keep the file mode. Replacing a config or state file by hand can drop it.\\\"\",\"fix\":\"Add the consequence to each pitfall that lacks one, for example that a hand replacement drops the 0600 mode the runner set, so a later read of the state file is refused.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":3,\"evidence\":\"Description has WHAT, WHEN, keywords and a boundary, but it is third-person capability prose (\\\"Covers the hard-tier wait\\\") rather than the imperative \\\"Use this skill when\\\" form.\",\"fix\":\"Use when you run, wait for, read, retry or chain an external AI CLI (pi, opencode, codex, cursor, copilot, claude) through ai-kit's cross-AI runner (cross-ai.mjs): pick one runtime and model, pass the call's settings (role, effort, context, session id, skills, MCP servers), launch the runner, read its exit code, its per-setting report and its last AIKIT-XAI stderr line, resume a session in a second round, and answer a stop. Use this skill when a lane hits quota, a rate limit or a 429, exits 75 or 69, prints retry_after_s=, reports a setting ignored, or needs an --argv-file for a CLI the runner has no formula for. It covers the hard-tier wait, the user notice, GSD's retry/skip/abort answer and the rule to never switch harness, provider or model. Not for reviewer setup or GSD config (those are ai-kit-spec-config and ai-kit-gsd-curated-config).\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/references/launch-and-wait.md\",\"line\":49,\"evidence\":\"The launch reference is gated (\\\"MANDATORY before the first launch on a host\\\"), but five host sections repeat the same unverified foreground-wait instruction.\",\"fix\":\"Keep the Claude Code pattern and one foreground-wait section, and name pi, opencode, cursor, codex and copilot as hosts that use it; do not load a separate file for a single host.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":229,\"evidence\":\"The hard-tier wake offers two equal paths: CronCreate when callable, otherwise print-and-stop, with no default for a host that is not Claude Code.\",\"fix\":\"Default every host but Claude Code to print retry_after_s, the state path and the re-invoke command and stop; mention CronCreate only as the Claude Code escape hatch.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/references/subprocess-quota-policy.md\",\"line\":99,\"evidence\":\"capS is given as 14400 with no source URL or date checked, and the skill does not tell the caller to read it live; the runner template does currently set capS to 14400.\",\"fix\":\"Point the reader at the runner's CONFIG capS (skills/ai-kit-spec-review/references/cross-ai.mjs) as the live read, or cite the vendor-or-repo source and the date checked next to 14400.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":101,\"evidence\":\"The outer deadline is min(CONFIG outerTimeoutS, GSD's workflow.cross_ai_timeout or gsd-core's 300 s default), but the skill never says where CONFIG or that GSD key is read from.\",\"fix\":\"Name the file and key the runner reads for outerTimeoutS and workflow.cross_ai_timeout, the same way section 6 names the state-file path.\"}]}"
+  }
+ ],
+ "digest": "5233eed1b54d171470986b1b8aa6eb3ffa3c83f04edfdeb4bec77085591d895d",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "fbdac1e55606d6cb4bd680b275bf3eac300c4fc545c6a093e3e0b0c6b1e5ec85"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "37",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_settings_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_staged_mapper.py"
+ ],
+ "prompt_sha256": "b7c0f4dbae464df12d3f0bdfd453a50300a301e0c9ed0735d98000b1a633ecaf",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D7",
+    "evidence": "16 queries (8 should-trigger, 8 should-not); optimizing-descriptions asks for about 20, with 8-10 on each side and near-misses.",
+    "file": "skills/ai-kit-cross-ai/evals/trigger-queries.json",
+    "fix": "Add four realistic queries, two should-trigger and two near-miss should-not-trigger (for example a session-wake or reviewer-setup prompt that shares runner words but belongs to the neighbour skills), keeping the existing near-misses.",
+    "id": "D7-1",
+    "line": 1,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "Six cases with verifiable assertions and two input files, but no case for the hard-tier wait (exit 75 with retry_after_s=) or the GSD retry/skip/abort answer, which sections 6 and 7 make the fragile path.",
+    "file": "skills/ai-kit-cross-ai/evals/evals.json",
+    "fix": "Add one eval whose prompt includes an AIKIT-XAI line with exit=75 and retry_after_s=, and assertions that the caller waits once for that many seconds, re-invokes the same runtime and model, and answers abort for every other non-zero exit.",
+    "id": "D7-2",
+    "line": 4,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "## When to use restates the description: \"When a run, a review or an execution step calls an external AI CLI and acts on the result.\"",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Delete the section and record the removal; the description already carries WHEN, and the body is invisible until the skill has triggered.",
+    "id": "D1-1",
+    "line": 26,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "## Pitfalls lists specific facts but several have no why: \"Atomic rewrites keep the file mode. Replacing a config or state file by hand can drop it.\"",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Add the consequence to each pitfall that lacks one, for example that a hand replacement drops the 0600 mode the runner set, so a later read of the state file is refused.",
+    "id": "D3-1",
+    "line": 252,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "Description has WHAT, WHEN, keywords and a boundary, but it is third-person capability prose (\"Covers the hard-tier wait\") rather than the imperative \"Use this skill when\" form.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use when you run, wait for, read, retry or chain an external AI CLI (pi, opencode, codex, cursor, copilot, claude) through ai-kit's cross-AI runner (cross-ai.mjs): pick one runtime and model, pass the call's settings (role, effort, context, session id, skills, MCP servers), launch the runner, read its exit code, its per-setting report and its last AIKIT-XAI stderr line, resume a session in a second round, and answer a stop. Use this skill when a lane hits quota, a rate limit or a 429, exits 75 or 69, prints retry_after_s=, reports a setting ignored, or needs an --argv-file for a CLI the runner has no formula for. It covers the hard-tier wait, the user notice, GSD's retry/skip/abort answer and the rule to never switch harness, provider or model. Not for reviewer setup or GSD config (those are ai-kit-spec-config and ai-kit-gsd-curated-config).",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "The launch reference is gated (\"MANDATORY before the first launch on a host\"), but five host sections repeat the same unverified foreground-wait instruction.",
+    "file": "skills/ai-kit-cross-ai/references/launch-and-wait.md",
+    "fix": "Keep the Claude Code pattern and one foreground-wait section, and name pi, opencode, cursor, codex and copilot as hosts that use it; do not load a separate file for a single host.",
+    "id": "D5-1",
+    "line": 49,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "The hard-tier wake offers two equal paths: CronCreate when callable, otherwise print-and-stop, with no default for a host that is not Claude Code.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Default every host but Claude Code to print retry_after_s, the state path and the re-invoke command and stop; mention CronCreate only as the Claude Code escape hatch.",
+    "id": "D6-1",
+    "line": 229,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "capS is given as 14400 with no source URL or date checked, and the skill does not tell the caller to read it live; the runner template does currently set capS to 14400.",
+    "file": "skills/ai-kit-cross-ai/references/subprocess-quota-policy.md",
+    "fix": "Point the reader at the runner's CONFIG capS (skills/ai-kit-spec-review/references/cross-ai.mjs) as the live read, or cite the vendor-or-repo source and the date checked next to 14400.",
+    "id": "D8-1",
+    "line": 99,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The outer deadline is min(CONFIG outerTimeoutS, GSD's workflow.cross_ai_timeout or gsd-core's 300 s default), but the skill never says where CONFIG or that GSD key is read from.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Name the file and key the runner reads for outerTimeoutS and workflow.cross_ai_timeout, the same way section 6 names the state-file path.",
+    "id": "D8-2",
+    "line": 101,
+    "severity": "low"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 88.8,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 18,
+   "D2": 15,
+   "D3": 13,
+   "D4": 14,
+   "D5": 14,
+   "D6": 14,
+   "D7": 10,
+   "D8": 13
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 111
+ }
+}

@@ -948,6 +948,36 @@ def _signal_server(proc, sig) -> None:
             proc.kill()
 
 
+def run_in_own_group(argv, *, timeout, capture_output=False, check=False,
+                     **kwargs: Any) -> subprocess.CompletedProcess:
+    """`subprocess.run` for a short node child, but the child leads its own session and, on a
+    timeout or any other error, its whole process group is killed. A launcher shim that runs
+    itself again (Volta's `node` under a HOME without its toolchain) forks a chain inside that
+    group; `subprocess.run` would kill only the first link and leave the chain forking."""
+    if capture_output:
+        kwargs["stdout"] = kwargs["stderr"] = subprocess.PIPE
+    with subprocess.Popen(argv, start_new_session=True, **kwargs) as proc:
+        finished = False
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            finished = True
+        finally:
+            if not finished:  # the leader is not reaped yet, so its group id is still ours
+                _signal_server(proc, _SIGKILL)
+    result = subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+    if check:
+        result.check_returncode()
+    return result
+
+
+_real_run = subprocess.run  # captured at import, so a test's mock.patch never compares equal
+
+
+def bounded_run(run_fn):
+    """The real `subprocess.run` becomes run_in_own_group; any other run_fn is a test seam."""
+    return run_in_own_group if run_fn is _real_run else run_fn
+
+
 _SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 

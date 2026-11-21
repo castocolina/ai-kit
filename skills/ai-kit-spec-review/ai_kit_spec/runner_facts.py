@@ -9,7 +9,7 @@ import json
 import subprocess
 
 from ai_kit_spec.cache import cache_read_json
-from ai_kit_spec.detection import cache_runtimes_path
+from ai_kit_spec.detection import bounded_run, cache_runtimes_path, run_in_own_group
 from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
 DESCRIBE_TIMEOUT_S = 30
@@ -27,8 +27,9 @@ def template_sha256(path) -> str | None:
         return None
 
 
-def read_runner_describe(node, template_path, run_fn=subprocess.run) -> dict:
+def read_runner_describe(node, template_path, run_fn=run_in_own_group) -> dict:
     """Read the runner's description without trusting failed or malformed output."""
+    run_fn = bounded_run(run_fn)
     describe = None
     if node and template_path:
         try:

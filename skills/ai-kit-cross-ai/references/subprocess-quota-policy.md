@@ -14,9 +14,15 @@ and chain one is [`../SKILL.md`](../SKILL.md).
   an old copy's `CONFIG.prefer` first entry. A missing binary, found missing before spawn or at
   spawn time, stops with `not_installed` (exit 127). The runner never moves on to another name.
 - pi ids are `provider/model[:thinking]` and opencode ids are `provider/model[#variant]`; a colon
-  inside a pi model part is part of the id, and only a trailing known thinking level is a suffix. A bare
-  id is refused before spawn (exit 2, `usage`), and the message names the grammar the id must
-  match. The runner owns each runtime's flags and grammar; a caller passes the id as given.
+  inside a pi model part is part of the id, and only a trailing known thinking level is a suffix.
+  Three separate checks apply. The syntax floor, the same for every runtime (non-empty, no
+  leading dash, no whitespace, shell, control or non-ASCII character, one optional trailing
+  `[k=v,...]` bracket), refuses before spawn (exit 2, `usage`) and names the pattern. A
+  runtime's seed shape, such as a bare id where pi or opencode expects `provider/model`, only
+  advises (`cross-ai: note: model id shape is unusual ...`) and the call still runs. The live
+  preflight ends the call with `bad_model` (exit 69) when the runtime's model listing succeeds
+  and lacks the id. The runner owns each runtime's flags and grammar; a caller passes the id as
+  given.
 - The runner never switches CLI, harness, provider or model on its own, and never moves the work
   to the native session.
 
@@ -112,8 +118,10 @@ the caller only waits.
 - Cycle n exits 75 with `retry_after_s=` equal to `hard_waits_s[n]`. The defaults are
   600, 900, 1800 s, so cycles 0, 1 and 2 ask for 600, 900 and 1800. The call never sleeps that
   wait.
-- The re-invoke after the last entry exits 69 with `stopped=hard-waits`. When the 4-hour cap
-  (`capS`, 14400) comes first, the exit is 69 with `stopped=cap`.
+- The re-invoke after the last entry still runs the task while the episode cap allows it, and it
+  can succeed. Only when that call needs the hard tier again and no wait is left does it exit 69
+  with `stopped=hard-waits`; when the 4-hour cap (`capS`, 14400) would pass first, the exit is 69
+  with `stopped=cap`.
 - A record whose `last_attempt_at` is older than the cap is a stale episode: it is replaced, the
   call proceeds, and the evidence notes `stale-state-fresh-start`.
 - A stopped record refuses every later call on its lane (checkout, CLI, model, route kind) until
@@ -126,9 +134,11 @@ the caller only waits.
 ## Upstream pass-through
 
 - After `cross-ai: report` and before the final `AIKIT-XAI` line, the runner prints
-  `cross-ai: upstream body=<JSON string>` and `cross-ai: upstream fields=<JSON object>`. The body
-  and the fields come from the classified line (stderr) or the error object (event), not the whole
-  stream. The report line carries only `upstream=present` or `upstream=-`.
+  `cross-ai: upstream body=<JSON string>` and `cross-ai: upstream fields=<JSON object>` only when
+  an upstream body exists. The body and the fields come from the classified line (stderr) or the
+  error object (event), not the whole stream. The report line carries `upstream=present` or
+  `upstream=-`; with `upstream=-` (for example a later call refused by a persisted stop) no
+  upstream line follows.
 - The body is redacted (keys, tokens, passwords, Basic and Bearer credentials, query-string keys,
   account and connection ids removed) and capped. A value redacted once is also redacted wherever
   it reappears later in the run's relayed output (values of 8 characters or more, up to 256 of
@@ -172,7 +182,8 @@ the caller only waits.
 ## What a skill does on a stop
 
 The caller rules live in [`../SKILL.md`](../SKILL.md), sections 6, 7 and 8. In short: print the
-`cross-ai: report`, `cross-ai: upstream` and `AIKIT-XAI` lines verbatim; an exit 75 with
+`cross-ai: report` and `AIKIT-XAI` lines verbatim, and the `cross-ai: upstream` lines when the
+report says `upstream=present` (never invented or retried for); an exit 75 with
 `retry_after_s=` gets one one-shot wait of that many seconds and then the same lane again; a
 `stopped=hard-waits` or `stopped=cap` record is the notice and the end of the lane. Never switch
 harness, provider or model, and never move the work to the native session.

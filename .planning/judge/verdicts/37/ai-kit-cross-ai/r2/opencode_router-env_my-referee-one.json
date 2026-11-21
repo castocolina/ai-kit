@@ -1,0 +1,220 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=179s out=564686 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_dffaf99caffevddYoOdcHHGcwn applied=model,provider,role ignored=- unknown=- escalate=-",
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"opencode:router-env/my-referee-one\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":19,\"D2\":14,\"D3\":15,\"D4\":14,\"D5\":14,\"D6\":12,\"D7\":12,\"D8\":6},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":106,\"max_total\":125,\"percent\":84.8,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":28,\"evidence\":\"“When a run, a review or an execution step calls an external AI CLI and acts on the result” repeats the frontmatter without adding a decision criterion.\",\"fix\":\"Replace the repeated scope sentence with the distinction between owning a lane and merely interpreting saved lane evidence. Record the removal of the duplicate sentence.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":59,\"evidence\":\"“Read --describe before naming a setting a host may not take” checks general capability, but the launch procedure has no checkpoint for whether the resolved invocation will apply the settings the task requires.\",\"fix\":\"Before launch, distinguish required settings from preferences. When a required setting could be dropped or overridden, preview the exact invocation with --print-argv and resolve any missing or ignored required setting with the owner before dispatch; leave optional settings to the normal report.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":3,\"evidence\":\"The description covers running and retrying lanes, but omits the supported standalone intent “Stop cross-ai lanes from opening herdr tabs,” tested in trigger-queries.json.\",\"fix\":\"Use ai-kit's cross-AI runner (cross-ai.mjs) to launch, wait for, inspect, resume, or retry a review or execution lane on pi, opencode, codex, Cursor, Copilot, or Claude. Use it to pass lane settings, skills or MCP servers; control herdr tabs; configure runner retry policy; or supply an --argv-file when there is no built-in formula. Also use it when an external review or execution stalls, a setting is ignored, or stderr shows AIKIT-XAI, exit 75 or 69, a 429, or retry_after_s. Follow the same-lane retry or owner-stop procedure without switching harness, provider, or model. Not for choosing reviewers, configuring GSD, or scheduling a general reminder.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":97,\"evidence\":\"The default launch path loads the full hosted-lane implementation detail beginning “The run directory is …”, including private files and cleanup internals, even when hosting is disabled or irrelevant.\",\"fix\":\"Keep host selection, precedence, and what constitutes the verdict in SKILL.md. Move the run-directory, lifecycle, and cleanup details to a hosting diagnostics subsection of references/launch-and-wait.md, and link it from the host-setting branch for users investigating a hosted lane.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":93,\"evidence\":\"“The runner supervises the lane like any other … [with] the review tree check” does not distinguish supervision from containment. The runner uses the supplied command for both roles, and outside Git it cannot verify the tree contract.\",\"fix\":\"Gate review-role argv-file launches on an owner-approved, independently confined command and a Git worktree when tree verification is required. State that the runner's tree check detects changes but does not prevent writes.\"},{\"id\":\"D6-2\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":81,\"evidence\":\"“$ROLE is review for a review lane” is a useful default for delegation, but the launch workflow does not distinguish it from a strict no-write request. The runner migrates legacy retry config before either role runs; that side effect is only described in the optional quota reference.\",\"fix\":\"Add a prelaunch gate for strict no-write requests: disclose possible legacy config migration, use the non-migrating inspection modes if inspection suffices, and stop before dispatch unless the owner authorizes any required writes. Link to the migration paragraph for details.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/evals.json\",\"line\":6,\"evidence\":\"“Run plan-review.md … with the model fake/ok” has an empty files list and no fake-runtime setup. Also, the hard-tier wait and bare-75 stop are central to the skill but neither has an output eval.\",\"fix\":\"Provide a prompt and a hermetic fake-runtime fixture or specify a command-construction-only eval. Add paired exit-75 evidence fixtures with and without retry_after_s, and assert one same-lane retry or explicit owner handoff for the former and no retry for the latter.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/evals/trigger-queries.json\",\"line\":43,\"evidence\":\"There are eight positive and eight negative queries, but negatives like “Fold the commits of the finished plan into one commit per feature” are easy to reject, and most positives name the runner or a distinctive token.\",\"fix\":\"Add or substitute realistic boundary cases: a positive that describes a delegated review stopping without naming the runner, and a negative that asks how to resume a native Codex session rather than an ai-kit lane.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":63,\"evidence\":\"“A project without one uses the template,” but the header check and every launch example still hardcode .planning/scripts/cross-ai.mjs. The documented no-project-copy branch cannot follow those commands as written.\",\"fix\":\"Resolve one RUNNER path before any check: prefer the active project copy and otherwise find the installed sibling template. Check the chosen path's header and use that same path in all launch, preview, and re-invocation examples. Stop if neither resolves.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":194,\"evidence\":\"“An ignored or unknown line is information, not a failure: the call ran.” The runner emits setting lines before model preflight, so an ignored setting can accompany bad_model, exit 69, without a model invocation.\",\"fix\":\"Explain that setting lines describe the resolved invocation and do not prove the child started. Use the final AIKIT-XAI line and exit code for the outcome, and report material setting omissions separately.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/references/subprocess-quota-policy.md\",\"line\":17,\"evidence\":\"“A bare id is refused before spawn (exit 2, usage)” conflicts with the template: runtime-specific seed shapes are advisory, while the general syntax floor and a successful model-list preflight enforce separate checks.\",\"fix\":\"Document the syntax floor, advisory shape notice, and live preflight separately. Say that a missing listed base ID is bad_model/69, not a usage refusal based on the seed shape.\"},{\"id\":\"D8-4\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":105,\"evidence\":\"“gsd-core's 300 s default” is an external default with no dated official source in the skill. The bundled runner independently hardcodes this fallback.\",\"fix\":\"Describe 300 seconds as the shipped runner's fallback when no valid scoped GSD value is found. If claiming that it mirrors a gsd-core release, cite the official source and date checked.\"},{\"id\":\"D8-5\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":239,\"evidence\":\"“When it cannot be confirmed, use the print-and-stop handoff” leaves an ambiguous creation result unresolved: a one-shot job may already be armed, and the manual handoff can then cause a second retry.\",\"fix\":\"When creation is ambiguous, inspect pending jobs and confirm the matching one or cancel it before handing off. If its state cannot be checked, disclose that a wake may still be armed and tell the owner not to retry manually until they verify or cancel it.\"}]}"
+  }
+ ],
+ "digest": "0a5782d9ec5f139a9e3fc55e4e5e87896ffcbd8253f3ddf8c0bb3111d3a92da9",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "fbdac1e55606d6cb4bd680b275bf3eac300c4fc545c6a093e3e0b0c6b1e5ec85"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-one",
+ "loop": "37",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_settings_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_staged_mapper.py"
+ ],
+ "prompt_sha256": "9a5a59607178baec610bd54ca1a8698673ec474a815db2c54b4403e0531d2e73",
+ "round": 2,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "“When a run, a review or an execution step calls an external AI CLI and acts on the result” repeats the frontmatter without adding a decision criterion.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Replace the repeated scope sentence with the distinction between owning a lane and merely interpreting saved lane evidence. Record the removal of the duplicate sentence.",
+    "id": "D1-1",
+    "line": 28,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "“Read --describe before naming a setting a host may not take” checks general capability, but the launch procedure has no checkpoint for whether the resolved invocation will apply the settings the task requires.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Before launch, distinguish required settings from preferences. When a required setting could be dropped or overridden, preview the exact invocation with --print-argv and resolve any missing or ignored required setting with the owner before dispatch; leave optional settings to the normal report.",
+    "id": "D2-1",
+    "line": 59,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description covers running and retrying lanes, but omits the supported standalone intent “Stop cross-ai lanes from opening herdr tabs,” tested in trigger-queries.json.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use ai-kit's cross-AI runner (cross-ai.mjs) to launch, wait for, inspect, resume, or retry a review or execution lane on pi, opencode, codex, Cursor, Copilot, or Claude. Use it to pass lane settings, skills or MCP servers; control herdr tabs; configure runner retry policy; or supply an --argv-file when there is no built-in formula. Also use it when an external review or execution stalls, a setting is ignored, or stderr shows AIKIT-XAI, exit 75 or 69, a 429, or retry_after_s. Follow the same-lane retry or owner-stop procedure without switching harness, provider, or model. Not for choosing reviewers, configuring GSD, or scheduling a general reminder.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "The default launch path loads the full hosted-lane implementation detail beginning “The run directory is …”, including private files and cleanup internals, even when hosting is disabled or irrelevant.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Keep host selection, precedence, and what constitutes the verdict in SKILL.md. Move the run-directory, lifecycle, and cleanup details to a hosting diagnostics subsection of references/launch-and-wait.md, and link it from the host-setting branch for users investigating a hosted lane.",
+    "id": "D5-1",
+    "line": 97,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "“The runner supervises the lane like any other … [with] the review tree check” does not distinguish supervision from containment. The runner uses the supplied command for both roles, and outside Git it cannot verify the tree contract.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Gate review-role argv-file launches on an owner-approved, independently confined command and a Git worktree when tree verification is required. State that the runner's tree check detects changes but does not prevent writes.",
+    "id": "D6-1",
+    "line": 93,
+    "severity": "high"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "“$ROLE is review for a review lane” is a useful default for delegation, but the launch workflow does not distinguish it from a strict no-write request. The runner migrates legacy retry config before either role runs; that side effect is only described in the optional quota reference.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Add a prelaunch gate for strict no-write requests: disclose possible legacy config migration, use the non-migrating inspection modes if inspection suffices, and stop before dispatch unless the owner authorizes any required writes. Link to the migration paragraph for details.",
+    "id": "D6-2",
+    "line": 81,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“Run plan-review.md … with the model fake/ok” has an empty files list and no fake-runtime setup. Also, the hard-tier wait and bare-75 stop are central to the skill but neither has an output eval.",
+    "file": "skills/ai-kit-cross-ai/evals/evals.json",
+    "fix": "Provide a prompt and a hermetic fake-runtime fixture or specify a command-construction-only eval. Add paired exit-75 evidence fixtures with and without retry_after_s, and assert one same-lane retry or explicit owner handoff for the former and no retry for the latter.",
+    "id": "D7-1",
+    "line": 6,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "There are eight positive and eight negative queries, but negatives like “Fold the commits of the finished plan into one commit per feature” are easy to reject, and most positives name the runner or a distinctive token.",
+    "file": "skills/ai-kit-cross-ai/evals/trigger-queries.json",
+    "fix": "Add or substitute realistic boundary cases: a positive that describes a delegated review stopping without naming the runner, and a negative that asks how to resume a native Codex session rather than an ai-kit lane.",
+    "id": "D7-2",
+    "line": 43,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“A project without one uses the template,” but the header check and every launch example still hardcode .planning/scripts/cross-ai.mjs. The documented no-project-copy branch cannot follow those commands as written.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Resolve one RUNNER path before any check: prefer the active project copy and otherwise find the installed sibling template. Check the chosen path's header and use that same path in all launch, preview, and re-invocation examples. Stop if neither resolves.",
+    "id": "D8-1",
+    "line": 63,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“An ignored or unknown line is information, not a failure: the call ran.” The runner emits setting lines before model preflight, so an ignored setting can accompany bad_model, exit 69, without a model invocation.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Explain that setting lines describe the resolved invocation and do not prove the child started. Use the final AIKIT-XAI line and exit code for the outcome, and report material setting omissions separately.",
+    "id": "D8-2",
+    "line": 194,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“A bare id is refused before spawn (exit 2, usage)” conflicts with the template: runtime-specific seed shapes are advisory, while the general syntax floor and a successful model-list preflight enforce separate checks.",
+    "file": "skills/ai-kit-cross-ai/references/subprocess-quota-policy.md",
+    "fix": "Document the syntax floor, advisory shape notice, and live preflight separately. Say that a missing listed base ID is bad_model/69, not a usage refusal based on the seed shape.",
+    "id": "D8-3",
+    "line": 17,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“gsd-core's 300 s default” is an external default with no dated official source in the skill. The bundled runner independently hardcodes this fallback.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Describe 300 seconds as the shipped runner's fallback when no valid scoped GSD value is found. If claiming that it mirrors a gsd-core release, cite the official source and date checked.",
+    "id": "D8-4",
+    "line": 105,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“When it cannot be confirmed, use the print-and-stop handoff” leaves an ambiguous creation result unresolved: a one-shot job may already be armed, and the manual handoff can then cause a second retry.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "When creation is ambiguous, inspect pending jobs and confirm the matching one or cancel it before handing off. If its state cannot be checked, disclose that a wake may still be armed and tell the owner not to retry manually until they verify or cancel it.",
+    "id": "D8-5",
+    "line": 239,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-one",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 84.8,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 19,
+   "D2": 14,
+   "D3": 15,
+   "D4": 14,
+   "D5": 14,
+   "D6": 12,
+   "D7": 12,
+   "D8": 6
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 106
+ }
+}

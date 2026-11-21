@@ -93,10 +93,16 @@ uses the smaller of that value and the timeout baked in at apply.
 
 **`.new` is not active:** the live runner keeps its old CONFIG and apply reports
 `script.active: false`. Merge `.new` by hand (keep customizations), check the **active**
-runner (the runner resolves its config from its cwd, so run it inside the target), then
-delete `.new`:
+runner (the runner resolves its config from its cwd, so run it inside the target), and
+delete `.new` only when that check passes:
 
 ```bash
 cd <target> && node .planning/scripts/cross-ai.mjs --print-argv
 ```
+
+The check passes only when the active runner's line-2 `template=` header names the bundled
+template and the printed line names the approved runtime, an installed binary (not `MISSING`),
+the approved model and an argv (not `NO MODEL`). `--print-argv` exits 0 in every one of those
+cases, so the exit code proves nothing. On any mismatch keep `.new`, dispatch no model and report
+the printed line to the owner.
 

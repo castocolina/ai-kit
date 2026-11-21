@@ -1,0 +1,83 @@
+{
+ "counts": {
+  "ai-kit-cross-ai": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": null,
+   "reasons": [
+    "no rubric-v4 verdict"
+   ]
+  },
+  "ai-kit-gsd-curated-config": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": {
+    "critical": 0,
+    "high": 1,
+    "judged_at": null,
+    "percent": 84.0,
+    "source": ".planning/phases/31-removals-and-small-defects/31-VERIFICATION.md:71"
+   },
+   "reasons": [
+    "last verdict had a critical or high finding",
+    "last percent 84.0 is within 7.0 points of 80"
+   ]
+  },
+  "ai-kit-spec-config": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": {
+    "critical": 0,
+    "high": 1,
+    "judged_at": "a2df274bd3b18c0cc96438613c6820e0f2541f3f",
+    "percent": 88.8,
+    "source": "verdicts/36/ai-kit-spec-config/r1/opencode_router-env_my-referee-two.json"
+   },
+   "reasons": [
+    "last verdict had a critical or high finding"
+   ]
+  }
+ },
+ "loop": "37",
+ "pool": {
+  "judges": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "members": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "native": null,
+  "probes": [
+   {
+    "judge": "opencode:router-env/my-referee-one",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=20s out=2200 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_dffd27795ffe0juWfNU5MJ3oZQ applied=model,provider,role ignored=- unknown=- escalate=-",
+    "usable": true
+   },
+   {
+    "judge": "opencode:router-env/my-referee-two",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=20s out=2426 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_dffd2779dffePwvnzJfAbQu88n applied=model,provider,role ignored=- unknown=- escalate=-",
+    "usable": true
+   }
+  ],
+  "substitutes": []
+ }
+}
