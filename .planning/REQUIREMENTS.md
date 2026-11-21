@@ -405,7 +405,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   Phase 38's outcomes `partial` and `locked`; four hosts' own "model does not exist" wording was captured live on 2026-11-16 and is
   added per host, labeled verified; the listed real-run bodies are added labeled unverified where no body was captured; the five
   rows with recorded real evidence are promoted)*
-- [ ] **RUN-06**: A test keeps the runner template and the rendered project copy in sync. *(amended 2026-11-16, 37 D-18:
+- [x] **RUN-06**: A test keeps the runner template and the rendered project copy in sync. *(amended 2026-11-16, 37 D-18:
   the test renders into a scratch project and reads no `.planning/` path; `tools/check_dogfood.py` stays the live check)*
 - [ ] **RUN-07**: An execute run through the runner records a start-of-run tree baseline and takes a run lock,
   because the lock exists to stop two runs from sharing one checkout: two runs started at once on the same checkout
@@ -1124,7 +1124,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-03 | Phase 38 | Pending |
 | RUN-04 | Phase 38 | Pending |
 | RUN-05 | Phase 38.1 | Pending |
-| RUN-06 | Phase 37 | Pending |
+| RUN-06 | Phase 37 | Complete |
 | RUN-07 | Phase 38 | Pending |
 | RUN-08 | Phase 38 | Pending |
 | RUN-09 | Phase 38.1 | Pending |
