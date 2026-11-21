@@ -737,7 +737,10 @@ def _validate_pair_fields(entry: dict, key) -> str | None:
     runtime = entry.get("runtime")
     if "runtime" in entry and runtime is not None:
         if not isinstance(runtime, str) or runtime not in _RUNNER_RUNTIMES:
-            return f"{key}: 'runtime' must be one of {_RUNNER_RUNTIMES}"
+            known = isinstance(runtime, str) and runtime in RUNTIMES
+            reason = "has no runner formula" if known else "is not in the runtime table"
+            return (f"{key}: runtime {runtime!r} {reason}; "
+                    "store a custom `command` lane instead (no 'runtime')")
         model = entry.get("model")
         if "model" not in entry or not isinstance(model, str) or model == "":
             return f"{key}: an entry with a 'runtime' needs a non-empty 'model'"

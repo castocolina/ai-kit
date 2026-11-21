@@ -5,7 +5,7 @@ import sys
 from typing import NamedTuple
 
 from ai_kit_spec import commands
-from ai_kit_spec.detection import runtime_id
+from ai_kit_spec.detection import RUNTIMES, runtime_id
 
 
 class ExecuteResolveOptions(NamedTuple):
@@ -76,14 +76,12 @@ class ExecuteSelectionError(ValueError):
 
 
 def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
-    """D-15 hardening screen: a candidate naming a CLI without a real execute builder (claude,
-    grok -- Phase 16.1 removed both) is never silently routed to another CLI. An entry whose
-    purpose explicitly declares it an executor (`purpose == "execute"`) raises ValueError
-    naming the supported CLIs; an entry that merely includes execution (purpose unset or
-    "both") is dropped with a visible stderr warning instead of being silently executed.
-    Native candidates (cli None) and purpose-"review" entries pass through untouched, as does
-    any candidate `exempt_fn` accepts (a caller route that needs no execute builder, such as
-    GSD's native-tier write, A-WR-08)."""
+    """D-15 screen, 36 SPEC R7: a runtime outside the table or a runner-less row cannot
+    execute: purpose "execute" raises ExecuteSelectionError with commands.execute_cli_error's
+    text; purpose unset or "both" is dropped with a warning. A runner row passes even without
+    an exec formula: the route walk skips it as no_formula with its reason. Native candidates,
+    purpose "review" entries and candidates exempt_fn accepts pass untouched; a custom command
+    entry declared an executor is refused (custom entries run only as reviewers)."""
     emit_warn = warn_fn if warn_fn is not None else _execute_default_warn
     kept = []
     for c in candidates:
@@ -100,7 +98,8 @@ def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
         if exempt_fn is not None and exempt_fn(c):
             kept.append(c)
             continue
-        if cli is not None and runtime_id(cli) not in commands.SUPPORTED_EXECUTE_CLIS \
+        row = RUNTIMES.get(runtime_id(cli)) if cli is not None else None
+        if cli is not None and (row is None or not row.runner) \
                 and purpose_matches(c.get("purpose"), "execute"):
             cli_err = commands.execute_cli_error(cli) or ""
             if c.get("purpose") == "execute":

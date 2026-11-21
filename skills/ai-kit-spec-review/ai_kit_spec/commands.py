@@ -1,7 +1,7 @@
 import shlex
 from typing import NamedTuple
 
-from ai_kit_spec.detection import RUNTIMES, has_exec_formula, runtime_id
+from ai_kit_spec.detection import RUNTIMES, exec_formula_source, has_exec_formula, runtime_id
 
 # ── Policy resolution ────────────────────────────────────────────────────────
 
@@ -66,13 +66,18 @@ SUPPORTED_EXECUTE_CLIS = tuple(sorted(
 
 
 def execute_cli_error(cli) -> str | None:
-    """None when `cli` is a supported execute CLI (exact, case-sensitive match -- the same
-    convention as KNOWN_CLIS), otherwise the human-readable error naming the supported set.
-    Callers must fail before any spawn or config write when this returns a message."""
-    if runtime_id(cli) in SUPPORTED_EXECUTE_CLIS:
+    """None when the runner has an exec formula for `cli` (exact, case-sensitive; a legacy
+    name maps to its runtime id), else the refusal naming the fact: the missing formula for a
+    table row, or the custom-lane rule for a runtime outside the table. Callers fail before any
+    spawn or config write when this returns a message (36 SPEC R7)."""
+    row = RUNTIMES.get(runtime_id(cli))
+    if row is None:
+        return (f"{cli!r} is not a runtime in the table; store it as a custom `command` lane "
+                "(custom lanes run in review mode only)")
+    if has_exec_formula(row):
         return None
-    return (f"{cli!r} cannot be an execution CLI; supported execute CLIs: "
-            f"{', '.join(SUPPORTED_EXECUTE_CLIS)}")
+    return (f"{cli!r} has no exec formula in the runner (route no_formula): "
+            f"{exec_formula_source(row)}")
 
 
 def build_cursor_agent_model_id(base_model: str, effort=None, fast=None, context=None) -> str:

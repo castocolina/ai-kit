@@ -415,10 +415,9 @@ class TestBuildDispatchInjection(unittest.TestCase):
         self.assertEqual(result["runtime"], "codex")
         self.assertIn("skipping claude-cli/opus-5 for execution: route no_formula",
                       stderr.getvalue())
-        self.assertNotIn("cannot be an execution CLI", stderr.getvalue())
+        self.assertNotIn("has no exec formula in the runner", stderr.getvalue())
 
-    def test_cli_claude_purpose_execute_raises_value_error_naming_the_supported_clis(self):
-        # D-15: an explicit purpose = "execute" claude entry is a hard error, never a fallback.
+    def test_claude_purpose_execute_is_skipped_with_route_no_formula(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
             {
@@ -430,16 +429,21 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 "context_limit": 1_000_000,
             }
         ]
-        with self.assertRaises(ValueError) as ctx:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(
+            dispatch_injection.QuotaExhaustedError
+        ) as ctx:
             dispatch_injection.build_dispatch_injection(
                 dispatch_injection.BuildInjectionRequest(
                     task, candidates, {}, {}, ["claude-cli/opus-5"]
                 ),
                 options=dispatch_injection.BuildInjectionOptions(quota={}),
             )
-        self.assertIn("codex, copilot, cursor, opencode, pi", str(ctx.exception))
+        self.assertEqual(ctx.exception.reasons, {candidates[0]["key"]: "no_formula"})
+        self.assertIn(f"skipping {candidates[0]['key']} for execution: route no_formula: "
+                      "the runner has no exec formula for claude", stderr.getvalue())
 
-    def test_cli_purpose_execute_exits_2_with_the_supported_list_on_stderr(self):
+    def test_cli_purpose_execute_claude_is_routed_no_formula(self):
         candidates = [
             {
                 "key": "claude-cli/opus-5",
@@ -482,10 +486,11 @@ class TestBuildDispatchInjection(unittest.TestCase):
                     env_fn=lambda: {"HOME": tmp, "XDG_CACHE_HOME": tmp},
                     stdout=out,
                 )
-        self.assertEqual(rc, 2)
-        self.assertEqual(out.getvalue(), "")
-        self.assertIn("codex, copilot, cursor, opencode, pi", stderr.getvalue())
-        self.assertIn("ai-kit-spec-execute-superpowers:", stderr.getvalue())
+        self.assertEqual(rc, 0, stderr.getvalue())
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["mode"], "quota_exhausted")
+        self.assertEqual(payload["reasons"], {candidates[0]["key"]: "no_formula"})
+        self.assertNotIn("has no exec formula in the runner", stderr.getvalue())
 
     def test_cli_custom_entry_with_purpose_execute_exits_2_not_a_traceback(self):
         # B-CR-01: a D-21 custom entry declared an executor is a config error (exit 2).
@@ -1718,21 +1723,22 @@ class TestResolveInjectionRouting(unittest.TestCase):
         self.assertEqual(result["key"], "c-opus")
         self.assertEqual(refreshed, [["cx"]])
 
-    def test_screen_order_records_no_formula_unless_purpose_is_execute(self):
+    def test_claude_lane_records_no_formula_with_or_without_purpose_execute(self):
         full = {"key": "c-full", "runtime": "claude", "model": "claude-opus-5-5",
                 "vendor": "anthropic", "task_affinity": None, "context_limit": None}
         rc, stdout, stderr, _refreshed, _calls = self._run([full], {"CLAUDECODE": "1"})
         self.assertEqual(rc, 0, stderr)
         result = json.loads(stdout)
         self.assertEqual(result["reasons"], {"c-full": "no_formula"})
-        self.assertNotIn("cannot be an execution CLI", stderr)
+        self.assertNotIn("has no exec formula in the runner", stderr)
         self.assertIn("skipping c-full for execution: route no_formula", stderr)
 
         explicit = dict(full, purpose="execute")
         rc, stdout, stderr, _refreshed, _calls = self._run([explicit], {"CLAUDECODE": "1"})
-        self.assertEqual(rc, 2)
-        self.assertEqual(stdout, "")
-        self.assertIn("cannot be an execution CLI", stderr)
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(json.loads(stdout)["reasons"], {"c-full": "no_formula"})
+        self.assertNotIn("has no exec formula in the runner", stderr)
+        self.assertIn("skipping c-full for execution: route no_formula", stderr)
 
 
 class TestCliDispatchTask(unittest.TestCase):
