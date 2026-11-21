@@ -92,7 +92,8 @@ class TestLegacyLoad(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as stream:
                 stream.write(text)
             env = {"HOME": home, "XDG_CONFIG_HOME": xdg,
-                   "XDG_CACHE_HOME": os.path.join(root, "cache")}
+                   "XDG_CACHE_HOME": os.path.join(root, "cache"),
+                   "AI_KIT_KEEP_MIGRATION_BACKUP": "1"}
             from ai_kit_spec.cache import cache_write_json
             from ai_kit_spec.detection import RUNTIMES_SCHEMA_VERSION, cache_runtimes_path
             cache_write_json(

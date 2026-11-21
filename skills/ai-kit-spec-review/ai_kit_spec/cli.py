@@ -16,6 +16,7 @@ from ai_kit_spec import (
     jev_names,
     optional_sources,
     provider_check,
+    role_orders,
     routing,
     secret_shapes,
     toml_splice,
@@ -304,6 +305,11 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
         "--replace", action="store_true",
         help="allow --out to replace an existing file (only after the user approved it)",
     )
+
+    p_toml.add_argument(
+        "--keep-backup", action="store_true",
+        help=f"keep a migrated old roster as a .migrated copy (default: deleted after the value "
+             f"check; same as {config_migrate.KEEP_BACKUP_ENV}=1)")
 
     p_render = sub.add_parser("render-command")
     p_render.add_argument("--reviewers-json", required=True,
@@ -797,7 +803,7 @@ def _cmd_apply_heuristic_correction(args: argparse.Namespace, deps: CliDeps) -> 
 def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
     config = cfg_resolve(args.cwd, deps.env_fn(), migrate=not args.no_migrate)
     routes = _route_reviewers(config, deps, persist=not args.no_save_runtimes)
-    ladder = routing.probe_keys(config.get("policy", {}).get("ladder", []), routes)
+    ladder = routing.probe_keys(role_orders.role_order(config, "review"), routes)
     existing = cache_read_json(args.quota_path) or {}
     updated = refresh_quota_cache(
         config, ladder, existing, QUOTA_TTL_SECONDS, seams=deps.probe_seams(),
@@ -806,13 +812,19 @@ def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
     print(json.dumps(updated))
     return 0
 
+def _review_lanes(config: dict) -> list:
+    lanes = config.get("review")
+    return lanes if isinstance(lanes, list) else config.get("reviewers", [])
+
+
 def _route_reviewers(config: dict, deps: CliDeps, persist=True) -> dict[str, str]:
-    """Route every configured reviewer and say why each skipped or unchecked one lost."""
+    """Route review lanes (36 D-04), including keys shared with execute lanes."""
+    lanes = _review_lanes(config)
     env = deps.env_fn()
     seams = RuntimesSeams(deps.which_fn, deps.run_fn, deps.popen_fn, deps.urlopen_fn)
     routes = routing.route_all(
-        config.get("reviewers", []), routing.host_context("review", env, seams, persist))
-    by_key = {entry.get("key"): entry for entry in config.get("reviewers", [])
+        lanes, routing.host_context("review", env, seams, persist))
+    by_key = {entry.get("key"): entry for entry in lanes
               if isinstance(entry, dict)}
     for key, decision in routes.items():
         if decision in routing.SKIP_ROUTES:
@@ -896,6 +908,8 @@ def _render_toml_refusal(out: str, doc: dict, replace: bool) -> str | None:
 
 def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
     env = deps.env_fn()
+    if args.keep_backup:
+        env = {**env, config_migrate.KEEP_BACKUP_ENV: "1"}
     with open(args.json_config, encoding="utf-8") as f:
         config = json.load(f)
     existing, doc = _checked_target(args.out) if args.out else ("", {})

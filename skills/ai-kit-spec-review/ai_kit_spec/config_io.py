@@ -488,7 +488,8 @@ def _migrate(path: str, env: dict, warn_fn, project: bool) -> str:
     trust_bytes_fn = (lambda lanes: cfg_project_trust_bytes(lanes, env)) if project else None
     try:
         return config_migrate.migrate_layer(path, warn_fn=warn_fn, trust_dir=trust_dir,
-                                            trust_bytes_fn=trust_bytes_fn)
+                                            trust_bytes_fn=trust_bytes_fn,
+                                            keep_backup=config_migrate.keep_backup_from_env(env))
     except config_migrate.LegacyRosterError as exc:
         raise ConfigError(exc.path, exc.message) from exc
 
