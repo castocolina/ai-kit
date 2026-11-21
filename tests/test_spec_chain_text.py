@@ -182,6 +182,14 @@ class TestReviewNoFormulaWording(unittest.TestCase):
         self.assertNotIn("probes each ladder entry", text)
 
 
+class TestReviewAsksBeforeRevising(unittest.TestCase):
+    def test_opening_gates_the_rewrite_on_authorized_revisions(self):
+        text = _read(REVIEW_SKILL)
+        opening = " ".join(text[text.index("## Your Task"):text.index("## Inputs")].split())
+        self.assertIn("when the request authorizes revisions", opening)
+        self.assertIn("ask before any fixer or framework rewrite runs", opening)
+
+
 ADAPTER_SKILL = REPO / "skills/ai-kit-spec-execute-superpowers/SKILL.md"
 CONFIG_CHECK_MD = REPO / "skills/ai-kit-spec-execute-superpowers/references/config-check.md"
 ADAPTER_BLOCK_LINES = (

@@ -159,7 +159,7 @@ Before registering any lane, weigh two judgment calls, not just the mechanics be
 
 **MANDATORY — READ ENTIRE FILE:** before asking any lane question, read [`references/wizard-flow.md`](references/wizard-flow.md) completely; **NEVER set any range limits when reading it.** It is the one place the question order lives: preferred runtimes per purpose, the catalog inputs, the `propose-lanes` shortlist per purpose, the free-lane questions of [`references/free-lanes.md`](references/free-lanes.md) (read it when a chosen model has a zero price), each chosen lane's pair and effort, the test call, the session default, the alternative lane, each role's order and the escalation flags. Review and execute stay separate in every question; no lane configuration is written before both sets are confirmed, and Step 3 writes only the lanes chosen there (the catalog step and the test calls still record catalog and usability data).
 
-**Do NOT load** `references/cli-model-selection.md` unless `wizard-flow.md` step 2 sends you there (a preferred runtime with no `models` list, or unmatched candidates). Skipping the flow reproduces landmines this wizard already hit: guessing a codex id (`placeholder-model-1-high` instead of `placeholder-model-1`), dumping a ~200-id cursor list raw instead of the catalog report, proposing before unmatched confirmation, and writing every catalog candidate instead of the chosen lanes.
+**Do NOT load** `references/cli-model-selection.md` unless `wizard-flow.md` sends you there: step 2 (a preferred runtime with no `models` list, or unmatched candidates) for its items 1 to 4, and step 6 for its item 6, the code-index alternative check that runs for every kept lane. Skipping the flow reproduces landmines this wizard already hit: guessing a codex id (`placeholder-model-1-high` instead of `placeholder-model-1`), dumping a ~200-id cursor list raw instead of the catalog report, proposing before unmatched confirmation, and writing every catalog candidate instead of the chosen lanes.
 
 Read the data-use note once per chosen model from that model's own vendor page; never reuse a page read for another model as its source, and if a provider page does not name it, use `unknown` with source `none`.
 
@@ -232,10 +232,12 @@ non-interactively with a model and a prompt can become a reviewer entry.
 #### Step 2.5 — Test the pair before saving
 
 **Check write risk first, before any live call.** When the runtime's profile (read at Step 2.4)
-has `read_only: unconfirmed`, the test below already runs that CLI with its normal write
-permissions against the working tree. Before running it, use `AskUserQuestion`: "Note: `<id>` has
-no confirmed read-only invocation — its test call and every later run use the CLI's normal write
-permissions against your working tree. Run the one test call now, or skip the test?" — with "skip
+has `read_only: unconfirmed`, the test below runs that CLI from a private temporary directory, not
+from the working tree, but with its normal write permissions, so nothing stops it from writing to
+other paths you can write, your files included. Before running it, use `AskUserQuestion`: "Note: `<id>` has
+no confirmed read-only invocation — its test call starts in a private temporary directory but runs
+with the CLI's normal write permissions, and every later run uses them against your working tree.
+Run the one test call now, or skip the test?" — with "skip
 the test" first/default. On skip, run no call, keep the entry and report it as untested at Step 4;
 on yes, continue below. A runtime with no profile (pi today) is treated the same way, because
 nothing confirms a read-only invocation for it.

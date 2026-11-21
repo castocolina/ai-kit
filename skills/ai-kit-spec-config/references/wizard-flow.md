@@ -39,7 +39,7 @@ For each chosen lane, resolve its vendor (Step 2.3), store the pair and its knob
 
 - Run: `check-reviewer --key <lane-key> --model <model-id> --vendor <vendor> --runtime <runtime-id> --effort <level>`
 
-  Read `effort_probe` from the printed JSON. `accepted`: write `effort` and `effort_source` set to its `label` (`accepted by a call on <YYYY-MM-DD>`; an answer shows that the call accepted the level, not its effect). `rejected`: write no effort and show its `error` line as printed. `inconclusive`: write no effort and say the call did not show acceptance (quota, auth or a timeout). `ignored`: write no effort and show its `reason`. Never add `--catalog-path` to this call: an effort test says nothing about the pair's usability, and the command refuses the two flags together.
+  Read `effort_probe` from the printed JSON. `accepted`: write `effort` and `effort_source` set to its `label` (`accepted by a call on <YYYY-MM-DD>`; an answer shows that the call accepted the level, not its effect). `rejected`: write no effort and show its `error` line as printed. `inconclusive`: write no effort and say the call did not show acceptance (quota, auth or a timeout). `ignored`: write no effort and show its `reason`. Never add `--catalog-path` to this call: an effort test says nothing about the pair's usability, and the command refuses the two flags together. The usability record comes from step 6's own call, which carries `--catalog-path` and no `--effort`, so one lane takes two separate calls when its effort is tested.
 
 A stored model id that already carries an effort keeps it; a different `effort` on the lane then prints an `ignored:` line on every preview and dispatch.
 

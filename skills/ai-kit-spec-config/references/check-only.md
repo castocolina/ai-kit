@@ -36,11 +36,12 @@ print(json.dumps([{'key': k, 'runtime': by_key[k].get('runtime'), 'model': by_ke
 
 For each printed entry with a `runtime`, read `read_only` from `$CLI_PROFILES_DIR/<runtime>.md`
 (only those profiles). An entry whose profile says `read_only: unconfirmed`, a runtime with no
-profile (pi today) and a custom entry (`custom: true`) all run with the CLI's normal write permissions
-against the working tree; the throwaway paths below keep ai-kit's caches clean, not the tree. When
+profile (pi today) and a custom entry (`custom: true`) all run with the CLI's normal write permissions.
+The probe starts each from a private temporary directory, not the working tree, but nothing confines
+those permissions to it; the throwaway paths below keep ai-kit's caches clean, not your files. When
 any such entry exists, use `AskUserQuestion` before any live call: "Note: `<key>` (`<model>` through `<runtime>` or `<command>`) have no
-confirmed read-only invocation — the quota probe runs them with their normal write permissions
-against your working tree. Run the probe now, or skip it?" — with "skip the probe" first/default.
+confirmed read-only invocation — the quota probe runs them from a private temporary directory with
+their normal write permissions, which nothing confines to that directory. Run the probe now, or skip it?" — with "skip the probe" first/default.
 List every such entry with the model and command the snippet printed, so the owner sees the exact lane the probe runs.
 `probe-quota` cannot probe a subset, so the answer covers the whole probe. On skip, run no
 `probe-quota` call and report every raw-read and printed key as

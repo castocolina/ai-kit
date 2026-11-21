@@ -69,7 +69,11 @@ Runs once per invocation, after Step 0.6.
    file for tool availability today, call it fresh each run (cheap — a
    handful of `which` calls, no network, no TTL logic needed):
    ```bash
-   TOOL_AVAILABILITY_JSON="$(python3 "$TOOLS_PY" detect-tools)"
+   if [ -f "$TOOLS_PY" ]; then
+     TOOL_AVAILABILITY_JSON="$(python3 "$TOOLS_PY" detect-tools)"
+   else
+     TOOL_AVAILABILITY_JSON='{}'
+   fi
    ```
    Record `TOOL_AVAILABILITY_JSON` as this run's literal tool-availability
    JSON string, substituted into every later `--tool-availability-json`
@@ -82,7 +86,8 @@ Runs once per invocation, after Step 0.6.
    belongs to which repo/branch/document — a real, observed problem: a multi-round review
    that spanned several orchestrator invocations left two unlabeled `tmp.XXXXXXXXXX` dirs
    with no way to tell which round produced which without opening each one. Resolve, in
-   order:
+   order (outside git, for a directory the user confirmed in Step 0.1, the two `git` lines fail:
+   set `REPO_NAME` to that directory's basename and `BRANCH_SLUG` to `no-git` instead):
    ```bash
    REPO_NAME="$(basename "$(git -C <CODEBASE_ROOT> rev-parse --show-toplevel)")"
    BRANCH_SLUG="$(git -C <CODEBASE_ROOT> branch --show-current 2>/dev/null || \
@@ -184,8 +189,9 @@ Runs once per invocation, after Step 0.6.
    first entry, same rule as point 4 above).
    **If either command's stderr prints `ignoring untrusted project-local config`**, the
    project-local `.aikit/config.toml` lanes under `<CODEBASE_ROOT>` are ignored until the user
-   trusts it. Show them `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT> --show` (each
-   reviewer's exact argv), ask whether to trust it, and run
+   trusts it. Show them `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT> --show` (writes
+   nothing; one JSON line per local reviewer with the argv dispatch would run, merged with the
+   global config, the prompt shown as `<prompt>`), ask whether to trust it, and run
    `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT>` only after an explicit yes — never
    trust on the user's behalf, then re-run points 4–5.
 6. **(Active cross-AI path only — point 2's degraded path already set
@@ -281,7 +287,8 @@ router`) treats router billing, access and credential rows as quota.
      grounding_docs "<GROUNDING_DOCS>" tools_py "$TOOLS_PY" \
      checklist_skill_md "$CHECKLIST_SKILL_MD" shared_tooling_path "$SHARED_TOOLING_PATH" \
      tool_availability_json "$TOOL_AVAILABILITY_JSON" unavailable "<the Step 0.7 unavailable lines>" \
-     sibling_key "<the sibling's key, or none>"
+     sibling_key "<the sibling's key, or none>" \
+     revisions_authorized "<yes, or no when the request asked only for a review or was unclear>"
    ```
    `REVIEWER_LIST` is the contents of `$RUN_TMP_DIR/reviewers.json`. Each pending lane writes its
    own `iter<N>-<key>-argv.json` and `resume-<key>.json`, so two pending lanes never overwrite
@@ -298,7 +305,9 @@ Resume ai-kit-spec-review. Do not start a new run and do not create a new temp d
 the skill with this resume pointer: RUN_TMP_DIR=<RUN_TMP_DIR>, iteration <N>, reviewer <key>.
 ```
 
-5. **On the re-invoke** (SKILL.md's Resume entry): read `resume-<key>.json`, remove
+5. **On the re-invoke** (SKILL.md's Resume entry): read `resume-<key>.json` (its
+   `revisions_authorized` is the request's authorization from SKILL.md's Your Task; when it is
+   absent or `no`, Step 3 surfaces the findings and asks before any fixer or framework rewrite), remove
    `iter<N>-<key>.exit`, write `iter<N>-<key>.running`, then re-run the recorded argv with no
    shell (same prompt file, tiers and flags; same CLI and model), backgrounded:
    ```bash

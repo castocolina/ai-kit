@@ -4,17 +4,17 @@ milestone: v2.0
 milestone_name: Skill Refactor
 current_phase: 36
 current_phase_name: spec-config as the hub
-status: executing
-stopped_at: Completed 36-28-PLAN.md
-last_updated: "2026-11-21T06:49:10.357Z"
+status: verifying
+stopped_at: Completed 36-29-PLAN.md
+last_updated: "2026-11-21T07:33:31.834Z"
 last_activity: 2026-11-20
 last_activity_desc: Phase 35 execution started
-state_head: fc0ba6a0165d803af6041bb35f7abd2ed1b5352a
+state_head: 7e2539d38e5b755367e40cc424a0735f5183abcf
 progress:
   total_phases: 40
   completed_phases: 15
   total_plans: 181
-  completed_plans: 180
+  completed_plans: 181
   percent: 38
 ---
 
@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 Phase: 36 (spec-config as the hub) — READY TO EXECUTE
 Plan: 28 of 28
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-11-20 — Phase 35 execution started
 
 Progress: [████░░░░░░] 38%
@@ -391,6 +391,7 @@ Progress: [████░░░░░░] 38%
 | Phase 36 P26 | 2min | 2 tasks | 5 files |
 | Phase 36 P27 | 8min | 2 tasks | 20 files |
 | Phase 36 P28 | 7min | 2 tasks | 5 files |
+| Phase 36 P29 | 41min | 3 tasks | 27 files |
 
 ## Accumulated Context
 
@@ -755,8 +756,8 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-21T06:49:09.207Z
-Stopped at: Completed 36-28-PLAN.md
+Last session: 2026-11-21T07:33:30.770Z
+Stopped at: Completed 36-29-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

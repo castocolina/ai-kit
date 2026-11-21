@@ -1,0 +1,82 @@
+{
+ "counts": {
+  "ai-kit-spec-config": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": {
+    "critical": 0,
+    "high": 3,
+    "judged_at": "dfae1d35299029fe91ae00c8490ab370ec506b9c",
+    "percent": 88.0,
+    "source": "verdicts/35/ai-kit-spec-config/r1/opencode_router-env_my-referee-one.json"
+   },
+   "reasons": [
+    "last verdict had a critical or high finding"
+   ]
+  },
+  "ai-kit-spec-execute-superpowers": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": {
+    "critical": 0,
+    "high": 0,
+    "judged_at": "76fa531",
+    "percent": 83.2,
+    "source": ".planning/phases/30-phase-boundary-index-refresh-code-exploration-rules-and-lens/30-JUDGE.md:55"
+   },
+   "reasons": [
+    "last percent 83.2 is within 7.0 points of 80"
+   ]
+  },
+  "ai-kit-spec-review": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": null,
+   "reasons": [
+    "no rubric-v4 verdict"
+   ]
+  }
+ },
+ "loop": "36",
+ "pool": {
+  "judges": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "members": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "native": null,
+  "probes": [
+   {
+    "judge": "opencode:router-env/my-referee-one",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=11s out=2212 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "usable": true
+   },
+   {
+    "judge": "opencode:router-env/my-referee-two",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=19s out=2333 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "usable": true
+   }
+  ],
+  "substitutes": []
+ }
+}

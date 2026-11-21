@@ -76,8 +76,9 @@ is itself a declaration, and reads a missing or conflicting declaration as `BLOC
 ## Why exec confinement differs by runtime
 
 Codex runs under `--codex-sandbox workspace-write`, so its writes stay inside the target dir plus
-`/tmp` and `$TMPDIR`, which workspace-write always allows; whether `.git` is writable under that
-sandbox is unverified. Every other exec target runs with full permissions and gets only the
+`/tmp` and `$TMPDIR`, which workspace-write always allows, and any writable root the owner's codex
+configuration adds (the sandbox is therefore not an unconditional boundary); whether `.git` is
+writable under that sandbox is unverified. Every other exec target runs with full permissions and gets only the
 soft-confinement sentence, which is guidance, not a boundary. `claude` has no exec formula in the runner, so it is an
 exec target only as a native Claude Code alias on a Claude Code host (otherwise route `no_formula`). pi exec uses the runner's pi formula, verified by its hermetic self-test only until
 live verification, which is still open.

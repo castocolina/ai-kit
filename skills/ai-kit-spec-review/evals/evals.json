@@ -15,7 +15,7 @@
     },
     {
       "id": "precise-gsd-plan-routes-native-cmd",
-      "prompt": "Review .planning/phases/02-auth/02-01-PLAN.md of this GSD project with cross-AI reviewers. Setup: copy evals/files/gsd/project to a scratch project root, rename its aikit/ folder to .aikit/ and its planning/ folder to .planning/, and run from that root.",
+      "prompt": "Review .planning/phases/02-auth/02-01-PLAN.md of this GSD project with cross-AI reviewers and fix what they find. Setup: copy evals/files/gsd/project to a scratch project root, rename its aikit/ folder to .aikit/ and its planning/ folder to .planning/, and run from that root.",
       "expected_output": "Treats the file as .planning/phases/02-auth/02-01-PLAN.md, detects the GSD framework and the plan archetype, routes the fix to /gsd-plan-phase with --reviews, never edits the PLAN.md itself, and when the slash command cannot run surfaces the pre-filled command with the report path.",
       "files": ["evals/files/gsd/project/aikit/config.toml", "evals/files/gsd/project/planning/phases/02-auth/02-01-PLAN.md"],
       "assertions": [
@@ -37,7 +37,7 @@
     },
     {
       "id": "edge-ambiguous-framework-fallback",
-      "prompt": "Review shared/architecture-decision.md. I do not know which framework it belongs to, just use whatever. Setup: copy evals/files/active/project to a scratch project root, rename its aikit/ folder to .aikit/, and run from that root.",
+      "prompt": "Review and fix shared/architecture-decision.md. I do not know which framework it belongs to, just use whatever. Setup: copy evals/files/active/project to a scratch project root, rename its aikit/ folder to .aikit/, and run from that root.",
       "expected_output": "Asks once to disambiguate, then sets FRAMEWORK_PROFILE_PATH to none, routes every archetype through ai-kit-spec-review-fixer, completes the review and notes in the surface message that the framework was ambiguous and the generic fixer was used. Reviewers come from config-status and the configured lanes, never from a silent no-config fallback.",
       "files": ["evals/files/active/project/aikit/config.toml", "evals/files/active/project/shared/architecture-decision.md"],
       "assertions": [
