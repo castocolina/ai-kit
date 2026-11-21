@@ -64,9 +64,10 @@ NO_SETTING_ARGV = {
     ("claude", "review"): ["-p", "--model", "fake-ok", "--output-format", "json",
                            "--permission-mode", "plan"],
     ("copilot", "exec"): ["-p", "<prompt>", "-s", "--no-ask-user", "--model", "fake-ok",
-                          "--allow-all-tools"],
+                          "--session-id", "<sid>", "--allow-all-tools"],
     ("copilot", "review"): ["-p", "<prompt>", "-s", "--no-ask-user", "--model", "fake-ok",
-                            "--allow-all-tools", "--available-tools=view,grep,glob",
+                            "--session-id", "<sid>", "--allow-all-tools",
+                            "--available-tools=view,grep,glob",
                             "--excluded-tools=bash,create,edit,apply_patch", "--deny-tool=shell",
                             "--deny-tool=write", "--disable-builtin-mcps"],
 }
@@ -265,6 +266,144 @@ class TestConfigEffort(unittest.TestCase):
         self.assertIn("cross-ai: setting effort=<redacted> ignored reason=bad_value", lines)
         self.assertNotIn("\x07", stderr)
         self.assertNotIn(self.key, stderr)
+
+
+class TestContextForms(unittest.TestCase):
+    def setUp(self):
+        if NODE is None:
+            self.skipTest("no real node executable")
+
+    def test_context_applied_per_kind(self):
+        for runtime, model, label, run in (
+            ("cursor", "fake-ok-cursor", "1m", ["fake-ok-cursor[context=1m]"]),
+            ("copilot", "fake-ok", "long_context",
+             ["--model", "fake-ok", "--context", "long_context"]),
+            ("codex", "fake-ok-codex", "200k", ["-", "-c", "model_context_window=200000"]),
+            ("codex", "fake-ok-codex", "1m", ["-", "-c", "model_context_window=1000000"]),
+            ("codex", "fake-ok-codex", "4096", ["-", "-c", "model_context_window=4096"]),
+        ):
+            with self.subTest(runtime=runtime, label=label):
+                mode = "review" if runtime == "cursor" else "exec"
+                rc, argv, lines, _, _, err = print_argv(
+                    ["--runtime", runtime, "--mode", mode, "--model", model, "--context", label])
+                self.assertEqual(rc, 0, err)
+                assert argv is not None
+                self.assertTrue(contains_run(argv, run))
+                self.assertIn(f"cross-ai: setting context={label} applied", lines)
+
+    def test_context_bad_value(self):
+        for runtime, model, label in (("copilot", "fake-ok", "1m"),
+                                      ("codex", "fake-ok-codex", "abc"),
+                                      ("codex", "fake-ok-codex", "0"),
+                                      ("codex", "fake-ok-codex", "2000m")):
+            rc, argv, lines, _, _, err = print_argv(
+                ["--runtime", runtime, "--model", model, "--context", label])
+            self.assertEqual(rc, 0, err)
+            assert argv is not None
+            self.assertNotIn("--context", argv)
+            self.assertFalse(any(x.startswith("model_context_window=") for x in argv))
+            self.assertIn(f"cross-ai: setting context={label} ignored reason=bad_value", lines)
+
+    def test_context_no_form_and_unverified(self):
+        for runtime, mode, model, reason in (("pi", "exec", "fake/ok", "no_form"),
+                                              ("opencode", "exec", "fake/ok", "no_form"),
+                                              ("claude", "review", "fake-ok", "unverified_form")):
+            rc, argv, lines, _, _, err = print_argv(
+                ["--runtime", runtime, "--mode", mode, "--model", model, "--context", "1m"])
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(argv, NO_SETTING_ARGV[runtime, mode])
+            self.assertIn(f"cross-ai: setting context=1m ignored reason={reason}", lines)
+
+    def test_context_id_carries(self):
+        model = "fake-ok-cursor[context=272k]"
+        rc, _, lines, actual, _, err = print_argv(
+            ["--runtime", "cursor", "--mode", "review", "--model", model, "--context", "1m"])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(actual, model)
+        self.assertIn("cross-ai: setting context=1m ignored reason=id_carries", lines)
+
+    def test_effort_and_context_together(self):
+        rc, _, lines, model, _, err = print_argv(
+            ["--runtime", "cursor", "--mode", "review", "--model", "fake-ok-cursor",
+             "--effort", "high", "--context", "1m"])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(model, "fake-ok-cursor[effort=high,context=1m]")
+        self.assertLess(lines.index("cross-ai: setting effort=high applied"),
+                        lines.index("cross-ai: setting context=1m applied"))
+        rc, argv, _, _, _, err = print_argv(
+            ["--runtime", "codex", "--model", "fake-ok-codex", "--effort", "high",
+             "--context", "1m"])
+        self.assertEqual(rc, 0, err)
+        assert argv is not None
+        self.assertTrue(contains_run(argv, ["-c", "model_reasoning_effort=high", "-c",
+                                            "model_context_window=1000000"]))
+
+
+class TestSessionForms(unittest.TestCase):
+    def setUp(self):
+        if NODE is None:
+            self.skipTest("no real node executable")
+
+    def test_chosen_session_ids(self):
+        for runtime, model in (("pi", "fake/ok"), ("copilot", "fake-ok")):
+            for sid in (None, "s-1"):
+                args = ["--runtime", runtime, "--model", model]
+                if sid:
+                    args += ["--session-id", sid]
+                rc, argv, lines, _, _, err = print_argv(args)
+                self.assertEqual(rc, 0, err)
+                self.assertEqual(argv, [sid if x == "<sid>" and sid else x
+                                        for x in NO_SETTING_ARGV[runtime, "exec"]])
+                sessions = [x for x in lines if x.startswith("cross-ai: setting session=")]
+                self.assertEqual(sessions,
+                                 [f"cross-ai: setting session={sid} applied"] if sid else [])
+
+    def test_minted_session_resume_argv(self):
+        for runtime, model, flag in (("cursor", "fake-ok-cursor", "--resume"),
+                                     ("opencode", "fake/ok", "--session"),
+                                     ("codex", "fake-ok-codex", None)):
+            rc, argv, lines, _, cwd, err = print_argv(
+                ["--runtime", runtime, "--model", model, "--session-id", "s-1"])
+            self.assertEqual(rc, 0, err)
+            expected = [x if x != "{cwd}" else cwd for x in NO_SETTING_ARGV[runtime, "exec"]]
+            if flag:
+                expected += [flag, "s-1"]
+            else:
+                expected = ["exec", "resume", "--dangerously-bypass-approvals-and-sandbox",
+                            "--skip-git-repo-check", "-m", model, "--json", "-o",
+                            "<tmp>/last-message.md", "s-1", "-"]
+            self.assertEqual(argv, expected)
+            self.assertIn("cross-ai: setting session=s-1 applied", lines)
+
+    def test_session_mode_forbids(self):
+        for mode, extra in (("review", []), ("exec", ["--codex-sandbox", "workspace-write"])):
+            rc, argv, lines, _, cwd, err = print_argv(
+                ["--runtime", "codex", "--mode", mode, "--model", "fake-ok-codex",
+                 "--session-id", "s-1", *extra])
+            self.assertEqual(rc, 0, err)
+            assert argv is not None
+            self.assertIn("cross-ai: setting session=s-1 ignored reason=mode_forbids", lines)
+            if mode == "review":
+                self.assertEqual(argv, [cwd if x == "{cwd}" else x
+                                        for x in NO_SETTING_ARGV["codex", mode]])
+            else:
+                self.assertTrue(contains_run(argv, ["--sandbox", "workspace-write"]))
+                self.assertNotIn("resume", argv)
+
+    def test_minted_without_resume_formula(self):
+        rc, argv, lines, _, _, err = print_argv(
+            ["--runtime", "claude", "--mode", "review", "--model", "fake-ok",
+             "--session-id", "s-1"])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(argv, NO_SETTING_ARGV["claude", "review"])
+        self.assertIn("cross-ai: setting session=s-1 ignored reason=no_form", lines)
+
+    def test_uuid_session_line_not_redacted(self):
+        sid = "00000000-0000-4000-8000-000000000001"
+        rc, _, lines, _, _, err = print_argv(
+            ["--runtime", "pi", "--model", "fake/ok", "--session-id", sid])
+        self.assertEqual(rc, 0, err)
+        self.assertIn(f"cross-ai: setting session={sid} applied", lines)
 
 
 if __name__ == "__main__":

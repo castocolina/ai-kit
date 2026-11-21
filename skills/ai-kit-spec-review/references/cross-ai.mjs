@@ -1364,6 +1364,8 @@ const RUNTIMES = {
     reviewExtras: [],
     env: {},
     forms: {
+      context: { kind: 'bracket', key: 'context', valueKind: 'label', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--model <model>" with the bracket example "[context=1m,effort=high,fast=false]"; meaning per model unverified' } },
+      session: { style: 'minted', resumeFlag: '--resume', label: { state: 'unverified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--resume [chatId] Select a session to resume"; resume not live-probed' } },
       effort: { kind: 'id-bracket', key: 'effort', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--model <model>" with the bracket example "[context=1m,effort=high,fast=false]"' } },
       provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
     },
@@ -1385,6 +1387,8 @@ const RUNTIMES = {
     reviewExtras: [],
     env: { OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1' },
     forms: {
+      context: { kind: 'none', valueKind: null, label: { state: 'unknown', source: 'opencode 2.3.2 run --help 2026-11-21: no context form' } },
+      session: { style: 'minted', resumeFlag: '--session', label: { state: 'unverified', source: 'opencode 2.3.2 run --help 2026-11-21: "Session ID to continue, or to create if it does not exist"; caller-chosen id shapes unverified (a ses_ id was accepted live on 2026-11-16)' } },
       effort: { kind: 'id-suffix', key: '#', label: { state: 'verified', source: 'opencode 2.3.2 run --help 2026-11-21: "Model to use in the format provider/model#variant"' } },
       provider: { kind: 'id-prefix', label: { state: 'verified', source: 'opencode 2.3.2 run --help 2026-11-21: "Model to use in the format provider/model#variant"' } },
     },
@@ -1410,6 +1414,8 @@ const RUNTIMES = {
     reviewExtras: ['--skill'],
     env: {},
     forms: {
+      context: { kind: 'none', valueKind: null, label: { state: 'unknown', source: 'pi 1.5.2 --help 2026-11-21: no context form' } },
+      session: { style: 'chosen', flag: '--session-id', label: { state: 'unverified', source: 'pi 1.5.2 --help 2026-11-21: "--session-id <id> Use the current directory existing session with the ID, creating it otherwise"; resume not live-probed' } },
       effort: { kind: 'flag', flag: '--thinking', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--thinking <level> Set thinking level: off, minimal, low, medium, high, xhigh, max"' } },
       provider: { kind: 'id-prefix', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--model <pattern> Model pattern or ID (supports provider/id and optional :<thinking>)"' } },
     },
@@ -1440,6 +1446,8 @@ const RUNTIMES = {
     reviewExtras: [],
     env: {},
     forms: {
+      context: { kind: 'config', key: 'model_context_window', valueKind: 'tokens', label: { state: 'verified', source: 'codex 0.170.0 exec --help 2026-11-21: "-c, --config <key=value>"; a zero-token config parse rejected a non-integer model_context_window as "expected i64" (2026-11-16); its effect on a model window is unverified' } },
+      session: { style: 'minted', resumeFlag: null, noResume: ['review', 'sandbox'], label: { state: 'unverified', source: 'codex 0.170.0 exec --help 2026-11-21: "resume Resume a previous session by id"; exec resume has no read-only sandbox form; resume not live-probed' } },
       effort: { kind: 'config', key: 'model_reasoning_effort', label: { state: 'verified', source: 'codex 0.170.0 exec --help 2026-11-21: "-c, --config <key=value>"; model_reasoning_effort is the runner\'s existing codex effort key' } },
       provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
     },
@@ -1464,6 +1472,8 @@ const RUNTIMES = {
     reviewExtras: [],
     env: {},
     forms: {
+      context: { kind: 'id-suffix', valueKind: null, label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: no model-context flag; the [1m] model suffix is not in the help' } },
+      session: { style: 'minted', resumeFlag: '--resume', label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: "-r, --resume [value] Resume a conversation by session ID or name"; no resume formula in this row yet; resume not live-probed' } },
       effort: { kind: 'flag', flag: '--effort', label: { state: 'verified', source: 'claude 2.1.330 --help 2026-11-21: "--effort <level> Effort level for the current session (low, medium, high, xhigh, max)"' } },
       provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
     },
@@ -1476,8 +1486,8 @@ const RUNTIMES = {
     argvPrompt: true,
     errorsUnverified: true,
     modelId: MODEL_ID,
-    exec: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.profileFlags || [])],
-    review: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.profileFlags || [])],
+    exec: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.adds?.context || []), '--session-id', c.sid, ...(c.profileFlags || [])],
+    review: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.adds?.context || []), '--session-id', c.sid, ...(c.profileFlags || [])],
     resume: null,
     parse: (out) => ({ text: out, sessionId: null, error: null }),
     modelSuffix: null,
@@ -1490,6 +1500,8 @@ const RUNTIMES = {
     },
     reviewExtras: [],
     forms: {
+      context: { kind: 'flag', flag: '--context', valueKind: 'enum', values: ['default', 'long_context'], label: { state: 'verified', source: 'copilot 1.0.112 --help 2026-11-21: "--context <tier> Set the context window tier (overrides persisted setting) [possible values: default, long_context]"' } },
+      session: { style: 'chosen', flag: '--session-id', label: { state: 'unverified', source: 'copilot 1.0.112 --help 2026-11-21: "--session-id <id> Resume an existing session or task by ID, or set the UUID for a new session"; resume not live-probed' } },
       effort: { kind: 'flag', flag: '--reasoning-effort', label: { state: 'verified', source: 'copilot 1.0.112 --help 2026-11-21: "--reasoning-effort <level> Set the reasoning effort level; supported levels depend on the model"' } },
       provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
     },
@@ -1515,6 +1527,14 @@ function mergeBracket(model, key, value) {
   const match = model.match(/\[([^\]]*)\]$/);
   if (!match) return `${model}[${key}=${value}]`;
   return `${model.slice(0, match.index)}[${match[1] ? `${match[1]},` : ''}${key}=${value}]`;
+}
+
+function contextTokens(label) {
+  // Decimal k and m, accepted assumption A1.
+  const match = /^([1-9][0-9]*)([km]?)$/.exec(label);
+  if (!match) return null;
+  const value = Number(match[1]) * (match[2] === 'k' ? 1000 : match[2] === 'm' ? 1000000 : 1);
+  return Number.isSafeInteger(value) && value >= 1 && value <= 1000000000 ? value : null;
 }
 
 function cleanSettingValue(name, value) {
@@ -1560,6 +1580,41 @@ const SETTING_HANDLERS = {
     else if (form.kind === 'id-bracket') plan.model = mergeBracket(plan.model, form.key, level);
     else if (form.kind === 'id-suffix') plan.model = `${plan.model}${form.key}${level}`;
     plan.report.push({ name: 'effort', value: level, state: 'applied', proof });
+  },
+  context: (plan, row, role, call) => {
+    const label = call.context ?? null;
+    if (label === null) return;
+    const form = row.forms?.context || { kind: 'none' };
+    let reason = null;
+    if (form.kind === 'none') reason = 'no_form';
+    else if (form.label?.state !== 'verified') reason = 'unverified_form';
+    else if (form.valueKind === 'enum' && !(form.values || []).includes(label)) reason = 'bad_value';
+    else if (form.valueKind === 'tokens' && contextTokens(label) === null) reason = 'bad_value';
+    else if (form.kind === 'bracket' && bracketValue(plan.model, form.key) !== null) reason = 'id_carries';
+    if (reason) { plan.report.push({ name: 'context', value: label, state: 'ignored', reason }); return; }
+    let proof = 'model';
+    if (form.kind === 'flag') proof = plan.adds.context = [form.flag, label];
+    else if (form.kind === 'config') proof = plan.adds.context = ['-c', `${form.key}=${form.valueKind === 'tokens' ? String(contextTokens(label)) : label}`];
+    else if (form.kind === 'bracket') plan.model = mergeBracket(plan.model, form.key, label);
+    else { plan.report.push({ name: 'context', value: label, state: 'ignored', reason: 'no_form' }); return; }
+    plan.report.push({ name: 'context', value: label, state: 'applied', proof });
+  },
+  session: (plan, row, role, call) => {
+    const form = row.forms?.session || { style: 'none' };
+    const id = call.sessionId ?? null;
+    if (form.style === 'chosen') plan.sessionId = id ?? call.newSessionId ?? null;
+    if (id === null) return;
+    // SPEC R7 requires resume; D-17 labels evidence rather than refusing it.
+    let reason = null;
+    if (form.style === 'none') reason = 'no_form';
+    else if (form.style === 'chosen') { plan.report.push({ name: 'session', value: id, state: 'applied', proof: [form.flag, id] }); return; }
+    else if (typeof row.resume !== 'function') reason = 'no_form';
+    else if ((form.noResume || []).some((k) => (k === 'review' && role === 'review') || (k === 'sandbox' && call.sandbox))) reason = 'mode_forbids';
+    if (reason) { plan.report.push({ name: 'session', value: id, state: 'ignored', reason }); return; }
+    plan.sessionId = id;
+    plan.resume = true;
+    const proof = form.resumeFlag ? [form.resumeFlag, id] : { runs: [['exec', 'resume'], [id, '-']] };
+    plan.report.push({ name: 'session', value: id, state: 'applied', proof });
   },
   escalate_runtime: (plan, row, role, call) => {
     if (call.escalateRuntime) plan.report.push({ name: 'escalate_runtime', value: 'true', state: 'ignored', reason: 'recorded_only' });
@@ -1622,6 +1677,7 @@ function withCodexKnobs(argv, ctx) {
   const out = [...argv];
   // The run path still passes ctx.codexEffort and ctx.piThinking without adds.
   if (ctx.adds) out.push(...ctx.adds.effort); else if (ctx.codexEffort) out.push('-c', `model_reasoning_effort=${ctx.codexEffort}`);
+  if (ctx.adds) out.push(...ctx.adds.context);
   if (ctx.codexServiceTier) out.push('-c', `service_tier=${ctx.codexServiceTier}`);
   return out;
 }
@@ -4246,9 +4302,9 @@ function sameSessionArgv(name, rt, model, ctx, sid, mode, input = RESUME_MSG) {
   return { argv: withExtra(name, rt.resume(model, ctx, sid, mode)), input };
 }
 
-// Rung 2 is a fresh argv on the same CLI and model. Pi gets a new session id.
+// Rung 2 is a fresh argv on the same CLI and model; every chosen row (pi, copilot) gets a new session id.
 function newSessionArgv(name, rt, model, ctx, mode, prompt) {
-  if (name === 'pi') ctx.sid = crypto.randomUUID();
+  if (rt.forms?.session?.style === 'chosen') ctx.sid = crypto.randomUUID();
   if (rt.argvPrompt) {
     ctx.promptArg = argvPromptElement(prompt);
     return { argv: withExtra(name, rt[mode](model, ctx)), input: null };
@@ -12716,7 +12772,7 @@ async function blackBoxSelfTest(listOnly = false) {
           if (!line) return 'missing argv line';
           const argv = JSON.parse(line.split('\t')[2]);
           const want = ['-p', '<prompt>', '-s', '--no-ask-user', '--model', 'fake-ok',
-            '--allow-all-tools'];
+            '--session-id', '<sid>', '--allow-all-tools'];
           return JSON.stringify(argv) === JSON.stringify(want) ? null : `argv=${JSON.stringify(argv)}`;
         },
       },
@@ -12922,7 +12978,7 @@ async function blackBoxSelfTest(listOnly = false) {
           const tail = ['--allow-all-tools', '--available-tools=view,grep,glob',
             '--excluded-tools=bash,create,edit,apply_patch', '--deny-tool=shell',
             '--deny-tool=write', '--disable-builtin-mcps'];
-          const head = ['-p', '<prompt>', '-s', '--no-ask-user', '--model', 'fake-ok'];
+          const head = ['-p', '<prompt>', '-s', '--no-ask-user', '--model', 'fake-ok', '--session-id', '<sid>'];
           const want = [...head, ...tail];
           return JSON.stringify(argv) === JSON.stringify(want) ? null : `argv=${JSON.stringify(argv)}`;
         },
@@ -13047,16 +13103,16 @@ async function main(argv) {
     log('cross-ai: --codex-sandbox applies to exec mode only; review already runs read-only');
   }
   if (o.printArgv) {
-    const plan = c.model ? planSettings(rt, o.mode, { model: c.model, effort: o.effort, configEffort: effort[name] ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel }) : null;
+    const plan = c.model ? planSettings(rt, o.mode, { model: c.model, effort: o.effort, context: o.context, sessionId: o.sessionId, newSessionId: '<sid>', sandbox: o.mode === 'exec' && Boolean(o.codexSandbox), configEffort: effort[name] ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel }) : null;
     const ctx = {
-      cwd: process.cwd(), sid: '<sid>', outFile: '<tmp>/last-message.md',
+      cwd: process.cwd(), sid: plan ? (plan.sessionId ?? '<sid>') : '<sid>', outFile: '<tmp>/last-message.md',
       adds: plan ? plan.adds : undefined, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
       codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
       profileFlags, promptArg: '<prompt>',
     };
     const formula = rt[o.mode];
     const argvOut = (c.model && typeof formula === 'function')
-      ? withExtra(name, formula(plan.model, ctx)) : null;
+      ? withExtra(name, plan.resume ? rt.resume(plan.model, ctx, plan.sessionId, o.mode) : formula(plan.model, ctx)) : null;
     process.stdout.write(`${name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(argvOut) : 'NO MODEL'}\n`);
     if (plan && argvOut) {
       confirmReport(plan.report, argvOut, '', o.mode);
