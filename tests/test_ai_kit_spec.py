@@ -5326,7 +5326,10 @@ class TestExecuteLadderScreen(unittest.TestCase):
                        "model": "placeholder-model-1", "purpose": "execute"}]
         with self.assertRaises(execute_selection.ExecuteSelectionError) as ctx:
             self._screen(candidates, warn_fn=lambda _msg: self.fail("must raise, not warn"))
-        self.assertEqual(str(ctx.exception), "reviewer 'p1' sets purpose = \"execute\": ")
+        self.assertEqual(
+            str(ctx.exception),
+            "reviewer 'p1' sets purpose = \"execute\": 'placeholder-cli-1' has no runner row "
+            "in the RUNTIMES table, so the runner has no way to execute with it")
 
     def test_custom_command_is_dropped_and_execute_purpose_raises(self):
         warnings = []

@@ -4,7 +4,6 @@ ai-kit-spec-config time (design spec Section 5)."""
 import sys
 from typing import NamedTuple
 
-from ai_kit_spec import commands
 from ai_kit_spec.detection import RUNTIMES, runtime_id
 
 
@@ -77,8 +76,8 @@ class ExecuteSelectionError(ValueError):
 
 def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
     """D-15 screen, 36 SPEC R7: a runtime outside the table or a runner-less row cannot
-    execute: purpose "execute" raises ExecuteSelectionError with commands.execute_cli_error's
-    text; purpose unset or "both" is dropped with a warning. A runner row passes even without
+    execute: purpose "execute" raises ExecuteSelectionError naming the missing runner row;
+    purpose unset or "both" is dropped with a warning. A runner row passes even without
     an exec formula: the route walk skips it as no_formula with its reason. Native candidates,
     purpose "review" entries and candidates exempt_fn accepts pass untouched; a custom command
     entry declared an executor is refused (custom entries run only as reviewers)."""
@@ -101,7 +100,8 @@ def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
         row = RUNTIMES.get(runtime_id(cli)) if cli is not None else None
         if cli is not None and (row is None or not row.runner) \
                 and purpose_matches(c.get("purpose"), "execute"):
-            cli_err = commands.execute_cli_error(cli) or ""
+            cli_err = (f"{cli!r} has no runner row in the RUNTIMES table, so the runner "
+                       "has no way to execute with it")
             if c.get("purpose") == "execute":
                 raise ExecuteSelectionError(
                     f"reviewer {c['key']!r} sets purpose = \"execute\": " + cli_err)
