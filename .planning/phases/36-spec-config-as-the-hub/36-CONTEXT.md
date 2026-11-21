@@ -1,6 +1,6 @@
 # Phase 36: spec-config as the hub - Context
 
-**Gathered:** 2026-11-16 (interactive path, no owner question needed, jev screening, after 36-SPEC.md); updated 2026-11-16 (re-run 2, herdr hosting and free models, interactive path, jev screening, after the 36-SPEC.md R12 amendment)
+**Gathered:** 2026-11-16 (interactive path, no owner question needed, jev screening, after 36-SPEC.md); updated 2026-11-16 (re-run 2, herdr hosting and free models, interactive path, jev screening, after the 36-SPEC.md R12 amendment); updated 2026-11-20 (plan time: D-20 to D-23 copied from ROADMAP and REQUIREMENTS, and the plan-time decisions record)
 **Status:** Ready for planning (after Phase 35 lands: this phase reads its classified catalog, usability records, per-(runtime, model) efforts and hardcoding guard)
 
 <domain>
@@ -23,6 +23,10 @@ Downstream agents MUST read `36-SPEC.md` before planning or implementing. Requir
 
 **Refined 2026-11-16 (re-run 2, D-15 to D-19):** 12 requirements are locked; R12 (free models selectable, a usage-limited
 flag and an alternative lane) is added, and R1 to R11 are unchanged.
+
+**Refined 2026-11-20 (plan time, D-20 to D-23):** 13 requirements are locked; R13 (a free model's data-use note and the
+owner's confirmation, HUB-10) is added, R12 gains clause (g) (each zero-price lane's pool and the different-pool fallback),
+and R7's acceptance names a placeholder CLI instead of grok (grok is not a target in this phase).
 
 **In scope:** the no-config check and chain (R1, R2); per-role orders (R3); effort per lane (R4); escalation flags (R5);
 the proposal command and wizard flow (R6); removing seed-flag refusals (R7); the referee rule (R8); the migration backup
@@ -61,6 +65,9 @@ adapter's resume and stop paths and session-model fallback (Phase 41); jev choos
   `ai-kit-spec-execute` never reads lanes (it hands off to GSD or the adapter). The adapter's block is the only edit to
   its SKILL.md in this phase; Phase 41 keeps it and owns the resume and stop paths. jev adapter_wiring choice 0.77. The
   amendment to EXE-01 and Phase 41 criterion 1 is made in this commit.
+  - **Refined 2026-11-20 (plan time):** the EXE-01 and Phase 41 criterion 1 amendment named above already exists
+    (REQUIREMENTS.md EXE-01 and ROADMAP.md Phase 41 criterion 1, both amended 2026-11-16 citing 36 D-03); this phase writes
+    nothing further there.
 
 ### The config shape (SPEC R3, R4, R5)
 
@@ -217,6 +224,53 @@ adapter's resume and stop paths and session-model fallback (Phase 41); jev choos
   Open for Phase 37: whether the runner's trigger for hosting reads the lane (a free lane the owner selected) or only
   availability, and whether the owner can switch hosting off; if a config key turns out to be needed, it is a 37 requirement
   that this phase's writer and validator then carry (a one-line amendment here).
+
+### Added 2026-11-20 (plan time; copied from ROADMAP Phase 36 criteria 8 and 9 and REQUIREMENTS HUB-05 and HUB-10)
+
+- **Plan-time decisions record:** section 0 ("Cross-area contract") of `36-RESEARCH.md` holds the decisions made at plan
+  time (the plan map, the cross-cutting decisions and the standing rules); where it differs from parts A to D of that file
+  it wins, and the plans cite it.
+- **D-20: A flagged lane records its pool (accepted by the owner on 2026-11-16, `.planning/docs/OWNER-DECISIONS-2026-11-16.md`; the shared pool itself is reported by users, not confirmed
+  by a maintainer).** REQUIREMENTS HUB-05 (amended
+  2026-11-16, free-lane pool study): "a flagged lane also records its pool (provider plus tier, for example the one pool that
+  the free models of a provider appear to share)". ROADMAP Phase 36 criterion 8: "the flag is written with the lane's pool
+  (provider plus free tier)". Source: `.planning/research/2026-11-16-opencode-free-models.md`, where the shared pool is
+  reported by users and not confirmed by a maintainer.
+  - **Refined 2026-11-20 (plan time, `36-RESEARCH.md` section 0 item 2):** the lane key is `pool` with the value
+    `<provider>:free` (shape `^[A-Za-z0-9._-]{1,64}:[a-z]{1,16}$`; the tier is always `free` in this phase). It is derived
+    from a zero price and written by the wizard on every chosen lane whose price is zero, flagged or not (so a fallback can
+    compare pools), is valid on any lane, is labelled reported, and never sets `usage_limited`, which stays the owner's yes
+    only (D-15). `propose-lanes` prints the same string as each row's `pool_key`.
+- **D-21: A flagged lane's fallback comes from a different pool (accepted by the owner on 2026-11-16, `.planning/docs/OWNER-DECISIONS-2026-11-16.md`).** REQUIREMENTS
+  HUB-05: "the fallback is the first lane of the role that is neither flagged nor in the same pool". ROADMAP criterion 8: "a
+  flagged lane's fallback is the first lane of the role that is neither flagged nor in the same pool". This replaces D-16's
+  fallback sentence ("the first lane of the same role ... that is not itself flagged").
+  - **Refined 2026-11-20 (plan time, `36-RESEARCH.md` section 0 item 3):** `lane_fallback(role_lanes, key)`, with
+    `role_lanes` already in the role's order, skips `key` itself, every flagged lane and every lane whose non-empty `pool`
+    equals the key lane's non-empty `pool`, and returns the first key left, else `None`.
+- **D-22: The wizard warns that the free models of one provider share one pool (accepted by the owner on 2026-11-16, `.planning/docs/OWNER-DECISIONS-2026-11-16.md`; the shared pool
+  itself stays reported-grade).**
+  REQUIREMENTS HUB-05: "the wizard warns that other free models of the same provider share the pool". ROADMAP criterion 8:
+  "the wizard warns that other free models of the same provider share one pool". The warning says the shared pool is
+  reported by users and not confirmed by the vendor.
+- **D-23: A free model's data-use note and the owner's confirmation (HUB-10; accepted by the owner on 2026-11-16, `.planning/docs/OWNER-DECISIONS-2026-11-16.md`, with the closed value list
+  and the decline path as recorded here).** REQUIREMENTS HUB-10: "When the owner selects a free (zero-price) model that is
+  not known to be local, spec-config shows the model's data-use note before anything else about the lane: `zero_retention`,
+  `may_be_kept_or_trained` or `unknown`, with a display line, its source, the date it was read and a label (`verified` only
+  for the vendor's own documentation page read in that run, else `reported`); an unreadable or silent source shows `unknown`
+  and never defaults to a safe value, and no shipped list decides. It states that a review or execute lane sends project
+  content to that vendor and asks the owner to confirm; a yes records the note and the confirmation beside the lane, a no or
+  a skip writes no lane." ROADMAP Phase 36 criterion 9 states the same and adds that the research note lists only four free
+  models as zero-retention, so project code may reach a third party.
+  - **Refined 2026-11-20 (plan time, `36-RESEARCH.md` section 0 item 4, record contract corrected in plan review):** the
+    record is flat keys on the lane: five always, `data_use` (`zero_retention`, `may_be_kept_or_trained` or `unknown`),
+    `data_use_line` (one display line, at most 200 characters, control characters removed, key shapes redacted),
+    `data_use_source` (an `https://` page of at most 300 characters, or `none`), `data_use_read` (`YYYY-MM-DD`) and
+    `data_use_confirmed` (only `true` is storable), plus `data_use_label` (`verified` or `reported`) exactly when
+    `data_use` is not `unknown`; a lane holds that whole record or no data-use key. There is no data-use
+    CLI command: the wizard composes the keys and `render-toml` validates them. In this phase the proposal cannot tell
+    local from hosted (every zero-price row reads `zero price (local or hosted not known)`), so the note is shown for every
+    chosen zero-price lane.
 
 ### Handoffs to later phases
 

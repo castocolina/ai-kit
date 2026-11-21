@@ -2,7 +2,7 @@
 
 **Created:** 2026-11-16
 **Ambiguity score:** 0.15 (gate: ≤ 0.20)
-**Requirements:** 11 locked *(amended 2026-11-16, re-run 2, 36 D-15 to D-19: 12 locked; R12 added for free models and usage-limited lanes; R1 to R11 unchanged)*
+**Requirements:** 11 locked *(amended 2026-11-16, re-run 2, 36 D-15 to D-19: 12 locked; R12 added for free models and usage-limited lanes; R1 to R11 unchanged)* *(amended 2026-11-20, plan time, 36 D-20 to D-23: 13 locked; R13 added for a free model's data-use note; R12 gains clause (g) for pools; R7's acceptance names a placeholder CLI instead of grok)*
 
 ## Goal
 
@@ -99,6 +99,21 @@ class, cost band, strengths, usability, context per runtime) that the proposal r
   through a summarising web fetch, so *web, unverified*): one free model "with a limit of 100 requests per day", other free
   models "free for a limited time", some with data-retention notes. Nothing a program can read states a daily limit, so the
   fact that a lane is usage-limited can only come from the owner (D-15). herdr 0.9.5 is installed here.
+
+**Amended 2026-11-20 (plan time).** Sources: ROADMAP Phase 36 criteria 8 and 9 and REQUIREMENTS HUB-05 and HUB-10 (36 D-20
+to D-23 in `36-CONTEXT.md`); the plan-time decisions record is section 0 of `36-RESEARCH.md`. The owner accepted D-20 to
+D-23 on 2026-11-16 (`.planning/docs/OWNER-DECISIONS-2026-11-16.md`); the one fact that stays reported-grade is that the
+free models of one provider share a pool (users report it, no maintainer has confirmed it).
+
+- R12 gains clause (g): each chosen zero-price lane records its pool, and a flagged lane's fallback comes from a different
+  pool; the wizard warns that the free models of one provider appear to share one pool (users report it, the vendor has
+  not confirmed it).
+- R13 is added: a chosen free model's data-use note comes before anything else about the lane, and the owner confirms
+  sending project content to it; a no or a skip writes no lane.
+- Grok is not a target in this phase (owner directive 2026-11-20; Phase 39.1 removes the runtime, RUN-15): no grok test,
+  fixture, doc line or list entry is added, existing grok code is left as it is, and R7's acceptance names a placeholder
+  CLI (`placeholder-cli-1`) stored as a custom `command` lane instead of grok. The grok facts in the live-facts list above
+  stay as history.
 
 ## Requirements
 
@@ -208,7 +223,7 @@ class, cost band, strengths, usability, context per runtime) that the proposal r
      printing the table. On a Claude Code host, the aliases still run natively as before.
    - Acceptance: tests cover claude as an explicit execute lane on a non-Claude host (accepted by config and selection,
      route `no_formula` with its reason, not `review_only`), on a Claude host (native), `dispatch-execute` for it no longer
-     exiting 2 on the flag, an unknown runtime without a command (the new message), grok as a custom command lane, and a
+     exiting 2 on the flag, an unknown runtime without a command (the new message), a placeholder CLI named `placeholder-cli-1` stored as a custom `command` lane *(amended 2026-11-20, owner directive: grok is not a target in this phase)*, and a
      grep-style test that no refusal path reads the `review_only` field.
 
 8. **The hardcoded-referee test, one guard (HUB-07, HUB-09)**.
@@ -273,7 +288,7 @@ class, cost band, strengths, usability, context per runtime) that the proposal r
       preview; the reader prints the same warning for a hand-written file; nothing refuses. The wizard states the fallback
       rule in one line: a flagged lane's fallback is the first lane of the same role, in that role's order, that is not itself
       flagged. (d) `lane_usage_limit(entry)` (flag, note; a non-boolean flag is refused with the key named) and
-      `lane_fallback(role_lanes, key)` (the first unflagged lane in the role's order, or none) are the one place consumers read
+      `lane_fallback(role_lanes, key)` (the first lane in the role's order that is neither flagged nor in the same pool, or none; *amended 2026-11-20, clause (g)*) are the one place consumers read
       the facts, beside `lane_escalation`; no run reads them in this phase (Phase 40 reads them to switch lane, 38.1's classes
       decide when). (e) The existing test call before saving runs for a free lane too; the wizard says in one line that the
       call spends part of its allowance. (f) With herdr available at runtime the runner may host that call or any lane in a
@@ -285,9 +300,44 @@ class, cost band, strengths, usability, context per runtime) that the proposal r
       its order from the same scores (jev confident, low and absent), the flag written only on a yes (no / not sure / skip write
       nothing, no inference from price or name), the optional note stored and never present in the jev item, a role with only
       flagged lanes (proposal, explicit none with the warning, reader warning for a hand-written file), `lane_usage_limit` on a
-      layered merge and a non-boolean refused, `lane_fallback` order (first unflagged in the role's order, none), a byte-
+      layered merge and a non-boolean refused, `lane_fallback` order (the first lane neither flagged nor in the same pool, in the role's order; none; *amended 2026-11-20, clause (g)*), a byte-
       preserving write through the splicing writer, and that the same session with and without a herdr signal in the
       environment gives byte-identical output (fake herdr, no pane opened by the wizard).
+   - *Amended 2026-11-20 (HUB-05, 36 D-20 to D-22, accepted by the owner on 2026-11-16; the shared pool itself is reported
+     by users, not confirmed by a maintainer):* (g) the wizard writes `pool = "<provider>:free"` on every chosen lane whose
+     price is zero (the wizard labels the pool reported); the key is valid on any lane and never sets `usage_limited`; a
+     flagged lane's fallback is the first lane of the same role, in that role's order, that is neither flagged nor in the
+     same pool, which replaces "the first unflagged lane" in (c) and (d); the wizard warns once per provider with a chosen
+     zero-price lane that another free model of that provider is no fallback for it; `propose-lanes` prints the same string
+     as each row's `pool_key`, and `--avoid-pool <key>` keeps that pool out of the alternative it proposes. Acceptance adds:
+     the pool key written on each zero-price lane and a malformed one refused with the key named, `lane_fallback` skipping a
+     lane of the same pool and returning none when only flagged or same-pool lanes remain, the pool warning pinned in the
+     wizard text, and `--avoid-pool` keeping that pool out of the alternative.
+
+13. **A free model's data-use note and the owner's confirmation (HUB-10)** *(added 2026-11-20 from ROADMAP criterion 9 and
+    REQUIREMENTS HUB-10, 36 D-23, accepted by the owner on 2026-11-16 with its closed value list and its decline path,
+    `.planning/docs/OWNER-DECISIONS-2026-11-16.md`)*: before anything else about a chosen zero-price lane, the wizard shows
+    what the vendor may do with the content the lane sends and asks the owner to confirm.
+    - Current: nothing tells the owner that a review or execute lane sends project content to the model's vendor; only four
+      of the free models on one vendor's page are listed as zero-retention, so project code may reach a third party.
+    - Target: for each chosen zero-price lane that is not known to be local (the proposal cannot tell local from hosted in
+      this phase: every zero-price row reads `zero price (local or hosted not known)`), the wizard first shows the data-use
+      note: `zero_retention`, `may_be_kept_or_trained` or `unknown`, one display line, its source (an `https://` page or
+      `none`), the date it was read and, for a value other than `unknown`, a label (`verified` only for the vendor's own
+      documentation page read in that run, else `reported`); an unreadable or silent source is `unknown`, carries no label
+      and is never defaulted to a safe value; no shipped list decides. It states that the lane sends project content to
+      that vendor and asks yes / no / skip. A yes writes the record as flat keys beside the lane: five always (`data_use`,
+      `data_use_line` (one line, control characters removed, at most 200 characters, key shapes redacted),
+      `data_use_source`, `data_use_read` (`YYYY-MM-DD`) and `data_use_confirmed = true`), plus `data_use_label` exactly when
+      `data_use` is not `unknown`; a lane holds that whole record or no data-use key. A no or a skip writes no lane, and the
+      lane leaves the set before any further question about it. The display line is never parsed and never sent to jev.
+      There is no data-use command: the wizard composes the keys and `render-toml` refuses a partial or inconsistent record
+      with the key named.
+    - Acceptance: tests cover each value (a known value with its label, `unknown` with none), a record missing one of the
+      five required keys refused with the key named, a label missing on a known value or present on `unknown` refused, a
+      false confirmation refused, a multi-line or over-long display line cleaned and capped, a byte-preserving write through
+      the splicing writer, the display line absent from every jev item, and doc-contract tests pin that the note comes first
+      and that a no or a skip writes no lane.
 
 ## Boundaries
 
@@ -296,7 +346,8 @@ class, cost band, strengths, usability, context per runtime) that the proposal r
   flags and the reader (R5), the proposal command and the wizard flow (R6), removing the seed-flag refusals (R7), the
   referee rule in Phase 35's guard (R8), the migration backup default (R9), the headless stop (R10), skill text and docs
   (R11). *(amended 2026-11-16, re-run 2, D-15 to D-19: also free-model selection, the usage-limited flag, the alternative-lane
-  rule and its reader (R12).)*
+  rule and its reader (R12).)* *(amended 2026-11-20: also each zero-price lane's pool and the different-pool fallback (R12
+  g), and a free model's data-use note with the owner's confirmation (R13).)*
 
 **Out of scope:**
 - Making any run read the escalation flags (Phases 37, 40, 41); the runner's effort flags for claude and copilot, its
@@ -311,6 +362,8 @@ class, cost band, strengths, usability, context per runtime) that the proposal r
   runner's hosting of a lane or call in a herdr pane, the pane's result channel, and ownership, cleanup, naming and the
   lock of what the runner opens (Phases 37 and 38); a shipped list of known free or limited models (never: a table does not
   decide, D-15); the catalog's own price fields (Phase 35).
+- *Added 2026-11-20:* any grok change (Phase 39.1 removes the runtime); a shipped list of data-use or zero-retention facts
+  (no list decides, D-23).
 
 ## Constraints
 
@@ -342,10 +395,14 @@ class, cost band, strengths, usability, context per runtime) that the proposal r
 - [ ] *(added 2026-11-16, re-run 2)* A zero-price model is reachable in its own group with its price source, the owner's
       yes writes `usage_limited` and nothing else does, a role holding only flagged lanes proposes an alternative or prints an
       explicit-none warning, and the wizard's output is identical with and without herdr (R12).
+- [ ] *(added 2026-11-20)* Each chosen zero-price lane records its pool, and a flagged lane's fallback is neither flagged
+      nor in the same pool (R12 g).
+- [ ] *(added 2026-11-20)* A chosen zero-price lane shows its data-use note first; a yes records the note and the
+      confirmation beside the lane, a no or a skip writes no lane, and `unknown` is never shown as safe (R13).
 
 ## Edge Coverage
 
-**Coverage:** 46/46 applicable edges resolved · 0 unresolved (46 engine rows from `edge_floor.py floor`; 7 added for R12 on 2026-11-16, re-run 2)
+**Coverage:** 52/52 applicable edges resolved · 0 unresolved (52 engine rows from `edge_floor.py floor`; 7 added for R12 on 2026-11-16, re-run 2; 6 added for R13 on 2026-11-20)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -392,13 +449,19 @@ class, cost band, strengths, usability, context per runtime) that the proposal r
 | adjacency | R12 | ✅ covered | One model offered by a free provider and a paid one is two rows with their own price; the flag belongs to one lane and a free and a paid lane of the same model never share it *(added 2026-11-16, re-run 2, D-16)* |
 | empty | R12 | ✅ covered | No zero-price entry: the group is not printed; a missing price is unknown, never zero; no note means no `usage_limit_note` key; not sure and skip write nothing *(added 2026-11-16, re-run 2, D-15)* |
 | encoding | R12 | ✅ covered | The note is one line, control characters removed, length capped, stored as typed, never parsed and never sent to jev; the flag is a TOML boolean compared exactly *(added 2026-11-16, re-run 2, D-16)* |
-| ordering | R12 | ✅ covered | The group follows the ranking order, ties by id for display only; `lane_fallback` follows the role's written order and a duplicate key keeps its first place *(added 2026-11-16, re-run 2, D-16, D-18)* |
+| ordering | R12 | ✅ covered | The group follows the ranking order, ties by id for display only; `lane_fallback` follows the role's written order, skips flagged lanes and lanes of the flagged lane's pool, and a duplicate key keeps its first place *(added 2026-11-16, re-run 2, D-16, D-18; amended 2026-11-20, D-21)* |
 | precision | R12 | ✅ covered | Zero is exact: any positive figure, however small, is not zero price; the source's figure is shown as stored with no rounding *(added 2026-11-16, re-run 2, D-18)* |
 | concurrency | R12 | 🧪 backstop | The proposal is read-only; the write is atomic through the splicing writer and the last writer wins; a pane the runner hosts is outside this phase *(added 2026-11-16, re-run 2, D-16, D-19)* |
+| boundary | R13 | ✅ covered | The display line holds at most 200 characters once control characters are removed (the cleaner cuts a longer typed line; a stored longer one is refused with the key named); the source is an `https://` page of at most 300 characters or `none` *(added 2026-11-20, D-23)* |
+| adjacency | R13 | ✅ covered | One model on a free provider and on a paid one is two lanes: only the zero-price lane gets the note, and its record belongs to that one lane *(added 2026-11-20, D-23)* |
+| empty | R13 | ✅ covered | A missing, unreadable or silent source gives `unknown` with source `none` and no label, never a safe value; a no or a skip writes no lane; a lane holds the whole record (five keys, plus `data_use_label` exactly when the value is not `unknown`) or no data-use key *(added 2026-11-20, D-23)* |
+| encoding | R13 | ✅ covered | The display line is one line with control characters removed and key shapes redacted before it is stored; values and labels are exact lowercase tokens from closed lists; the read date is `YYYY-MM-DD` *(added 2026-11-20, D-23)* |
+| ordering | R13 | ✅ covered | The note is the first question about a chosen zero-price lane, before the usage-limit, effort, order and escalation questions; a decline removes the lane before any later question about it *(added 2026-11-20, D-23)* |
+| precision | R13 | ✅ covered | Only `true` is a storable confirmation; `verified` is set only for the vendor's own page read in that run and every other source is `reported`; no rule claims the read date is today (a program cannot check it) *(added 2026-11-20, D-23)* |
 
 ## Prohibitions (must-NOT)
 
-**Coverage:** 11/11 applicable prohibitions resolved · 0 unresolved *(amended 2026-11-16, re-run 2: 3 rows added for R12)*
+**Coverage:** 12/12 applicable prohibitions resolved · 0 unresolved *(amended 2026-11-16, re-run 2: 3 rows added for R12; amended 2026-11-20: 1 row added for R13)*
 
 | Prohibition (must-NOT statement) | Requirement | Status | Verification / Reason |
 |----------------------------------|-------------|--------|------------------------|
@@ -413,6 +476,7 @@ class, cost band, strengths, usability, context per runtime) that the proposal r
 | MUST NOT set `usage_limited` from a price, a model id's wording, a shipped list or a skipped, "no" or "not sure" answer, and MUST NOT send the note to jev | R12 | resolved | verification: test — the writer writes the flag only on a yes; the jev item text is checked for the note *(added 2026-11-16, re-run 2)* |
 | MUST NOT refuse or reorder a role because its only lanes are usage-limited, and MUST NOT make a run switch lane from the flag in this phase | R12 | resolved | verification: test — the explicit-none write succeeds with its warning; no run path reads `lane_usage_limit` *(added 2026-11-16, re-run 2)* |
 | MUST NOT ask the owner's wizard questions in a herdr pane or of another agent, and MUST NOT make the written file or the questions differ with herdr present | R12 | resolved | verification: test — the same session with and without a fake herdr signal gives identical output and opens no pane *(added 2026-11-16, re-run 2)* |
+| MUST NOT write a lane whose data-use confirmation was declined or skipped, MUST NOT default an unknown or unreadable data-use source to a safe value, and MUST NOT send the display line to jev | R13 | resolved | verification: test — the validator refuses a partial record or a false confirmation, the wizard text pins that a no or a skip writes no lane, and the jev item text is checked for the line *(added 2026-11-20)* |
 
 ## Ambiguity Report
 
@@ -461,3 +525,4 @@ question unclear enough to relay; typesafe answered, laya gave no answer in this
 
 *Phase: 36-spec-config-as-the-hub*
 *Spec created: 2026-11-16*
+*Amended: 2026-11-20 (plan time: R12 g, R13, grok not a target)*
