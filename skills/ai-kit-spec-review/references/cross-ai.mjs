@@ -4946,6 +4946,15 @@ async function hostedChild(bin, argv, opts) {
       clearInterval(poller); clearTimeout(timer);
       if (currentFinalize === finalize) currentFinalize = null;
       if (reason === 'limit') limited = true;
+      // A signal can arrive after the launcher starts but before the first poll.
+      if (launcherPid === null) {
+        const pidText = readOr(made.files.pid, '');
+        if (/^\d+\n?$/.test(pidText)) {
+          launcherPid = Number(pidText); launcherStart = procStartTime(launcherPid);
+          verified = launcherVerified(launcherPid, launcherStart, launcherStart, procGroup(launcherPid));
+          if (verified) pseudo = { pid: launcherPid, kill: (sig) => { try { process.kill(launcherPid, sig); } catch { /* gone */ } } };
+        }
+      }
       if (verified && launcherVerified(launcherPid, launcherStart, procStartTime(launcherPid), procGroup(launcherPid))) {
         killGroup(pseudo, 'SIGTERM');
         if (!['exit', 'dead', 'nopid'].includes(reason)) await waitDead(launcherPid, budgetMs(aborting ? SIGNAL_GRACE_MS : KILL_GRACE_MS, finalizeBy));
@@ -6436,6 +6445,13 @@ const STICKY_FAKE = new Set([
 ]);
 let stdinBuf = '';
 const FAKE_MODES = {
+  // Hosted only: kills the launcher shell so it never writes rc; under a node parent it exits 3.
+  killparent: () => {
+    let comm = '';
+    try { comm = fs.readFileSync('/proc/' + process.ppid + '/comm', 'utf8').trim(); } catch { /* unavailable */ }
+    if (!['sh', 'dash', 'bash'].includes(comm)) process.exit(3);
+    process.kill(process.ppid, 'SIGKILL');
+  },
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
   envmarker: () => {
     fs.writeFileSync('marker.seen', process.env.AI_KIT_CROSS_AI_CHILD ?? '<unset>');
@@ -7079,6 +7095,14 @@ const home = process.env.HOME || '.';
 const hlog = (line) => fs.appendFileSync(path.join(home, 'herdr.log'), line + '\n');
 const args = process.argv.slice(2);
 hlog('argv ' + JSON.stringify(args));
+const lock = path.join(home, 'herdr-state.lock');
+let held = false;
+for (let i = 0; i < 400; i++) {
+  try { fs.mkdirSync(lock); held = true; break; } catch { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); }
+}
+const unlock = () => { if (held) { try { fs.rmdirSync(lock); } catch { /* not held */ } held = false; } };
+process.on('exit', unlock);
+const fail = process.env.FAKE_HERDR_FAIL || '';
 const stateFile = path.join(home, 'herdr-state.json');
 let state = { next: 1, tabs: { t0: { label: 'aikit:review:pi:000000000000', pane: 'p0', cwd: home, pgid: null, dir: null, closed: false } } };
 try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { /* new state */ }
@@ -7086,11 +7110,16 @@ const save = () => fs.writeFileSync(stateFile, JSON.stringify(state));
 const mode = (p) => { try { return (fs.statSync(p).mode & 0o777).toString(8); } catch { return '-'; } };
 const verb = args[0] + ' ' + args[1];
 if (verb === 'tab create') {
+  if (fail === 'create') { console.error('{"error":"fake create failure"}'); process.exit(1); }
   const id = 't' + state.next, pane = 'p' + state.next++;
   state.tabs[id] = { label: argOf('--label'), pane, cwd: argOf('--cwd'), pgid: null, dir: null, closed: false };
   save();
+  if (fail === 'create-lost') { console.log('not json'); process.exit(0); }
   console.log(JSON.stringify({ result: { tab: { tab_id: id, label: argOf('--label') }, root_pane: { pane_id: pane } } }));
 } else if (verb === 'pane run') {
+  if (fail === 'run') { console.error('{"error":"fake pane run failure"}'); process.exit(1); }
+  if (fail === 'run-lost') { unlock(); process.kill(process.pid, 'SIGKILL'); }
+  if (fail === 'nolaunch') { hlog('nolaunch'); process.exit(0); }
   const tab = Object.values(state.tabs).find((t) => t.pane === args[2]);
   if (!tab || tab.closed) { console.error('{"error":"fake pane run failure"}'); process.exit(1); }
   const m = /^sh (\/[A-Za-z0-9._\/-]+)$/.exec(args[3] || '');
@@ -7102,9 +7131,11 @@ if (verb === 'tab create') {
   const child = spawn('/bin/sh', [m[1]], { cwd: tab.cwd, detached: true, stdio: 'ignore', env: process.env });
   recordPid('launcher', child.pid); child.unref();
   tab.pgid = child.pid; tab.dir = dir; tab.closed = process.env.FAKE_HERDR_PRECLOSED === '1'; save();
+  if (fail === 'run-after') { console.error('{"error":"fake pane run failure"}'); process.exit(1); }
 } else if (verb === 'tab close') {
   const tab = state.tabs[args[2]];
   hlog('close ' + args[2] + ' dir=' + (tab && tab.dir ? (fs.existsSync(tab.dir) ? 'present' : 'gone') : '-') + (tab && tab.closed ? ' already-closed' : ''));
+  if (fail === 'close') { console.error('{"error":"fake close failure"}'); process.exit(1); }
   if (tab && !tab.closed && tab.pgid) { try { process.kill(-tab.pgid, 'SIGHUP'); } catch { /* gone */ } }
   if (tab) tab.closed = true;
   save(); console.log('{"result":{"type":"ok"}}');
@@ -7583,6 +7614,8 @@ async function blackBoxSelfTest(listOnly = false) {
       return dir;
     };
     const hostedUsable = (c) => HOST_PATH_SAFE.test(path.resolve(c.env.XDG_STATE_HOME));
+    // A TMPDIR with a space makes every case's state home unsafe: the hosted cases then run headless once (host_failed).
+    const hostedHere = HOST_PATH_SAFE.test(path.resolve(tmp));
     const hostFailedOnly = (r, c) => r.stderr.includes('cross-ai: setting host=herdr ignored reason=host_failed') && !fs.existsSync(path.join(c.home, 'herdr.log')) ? null : 'expected host_failed and no herdr call';
     const statusFields = (r) => {
       const line = r.stderr.split('\n').filter((s) => s.startsWith('AIKIT-XAI ')).at(-1) || '';
@@ -7625,6 +7658,26 @@ async function blackBoxSelfTest(listOnly = false) {
     const hostPair = (name, model, exit, status, extra = {}) => {
       const base = ['--runtime', 'pi', '--model', model, '--session-id', 'placeholder-sid-' + name, ...(extra.args || [])];
       return { name, kind: 'runtime', args: [...base, '--host', 'auto'], env: { HERDR_ENV: '1', PATH: hostedPath, ...(extra.env || {}) }, exit, status, second: { args: [...base, '--host', 'none'], exit, status }, check: (both, c) => hostPairCheck(both, c, extra) };
+    };
+    const keptRecords = (c) => {
+      const root = path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host');
+      if (!fs.existsSync(root)) return [];
+      const records = [];
+      for (const name of fs.readdirSync(root)) {
+        const folder = path.join(root, name);
+        const files = fs.readdirSync(folder);
+        if (files.length !== 1 || files[0] !== 'run.json') return `extra files in ${folder}`;
+        records.push(JSON.parse(fs.readFileSync(path.join(folder, 'run.json'), 'utf8')));
+      }
+      return records.sort((a, b) => (a.tab_id || '').localeCompare(b.tab_id || ''));
+    };
+    const fakeTabs = (c) => JSON.parse(readOr(path.join(c.home, 'herdr-state.json'), '{"tabs":{}}')).tabs;
+    const hostCalls = (c) => readOr(path.join(c.home, 'herdr.log'), '').split('\n').filter((s) => s.startsWith('argv ')).map((s) => JSON.parse(s.slice(5)));
+    const hostSafety = (calls) => {
+      const verbs = calls.map((a) => a.slice(0, 2).join(' '));
+      if (verbs.some((v) => !HERDR_VERBS.includes(v))) return `herdr verbs ${verbs}`;
+      if (calls.some((a) => a.includes('t0') || a.includes('p0'))) return 'the foreign tab t0 was touched';
+      return null;
     };
     const cases = [
       {
@@ -14513,6 +14566,135 @@ async function blackBoxSelfTest(listOnly = false) {
         env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
         check: (r, c) => !r.stderr.includes('cross-ai: setting host=herdr applied') ? 'missing host=herdr' : r.stderr.includes('cross-ai: host herdr tab=') ? 'host tab line present' : fs.existsSync(path.join(c.home, 'herdr.log')) ? 'herdr was called' : null,
+      },
+      {
+        name: 'host-unsafe-path', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0,
+        setup: (c) => { c.env.XDG_STATE_HOME = path.join(c.tmp, 'state home'); return null; },
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        check: (r, c) => {
+          if (!r.stderr.includes('cross-ai: host: state home path holds a character outside [A-Za-z0-9._/-]; the lane runs headless')) return 'missing unsafe path note';
+          return hostFailedOnly(r, c) || (c.calls.filter((s) => s === 'pi ok').length === 1 ? null : 'pi ok call count');
+        },
+      },
+      {
+        name: 'host-overlap', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/slowok', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/slowok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        setup: (c) => {
+          const out = fs.openSync(path.join(c.home, 'overlap-out.txt'), 'w');
+          const err = fs.openSync(path.join(c.home, 'overlap-err.txt'), 'w');
+          const child = spawn(process.execPath, [c.copy, '--runtime', 'pi', '--model', 'fake/slowok', '--host', 'auto'], { cwd: c.repo, env: c.env, stdio: ['pipe', out, err], detached: true });
+          child.stdin.end('prompt\n');
+          fs.closeSync(out); fs.closeSync(err);
+          caseRunners.add(child);
+          c.overlapExit = new Promise((resolve) => child.once('exit', (code) => { caseRunners.delete(child); resolve(code); }));
+          return null;
+        },
+        check: async (r, c) => {
+          const err = path.join(c.home, 'overlap-err.txt');
+          const deadline = Date.now() + scaledMs(20000);
+          let stderr = '';
+          while (Date.now() < deadline) {
+            stderr = readOr(err, '');
+            if (stderr.split('\n').some((s) => s.startsWith('AIKIT-XAI '))) break;
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+          }
+          const status = statusLineOk(stderr, /^AIKIT-XAI status=ok cli=pi model=fake\/slowok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/);
+          if (status) return `background: ${status}`;
+          const code = await c.overlapExit;
+          if (code !== 0) return `background exit ${code}`;
+          if (!r.stdout.includes('# Summary') || !readOr(path.join(c.home, 'overlap-out.txt'), '').includes('# Summary')) return 'missing summary';
+          if (!hostedUsable(c)) return hostFailedOnly(r, c) || hostFailedOnly({ stderr }, c);
+          const labels = [r.stderr, stderr].map((text) => /cross-ai: host herdr tab=\S+ label=(\S+)/.exec(text)?.[1]);
+          if (!labels[0] || !labels[1] || labels[0] === labels[1]) return 'host labels missing or equal';
+          return hostLogProblem(c, 2);
+        },
+      },
+      {
+        name: 'host-signal-guard', kind: 'logic',
+        pure: () => {
+          const rows = [[100, '5', '5', 100, true], [100, '5', '6', 100, false], [100, '-', '-', 100, false], [100, '5', '5', 99, false], [100, '5', '-', 100, false]];
+          for (const [pid, recorded, current, group, expected] of rows) if (launcherVerified(pid, recorded, current, group) !== expected) return `wrong signal guard row: ${[pid, recorded, current, group]}`;
+          return null;
+        },
+      },
+      {
+        name: 'host-signal', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/hang', '--timeout', '60', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath },
+        signal: { when: (c) => fs.existsSync(path.join(c.repo, 'gc.pid')), sig: 'SIGTERM', withinMs: SELF_TEST_SIGNAL_EXIT_MS },
+        exit: 143, status: /^AIKIT-XAI status=signal cli=pi model=fake\/hang exit=143 .* action=stop$/,
+        check: (r, c) => deadCheck(c, ['pi', 'gc']) || (hostedUsable(c) ? hostLogProblem(c, 1) : hostFailedOnly(r, c)),
+      },
+      ...[
+        { name: 'host-failed-run', kind: 'runtime', fail: 'run', count: 1, message: 'pane run failed (exit 1); the lane runs headless', close: true },
+        { name: 'host-run-error-started', kind: 'runtime', fail: 'run-after', count: 1, started: true },
+        { name: 'host-run-unclear', kind: 'runtime', fail: 'run-lost', count: 0, message: 'pane run answer unclear (signal SIGKILL); the lane may have started, so it is not rerun', close: true },
+        { name: 'host-no-pid', kind: 'runtime', fail: 'nolaunch', count: 0, message: 'the launcher wrote no pid within 5000 ms; not rerun', close: true },
+        { name: 'host-create-refused', kind: 'logic', fail: 'create', count: 1, message: 'tab create failed (exit 1); the lane runs headless', noRun: true },
+        { name: 'host-create-lost', kind: 'logic', fail: 'create-lost', count: 1, message: 'tab create answer lost (no tab id in its answer); kept the run record for the sweep; the lane runs headless', noRun: true },
+      ].map((test) => (hostedHere ? test : { ...test, count: 1 })).map((test) => ({
+        name: test.name, kind: test.kind,
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath, FAKE_HERDR_FAIL: test.fail },
+        exit: test.count ? 0 : 1,
+        status: test.count ? /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/ : /^AIKIT-XAI status=crash cli=pi model=fake\/ok exit=1 cli_rc=- elapsed=\d+s out=\d+ tree=clean action=stop$/,
+        check: (r, c) => {
+          const count = c.calls.filter((s) => s === 'pi ok').length;
+          if (count !== test.count) return `pi ok calls ${count}`;
+          if (!hostedUsable(c)) return hostFailedOnly(r, c);
+          if (test.message && !r.stderr.includes(`cross-ai: host: ${test.message}`)) return 'missing host message';
+          if (test.fail === 'run') {
+            if (!r.stderr.includes('cross-ai: setting host=herdr ignored reason=host_failed')) return 'missing host_failed';
+            const line = r.stderr.split('\n').filter((s) => s.startsWith('AIKIT-XAI ')).at(-1) || '';
+            const ignored = (/ ignored=(\S+)/.exec(line)?.[1] || '').split(',');
+            const applied = (/ applied=(\S+)/.exec(line)?.[1] || '').split(',');
+            if (!ignored.includes('host') || applied.includes('host')) return 'status host lists';
+          }
+          if (test.started && (!r.stderr.includes('cross-ai: setting host=herdr applied') || r.stderr.includes('host_failed'))) return 'started host setting';
+          const calls = hostCalls(c);
+          const safety = hostSafety(calls); if (safety) return safety;
+          if (test.close && !calls.some((a) => JSON.stringify(a) === '["tab","close","t1"]')) return 'missing close';
+          if (test.noRun && calls.some((a) => ['pane run', 'tab close'].includes(a.slice(0, 2).join(' ')))) return 'unexpected run or close';
+          if (test.started) return hostLogProblem(c, 1);
+          if (test.fail === 'nolaunch') { const records = keptRecords(c); if (!Array.isArray(records) || records.length) return 'host records remain'; }
+          if (test.fail === 'create-lost') {
+            const records = keptRecords(c);
+            if (!Array.isArray(records) || records.length !== 1 || records[0].tab_id !== null || !records[0].label.startsWith('aikit:execute:pi:')) return 'lost create record';
+            if (fakeTabs(c).t1?.closed !== false) return 'lost create tab';
+          }
+          return null;
+        },
+      })),
+      {
+        name: 'host-dead-launcher', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/killparent', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath, FAKE_HERDR_FAIL: 'close' }, exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/killparent exit=1 cli_rc=\S+ elapsed=\d+s out=\d+ tree=.* action=stop$/,
+        second: { exit: 1, status: /^AIKIT-XAI status=crash cli=pi model=fake\/killparent exit=1 cli_rc=\S+ elapsed=\d+s out=\d+ tree=.* action=stop$/ },
+        check: (both, c) => {
+          for (const calls of [both.calls1, both.calls2]) if (calls.filter((s) => s === 'pi killparent').length !== 1) return 'killparent call count';
+          if (!hostedUsable(c)) return hostFailedOnly(both.first, c);
+          const status = statusLineOk(both.first.stderr, /^AIKIT-XAI status=crash cli=pi model=fake\/killparent exit=1 cli_rc=\S+ elapsed=\d+s out=\d+ tree=.* action=stop$/);
+          if (status) return `first: ${status}`;
+          const labels = [];
+          for (const [i, r] of [both.first, both.again].entries()) {
+            const id = `t${i + 1}`;
+            if (!r.stderr.includes(' cli_rc=- ') || !r.stderr.includes('failed (exit null SIGKILL')) return 'dead launcher status';
+            if (!r.stderr.includes(`cross-ai: host: tab close ${id} failed (exit 1)`)) return 'close failure missing';
+            if (!r.stderr.split('\n').some((s) => s.startsWith('cross-ai: host: kept ') && s.endsWith(`/run.json for tab ${id} (close not confirmed)`))) return 'kept message missing';
+            labels.push(r.stderr.split('\n').find((s) => s.startsWith('cross-ai: host herdr tab='))?.split(' label=')[1]);
+          }
+          if (!labels[0] || !labels[1] || labels[0] === labels[1]) return 'labels not distinct';
+          const safety = hostSafety(hostCalls(c)); if (safety) return safety;
+          const records = keptRecords(c);
+          if (!Array.isArray(records) || records.length !== 2 || records[0].tab_id !== 't1' || records[1].tab_id !== 't2') return 'dead launcher records';
+          const tabs = fakeTabs(c);
+          return tabs.t1?.closed === false && tabs.t2?.closed === false ? null : 'dead launcher tabs';
+        },
       },
     ];
 
