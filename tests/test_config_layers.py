@@ -156,7 +156,8 @@ class TestLaneRoles(_LayerCase):
         entry = resolved["execute"][0]
         self.assertEqual(entry["model"], "p")
         self.assertEqual(entry["runtime"], "codex")
-        self.assertEqual(entry["effort"], "low")
+        # effort is model-bound (36 contract item 6): it was set for model u, so it is dropped
+        self.assertNotIn("effort", entry)
 
 
 class TestTrustRule(_LayerCase):

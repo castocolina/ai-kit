@@ -2,7 +2,7 @@ import os
 import shlex
 import sys
 
-from ai_kit_spec import config_migrate, role_orders, toml_splice, trust
+from ai_kit_spec import config_migrate, lane_effort, lane_settings, role_orders, toml_splice, trust
 from ai_kit_spec.detection import RUNTIMES, runtime_id
 
 try:
@@ -358,6 +358,16 @@ def cfg_parse_toml_bytes(raw: bytes, path: str) -> dict:
 _VARIANT_FIELDS = ("runtime", "command")
 
 
+def _drop_model_bound(base: dict, local: dict) -> None:
+    """Drop settings for the old pair when a local entry changes or restates its variant."""
+    moved = (any(local.get(field) is not None for field in _VARIANT_FIELDS)
+             or ("model" in local and local["model"] != base.get("model")))
+    if moved:
+        for name in lane_settings.MODEL_BOUND:
+            if name not in local:
+                base.pop(name, None)
+
+
 def cfg_merge_reviewers(global_list: list, local_list: list) -> list:
     """Merge [[reviewers]] by key: local fields override/extend matching
     global entries; local-only keys are appended; global-only keys are
@@ -365,13 +375,14 @@ def cfg_merge_reviewers(global_list: list, local_list: list) -> list:
     A malformed entry with no `key` at all is silently skipped (never
     raises) — matches cfg_load_toml's "never raises on bad input"
     contract: one hand-written mistake in the roster must not crash
-    the whole orchestrator."""
+    the whole orchestrator. Model-bound settings are dropped first when the pair changes."""
     global_list = [r for r in global_list if "key" in r]
     local_list = [r for r in local_list if "key" in r]
     by_key = {r["key"]: dict(r) for r in global_list}
     for r in local_list:
         key = r["key"]
         if key in by_key:
+            _drop_model_bound(by_key[key], r)
             by_key[key].update(r)
             if any(r.get(field) is not None for field in _VARIANT_FIELDS):
                 for field in _VARIANT_FIELDS:
@@ -756,8 +767,9 @@ def _validate_pair_fields(entry: dict, key) -> str | None:
 def validate_reviewer_fields(entry: dict) -> str | None:
     """The roster-side sibling of model_catalog.validate_catalog_entry (design spec
     2026-09-02 Section 5: "enforced in both render-toml and the new fetch-model-catalog
-    subcommand"). Checks purpose/is_router/fallback_quota when present, then the pair rules:
-    a table runtime needs a model, a command is custom-only, a pinned model needs a runtime."""
+    subcommand"). Checks purpose/is_router/fallback_quota, then effort, lane settings and pair
+    rules: a table runtime needs a model, a command is custom-only, and a pinned model needs a
+    runtime."""
     key = entry.get("key", "<unknown>")
     # WR-03 fix: a dict-valued field must not reach the writer as a quoted TOML string (e.g. a
     # hand-edited `extra = { timeout_tiers = [...] }`, a known constraint of this schema), so
@@ -783,7 +795,9 @@ def validate_reviewer_fields(entry: dict) -> str | None:
     for field in ("is_router", "fallback_quota"):
         if field in entry and not isinstance(entry[field], bool):
             return f"{key}: '{field}' must be a boolean"
-    return _validate_pair_fields(entry, key)
+    return (lane_effort.effort_problem(entry)
+            or lane_settings.validate_lane_settings(entry, key)
+            or _validate_pair_fields(entry, key))
 
 
 def _cfg_partition_reviewers(reviewers: list) -> tuple[list, list, set]:
@@ -791,7 +805,7 @@ def _cfg_partition_reviewers(reviewers: list) -> tuple[list, list, set]:
     valid_reviewers = []
     dropped_keys = set()
     for r in reviewers:
-        reason = validate_reviewer_fields(r)
+        reason = validate_reviewer_fields(r) or lane_settings.write_problem(r)
         if reason:
             rejections.append(reason)
             if "key" in r:
@@ -805,9 +819,12 @@ def _cfg_render_reviewers(entries: list) -> tuple[list, list[str]]:
     """The two load steps, in the same order, so a write holds only the new form.
 
     A stored route is NOT dropped here: save rejects it, so the entry stays intact for
-    validate_reviewer_fields to refuse. Load drops it instead."""
+    validate_reviewer_fields to refuse. Load drops it instead. The lane settings' display lines
+    are cleaned before validation (36 D-16, D-23)."""
     reviewers, notes = normalize_legacy_reviewers(entries)
     reviewers, inferred = infer_legacy_native(reviewers)
+    reviewers = [lane_settings.normalise_lane_settings(entry) if isinstance(entry, dict) else entry
+                 for entry in reviewers]
     return reviewers, notes + inferred
 
 
