@@ -10,10 +10,15 @@ from pathlib import Path
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import cli, lane_data_use
+from ai_kit_spec import cli, config_migrate, lane_data_use, lane_settings
 
 REPO = Path(__file__).resolve().parents[1]
 SKILL_DIR = REPO / "skills" / "ai-kit-spec-config"
+SKILL = SKILL_DIR / "SKILL.md"
+HEADLESS = SKILL_DIR / "references" / "headless.md"
+CONFIG_FILE = SKILL_DIR / "references" / "config-file.md"
+KEEP_ENV = "AI_KIT_KEEP_MIGRATION_BACKUP"
+KEEP_ANSWER = "keep the old roster as `review-spec.toml.migrated`"
 FLOW = SKILL_DIR / "references" / "wizard-flow.md"
 FREE = SKILL_DIR / "references" / "free-lanes.md"
 SELECTION = SKILL_DIR / "references" / "cli-model-selection.md"
@@ -225,6 +230,118 @@ class TestFreeLanesText(unittest.TestCase):
 
     def test_flow_and_free_links_resolve(self):
         self.assertEqual([], link_problems(FREE) + link_problems(FLOW))
+
+
+def between(text, start, end) -> str:
+    return text[text.index(start):text.index(end, text.index(start))]
+
+
+class TestSkillSkeleton(unittest.TestCase):
+    def setUp(self):
+        self.skill = SKILL.read_text(encoding="utf-8")
+        self.headless = HEADLESS.read_text(encoding="utf-8")
+
+    def test_headless_stop_comes_right_after_detection(self):
+        markers = ('python3 "$TOOLS_PY" detect-tools',
+                   'If the host has no structured-question tool',
+                   '**If `--check-only` was passed**', 'python3 "$TOOLS_PY" detect-runtimes --save')
+        indexes = [self.skill.index(item) for item in markers]
+        self.assertEqual(indexes, sorted(indexes))
+        self.assertIn('(references/headless.md)', self.skill)
+
+    def test_headless_block_writes_nothing(self):
+        for phrase in ('ai-kit-spec-config cannot ask here; no config, cache or trust record '
+                       'was written.',
+                       'Installed runtimes:', 'Questions it would ask:',
+                       'A person must run ai-kit-spec-config.'):
+            self.assertIn(phrase, self.headless)
+        self.assertNotIn('--save', self.headless)
+        self.assertEqual([], RUN_LINE.findall(self.headless))
+
+    def test_never_additions(self):
+        text = between(self.skill, '## NEVER', '### Step 1 —')
+        for phrase in ("Never let the proposal's order stand as the owner's pick",
+                       'Never ask a wizard question in a herdr pane or of another agent',
+                       'Never write a lane whose data-use confirmation was declined or skipped',
+                       "Never set `usage_limited`, `escalate_runtime` or `escalate_model` "
+                       "without the owner's explicit yes"):
+            self.assertIn(phrase, text)
+
+    def test_description_names_both_callers(self):
+        front = self.skill.split('---', 2)[1]
+        self.assertIn('ai-kit-spec-execute-superpowers', front)
+        self.assertIn('proposes a review set and an execute set', front)
+        self.assertNotIn('warns no config exists', front)
+
+    def test_step_2_2_points_to_the_flow(self):
+        text = between(self.skill, '#### Step 2.2', '#### Step 2.3')
+        for phrase in ('(references/wizard-flow.md)', '(references/free-lanes.md)', 'MANDATORY',
+                       'once per chosen model'):
+            self.assertIn(phrase, text)
+
+    def test_per_role_orders_replace_the_shared_ladder(self):
+        self.assertNotIn('policy.ladder', self.skill)
+        text = between(self.skill, '### Step 3 —', '### Step 4 —')
+        for phrase in ('"review": {"ladder"', '"execute": {"ladder"', '[--keep-backup]'):
+            self.assertIn(phrase, text)
+        for role in ('review', 'execute'):
+            self.assertIn(f'[lanes.policy.{role}]', self.skill[self.skill.index('### Step 4 —'):])
+
+    def test_migration_line(self):
+        self.assertNotIn('stays recoverable', self.skill)
+        text = between(self.skill, '#### Step 2.1', '#### Step 2.2')
+        self.assertIn('--keep-backup', text)
+        self.assertIn('review-spec.toml.migrated', text)
+
+    def test_keep_answer_on_every_route(self):
+        text = between(self.skill, '#### Step 2.1', '#### Step 2.2')
+        self.assertEqual(2, text.count(KEEP_ANSWER))
+        self.assertLess(text.index('A global roster already exists at'), text.index(KEEP_ANSWER))
+        self.assertLess(text.index(KEEP_ANSWER), text.index('**Replacement gate'))
+        self.assertGreater(text.rindex(KEEP_ANSWER), text.index('**Replacement gate'))
+
+    def test_no_real_alias_names_in_step_2_7(self):
+        text = between(self.skill, '#### Step 2.7', '#### Step 2.8')
+        self.assertIn('placeholder-alias-1', text)
+        self.assertNotIn('never a full model id like', text)
+        self.assertNotIn('pick one of those four', text)
+
+    def test_cursor_effort_is_a_lane_key(self):
+        text = between(self.skill, '#### Step 2.4', '#### Step 2.5')
+        self.assertNotIn('[--effort <e>] [--fast', text)
+        self.assertNotIn('effort/fast/context', text)
+        self.assertIn('Leave `--effort` out', text)
+
+    def test_allowance_line_in_step_2_5(self):
+        self.assertIn(ALLOWANCE_LINE, between(self.skill, '#### Step 2.5', '#### Step 2.6'))
+
+    def test_skill_links_resolve(self):
+        self.assertEqual([], link_problems(SKILL) + link_problems(HEADLESS))
+
+    def test_render_toml_passes_the_proposal_evidence(self):
+        text = between(self.skill, '### Step 3 —', '### Step 4 —')
+        self.assertIn('--catalog-path <catalog> --runtimes-json "$RUNTIMES_JSON"', text)
+        cli._build_parser().parse_args(['render-toml', '--json-config', 'c.json', '--out', 't.toml',
+                                        '--replace', '--keep-backup', '--catalog-path', 'c',
+                                        '--runtimes-json', 'r'])
+
+
+class TestConfigFileText(unittest.TestCase):
+    def setUp(self):
+        self.text = CONFIG_FILE.read_text(encoding='utf-8')
+
+    def test_role_tables_and_lane_settings(self):
+        for phrase in ('`[lanes.policy.review]`', '`[lanes.policy.execute]`', '## Lane settings',
+                       *(f'`{key}`' for key in lane_settings.MODEL_BOUND)):
+            self.assertIn(phrase, self.text)
+
+    def test_migration_default_and_read_only_commands(self):
+        self.assertNotIn('stays recoverable', self.text)
+        for phrase in (f'{KEEP_ENV}=1', 'render-toml --keep-backup', '## Read-only commands',
+                       '`config-status --cwd <project root>`', '`propose-lanes --purpose review`'):
+            self.assertIn(phrase, self.text)
+        self.assertTrue(config_migrate.keep_backup_from_env({KEEP_ENV: '1'}))
+        self.assertFalse(config_migrate.keep_backup_from_env({}))
 
 
 if __name__ == "__main__":

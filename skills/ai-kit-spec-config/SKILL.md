@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-config
-description: "Cross-AI lane setup: detects installed CLIs and models, asks which to use for review and execute lanes and in what priority order, then writes the [lanes] table of ai-kit's config.toml. Writes the per-project ./.aikit/config.toml by default (always announces the exact path), asks before replacing an existing [lanes] table (local or global), and migrates an old review-spec.toml on first use. Use when the user requests cross-AI review or execute setup or when ai-kit-spec-review warns no config exists. Supports --check-only (report availability, no writes), --local (force local write without asking), and --global (force the user ${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml directly)."
+description: "Cross-AI lane setup: detects installed CLIs and models, proposes a review set and an execute set from the model catalog for the owner to pick, asks each role's priority order, effort and opt-in flags, then writes the [lanes] table of ai-kit's config.toml. Writes the per-project ./.aikit/config.toml by default (always announces the exact path), asks before replacing an existing [lanes] table (local or global), and migrates an old review-spec.toml on first use. Use when the user requests cross-AI review or execute setup, or when ai-kit-spec-review or ai-kit-spec-execute-superpowers offers it because no lanes exist. Supports --check-only (report availability, no writes), --local (force local write without asking), and --global (force the user ${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml directly)."
 ---
 
 ## Your task
@@ -64,11 +64,9 @@ installed."
 - **Never hand-write a `command` for a runtime the runner knows** — a table runtime stores `runtime` and `model` (plus its knobs); the runner builds the argv. Only a CLI outside the runner table gets a custom `command`.
 - **Never save a CLI reviewer entry without testing it via `check-reviewer` first** — catch auth/model/entitlement problems before persisting. The one exception: the user declined the test at Step 2.5's write-risk ask; that entry is saved untested and named so at Step 4.
 - **Never silently pre-filter model families based on your own judgment** — always let the user decide, informed by your research (user agency over paternalism).
-- **Never paste a multi-provider CLI's raw model list** — show the sorted, labeled `catalog-report` rows and the ranked blocks of `references/cli-model-selection.md` instead (raw lists can be hundreds of ids; the report keeps them readable).
+- **Never paste a multi-provider CLI's raw model list** — show the sorted, labeled `catalog-report` rows and the `propose-lanes` shortlist instead (raw lists can be hundreds of ids; the report keeps them readable).
 - **Never write the global config without an explicit `--global` or a Step 2.1 "replace" answer, and never treat `--global` or `--local` as consent to replace an existing roster** (global changes affect all projects; default is local).
-- **Never skip asking about session-default reviewer entries** — the only
-  zero-external-dependency reviewer option, worth having available as a fallback (placed last
-  in `policy.ladder`) even when the user primarily wants external CLI reviewers.
+- **Never skip asking about session-default entries** — the only zero-external-dependency option, worth having as a fallback in a role's order even when the user mainly wants external CLI lanes.
 - **Never omit or soften `(running under: unknown)`** — when `detect-current-runtime` returns
   `"unknown"`, render that annotation literally in Step 2.7's session-default ask. An
   `unknown` host gets a session-default entry (no `runtime`, `model = ""`), never a guessed
@@ -78,6 +76,10 @@ installed."
 - **Never re-derive the write target at Step 3** — use what Step 2 already resolved and announced (consistency guarantee).
 - **Never translate literal identifiers** — `purpose` values (REVIEW/EXECUTE), model ids, catalog keys, CLI/runtime names, and field labels stay in their literal, invariant form regardless of what language the rest of this conversation is in. Narrate and explain in the user's own language, but never garble an identifier a user or this skill needs to match against config values by translating it.
 - **Never run `trust-local` (the trusting form) without the user's explicit yes** — not even for the `./.aikit/config.toml` this wizard just wrote. Show `trust-local --cwd <project root> --show` first so the user consents after seeing each reviewer's argv; until then a file with a command-bearing entry (defined at Step 4) has its whole `[lanes]` table inactive.
+- **Never let the proposal's order stand as the owner's pick** — jev or the scorer only orders the shortlist; no lane configuration is written before the owner confirms the review set and the execute set.
+- **Never ask a wizard question in a herdr pane or of another agent** — every question goes to the owner in the owner's own session.
+- **Never write a lane whose data-use confirmation was declined or skipped**, and never default an unknown data-use note to a safe value.
+- **Never set `usage_limited`, `escalate_runtime` or `escalate_model` without the owner's explicit yes** — no price, name, ranking or default turns one on.
 - **Never read or print opencode's `auth.json` or any `apiKey`** — the stale-provider report
   reads provider names only, and a key value never belongs in a reply.
 
@@ -97,6 +99,8 @@ one, grok never does; a CLI whose enumeration failed degrades to no list).
 When asking the user optional per-reviewer/per-executor questions later in the wizard,
 mention which of these are present on this machine — this is the data
 `ai-kit-spec-execute` will need later; this step only surfaces it.
+
+**No way to ask: stop here.** If the host has no structured-question tool and no plain conversation with the user (a subagent, a print-mode or other headless run), stop after the two detection commands above: read [`references/headless.md`](references/headless.md), print its block, write no config, cache or trust record (no runtimes snapshot, no catalog), remove `$SCRATCH`, and say that a person must run ai-kit-spec-config. This check comes before every branch below, `--check-only` included.
 
 **If `--check-only` was passed**, read [references/check-only.md](references/check-only.md)
 and follow it: it asks Step 2.5's write-risk question before any live probe, reports availability
@@ -124,70 +128,40 @@ and an `(unconfirmed: ...)`, `config file only` or `not checked` line is never u
 
 Run the catalog flow and **MANDATORY read** [`references/catalog.md`](references/catalog.md).
 Show the `catalog-report` output and its attribution lines verbatim, then continue to Step 2.
-The coding and review proposal belongs to Phase 36 and is not described here.
+The review and execute proposal is Step 2.2's `propose-lanes` run over this catalog.
 
 ### Step 2 — Ask
 
-Before registering any candidate, weigh it against two judgment calls, not
-just the mechanics below: **is this CLI's quota reliable enough to be a
-primary pick, or only worth keeping as a fallback?** (a CLI with a tight
-free-tier limit belongs low in the ladder, not first) — and **does this
-model's strength (planning vs. execution-oriented, per Step 2.2's
-purpose-weighted ranking) actually match what the user reviews most?** Registering every
-available CLI/model indiscriminately produces a bloated, hard-to-reason-about
-ladder; the goal is a config the user can predict the fallback behavior of
-at a glance.
+Before registering any lane, weigh two judgment calls, not just the mechanics below: **is this lane's quota reliable enough to be a primary pick, or only worth keeping as a fallback?** (a lane with a tight free-tier limit belongs low in its role's order, not first) — and **does the model's strength match the purpose it is chosen for?** (the proposal ranks per purpose). Registering every available model indiscriminately produces orders nobody can predict; the goal is a config whose fallback behavior the user sees at a glance.
 
 | I want to... | Go to |
 |---|---|
 | Decide where the config gets written | Step 2.1 |
-| Pick which CLIs/models to register | Step 2.2 |
+| Ask the questions in order: runtimes per purpose, proposal, free lanes, effort, orders, escalation | Step 2.2 |
 | Figure out a model's vendor | Step 2.3 |
-| Build the actual command/model-id | Step 2.4 |
+| Store the pair and its runner knobs | Step 2.4 |
 | Verify a candidate actually works | Step 2.5 |
-| Tag a reviewer as UI/coding/planning-oriented | Step 2.6 |
-| Register a session-default (no-runtime) reviewer | Step 2.7 |
-| Set the priority/fallback order | Step 2.8 |
+| Tag a lane as UI/coding/planning-oriented | Step 2.6 |
+| Register a session-default (no-runtime) lane | Step 2.7 |
+| Set the mode, the strategy and the timeouts | Step 2.8 |
 
 #### Step 2.1 — Resolve the write target
 
 **Resolve the write target first, before asking anything else about reviewers.** Default is **local** (`./.aikit/config.toml`) — a per-project config is the safer default since it can't silently affect other projects. The global file is the user layer, `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml` (the same rule the config reader uses; a relative or blank `XDG_CONFIG_HOME` counts as unset); resolve it once to an absolute path, called `<user config>` below. `--global` forces `<user config>` directly, skipping the ask below. `--local` also forces local directly, skipping the ask (both flags are an explicit choice, so neither needs confirming). With **neither flag passed** (the common case): `Read` `<user config>` and check whether a global roster exists. A global roster exists when that file has a `[lanes]` table, or when an old `review-spec.toml` sits beside it in the same folder (that old roster migrates into the config.toml on the write). A config.toml with neither counts as no roster.
 - If it does **not** exist, proceed with the local default silently.
-- If it **does** exist, use `AskUserQuestion` to ask explicitly before writing anywhere: "A global roster already exists at `<user config>` (or as an old `review-spec.toml` there that migrates into it). Write a per-project roster at `./.aikit/config.toml` instead (recommended — doesn't touch the global roster), or replace the global roster?" — with the local option first/default. Picking "replace" here is the replacement consent below for the global file.
+- If it **does** exist, use `AskUserQuestion` to ask explicitly before writing anywhere: "A global roster already exists at `<user config>` (or as an old `review-spec.toml` there that migrates into it). Write a per-project roster at `./.aikit/config.toml` instead (recommended — doesn't touch the global roster), or replace the global roster?" — with the local option first/default. When that global roster is an old `review-spec.toml`, offer replace in two forms: "replace" (the old file migrates first and is deleted once the migration's value check passes) and "replace, and keep the old roster as `review-spec.toml.migrated`". Picking either form here is the replacement consent below for the global file, and the keep form is also its keep answer.
 
-**Replacement gate (every flag combination).** `Read` the resolved target itself. If it already holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates into the target on the write) and the user has not already approved replacing that exact file above, use `AskUserQuestion`: "`<resolved absolute path>` already holds a roster. Replace it with the roster built in this run (its current reviewers and policy are lost unless you re-enter them; other tables and comments in the file are kept; an old `review-spec.toml` migrates first and stays recoverable as `review-spec.toml.migrated`), or stop and keep it?" — with "stop" first/default. `--local`/`--global` choose the target, never consent to replace it. On "stop", end the run without writing. Only an explicit "replace" lets Step 3 pass `--replace`; without it `render-toml --out` refuses an existing roster and writes nothing.
+**Replacement gate (every flag combination).** `Read` the resolved target itself. If it already holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates into the target on the write) and the user has not already approved replacing that exact file above, use `AskUserQuestion`: "`<resolved absolute path>` already holds a roster. Replace it with the roster built in this run (its current lanes and policy are lost unless you re-enter them; other tables and comments in the file are kept; an old `review-spec.toml` migrates first and is deleted once the migration's value check passes), or stop and keep it?" — with "stop" first/default. When an old `review-spec.toml` sits beside the target, add a third answer, "replace, and keep the old roster as `review-spec.toml.migrated`", which also migrates first. `--local`/`--global` choose the target, never consent to replace it. On "stop", end the run without writing. Only an explicit "replace" (either form) lets Step 3 pass `--replace`, and only the keep form adds `--keep-backup`; without `--replace`, `render-toml --out` refuses an existing roster and writes nothing.
 
 **Once the target is resolved, announce it immediately** — print "Writing to: `<resolved absolute path>`" before asking any of the reviewer questions below, so the user knows where this run's answers are headed from the start (not just in Step 4's closing report, which restates the same path after the write actually happens).
 
-#### Step 2.2 — Pick which CLIs and models to register
+#### Step 2.2 — Ask the questions in order
 
-For every CLI the user wants to consider (from Step 1's detection), build the ranked
-candidate list via the model-discovery catalog rather than guessing or searching per model.
-**Order matters here: unmatched candidates are researched and confirmed BEFORE anything is
-ranked** — an unconfirmed guess must never appear in a ranked list the user is about to trust.
+**MANDATORY — READ ENTIRE FILE:** before asking any lane question, read [`references/wizard-flow.md`](references/wizard-flow.md) completely; **NEVER set any range limits when reading it.** It is the one place the question order lives: preferred runtimes per purpose, the catalog inputs, the `propose-lanes` shortlist per purpose, the free-lane questions of [`references/free-lanes.md`](references/free-lanes.md) (read it when a chosen model has a zero price), each chosen lane's pair and effort, the test call, the session default, the alternative lane, each role's order and the escalation flags. Review and execute stay separate in every question; no lane configuration is written before both sets are confirmed, and Step 3 writes only the lanes chosen there (the catalog step and the test calls still record catalog and usability data).
 
-For each installed CLI from Step 1, the current session's own runtime included, use
-`AskUserQuestion` to ask whether the user wants it available as a cross-AI reviewer at
-all — registering every installed CLI indiscriminately is exactly what this step's own
-opening framing at the top of Step 2 warns against. A pair on the host's own runtime is a
-real option: routing runs it as a subprocess whenever the host cannot select that model per
-call (a pi session can register another pi model this way). Only Claude Code's four aliases
-on a Claude Code host run natively, and those are Step 2.7's session-default ask, not this
-catalog flow.
+**Do NOT load** `references/cli-model-selection.md` unless `wizard-flow.md` step 2 sends you there (a preferred runtime with no `models` list, or unmatched candidates). Skipping the flow reproduces landmines this wizard already hit: guessing a codex id (`placeholder-model-1-high` instead of `placeholder-model-1`), dumping a ~200-id cursor list raw instead of the catalog report, proposing before unmatched confirmation, and writing every catalog candidate instead of the chosen lanes.
 
-**Do NOT load** `references/cli-model-selection.md` when Step 1 found no installed CLI,
-or the user declined every installed CLI at the ask above. Session-default entries never go
-through this catalog/ranking flow — continue at Step 2.3/2.7.
-
-**MANDATORY — READ ENTIRE FILE:** when the user kept at least one CLI, before
-calling `fetch-model-catalog`, ranking, or presenting candidates, read
-[`references/cli-model-selection.md`](references/cli-model-selection.md) completely
-from start to finish. **NEVER set any range limits when reading this file.** It is the
-9-item procedure (snapshot and catalog path → extra-candidate → fetch → unmatched-confirm → catalog-report → rank → present → code-index-alternative → router-alias note) plus the exact command templates. Skipping
-it reproduces live landmines this wizard already hit: guessing a codex id
-(`placeholder-model-1-high` instead of `placeholder-model-1`), dumping a ~200-id cursor list
-raw instead of the catalog report, ranking before unmatched confirmation, and silently dropping every
-single-provider-CLI candidate by rebuilding `discovered` from `$RUNTIMES_JSON` alone.
+Read the data-use note once per chosen model from that model's own vendor page; never reuse a page read for another model as its source, and if a provider page does not name it, use `unknown` with source `none`.
 
 #### Step 2.3 — Resolve vendor attribution
 
@@ -210,7 +184,7 @@ today), say so in one line and continue: the runner table, `build-command --runt
 preview and Step 2.5's live test are then the only sources — never invent quirks for it.
 
 **A runtime the runner knows stores no `command`.** Store the pair: `runtime` and `model`,
-plus the knobs that runtime takes as entry fields (`effort` and `service_tier` for codex,
+plus the knobs that runtime takes as entry fields (`effort`, asked at `references/wizard-flow.md` step 5; `service_tier` for codex;
 `cursor_mode` for cursor, default `ask`). The runner builds the argv from those fields at
 dispatch. `build-command --runtime <id>` is an optional preview of that argv — it prints the
 argv and says that a config.toml lane stores `runtime` and `model`; do not store its output as a
@@ -224,8 +198,8 @@ python3 "$TOOLS_PY" build-command --runtime <id> \
 **codex's `model` field must be the BARE model id — never suffix an effort/tier tag onto it.**
 A live check confirmed that codex rejects an effort suffix on the model id; shown here with invented placeholders: `codex exec -m placeholder-model-1-high` is rejected, and the correct pair is `model = "placeholder-model-1"`
 with `effort = "high"` stored on the entry (the runner passes it as `--codex-effort`, not in
-the model string). This is the opposite convention from cursor below, where effort/fast/context
-ARE baked into the model-id string — do not carry that pattern over to codex. codex has no
+the model string). For cursor below, fast and context sit in the model-id string and the runner composes
+the lane's effort into it at dispatch — never carry that pattern over to codex. codex has no
 `models`/`list-models` subcommand (confirmed via `codex --help`), but `detect-runtimes`
 enumerates its user-selectable models from the real binary's `codex debug models` output
 (entries with `visibility: "list"` only) into `clis.codex.models` — when `$RUNTIMES_JSON`
@@ -234,14 +208,14 @@ carries that list, pick the model id from it. When it does not (an older codex w
 model id as unfamiliar and research it per Step 2.2's rule before proposing it to the user,
 rather than typing a remembered id from training knowledge.
 
-For `cursor` specifically, effort/fast/context are encoded in the model id itself, not a runner
-flag — ask the user for any of those they want, then:
+For `cursor` specifically, fast and context are encoded in the model id itself, not a runner
+flag — ask the user for either, then:
 ```bash
 python3 "$TOOLS_PY" build-model-id --runtime cursor --base-model <id> \
-  [--effort <e>] [--fast true|false] [--context <c>]
+  [--fast true|false] [--context <c>]
 ```
 and use the printed id as this entry's `model` field (unchanged from the plain id when no
-overrides were given). `build-model-id` stays for these cursor bracket ids.
+overrides were given). `build-model-id` stays for these cursor bracket ids. Leave `--effort` out: the lane's `effort` key is merged into the id's bracket at dispatch, and an id that already carries an effort keeps it and prints an `ignored:` line for a different lane effort.
 
 **Grok has no runner formula.** `build-command --runtime grok` prints the command to store on a
 custom entry with no `runtime`, trust-gated like any custom command. Any other CLI outside the
@@ -282,6 +256,8 @@ error text — e.g. a bad model id, an auth problem, or a plan/entitlement gate 
 Free-plan restriction) and ask whether to save the entry anyway (it may just be a temporary
 quota exhaustion, worth keeping for later) or drop it.
 
+For a lane whose proposal row shows a zero price, say in one line before the call: "This test call spends part of the lane's allowance."
+
 The write-risk answer is about the test call only: saving the entry stays the user's choice, because every later dispatch accepts that CLI's default risk the same way.
 
 #### Step 2.6 — Ask about the optional strength attribute; `purpose` comes from Step 2.2
@@ -293,9 +269,7 @@ design) to read, but **not yet consumed by any resolution logic today**
 (`resolve_reviewers`/`resolve_ladder_pick` ignore it completely). Tell the user this plainly if
 they ask what it does: it doesn't change dispatch behavior yet, it just gets saved.
 
-**`purpose` is NOT asked here** — it was already captured at Step 2.2 (which ranked list(s),
-REVIEW/EXECUTE/both, the user confirmed each candidate from). Carry that value forward unchanged
-into this entry's fields; do not re-ask, and do not silently drop it.
+**`purpose` is NOT asked here** — the set the lane was confirmed in at Step 2.2 gives it: `review`, `execute`, or `both` for a pair kept in both sets. Carry it forward unchanged; do not re-ask, and do not silently drop it.
 
 #### Step 2.7 — Ask about the session default
 
@@ -317,20 +291,7 @@ render `(running under: unknown)` literally — never omitted, never softened to
 or dropped from the prompt. Let the entry's `key` describe its place in the ladder (e.g.
 `session-primary`, `session-fallback`), not a vendor.
 
-Worth asking regardless of `policy.mode`, since it's the only zero-external-dependency reviewer
-option available (it needs no extra CLI and no external quota probe; the session's own
-quota still applies and is not observable here) — useful as
-either a primary pick or a pure fallback, depending on where the user places it in
-`policy.ladder` at Step 2.8. **A host-run entry is never automatically prioritized over a
-subprocess one** — `resolve_reviewers` (`ai-kit-spec.py`) treats every ladder entry
-identically; only its position in `policy.ladder` decides priority, and quota/availability
-failures decide fallback. If the user wants one
-as pure fallback, place it LAST in the ladder order at Step 2.8. **When the captured `host` is
-`"claude"`**, the entry is the pair `runtime = "claude"` plus one of the four aliases
-(`sonnet`/`opus`/`haiku`/`fable`), never a full model id like `"opus-5"`; ask the user to pick
-one of those four rather than typing a version string. On any other host, or `unknown`, the
-entry is the session default (no `runtime`, `model = ""`), because only Claude Code's aliases
-are verified per-call selectable today (Phases 20-22 extend this).
+Worth asking regardless of `policy.mode`, since it is the only zero-external-dependency option (it needs no extra CLI and no external quota probe; the session's own quota still applies and is not observable here): useful as a primary pick or a pure fallback, depending on where the user places it in its role's order (`references/wizard-flow.md` step 9). **A host-run entry is never automatically prioritized over a subprocess one** — only its position in its role's order decides priority, and quota or availability failures decide fallback; for a pure fallback, place it last in that order. **When the captured `host` is `"claude"`**, the entry is the pair `runtime = "claude"` plus one of the short aliases that host defines (shown here as `placeholder-alias-1`), never a full model id such as `placeholder-model-1`; ask the user to pick one of those aliases rather than typing a version string. On any other host, or `unknown`, the entry is the session default (no `runtime`, `model = ""`), because only Claude Code's aliases are verified per-call selectable.
 
 **Also ask, for each such entry, the same `purpose` question Step 2.2 answers for ranked
 candidates**: review, execute, or both? (`"review"` | `"execute"` | `"both"`.) A
@@ -342,14 +303,9 @@ brand-new one. Carry the answer into this entry's `purpose` field at Step 3's wr
 exactly like a Step 2.2-sourced entry — never leave it unset for a newly-registered one. Carry
 the captured host into the entry as described above — never silently omitted.
 
-#### Step 2.8 — Set policy.mode, policy.ladder order, and strategy
+#### Step 2.8 — Set `policy.mode`, strategy and timeouts
 
-Then ask: `policy.mode` (`single` or `double`) and the `policy.ladder` order — this is the
-**priority fallback list**: the order reviewers are tried in, first available wins the primary
-slot (`double` mode also seats an independent secondary). Default the order to the order the
-user answered the per-runtime and session-default questions in, combined, but let them reorder;
-once confirmed, echo it back as a numbered list so the user sees the exact fallback order
-before it's written (`render-toml` also writes this same list as a `#` comment above `[lanes.policy]` and refreshes it whenever the ladder changes, so it stays readable to anyone opening `config.toml` later, not just at setup time). If the resolved write target (above) is **local**,
+Then ask `policy.mode` (`single` or `double`): `single` seats the first available lane of the review order; `double` also seats an independent secondary. Each role's order was already asked at `references/wizard-flow.md` step 9; `render-toml` keeps a generated `#` comment with each order above its `[lanes.policy.review]` or `[lanes.policy.execute]` table, so it stays readable to anyone opening `config.toml` later. If the resolved write target (above) is **local**,
 also ask whether this local config should be `local-only` or the default `global-merge` — set
 the JSON config's top-level `strategy` key to `"local-only"` if so (`render-toml` writes it as `strategy = "..."` under `[lanes]`); omit the key entirely for the
 default (global-merge applies, no line needed).
@@ -370,29 +326,13 @@ so a nested `extra = { timeout_tiers = [...] }` is not a way to set it.
 
 ### Step 3 — Write
 
-Build the JSON shape `skills/ai-kit-spec-review/ai-kit-spec.py`'s `render-toml` subcommand
-expects (`{"strategy": "...", "policy": {...}, "lanes": [...]}` — the
-`strategy` key only when Step 2 asked for `local-only`). **Each object in
-`lanes` now also carries `purpose` (`"review"`/`"execute"`/`"both"`, from
-Step 2.2 for a ranked pair or Step 2.7 for a session-default one — every entry
-this wizard newly registers gets an explicit `purpose`; absent `purpose` is
-reserved for a pre-migration entry this run is merely carrying forward
-unchanged, never for a brand-new one).
-Every entry carries `runtime` and `model` (or neither, for the session default);
-`command` appears only on a custom entry for a CLI outside the table or a
-hand-tuned command; `render-toml` rejects anything else and prints why. Also
-`is_router`/`fallback_quota` when Step 2.2/2.7 confirmed either as `true`**
-(omit when `false`/unknown rather than writing a redundant `false` for every
-entry — the consumer side already treats an absent field as "no preference,"
-exactly like today's `task_affinity`; that fallback exists for legacy
-compatibility, not as this wizard's normal path for a new entry). Write it to
-`$SCRATCH/config.json`, then let `--out` do the write directly (atomic, creating
-parent dirs as needed) rather than piping
-stdout through a second write yourself:
+Build the JSON shape `skills/ai-kit-spec-review/ai-kit-spec.py`'s `render-toml` subcommand expects: `{"strategy": "local-only", "policy": {"mode": "single", "timeout_tiers": [600, 1200, 1800], "review": {"ladder": ["<key>"]}, "execute": {"ladder": ["<key>"]}}, "lanes": [...]}` — `strategy` only when Step 2.8 asked for `local-only`, `timeout_tiers` only when changed, a role's `review` or `execute` table only when that role has a lane, and never a flat `ladder`. Each object in `lanes` carries: `key`; `runtime` and `model` (or neither, for the session default; `command` only on a custom entry for a CLI outside the table); `purpose` (`review`, `execute` or `both`, from Step 2.2 or Step 2.7 — every newly registered entry gets an explicit `purpose`; an absent `purpose` is reserved for a pre-migration entry carried forward unchanged); its knobs and `strength`; `is_router` or `fallback_quota` only when confirmed `true`; `effort` when chosen, plus `effort_source` only after a test call accepted it; `escalate_runtime` or `escalate_model` only when `true`; `usage_limited` (and `usage_limit_note`) only on the owner's yes; `pool` on every zero-price lane; and the data-use keys on every zero-price lane the owner confirmed (`references/free-lanes.md`). Never write a `false` flag. [`references/config-file.md`](references/config-file.md) shows an example. `render-toml` rejects anything else and prints why. Pass `--catalog-path <catalog>` (the path Step 1.5 printed) and `--runtimes-json "$RUNTIMES_JSON"` (the snapshot Step 1 saved), so the write checks each effort against the evidence the proposal used.
+
+Write it to `$SCRATCH/config.json`, then let `--out` do the write directly (atomic, creating parent dirs as needed) rather than piping stdout through a second write yourself:
 
 ```bash
 python3 "$TOOLS_PY" render-toml --json-config "$SCRATCH/config.json" --out <target path> \
-  [--replace] > "$SCRATCH/rendered.toml" 2> "$SCRATCH/render-toml-stderr.txt"
+  [--replace] [--keep-backup] --catalog-path <catalog> --runtimes-json "$RUNTIMES_JSON" > "$SCRATCH/rendered.toml" 2> "$SCRATCH/render-toml-stderr.txt"
 echo "render-toml exit $?"
 ```
 
@@ -401,7 +341,7 @@ announced — `./.aikit/config.toml` by default (or explicitly via
 `--local`), `<user config>` only via `--global` or
 because the user picked "replace the global roster" at Step 2.1's
 ask. Never re-derive the target here independently of what Step 2
-already resolved and told the user. Add `--replace` only when the target holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates) and Step 2.1's replacement gate got an explicit "replace"; with `--replace`, render-toml first migrates that old roster and prints one line. (The runtimes snapshot was already
+already resolved and told the user. Add `--replace` only when the target holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates) and Step 2.1's replacement gate got an explicit "replace"; with `--replace`, render-toml first migrates that old roster and prints one line. Add `--keep-backup` only for Step 2.1's keep answer: the migrated old roster then stays as `review-spec.toml.migrated`; without it the old file is deleted once the migration's value check passes. (The runtimes snapshot was already
 persisted in Step 1 via `--save` — no separate write needed here.)
 **Capture stderr to `$SCRATCH/render-toml-stderr.txt`** — `render-toml`
 prints a `WARNING:` line there for every lane entry it
@@ -421,6 +361,8 @@ such as printing stdout, can leave the target already replaced): show
 confirmed" with what the target now holds, keep `$SCRATCH` for inspection and stop — never
 offer trust after a nonzero exit.
 
+One exception to that stop: when every stderr line is a `render-toml: <key>: effort ...` refusal (a level outside the model's list, or one the runner cannot pass), nothing was written; ask each named lane's effort again from the levels the line names, then re-run Step 3.
+
 **On exit 0, check `$SCRATCH/render-toml-stderr.txt` for any `WARNING:`-prefixed
 line.** If one or more are present, the write still succeeded but
 `render-toml` silently dropped at least one lane entry —
@@ -428,27 +370,24 @@ never report a plain success in this case. Surface it clearly, e.g.:
 ```
 Config written to: `<target path>` — but with warnings:
   WARNING: 1 issue(s) found and NOT written: <reviewer detail>
-One or more reviewer entries were rejected and are NOT in the ladder above. Review them and re-run if this wasn't intended.
+One or more lane entries were rejected and are NOT in the orders below. Review them and re-run if this wasn't intended.
 ```
 Only when the captured file has no `WARNING:` lines, print a plain
 summary confirming the write, always including the exact absolute path
 (repeat it even though Step 2 already announced it — this is the
 confirmation that the write actually happened, not just the plan to do
-it): "Config written to: `<target path>`." Then, either way, the
-resolved `policy.mode`, and the **priority fallback order** as its own
-explicit numbered list, read from the `ladder` line of `[lanes.policy]` in
-`$SCRATCH/rendered.toml` (what was actually written, which omits any
-rejected entry), never re-typed from Step 2's confirmed list — e.g.:
+it): "Config written to: `<target path>`." Then, either way, the resolved `policy.mode` and **each role's priority order** as its own explicit numbered list, read from the `ladder` line of `[lanes.policy.review]` and of `[lanes.policy.execute]` in `$SCRATCH/rendered.toml` (what was actually written, which omits any rejected entry), never re-typed from Step 2's confirmed lists — e.g.:
 ```
-Priority fallback order:
-  1. codex-gpt
-  2. sonnet-native
-  3. grok-flagship
+Review order:
+  1. review-primary
+  2. session-fallback
+Execute order:
+  1. execute-primary
 ```
 not folded into a single vague sentence about "reviewers configured in
 some order" — the point of this report is that the user can see the
-exact fallback sequence without having to open the file. If that ladder
-differs from the one confirmed in Step 2, name the missing keys. Name every entry saved
+exact fallback sequence without having to open the file. If an order
+differs from the one confirmed at Step 2.2, name the missing keys; a role with no lane has no order. Show every other stderr line (a migration line, a usage-limited role warning, a legacy-order note) as printed. Name every entry saved
 untested at Step 2.5 ("untested: `<key>` — its availability is unverified").
 
 **When the write target was local** (`./.aikit/config.toml`), check whether it holds a
