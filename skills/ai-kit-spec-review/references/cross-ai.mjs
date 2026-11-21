@@ -4294,6 +4294,9 @@ function hardWaitFor(cycle, waits, capLeftS) {
 // Rung 1 continues the captured session. Null when no session can be continued: no id,
 // no resume formula, a sandboxed codex exec, or codex review (its resume argv has no
 // read-only sandbox).
+// An id is printed or passed back only inside the session charset and when no key shape matches it (SPEC R7; redactSecrets would also hide a UUID).
+function sessionShown(id) { return typeof id === 'string' && SESSION_ID_RE.test(id) && redactKeyShapes(id) === id; }
+
 function sameSessionArgv(name, rt, model, ctx, sid, mode, input = RESUME_MSG) {
   if (!sid || !rt.resume) return null;
   if (name === 'codex' && (mode === 'review' || ctx.codexSandbox)) return null;
@@ -4301,8 +4304,8 @@ function sameSessionArgv(name, rt, model, ctx, sid, mode, input = RESUME_MSG) {
 }
 
 // Rung 2 is a fresh argv on the same CLI and model; every chosen row (pi, copilot) gets a new session id.
-function newSessionArgv(name, rt, model, ctx, mode, prompt) {
-  if (rt.forms?.session?.style === 'chosen') ctx.sid = crypto.randomUUID();
+function newSessionArgv(name, rt, model, ctx, mode, prompt, keepSid = false) {
+  if (!keepSid && rt.forms?.session?.style === 'chosen') ctx.sid = crypto.randomUUID();
   if (rt.argvPrompt) {
     ctx.promptArg = argvPromptElement(prompt);
     return { argv: withExtra(name, rt[mode](model, ctx)), input: null };
@@ -4975,12 +4978,17 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     promptArg: '<prompt>',
   };
   if (opts.sessionId) ctx.sid = opts.sessionId;
+  // An explicit id the planner applied is pinned: retries keep it and no rung starts a fresh session (SPEC R7).
+  const pinned = opts.pinSession ? opts.sessionId : null;
+  const chosen = rt.forms?.session?.style === 'chosen';
+  // A pinned chosen row continues through its create-or-continue form with the same id.
+  const sameArgv = (sid, input) => sameSessionArgv(name, rt, model, ctx, sid, mode, input) || (pinned && chosen && sid === pinned ? newSessionArgv(name, rt, model, ctx, mode, input, true) : null);
   const env = childEnv(rt.env, process.env);
   // A resume argv is checked against the runtime's own resume formula, so its session flag is
   // trusted and only extras beyond the formula count as a widening.
   const reviewProblem = (argv, sid = null) => {
     if (mode !== 'review') return null;
-    const base = sid ? rt.resume(model, ctx, sid, mode) : rt.review(model, ctx);
+    const base = sid && rt.resume ? rt.resume(model, ctx, sid, mode) : rt.review(model, ctx);
     return reviewArgvProblem(argv, base, rt.reviewExtras || []);
   };
   const refuseReview = (problem) => {
@@ -4995,6 +5003,8 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const initialProblem = reviewProblem(argv, first ? opts.sessionId : null);
   if (initialProblem) return refuseReview(initialProblem);
   let input = first ? first.input : (rt.argvPrompt ? null : prompt);
+  let attemptSid = first ? opts.sessionId : (argv.includes(ctx.sid) ? ctx.sid : null);
+  let unshownNoted = false;
   // The dirty-tree gate runs once, when a fresh series opens, and its input covers every
   // call of that series. Re-running it mid-series would see the series' own edits.
   let seriesInput = prompt;
@@ -5162,18 +5172,24 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   };
   try {
     if (!opts.callSessionId && persisted && persisted.task_digest === digest && persisted.last_sid) {
-      ctx.sid = persisted.last_sid;
-      // A re-entry repeats the task on the saved session, so the session gets the prompt
-      // itself; the resume note would hide it.
-      const retry = sameSessionArgv(name, rt, model, ctx, persisted.last_sid, mode, prompt);
-      if (retry) {
-        argv = retry.argv;
-        input = retry.input;
-        seriesInput = prompt;
-        continued = true;
-        ladder.canResume = true;
+      if (!sessionShown(persisted.last_sid)) {
+        log('cross-ai: note: the quota record\'s session id is outside [A-Za-z0-9._:-] or shaped like a key; it is not reused');
+      } else {
+        ctx.sid = persisted.last_sid;
+        // A re-entry repeats the task on the saved session, so the session gets the prompt
+        // itself; the resume note would hide it.
+        const retry = sameSessionArgv(name, rt, model, ctx, persisted.last_sid, mode, prompt);
+        if (retry) {
+          argv = retry.argv;
+          input = retry.input;
+          seriesInput = prompt;
+          continued = true;
+          ladder.canResume = true;
+          attemptSid = persisted.last_sid;
+        }
       }
     }
+    liveSettings.sessionId = sessionShown(attemptSid) ? attemptSid : null;
     for (let attempt = 0; ; attempt++) {
       // Before the child runs: the snapshot after it would race the next attempt's edits.
       if (mode === 'exec' && seenSig !== null) {
@@ -5215,6 +5231,13 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         };
       }
       const p = rt.parse(r.stdout, ctx);
+      const hostSid = sessionShown(p.sessionId) ? p.sessionId : null;
+      if (p.sessionId && !hostSid && !unshownNoted) {
+        unshownNoted = true;
+        log(`cross-ai: note: ${name} printed a session id outside [A-Za-z0-9._:-] or shaped like a key; session=- and it is not passed back`);
+      }
+      const usedSid = hostSid || attemptSid;
+      liveSettings.sessionId = sessionShown(usedSid) ? usedSid : null;
       // A live hit wins only when it ended the child: one that finished on its own with exit 0
       // and an answer succeeded, whatever it printed on stderr on the way.
       // A late error (after our turn ended) does not discard a complete answer.
@@ -5227,7 +5250,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       // A non-retryable class ends the call here; both class checks below share it.
       const classStop = () => {
         attempts += 1;
-        logAttempt(attempts, rungOf(), ladder.cycle, p.sessionId, hit, evidence.rule,
+        logAttempt(attempts, rungOf(), ladder.cycle, usedSid, hit, evidence.rule,
           evidence.pattern, startedMs);
         lastFailureMs = Date.now();
         if (!firstFailureMs) firstFailureMs = startedMs;
@@ -5282,7 +5305,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       attempts += 1;
       lastFailureMs = Date.now();
       if (!firstFailureMs) firstFailureMs = startedMs;
-      const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
+      const sid = usedSid;
       const rung = rungOf();
       logAttempt(attempts, rung, ladder.cycle, sid, hit || (r.timedOut ? 'timeout' : 'crash'),
         hit ? evidence.rule : '-', hit ? evidence.pattern : '-', startedMs);
@@ -5290,7 +5313,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       if (soft && !ladder.firstMs) ladder.firstMs = Date.now();
       const sig = r.signal ? ' ' + r.signal : '';
       log(`cross-ai: ${name} failed (exit ${r.code}${sig}, rule=${hit ? evidence.rule : '-' })`);
-      ladder.canResume = Boolean(sameSessionArgv(name, rt, model, ctx, sid, mode));
+      ladder.canResume = Boolean(sameArgv(sid));
       // k restarts at 1 with every series, so the reset and the first retry after it both wait
       // about base_s, and the ordering floor applies within one series only.
       const k = ladder.retry < retryCfg.max_retries ? ladder.retry + 1 : 1;
@@ -5298,11 +5321,16 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const nominal = softWaitMs(retryCfg, k, Math.random, prevMs);
       const end = episodeEnd();
       const step = ladderNext(ladder, cls, Date.now(), {
-        maxRetries: retryCfg.max_retries, sessionResets: retryCfg.session_resets,
+        maxRetries: retryCfg.max_retries, sessionResets: pinned ? 0 : retryCfg.session_resets,
         deadlineMs: runDeadline, waitMs: nominal, capMs,
       });
       const wait = end ? Math.min(nominal, Math.max(0, end - Date.now())) : nominal;
       log(`cross-ai: ladder ${name} next=${step.next} why=${step.why}`);
+      if (pinned && (step.next === 'new' || step.next === 'reset')) {
+        log(`cross-ai: --session-id was given; no fresh session is started (next=${step.next} refused)`);
+        dropState(hit || 'crash');
+        return { ok: false, status: hit || 'crash', outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(), stopped: 'class' };
+      }
       if (step.next === 'hard') return hardHandler(r, evidence, step.why, sid, cls);
       if (step.next === 'stop') {
         // A no-budget timeout, the first attempt stopped before any retry was admitted, stays
@@ -5379,10 +5407,11 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         // A fresh series opened over a dirty tree keeps the gate's resume text; every other
         // same-session retry gets the plain resume note.
         const resumed = gated ? seriesInput : RESUME_MSG;
-        const retry = sameSessionArgv(name, rt, model, ctx, sid, mode, resumed);
+        const retry = sameArgv(sid, resumed);
         const resumeProblem = reviewProblem(retry.argv, sid);
         if (resumeProblem) return refuseReview(resumeProblem);
         argv = retry.argv;
+        attemptSid = sid;
         input = retry.input;
       } else if (step.next === 'reset') {
         ladder.resets += 1;
@@ -5390,6 +5419,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         rungLabel = 'reset';
         const retry = newSessionArgv(name, rt, model, ctx, mode, nextInput);
         argv = retry.argv;
+        attemptSid = argv.includes(ctx.sid) ? ctx.sid : null;
         input = retry.input;
       } else {
         ladder.retry += 1;
@@ -5399,6 +5429,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         const fresh = gated ? nextInput : prompt;
         const retry = newSessionArgv(name, rt, model, ctx, mode, fresh);
         argv = retry.argv;
+        attemptSid = argv.includes(ctx.sid) ? ctx.sid : null;
         input = retry.input;
       }
     }
@@ -5770,6 +5801,7 @@ const log = (line) => { if (calls) fs.appendFileSync(calls, line + '\n'); };
 const recordPid = (name, pid) => { if (process.env.FAKE_PIDS) fs.appendFileSync(process.env.FAKE_PIDS, name + ' ' + pid + '\n'); };
 recordPid(process.argv[1].split('/').pop(), process.pid);
 const argOf = (flag) => { const i = process.argv.indexOf(flag); return i >= 0 ? process.argv[i + 1] || '' : ''; };
+const recordSession = (cli, id, input) => { if (process.env.FAKE_SESSIONS) fs.appendFileSync(process.env.FAKE_SESSIONS, cli + ' ' + (id || '-') + ' ' + (String(input || '').startsWith('You were interrupted') ? 'resume-note' : 'prompt') + '\n'); };
 `;
 
 function writeExe(binDir, name, imports, body) {
@@ -6185,7 +6217,12 @@ if (sub[0] === 'models') {
 }
 const model = argOf('--model');
 log('cursor-agent ' + model);
-process.stdin.on('data', () => {}).on('end', () => {
+let input = ''; process.stdin.on('data', (d) => { input += d; }).on('end', () => {
+  const given = argOf('--resume');
+  recordSession('cursor-agent', given, input);
+  if (given.startsWith('rejected-')) { process.stderr.write('fake-session: no session ' + given + '\n'); process.exit(7); }
+  if (given.startsWith('rejected503-')) { process.stderr.write('503 Service Unavailable\n'); console.log(JSON.stringify({ type: 'result', is_error: true, result: '503 Service Unavailable', session_id: given })); process.exit(1); }
+  if (process.env.FAKE_SESSION_MODE === 'badsid-503') { process.stderr.write('503 Service Unavailable\n'); console.log(JSON.stringify({ type: 'result', is_error: true, result: '503 Service Unavailable', session_id: 'bad id!' })); process.exit(1); }
   if (model === 'fake-err-cursor') {
     console.log(JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized', session_id: 'c2' }));
     process.exit(0);
@@ -6221,7 +6258,7 @@ process.stdin.on('data', () => {}).on('end', () => {
     process.exit(0);
   }
   fs.appendFileSync('a.txt', 'cursor\n');
-  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '## Summary\nok', session_id: 'c1' }));
+  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '## Summary\nok', session_id: given || 'c1' }));
 });
 `);
 }
@@ -6236,7 +6273,10 @@ if (sub[0] === 'models') {
 }
 const model = argOf('--model');
 log('opencode ' + model);
-process.stdin.on('data', () => {}).on('end', () => {
+let input = '';
+process.stdin.on('data', (d) => { input += d; }).on('end', () => {
+  const given = argOf('--session');
+  recordSession('opencode', given, input);
   if (model === 'fake/ok' && ['upstream-event', 'two-events'].includes(process.env.FAKE_OPENCODE_MODE)) {
     const acct = 'acct-' + process.pid;
     const token = process.env.AIKIT_XAI_SENTINEL || 'sentinel';
@@ -6286,9 +6326,9 @@ process.stdin.on('data', () => {}).on('end', () => {
     process.exit(process.env.FAKE_OPENCODE_MODE === 'late-error' ? 1 : 0);
   }
   const lines = [
-    JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { id: 'p1', messageID: 'm1', type: 'text', text: 'Plan first.' } }),
-    JSON.stringify({ type: 'tool_use', sessionID: 'ses_1', part: { type: 'tool', tool: 'bash' } }),
-    JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { id: 'p2', messageID: 'm2', type: 'text', text: '## Summary\ndone' } }),
+    JSON.stringify({ type: 'text', sessionID: given || 'ses_1', part: { id: 'p1', messageID: 'm1', type: 'text', text: 'Plan first.' } }),
+    JSON.stringify({ type: 'tool_use', sessionID: given || 'ses_1', part: { type: 'tool', tool: 'bash' } }),
+    JSON.stringify({ type: 'text', sessionID: given || 'ses_1', part: { id: 'p2', messageID: 'm2', type: 'text', text: '## Summary\ndone' } }),
   ];
   for (const l of lines) console.log(l);
 });
@@ -6301,6 +6341,7 @@ const model = argOf('--model');
 const mode = model.startsWith('fake-') ? model.slice(5) : '';
 log('copilot ' + mode);
 const seen = process.env.FAKE_COPILOT_SEEN;
+recordSession('copilot', argOf('--session-id'), argOf('-p'));
 const tokenNames = ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'];
 let stdinFifo = false;
 let stdinBytes = 0;
@@ -6336,8 +6377,13 @@ process.stdout.write('# Summary\nok');
 function writeFakeClaude(binDir) {
   writeExe(binDir, 'claude', '', String.raw`
 log('claude ' + argOf('--model'));
-process.stdin.on('data', () => {}).on('end', () => {
-  console.log(JSON.stringify({ type: 'result', result: 'ok', session_id: 'x', is_error: false }));
+let input = '';
+process.stdin.on('data', (d) => { input += d; }).on('end', () => {
+  const given = argOf('--resume');
+  recordSession('claude', given, input);
+  const result = { type: 'result', result: 'ok', is_error: false };
+  if (process.env.FAKE_SESSION_MODE !== 'nosid') result.session_id = given || 'x';
+  console.log(JSON.stringify(result));
   process.exit(0);
 });
 `);
@@ -6356,13 +6402,17 @@ if (sub[0] === 'debug' && sub[1] === 'models') {
   process.exit(0);
 }
 const outFile = argOf('-o');
+const dash = sub.lastIndexOf('-');
+const resumeId = sub[1] === 'resume' && dash > 0 ? sub[dash - 1] : '';
 if (sub[0] === 'exec' && sub[1] === 'resume') log('codex-resume ' + argOf('-m'));
 log('codex ' + argOf('-m'));
-process.stdin.on('data', () => {}).on('end', () => {
+let input = '';
+process.stdin.on('data', (d) => { input += d; }).on('end', () => {
+  recordSession('codex', resumeId, input);
   const model = argOf('-m');
   if (model !== 'fake-event400-codex') fs.appendFileSync('a.txt', 'cx\n');
   if (outFile) fs.writeFileSync(outFile, '## Summary\nok');
-  console.log(JSON.stringify({ type: 'thread.started', thread_id: 't1' }));
+  console.log(JSON.stringify({ type: 'thread.started', thread_id: resumeId || 't1' }));
   const limitText = 'You\u2019ve hit your usage limit. Upgrade to Pro, or try again later.';
   if (model === 'fake-retry-codex') {
     console.log(JSON.stringify({ type: 'error', message: 'stream disconnected; retrying 1/5' }));
@@ -6446,6 +6496,8 @@ function statusTail(stderr) {
     session: tok.session, applied: tok.applied, ignored: tok.ignored, unknown: tok.unknown, escalate: tok.escalate,
   };
 }
+
+function sessionRows(ctx) { return readOr(ctx.env.FAKE_SESSIONS, '').trim().split('\n').filter(Boolean).map((l) => l.split(' ')); }
 
 function pidAlive(pid) {
   try { process.kill(pid, 0); } catch { return false; }
@@ -6753,6 +6805,7 @@ async function runSelfTestCase(tmp, spec) {
     XDG_STATE_HOME: path.join(home, '.local', 'state', spec.name),
     FAKE_CALLS: calls, FAKE_PIDS: pidFile,
     FAKE_SIDS: path.join(tmp, `sids-${spec.name}.log`),
+    FAKE_SESSIONS: path.join(tmp, `sessions-${spec.name}.log`),
     AIKIT_XAI_SENTINEL: 'sk-aikit-SENTINEL-' + process.pid,
     AIKIT_XAI_BEARER: 'brtok-' + process.pid,
     ...(spec.fakeOpencodeMode ? { FAKE_OPENCODE_MODE: spec.fakeOpencodeMode } : {}),
@@ -13124,6 +13177,140 @@ async function blackBoxSelfTest(listOnly = false) {
           return i >= 0 && rows().length === 2 && rows()[1][0] === piArgv[i + 1] ? null : `sids=${JSON.stringify(rows())}`;
         },
       },
+      {
+        name: 'session-roundtrip-cursor', kind: 'logic',
+        args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=cursor model=fake-ok-cursor exit=0 .* tree=dirty action=stop$/,
+        check: async (r, ctx) => {
+          if (statusTail(r.stderr || '')?.session !== 'c1') return 'initial session';
+          for (let i = 0; i < 2; i++) {
+            const next = await runCaseProcess({ args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--session-id', 'c1'] }, ctx);
+            if (next.status !== 0 || statusTail(next.stderr || '')?.session !== 'c1' || !(next.stderr || '').includes('"--resume","c1"')) return `resume=${next.status}`;
+          }
+          const expected = [['cursor-agent', '-', 'prompt'], ['cursor-agent', 'c1', 'prompt'], ['cursor-agent', 'c1', 'prompt']];
+          return JSON.stringify(sessionRows(ctx)) === JSON.stringify(expected) && !fs.existsSync(caseCycleFile(ctx, 'cursor', 'fake-ok-cursor', 'other')) ? null : `rows=${JSON.stringify(sessionRows(ctx))}`;
+        },
+      },
+      {
+        name: 'session-rejected-no-fresh', kind: 'logic',
+        args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--session-id', 'rejected-1'], exit: 1,
+        status: /^AIKIT-XAI status=crash cli=cursor model=fake-ok-cursor exit=1 cli_rc=7 .* action=stop$/,
+        check: (r, ctx) => statusTail(r.stderr || '')?.session === 'rejected-1' && (r.stderr || '').includes('fake-session: no session rejected-1') && JSON.stringify(sessionRows(ctx)) === JSON.stringify([['cursor-agent', 'rejected-1', 'prompt']]) ? null : `rows=${JSON.stringify(sessionRows(ctx))}`,
+      },
+      {
+        name: 'session-rejected-transient-no-fresh', kind: 'logic', config: { retry: { max_retries: 1 } },
+        args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--session-id', 'rejected503-1'], exit: 75,
+        status: /^AIKIT-XAI status=transient cli=cursor model=fake-ok-cursor exit=75 .* action=stop$/,
+        check: (r, ctx) => JSON.stringify(sessionRows(ctx)) === JSON.stringify([['cursor-agent', 'rejected503-1', 'prompt'], ['cursor-agent', 'rejected503-1', 'resume-note']]) ? null : `rows=${JSON.stringify(sessionRows(ctx))}`,
+      },
+      {
+        // R7: opencode preserves adjacent and maximum-length ids exactly.
+        name: 'session-roundtrip-opencode', kind: 'logic', args: ['--runtime', 'opencode', '--model', 'fake/ok'], exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: async (r, ctx) => {
+          const minted = sessionRows(ctx)[0]?.[1] !== '-' ? sessionRows(ctx)[0]?.[1] : 'ses_1';
+          if (statusTail(r.stderr || '')?.session !== minted) return 'initial id';
+          const ids = [minted, 'c1', 'P' + 'a.B:c-9'.repeat(18) + 'z'];
+          for (const id of ids) {
+            const next = await runCaseProcess({ args: ['--runtime', 'opencode', '--model', 'fake/ok', '--session-id', id] }, ctx);
+            if (next.status !== 0 || statusTail(next.stderr || '')?.session !== id) return `resume ${id}`;
+          }
+          return JSON.stringify(sessionRows(ctx).slice(1).map((row) => row[1])) === JSON.stringify(ids) ? null : 'rows';
+        },
+      },
+      {
+        // R7: codex resume passes the thread id before the final dash.
+        name: 'session-roundtrip-codex', kind: 'logic', args: ['--runtime', 'codex', '--model', 'fake-ok-codex'], exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: async (r, ctx) => {
+          const next = await runCaseProcess({ args: ['--runtime', 'codex', '--model', 'fake-ok-codex', '--session-id', 't1'] }, ctx);
+          return statusTail(r.stderr || '')?.session === 't1' && next.status === 0 && statusTail(next.stderr || '')?.session === 't1' && readOr(ctx.env.FAKE_CALLS, '').includes('codex-resume fake-ok-codex') && JSON.stringify(sessionRows(ctx)) === JSON.stringify([['codex', '-', 'prompt'], ['codex', 't1', 'prompt']]) ? null : 'codex roundtrip';
+        },
+      },
+      {
+        // R7: chosen pi ids reject empty input and allow concurrent explicit ids.
+        name: 'session-chosen-pi', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: async (r, ctx) => {
+          const rows = () => readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').filter(Boolean).map((l) => l.split(' '));
+          const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+          if (rows().length !== 1 || !uuid.test(rows()[0][0]) || statusTail(r.stderr || '')?.session !== rows()[0][0]) return 'initial id';
+          const args = ['--runtime', 'pi', '--model', 'fake/ok', '--session-id'];
+          const one = await runCaseProcess({ args: [...args, 'placeholder-sid-1'] }, ctx);
+          const empty = await runCaseProcess({ args: [...args, ''] }, ctx);
+          const pair = await Promise.all([0, 1].map(() => runCaseProcess({ args: [...args, 'placeholder-sid-6'] }, ctx)));
+          return one.status === 0 && statusTail(one.stderr || '')?.session === 'placeholder-sid-1' && empty.status === 2 && pair.every((x) => x.status === 0) && JSON.stringify(rows().slice(1).map((x) => x[0])) === JSON.stringify(['placeholder-sid-1', 'placeholder-sid-6', 'placeholder-sid-6']) ? null : 'pi ids';
+        },
+      },
+      {
+        // R7: copilot chosen ids are reported and reused.
+        name: 'session-chosen-copilot', kind: 'logic', env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) }, args: ['--runtime', 'copilot', '--model', 'fake-ok'], exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: async (r, ctx) => {
+          const id = sessionRows(ctx)[0]?.[1];
+          if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id || '') || statusTail(r.stderr || '')?.session !== id || JSON.stringify(sessionRows(ctx)) !== JSON.stringify([['copilot', id, 'prompt']])) return 'initial id';
+          const next = await runCaseProcess({ args: ['--runtime', 'copilot', '--model', 'fake-ok', '--session-id', 'placeholder-sid-2'] }, ctx);
+          return next.status === 0 && statusTail(next.stderr || '')?.session === 'placeholder-sid-2' && JSON.stringify(sessionRows(ctx)[1]) === JSON.stringify(['copilot', 'placeholder-sid-2', 'prompt']) ? null : 'copilot resume';
+        },
+      },
+      {
+        // R7: forbidden codex modes visibly start fresh.
+        name: 'session-mode-forbids-codex', kind: 'logic', config: { retry: { max_retries: 0, session_resets: 0 } }, args: ['--runtime', 'codex', '--role', 'review', '--model', 'fake-event400-codex', '--session-id', 'placeholder-sid-3'], exit: 75, status: /^AIKIT-XAI status=transient .* action=stop$/,
+        check: async (r, ctx) => {
+          const next = await runCaseProcess({ args: ['--runtime', 'codex', '--role', 'execute', '--codex-sandbox', 'workspace-write', '--model', 'fake-ok-codex', '--session-id', 'placeholder-sid-4'] }, ctx);
+          return (r.stderr || '').includes('cross-ai: setting session=placeholder-sid-3 ignored reason=mode_forbids') && statusTail(r.stderr || '')?.session === 't1' && next.status === 0 && (next.stderr || '').includes('cross-ai: setting session=placeholder-sid-4 ignored reason=mode_forbids') && statusTail(next.stderr || '')?.session === 't1' && JSON.stringify(sessionRows(ctx)) === JSON.stringify([['codex', '-', 'prompt'], ['codex', '-', 'prompt']]) ? null : 'forbidden mode';
+        },
+      },
+      {
+        // R7: explicit ids take precedence over the quota record.
+        name: 'session-explicit-beats-last-sid', kind: 'logic', stdin: 'same task\n', config: { retry: { ...HARD_TIER_RETRY } }, args: ['--runtime', 'pi', '--model', 'fake/event400', '--no-preamble', '--session-id', 'placeholder-sid-5'], exit: 75, status: /^AIKIT-XAI status=transient .* action=stop$/,
+        setup: (c) => { writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0, { last_sid: 'old-sid', task_digest: taskDigest('same task\n') }); return null; },
+        check: (r, ctx) => {
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').filter(Boolean).map((l) => l.split(' '));
+          return rows.length === 1 && rows[0][0] === 'placeholder-sid-5' && readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'))?.last_sid === 'placeholder-sid-5' && statusTail(r.stderr || '')?.session === 'placeholder-sid-5' ? null : 'precedence';
+        },
+      },
+      {
+        // R7: status reports the last session in rung order.
+        name: 'session-last-id-reported', kind: 'logic', config: { retry: { max_retries: 1, session_resets: 1 } }, args: ['--runtime', 'pi', '--model', 'fake/event400'], exit: 75, status: /^AIKIT-XAI status=transient .* action=stop$/,
+        check: (r, ctx) => {
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').filter(Boolean).map((l) => l.split(' '));
+          return rows.length >= 3 && rows.at(-1)[0] !== rows[0][0] && statusTail(r.stderr || '')?.session === rows.at(-1)[0] ? null : 'last id';
+        },
+      },
+      {
+        // R7: pinned copilot retries continue the same chosen session.
+        name: 'session-pinned-copilot-retry', kind: 'logic', env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) }, config: { retry: { max_retries: 1 } }, args: ['--runtime', 'copilot', '--model', 'fake-event400', '--session-id', 'placeholder-sid-7'], exit: 75,
+        status: /^AIKIT-XAI status=transient cli=copilot model=fake-event400 exit=75 .* action=stop$/,
+        check: (r, ctx) => JSON.stringify(sessionRows(ctx)) === JSON.stringify([['copilot', 'placeholder-sid-7', 'prompt'], ['copilot', 'placeholder-sid-7', 'resume-note']]) && !(r.stderr || '').includes('next=new refused') && statusTail(r.stderr || '')?.session === 'placeholder-sid-7' ? null : 'pinned retry',
+      },
+      {
+        // R7: key-shaped record ids are neither reused nor displayed.
+        name: 'session-record-id-unshown', kind: 'logic', stdin: 'same task\n', config: { retry: { ...HARD_TIER_RETRY } }, args: ['--runtime', 'pi', '--model', 'fake/event400', '--no-preamble'], exit: 75, status: /^AIKIT-XAI status=transient .* action=stop$/,
+        setup: (c) => { writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0, { last_sid: c.env.AIKIT_XAI_SENTINEL, task_digest: taskDigest('same task\n') }); return null; },
+        check: (r, ctx) => {
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').filter(Boolean).map((l) => l.split(' '));
+          const lines = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: attempt ') || l.startsWith('AIKIT-XAI '));
+          return (r.stderr || '').includes("cross-ai: note: the quota record's session id is outside [A-Za-z0-9._:-] or shaped like a key; it is not reused") && rows.length === 1 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(rows[0][0]) && readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'))?.last_sid === rows[0][0] && lines.every((l) => !l.includes(ctx.env.AIKIT_XAI_SENTINEL)) ? null : 'unshown record id';
+        },
+      },
+      {
+        // R7: invalid host and persisted ids are never displayed, saved or resumed.
+        name: 'session-host-id-unshown', kind: 'logic', env: { FAKE_SESSION_MODE: 'badsid-503' }, config: { retry: { max_retries: 1, session_resets: 0 } }, args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--no-preamble'], exit: 75,
+        status: /^AIKIT-XAI status=transient cli=cursor model=fake-ok-cursor exit=75 .* action=stop$/,
+        check: async (r, ctx) => {
+          const rows = sessionRows(ctx);
+          const note = ' printed a session id outside [A-Za-z0-9._:-] or shaped like a key; session=- and it is not passed back';
+          if (rows.length !== 2 || rows.some((x) => x[1] !== '-') || (r.stderr || '').split(note).length !== 2 || (r.stderr || '').split('\n').some((l) => l.startsWith('cross-ai: attempt ') && l.includes('bad')) || statusTail(r.stderr || '')?.session !== '-') return 'host id';
+          const file = caseCycleFile(ctx, 'cursor', 'fake-ok-cursor', 'other');
+          const saved = readCycleState(file);
+          if (!saved || saved.last_sid !== null) return 'saved host id';
+          writePriorRecord(ctx, 'cursor', 'fake-ok-cursor', 'other', 'transient', 0, { last_sid: 'bad id!', task_digest: taskDigest('prompt\n') });
+          const next = await runCaseProcess({ args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--no-preamble'] }, ctx);
+          if (next.status !== 75 || !(next.stderr || '').includes("cross-ai: note: the quota record's session id is outside [A-Za-z0-9._:-] or shaped like a key; it is not reused") || sessionRows(ctx).slice(rows.length).some((x) => x[1] !== '-')) return 'record id';
+          const claude = await runCaseProcess({ args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-ok'] }, { ...ctx, env: { ...ctx.env, FAKE_SESSION_MODE: 'nosid' } });
+          if (claude.status !== 0 || statusTail(claude.stderr || '')?.session !== '-') return 'claude missing id';
+          const pi = await runCaseProcess({ args: ['--runtime', 'pi', '--model', 'fake/ok', '--session-id', ctx.env.AIKIT_XAI_SENTINEL] }, ctx);
+          const line = (pi.stderr || '').split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
+          return pi.status === 0 && !line.includes(ctx.env.AIKIT_XAI_SENTINEL) && statusTail(pi.stderr || '')?.session === '-' ? null : 'pi key-shaped id';
+        },
+      },
     ];
 
     const unkinded = cases.filter((c) => c.kind !== 'logic' && c.kind !== 'runtime').map((c) => c.name);
@@ -13255,6 +13442,7 @@ async function main(argv) {
       confirmReport(plan.report, argvOut, '', o.mode);
       for (const line of reportLines(plan.report)) log(line);
       liveSettings.report = plan.report;
+      liveSettings.sessionId = o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null;
       liveSettings.escalation = { runtime: Boolean(o.escalateRuntime), model: Boolean(o.escalateModel) };
       log(`cross-ai: model-id ${redactKeyShapes(String(plan.model).replace(/[\x00-\x1f\x7f-\x9f]/g, ''))}`);
       const rung1 = sameSessionArgv(name, rt, plan.model, ctx, '<sid>', o.mode);
@@ -13358,6 +13546,8 @@ async function main(argv) {
   const report = confirmReport(plan.report, firstArgv, '', o.mode) || plan.report;
   for (const line of reportLines(report)) log(line);
   liveSettings.report = report;
+  const sessionEntry = report.find((e) => e.name === 'session');
+  liveSettings.sessionId = o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null;
   liveSettings.escalation = { runtime: Boolean(o.escalateRuntime), model: Boolean(o.escalateModel) };
   const listEnv = childEnv(c.rt.env, process.env);
   const listing = await listModels(c.rt, c.bin, listEnv, runDeadline);
@@ -13383,6 +13573,7 @@ async function main(argv) {
   const r = await runCli(c.name, c.rt, c.bin, plan.model, o.mode, prompt, {
     beforeSig: noTree ? null : stateSig(before),
     adds: plan.adds, sessionId: plan.sessionId ?? null, resume: Boolean(plan.resume), callSessionId: o.sessionId ?? null,
+    pinSession: Boolean(o.sessionId) && sessionEntry?.state === 'applied',
     codexServiceTier: o.codexServiceTier,
     cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
     route: liveFields.route, retry: resolved.retry, capS: resolved.capS,
