@@ -1,5 +1,6 @@
-"""35 D-04, D-06, D-20: jev seam for catalog name matching and class judgment. A lookup copy
-of fold_group.py's jev client (tests/test_arch.py LOOKUP_COPIES); one ladder call per batch;
+"""35 D-04, D-06, D-20: jev seam for catalog name matching and class judgment and the
+proposal's fit scores (36 D-07). A lookup copy of fold_group.py's jev client
+(tests/test_arch.py LOOKUP_COPIES); one ladder call per batch;
 advisory: no answer means unmatched or unknown."""
 
 import json
@@ -30,6 +31,18 @@ CLASSES = ("flagship", "coding", "general", "fast", "small")
 CONTEXT_CHARS = 600
 NAME_CHARS = 80
 BATCH_CHARS = 7000
+SCORE_LEVELS = ("very poor fit", "poor fit", "fair fit", "good fit", "excellent fit")
+SCORE_CONTEXT_CHARS = 240
+SCORE_QUESTIONS = {
+    "review": (
+        "Rate how well a model with these facts fits reviewing plans and code diffs for flaws: "
+        "top quality and careful reasoning matter most; cost and speed barely matter."
+    ),
+    "execute": (
+        "Rate how well a model with these facts fits writing code from a plan many times over: "
+        "coding skill, speed and low cost matter most; top quality matters less."
+    ),
+}
 
 
 def skills_roots(env, own_root):
@@ -192,6 +205,28 @@ def class_judge(env, own_root=None, run=subprocess.run):
     def judge(pairs):
         items = [class_item(index, model, summary)
                  for index, (model, summary) in enumerate(pairs)]
+        answers = ask_items(entry, items, env, run)
+        return [answers[item["id"]] for item in items]
+
+    return judge
+
+
+def score_item(index: int, purpose: str, summary: str) -> dict:
+    """Build a score item containing only printable ASCII facts."""
+    context = "".join(ch for ch in summary if ch.isascii() and ch.isprintable())
+    return {"id": f"c{index}", "type": "score", "instructions": SCORE_QUESTIONS[purpose],
+            "context": context[:SCORE_CONTEXT_CHARS], "criteria": list(SCORE_LEVELS)}
+
+
+def score_judge(env, own_root=None, run=subprocess.run):
+    """Return a batch score judge when jev is installed, otherwise None."""
+    entry = find_jev(env, own_root)
+    if entry is None:
+        return None
+
+    def judge(pairs):
+        items = [score_item(index, purpose, summary)
+                 for index, (purpose, summary) in enumerate(pairs)]
         answers = ask_items(entry, items, env, run)
         return [answers[item["id"]] for item in items]
 
