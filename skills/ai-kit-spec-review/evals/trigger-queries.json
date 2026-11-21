@@ -1,0 +1,22 @@
+[
+  {"query": "Review my plan at docs/superpowers/plans/demo.md and fix what the reviewer finds.", "should_trigger": true},
+  {"query": "review my spec before I start implementing it, loop until it is approved", "should_trigger": true},
+  {"query": "Run ai-kit-spec-review on this GSD PLAN.md with cross-AI reviewers.", "should_trigger": true},
+  {"query": "Please review this design document and route the fixes the right way.", "should_trigger": true},
+  {"query": "Review the OpenSpec change proposal in this repo for gaps and fix them.", "should_trigger": true},
+  {"query": "Do a review-and-fix pass on my Kiro requirements document, please.", "should_trigger": true},
+  {"query": "Review this RFC with a second model from another vendor, using --cross-ai.", "should_trigger": true},
+  {"query": "Review my plan with no cross-AI reviewers, only the session model (--no-cross-ai).", "should_trigger": true},
+  {"query": "Check this BMAD architecture document for problems and apply the fixes.", "should_trigger": true},
+  {"query": "Review the spec at docs/rfcs/0042.md and keep iterating until it is approved.", "should_trigger": true},
+  {"query": "Set up which cross-AI reviewers ai-kit should use in this project.", "should_trigger": false},
+  {"query": "Execute the superpowers plan task by task with subagent-driven-development.", "should_trigger": false},
+  {"query": "Write a new implementation plan for the billing feature from this spec.", "should_trigger": false},
+  {"query": "Review my pull request diff for bugs before I merge it into main.", "should_trigger": false},
+  {"query": "Score this SKILL.md against the Agent Skills spec and tell me the grade.", "should_trigger": false},
+  {"query": "Fold the commits of my finished plan into one commit per logical feature.", "should_trigger": false},
+  {"query": "Fix the failing unit test in the status line module, nothing else.", "should_trigger": false},
+  {"query": "Draft a commit message for the config migration change I just staged.", "should_trigger": false},
+  {"query": "Check my remaining model quota across the installed CLIs before tonight.", "should_trigger": false},
+  {"query": "Brainstorm features for the reporting dashboard before writing any spec.", "should_trigger": false}
+]

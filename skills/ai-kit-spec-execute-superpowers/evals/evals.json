@@ -88,6 +88,78 @@
         "The agent does not resolve a (runtime, model) pair or call the shim's dispatch-task for this run.",
         "The agent does not run the Step 5 fold block for a run it does not own."
       ]
+    },
+    {
+      "id": "precise-no-config-chains-spec-config",
+      "prompt": "Run the superpowers plan at evals/files/plan-two-features.md under subagent-driven-development. No cross-AI lanes are configured in this project or for the user; when you ask about setup, I pick the first option.",
+      "expected_output": "After subagent-driven-development's Setup and before fold.py start, the agent reads references/config-check.md, runs config-status (none), asks once with the three answers, follows ai-kit-spec-config to its end, runs config-status again and continues only when it prints active, and records CONFIG_CHECK=chained in the scalar file.",
+      "files": ["evals/files/plan-two-features.md"],
+      "assertions": [
+        "Runs config-status before fold.py start and asks the three-answer question once",
+        "After ai-kit-spec-config ends, runs config-status again and continues only when it prints active",
+        "Records a CONFIG_CHECK= line in the scalar file so a re-invoke does not ask again"
+      ]
+    },
+    {
+      "id": "precise-config-active-never-asks",
+      "prompt": "Run the superpowers plan docs/superpowers/plans/demo.md under subagent-driven-development. Setup: copy evals/files/active-execute/project to a scratch project root, rename its aikit/ folder to .aikit/, copy evals/files/plan-two-features.md to docs/superpowers/plans/demo.md inside that root, and run from that root.",
+      "expected_output": "config-status prints active, so the agent asks no setup question, never offers ai-kit-spec-config, and goes on to fold.py start and the first task.",
+      "files": ["evals/files/plan-two-features.md", "evals/files/active-execute/project/aikit/config.toml"],
+      "assertions": [
+        "Reads active from config-status and asks no setup question",
+        "Never runs or offers ai-kit-spec-config in this run"
+      ]
+    },
+    {
+      "id": "edge-spec-config-missing-stops",
+      "prompt": "Run the plan at evals/files/plan-two-features.md under subagent-driven-development. No lanes are configured, the ai-kit-spec-config skill is not installed beside this skill, and when you ask about setup I pick the first option.",
+      "expected_output": "The agent runs config-status (none), asks once, finds no ai-kit-spec-config skill on the first answer and stops with ai-kit-spec-config is not installed. Install ai-kit, then run ai-kit-spec-config., before fold.py start and before any task.",
+      "files": ["evals/files/plan-two-features.md"],
+      "assertions": [
+        "Stops with the message ai-kit-spec-config is not installed. Install ai-kit, then run ai-kit-spec-config.",
+        "Runs no fold.py start and dispatches no task after that message"
+      ]
+    },
+    {
+      "id": "edge-no-way-to-ask-notice",
+      "prompt": "Run the plan at evals/files/plan-two-features.md under subagent-driven-development from a subagent that cannot ask the user anything. No lanes are configured.",
+      "expected_output": "The agent runs config-status (none), cannot ask, prints no cross-AI config: run ai-kit-spec-config; continuing on the session model, no config written at the start, records CONFIG_CHECK=notice in the scalar file, runs the tasks natively on the session model with the model omitted (no resolve-injection call, no escalation in fix rounds 4 and 5) and prints the same line again after the final review.",
+      "files": ["evals/files/plan-two-features.md"],
+      "assertions": [
+        "Prints the line no cross-AI config: run ai-kit-spec-config; continuing on the session model, no config written at the start and again after the final review",
+        "Records CONFIG_CHECK=notice in the scalar file and writes no config",
+        "Dispatches every task natively on the session model with the model omitted and no escalation in fix rounds 4 and 5"
+      ]
+    },
+    {
+      "id": "edge-no-config-stop-answer",
+      "prompt": "Run the plan at evals/files/plan-two-features.md under subagent-driven-development. No lanes are configured; when you ask about setup I pick the third option.",
+      "expected_output": "Runs config-status (none), asks once and, on stop, ends before fold.py start: no task is dispatched, no CONFIG_CHECK= line is recorded and no config is written.",
+      "files": ["evals/files/plan-two-features.md"],
+      "assertions": [
+        "Runs config-status, reads none and on the third answer stops before fold.py start with no task dispatched",
+        "Records no CONFIG_CHECK= line and writes no config"
+      ]
+    },
+    {
+      "id": "precise-no-config-once-native",
+      "prompt": "Run the plan at evals/files/plan-two-features.md under subagent-driven-development. No lanes are configured; when you ask about setup I pick the second option.",
+      "expected_output": "After config-status prints none and the second answer, the agent records CONFIG_CHECK=once, prints no cross-AI config: ran on the session model at the start and again after the final review, and dispatches each task natively on the session model with the model omitted: no resolve-injection call and no capability escalation in fix rounds 4 and 5.",
+      "files": ["evals/files/plan-two-features.md"],
+      "assertions": [
+        "After config-status prints none, records CONFIG_CHECK=once and prints the line no cross-AI config: ran on the session model at the start and again after the final review",
+        "Dispatches every task natively on the session model with the model omitted, with no resolve-injection call and no escalation in fix rounds 4 and 5"
+      ]
+    },
+    {
+      "id": "edge-review-only-roster-still-asks",
+      "prompt": "Run the superpowers plan docs/superpowers/plans/demo.md under subagent-driven-development. When you ask about setup, I pick the third option. Setup: copy evals/files/review-only/project to a scratch project root, rename its aikit/ folder to .aikit/ (it holds only a review lane), copy evals/files/plan-two-features.md to docs/superpowers/plans/demo.md inside that root, and run from that root.",
+      "expected_output": "Runs config-status for the execute role, which reads none because the only lane is a review lane, asks once with the three answers and, on stop, ends before fold.py start with no task dispatched.",
+      "files": ["evals/files/plan-two-features.md", "evals/files/review-only/project/aikit/config.toml"],
+      "assertions": [
+        "Runs config-status for the execute role and reads none although the project holds a review lane",
+        "Asks the three-answer setup question once before fold.py start instead of treating the review lane as an execute roster"
+      ]
     }
   ]
 }

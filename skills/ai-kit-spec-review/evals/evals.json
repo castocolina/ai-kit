@@ -1,0 +1,142 @@
+{
+  "skill_name": "ai-kit-spec-review",
+  "evals": [
+    {
+      "id": "casual-superpowers-plan-routes-writing-plans",
+      "prompt": "Review my plan at docs/superpowers/plans/demo.md and fix what you find. Setup: copy evals/files/active/project to a scratch project root, rename its aikit/ folder to .aikit/, and run from that root.",
+      "expected_output": "Detects the superpowers framework and the plan archetype, runs config-status (active, so it asks nothing), dispatches the reviewer as a clean-context subagent with the file path only, and routes the fix to the superpowers:writing-plans skill, not to the generic fixer.",
+      "files": ["evals/files/active/project/aikit/config.toml", "evals/files/active/project/docs/superpowers/plans/demo.md"],
+      "assertions": [
+        "Sets the framework to superpowers and the archetype to plan, and passes the reviewer the file path only, never the document body",
+        "Routes the fix to the superpowers:writing-plans skill instead of ai-kit-spec-review-fixer",
+        "Runs config-status, reads active on its first line and asks no setup question",
+        "Resolves the framework profile seeds folder (SEEDS_DIR) to an absolute path before reading any profile, and on approval the surface message names the plan file path"
+      ]
+    },
+    {
+      "id": "precise-gsd-plan-routes-native-cmd",
+      "prompt": "Review .planning/phases/02-auth/02-01-PLAN.md of this GSD project with cross-AI reviewers. Setup: copy evals/files/gsd/project to a scratch project root, rename its aikit/ folder to .aikit/ and its planning/ folder to .planning/, and run from that root.",
+      "expected_output": "Treats the file as .planning/phases/02-auth/02-01-PLAN.md, detects the GSD framework and the plan archetype, routes the fix to /gsd-plan-phase with --reviews, never edits the PLAN.md itself, and when the slash command cannot run surfaces the pre-filled command with the report path.",
+      "files": ["evals/files/gsd/project/aikit/config.toml", "evals/files/gsd/project/planning/phases/02-auth/02-01-PLAN.md"],
+      "assertions": [
+        "Routes the fix to /gsd-plan-phase with --reviews, never to ai-kit-spec-review-fixer, and does not edit the PLAN.md itself",
+        "When the slash command cannot run, the surface message carries the exact command and the report path",
+        "When the slash command succeeds, dispatches gsd-plan-checker as the validate step and then re-reviews"
+      ]
+    },
+    {
+      "id": "edge-generic-doc-direct-edit",
+      "prompt": "Review the RFC at docs/rfcs/0042-rate-limiting.md and fix it in place. Setup: copy evals/files/active/project to a scratch project root, rename its aikit/ folder to .aikit/, and run from that root.",
+      "expected_output": "Finds no framework profile, so FRAMEWORK_PROFILE_PATH is none for both the reviewer and the fixer; reviews with the generic archetype checklists, routes the fix to ai-kit-spec-review-fixer, which edits the file directly, and re-reviews until approved.",
+      "files": ["evals/files/active/project/aikit/config.toml", "evals/files/active/project/docs/rfcs/0042-rate-limiting.md"],
+      "assertions": [
+        "Passes FRAMEWORK_PROFILE_PATH none to both the reviewer and the fixer",
+        "Routes the fix to ai-kit-spec-review-fixer, which edits the document directly with no hand-off command",
+        "On approval the surface message is concise and names the RFC file path"
+      ]
+    },
+    {
+      "id": "edge-ambiguous-framework-fallback",
+      "prompt": "Review shared/architecture-decision.md. I do not know which framework it belongs to, just use whatever. Setup: copy evals/files/active/project to a scratch project root, rename its aikit/ folder to .aikit/, and run from that root.",
+      "expected_output": "Asks once to disambiguate, then sets FRAMEWORK_PROFILE_PATH to none, routes every archetype through ai-kit-spec-review-fixer, completes the review and notes in the surface message that the framework was ambiguous and the generic fixer was used. Reviewers come from config-status and the configured lanes, never from a silent no-config fallback.",
+      "files": ["evals/files/active/project/aikit/config.toml", "evals/files/active/project/shared/architecture-decision.md"],
+      "assertions": [
+        "Asks exactly once before falling back and does not loop on the question",
+        "Notes in the surface message that the framework was ambiguous and the generic fixer was used",
+        "Runs config-status before resolving reviewers instead of falling back silently to the session default",
+        "Attempts no native-skill and no slash-command routing, and the review still completes instead of aborting because of the ambiguity"
+      ]
+    },
+    {
+      "id": "precise-no-config-asks-once",
+      "prompt": "Review my plan at docs/superpowers/plans/demo.md. When you ask about setup, I pick the second option. Setup: copy evals/files/no-config/project to a scratch project root and run from that root; it has no .aikit/ folder and there is no user config.",
+      "expected_output": "Runs config-status, reads none, asks once with three numbered answers (run ai-kit-spec-config now, run once on the session model, stop), and on the second answer reviews on the session default and puts the line no cross-AI config: ran on the session model in the surface message.",
+      "files": ["evals/files/no-config/project/docs/superpowers/plans/demo.md"],
+      "assertions": [
+        "Runs config-status --cwd on the codebase root before resolving reviewers and reads none on its first line",
+        "Asks once with exactly three numbered answers: run ai-kit-spec-config now, run once on the session model, stop",
+        "On the second answer the surface message carries the line no cross-AI config: ran on the session model"
+      ]
+    },
+    {
+      "id": "edge-no-config-stop-answer",
+      "prompt": "Review my plan at docs/superpowers/plans/demo.md. When you ask about setup, I pick the third option. Setup: copy evals/files/no-config/project to a scratch project root and run from that root; it has no .aikit/ folder and there is no user config.",
+      "expected_output": "Runs config-status, reads none, asks once with the three numbered answers and, on stop, ends the run: no reviewer is dispatched, ai-kit-spec-config is not run and no config is written.",
+      "files": ["evals/files/no-config/project/docs/superpowers/plans/demo.md"],
+      "assertions": [
+        "Runs config-status, reads none and on the third answer stops with no reviewer dispatched and no fix applied",
+        "Runs no ai-kit-spec-config and writes no config after the stop answer"
+      ]
+    },
+    {
+      "id": "precise-no-config-setup-chains",
+      "prompt": "Review my plan at docs/superpowers/plans/demo.md. When you ask about setup, I pick the first option and set up one review lane. Setup: copy evals/files/no-config/project to a scratch project root and run from that root; it has no .aikit/ folder and there is no user config.",
+      "expected_output": "Runs config-status (none), asks once, follows the sibling ai-kit-spec-config skill to its end, runs config-status again, continues only when it prints active, and then reviews the plan with the new lane.",
+      "files": ["evals/files/no-config/project/docs/superpowers/plans/demo.md"],
+      "assertions": [
+        "On the first answer follows ai-kit-spec-config to its end, then runs config-status again and continues only when it prints active",
+        "Reviews the plan with the newly configured lane, not on the session default"
+      ]
+    },
+    {
+      "id": "precise-config-active-never-asks",
+      "prompt": "Review docs/rfcs/0042-rate-limiting.md with my configured reviewers. Setup: copy evals/files/active/project to a scratch project root, rename its aikit/ folder to .aikit/, and run from that root.",
+      "expected_output": "Runs config-status, reads active, asks no setup question, never offers ai-kit-spec-config, and resolves reviewers from the configured lanes.",
+      "files": ["evals/files/active/project/aikit/config.toml", "evals/files/active/project/docs/rfcs/0042-rate-limiting.md"],
+      "assertions": [
+        "Reads active from config-status and asks no setup question",
+        "Never runs or offers ai-kit-spec-config in this run"
+      ]
+    },
+    {
+      "id": "edge-no-cross-ai-never-checks",
+      "prompt": "Review docs/superpowers/plans/demo.md with --no-cross-ai. Setup: copy evals/files/no-config/project to a scratch project root and run from that root; it has no .aikit/ folder and there is no user config.",
+      "expected_output": "Skips the no-config check: runs no config-status, never offers ai-kit-spec-config, reads no config file and reviews on the session model.",
+      "files": ["evals/files/no-config/project/docs/superpowers/plans/demo.md"],
+      "assertions": [
+        "Runs no config-status and reads no config.toml under --no-cross-ai",
+        "Never asks the setup question and reviews on the session model"
+      ]
+    },
+    {
+      "id": "edge-spec-config-missing-stops",
+      "prompt": "Review docs/superpowers/plans/demo.md. The ai-kit-spec-config skill is not installed beside this skill, and when you ask about setup I pick the first option. Setup: copy evals/files/no-config/project to a scratch project root and run from that root; it has no .aikit/ folder and there is no user config.",
+      "expected_output": "Runs config-status (none), asks once, finds no ai-kit-spec-config skill beside this one on the first answer and stops with ai-kit-spec-config is not installed. Install ai-kit, then run ai-kit-spec-config.",
+      "files": ["evals/files/no-config/project/docs/superpowers/plans/demo.md"],
+      "assertions": [
+        "Stops with the message ai-kit-spec-config is not installed. Install ai-kit, then run ai-kit-spec-config.",
+        "Does not continue the review and writes no config after that message"
+      ]
+    },
+    {
+      "id": "edge-no-way-to-ask-session-default",
+      "prompt": "You are a subagent with no way to ask the user. Review docs/superpowers/plans/demo.md. Setup: copy evals/files/no-config/project to a scratch project root and run from that root; it has no .aikit/ folder and there is no user config.",
+      "expected_output": "Runs config-status (none), cannot ask, prints no cross-AI config: run ai-kit-spec-config; continuing on the session model, no config written, reviews on the session default and repeats that line in the surface message.",
+      "files": ["evals/files/no-config/project/docs/superpowers/plans/demo.md"],
+      "assertions": [
+        "Prints the line no cross-AI config: run ai-kit-spec-config; continuing on the session model, no config written",
+        "Writes no config, reviews on the session default and repeats that line in the surface message"
+      ]
+    },
+    {
+      "id": "edge-execute-only-roster-still-asks",
+      "prompt": "Review my plan at docs/superpowers/plans/demo.md. When you ask about setup, I pick the third option. Setup: copy evals/files/execute-only/project to a scratch project root, rename its aikit/ folder to .aikit/, and run from that root; its config holds only an execute lane, and there is no user config.",
+      "expected_output": "Runs config-status for the review role, which reads none because the only lane is an execute lane, asks once with the three numbered answers and, on stop, ends with no reviewer dispatched and no config written.",
+      "files": ["evals/files/execute-only/project/aikit/config.toml", "evals/files/execute-only/project/docs/superpowers/plans/demo.md"],
+      "assertions": [
+        "Runs config-status for the review role and reads none although the project holds an execute lane",
+        "Asks the three-answer setup question once instead of treating the execute lane as a review roster"
+      ]
+    },
+    {
+      "id": "edge-review-tool-missing-notice",
+      "prompt": "Review docs/superpowers/plans/demo.md; in this install the review skill's own ai-kit-spec.py helper is missing. Setup: copy evals/files/no-config/project to a scratch project root and run from that root; it has no .aikit/ folder and there is no user config.",
+      "expected_output": "Prints ai-kit-spec-review: ai-kit-spec.py is missing; install ai-kit. Continuing on the session model, nothing checked., runs no config-status, reviews on the session default and repeats the line in the surface message.",
+      "files": ["evals/files/no-config/project/docs/superpowers/plans/demo.md"],
+      "assertions": [
+        "Prints the line ai-kit-spec-review: ai-kit-spec.py is missing; install ai-kit. Continuing on the session model, nothing checked.",
+        "Runs no config-status, reviews on the session default and repeats that line in the surface message"
+      ]
+    }
+  ]
+}

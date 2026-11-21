@@ -434,5 +434,75 @@ class TestAdapterNoFormulaWording(unittest.TestCase):
                       "escalation and no model bump", " ".join(_read(CONFIG_CHECK_MD).split()))
 
 
+CHAIN_REPO = Path(__file__).resolve().parents[1]
+REVIEW_EVALS_DIR = CHAIN_REPO / "skills" / "ai-kit-spec-review" / "evals"
+ADAPTER_EVALS = CHAIN_REPO / "skills" / "ai-kit-spec-execute-superpowers" / "evals" / "evals.json"
+REVIEW_SITUATIONS = ("no-config", "config-active", "no-cross-ai", "spec-config-missing",
+                     "no-way-to-ask", "stop-answer", "setup", "tool-missing",
+                     "execute-only-roster")
+ADAPTER_SITUATIONS = ("no-config", "config-active", "spec-config-missing", "no-way-to-ask",
+                      "stop-answer", "once", "review-only-roster")
+SETUP_STEP = "Setup: copy evals/files/"
+NOTICE_LINES = (
+    "no cross-AI config: ran on the session model",
+    "no cross-AI config: run ai-kit-spec-config; continuing on the session model, "
+    "no config written",
+    "ai-kit-spec-config is not installed. Install ai-kit, then run ai-kit-spec-config.",
+)
+
+
+def _cases(path: Path) -> list[dict]:
+    return json.loads(path.read_text(encoding="utf-8"))["evals"]
+
+
+class TestChainEvals(unittest.TestCase):
+    def test_review_evals_left_the_markdown_shape(self):
+        self.assertEqual(sorted(p.name for p in REVIEW_EVALS_DIR.glob("*.md")), [])
+        for name in ("evals.json", "trigger-queries.json"):
+            self.assertTrue((REVIEW_EVALS_DIR / name).is_file())
+
+    def test_review_evals_cover_every_situation(self):
+        cases = _cases(REVIEW_EVALS_DIR / "evals.json")
+        for situation in REVIEW_SITUATIONS:
+            with self.subTest(situation=situation):
+                self.assertTrue(any(situation in case["id"] for case in cases))
+
+    def test_adapter_evals_cover_their_situations_without_the_flag(self):
+        cases = _cases(ADAPTER_EVALS)
+        for situation in ADAPTER_SITUATIONS:
+            with self.subTest(situation=situation):
+                self.assertTrue(any(situation in case["id"] for case in cases))
+        self.assertNotIn("--no-cross-ai", ADAPTER_EVALS.read_text(encoding="utf-8"))
+
+    def test_config_situations_name_config_status(self):
+        for path in (REVIEW_EVALS_DIR / "evals.json", ADAPTER_EVALS):
+            for case in _cases(path):
+                if any(s in case["id"] for s in ("no-config", "config-active", "only-roster")):
+                    with self.subTest(path=path, case=case["id"]):
+                        self.assertTrue(any("config-status" in a for a in case["assertions"]))
+
+    def test_review_fixtures_use_a_project_folder(self):
+        for case in _cases(REVIEW_EVALS_DIR / "evals.json"):
+            with self.subTest(case=case["id"]):
+                self.assertTrue(case["files"])
+                self.assertTrue(all("/project/" in path for path in case["files"]))
+                self.assertIn(SETUP_STEP, case["prompt"])
+        for case in _cases(ADAPTER_EVALS):
+            if any("/project/" in path for path in case["files"]):
+                with self.subTest(case=case["id"]):
+                    self.assertIn(SETUP_STEP, case["prompt"])
+
+    def test_quoted_notices_match_the_block(self):
+        review = _cases(REVIEW_EVALS_DIR / "evals.json")
+        adapter = _cases(ADAPTER_EVALS)
+        for notice in NOTICE_LINES:
+            with self.subTest(notice=notice):
+                self.assertIn(notice, BLOCK)
+                self.assertIn(notice, ADAPTER_BLOCK)
+                for cases in (review, adapter):
+                    self.assertTrue(any(notice in a for c in cases for a in c["assertions"]))
+        self.assertTrue(any(TOOLS_PY_NOTICE in a for c in review for a in c["assertions"]))
+
+
 if __name__ == "__main__":
     unittest.main()
