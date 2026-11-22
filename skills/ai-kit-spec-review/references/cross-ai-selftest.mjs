@@ -270,7 +270,7 @@ const CLASSIFY_CASES = [
       message: 'Your workspace has reached its monthly spending limit',
       response: { body: JSON.stringify({ type: 'MonthlyLimitError' }) },
     }),
-    expect: { status: 'billing', pattern: 'unverified' },
+    expect: { status: 'billing', pattern: 'verified' },
   },
   {
     name: 'opencode-monthly-limit-router', cli: 'opencode', route: 'router',
@@ -279,7 +279,7 @@ const CLASSIFY_CASES = [
       message: 'Your workspace has reached its monthly spending limit',
       response: { body: JSON.stringify({ type: 'MonthlyLimitError' }) },
     }),
-    expect: { status: 'quota', pattern: 'unverified' },
+    expect: { status: 'quota', pattern: 'verified' },
   },
   {
     name: 'opencode-spend-403', cli: 'opencode',
@@ -295,14 +295,14 @@ const CLASSIFY_CASES = [
       type: 'provider.auth', status: 403, message: 'Model access is disabled',
       response: { body: JSON.stringify({ type: 'ModelDisabledError' }) },
     }),
-    expect: { status: 'billing', pattern: 'unverified' },
+    expect: { status: 'billing', pattern: 'verified' },
   },
   {
     name: 'opencode-model-disabled-router', cli: 'opencode', route: 'router',
     stdout: ocError({
       type: 'provider.auth', status: 403, message: 'Model access is disabled',
     }),
-    expect: { status: 'quota', pattern: 'unverified' },
+    expect: { status: 'quota', pattern: 'verified' },
   },
   {
     name: 'opencode-bad-key', cli: 'opencode',
@@ -490,7 +490,7 @@ const CLASSIFY_CASES = [
   {
     name: 'evidence-model-cooldown', cli: 'pi', route: 'router',
     stderr: '{"code":"model_cooldown","retry_after":"2026-10-25T08:42:03.640Z"}',
-    expect: { status: 'transient', pattern: 'unverified', rule: 'omniroute-model-cooldown' },
+    expect: { status: 'transient', pattern: 'verified', rule: 'omniroute-model-cooldown' },
   },
   {
     name: 'evidence-endpoint-unavailable', cli: 'pi', route: 'router',
@@ -650,6 +650,66 @@ const CLASSIFY_CASES = [
     }),
     expect: { status: 'quota', pattern: 'verified', rule: 'vendor-usage-limit-reached' },
   },
+  {
+    name: 'catalog-provider-not-configured', cli: 'pi',
+    stderr: '{"error":{"code":"provider_not_configured"}}',
+    expect: { status: 'bad_model', pattern: 'unverified', rule: 'provider-not-configured' },
+  },
+  {
+    name: 'catalog-policy-budget', cli: 'pi', stderr: '429 Policy budget exceeded',
+    expect: { status: 'billing', pattern: 'unverified', rule: 'text-policy-budget-exceeded' },
+  },
+  {
+    name: 'catalog-policy-budget-router', cli: 'pi', route: 'router',
+    stderr: '429 Policy budget exceeded',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'text-policy-budget-exceeded' },
+  },
+  {
+    name: 'catalog-account-budget', cli: 'pi', stderr: '429 Account budget exceeded',
+    expect: { status: 'billing', pattern: 'unverified', rule: 'text-account-budget-exceeded' },
+  },
+  {
+    name: 'catalog-data-inspection', cli: 'pi',
+    stderr: '400 {"error":{"code":"data_inspection_failed"}}',
+    expect: { status: 'bad_request', pattern: 'unverified', rule: 'vendor-data-inspection-failed' },
+  },
+  {
+    name: 'catalog-context-length', cli: 'pi',
+    stderr: '400 {"error":{"code":"context_length_exceeded"}}',
+    expect: { status: 'bad_request', pattern: 'unverified', rule: 'vendor-context-length-exceeded' },
+  },
+  {
+    name: 'catalog-code-1311', cli: 'pi', stderr: '429: {"code":"1311","message":"plan not open"}',
+    expect: { status: 'billing', pattern: 'unverified', rule: 'vendor-code-1311' },
+  },
+  {
+    name: 'catalog-code-1311-router', cli: 'pi', route: 'router',
+    stderr: '429: {"code":"1311","message":"plan not open"}',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'vendor-code-1311' },
+  },
+  {
+    name: 'catalog-connection-capacity', cli: 'pi',
+    stderr: 'Connection capacity reached for placeholder-model-1',
+    expect: { status: 'transient', pattern: 'unverified', rule: 'text-connection-capacity' },
+  },
+  {
+    name: 'catalog-connection-capacity-503', cli: 'pi',
+    stderr: '503 Connection capacity reached for placeholder-model-1',
+    expect: { status: 'transient', pattern: 'unverified', rule: 'text-connection-capacity' },
+  },
+  {
+    name: 'catalog-bare-503', cli: 'pi', stderr: '503 upstream error',
+    expect: { status: 'transient', pattern: 'verified', rule: 'code-5xx' },
+  },
+  {
+    name: 'catalog-near-miss', cli: 'pi',
+    stderr: 'note: provider_not_configuredx and context_length_exceeded_soon in the log',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'catalog-insufficient-funds', cli: 'pi', stderr: 'insufficient funds on this account',
+    expect: { status: 'billing', pattern: 'verified', rule: 'text-insufficient-funds' },
+  },
 ];
 
 function classifyOne(entry, table) {
@@ -671,6 +731,13 @@ function pureClassify(entry) {
     return `rule ${got.rule} expected ${want.rule}`;
   }
   return null;
+}
+
+function narrowViolations(rows) {
+  const generic = ['unavailable', 'not found', '503 Service Unavailable', '404 Not Found',
+    'service temporarily unavailable'];
+  return rows.filter((row) => row.class === 'bad_model' &&
+    generic.some((text) => new RegExp(row.match, 'i').test(text))).map((row) => row.id);
 }
 
 function classifyCases() {
@@ -744,6 +811,34 @@ function classifyCases() {
           prev = row.tier;
         }
         return null;
+      },
+    },
+    {
+      name: 'pure-catalog-narrow',
+      kind: 'logic',
+      pure: () => {
+        const shipped = narrowViolations(PATTERNS);
+        if (shipped.length) return `shipped rows too broad: ${shipped.join(', ')}`;
+        const planted = (id, match) => ({
+          id, match, tier: 4, cli: '*', route: '*', provider: '*', input: 'any',
+          class: 'bad_model', terminal: true, label: 'unverified', evidence: 'test',
+        });
+        const got = narrowViolations([...PATTERNS, planted('planted-unavailable', 'unavailable'),
+          planted('planted-not-found', 'not found')]);
+        const want = ['planted-unavailable', 'planted-not-found'];
+        return JSON.stringify(got) === JSON.stringify(want) ? null : `violations ${JSON.stringify(got)}`;
+      },
+    },
+    {
+      name: 'pure-catalog-budget-order',
+      kind: 'logic',
+      pure: () => {
+        const budget = TABLE.findIndex((row) => row.id === 'text-policy-budget-exceeded');
+        const code = TABLE.findIndex((row) => row.id === 'code-429');
+        if (budget < 0 || code < 0 || budget >= code) return 'budget row must precede code-429';
+        const got = classifyOne({ cli: 'pi', stderr: '429 Policy budget exceeded' },
+          TABLE.filter((row) => !row.id.endsWith('budget-exceeded')));
+        return got.rule === 'code-429' ? null : `rule ${got.rule} expected code-429`;
       },
     },
     {

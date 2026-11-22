@@ -48,8 +48,8 @@
     "match": "model_cooldown",
     "class": "transient",
     "terminal": false,
-    "label": "unverified",
-    "evidence": "CHANGELOG 0a1265ea8"
+    "label": "verified",
+    "evidence": "CHANGELOG 0a1265ea8; body seen in 45 cases from an older router image, logs read 2026-11-02 (v1.3-OWNER-FOLLOWUP.md section 1 and Evidence sources)"
   },
   {
     "id": "omniroute-endpoint-unavailable",
@@ -104,6 +104,19 @@
     "evidence": "CHANGELOG 0a1265ea8"
   },
   {
+    "id": "provider-not-configured",
+    "tier": 0,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\\bprovider_not_configured\\b",
+    "class": "bad_model",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "code name recorded in real runs (38.1 SPEC R2); body not captured"
+  },
+  {
     "id": "vendor-usage-limit-reached",
     "tier": 1,
     "cli": "*",
@@ -141,7 +154,47 @@
     "class": "quota",
     "terminal": true,
     "label": "verified",
-    "evidence": "the Zhipu GLM capture"
+    "evidence": "the Zhipu GLM capture; weekly limit wording found in past runs (v1.3-OWNER-FOLLOWUP.md section 1)"
+  },
+  {
+    "id": "vendor-data-inspection-failed",
+    "tier": 1,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\\bdata_inspection_failed\\b",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "code name recorded in real runs (38.1 SPEC Live facts 2026-11-16); body not captured"
+  },
+  {
+    "id": "vendor-context-length-exceeded",
+    "tier": 1,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\\bcontext_length_exceeded\\b",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "code name recorded in real runs (38.1 SPEC Live facts 2026-11-16); body not captured"
+  },
+  {
+    "id": "vendor-code-1311",
+    "tier": 1,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\"code\"\\s*:\\s*\"1311\"",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "vendor plan-not-open code recorded in real runs (38.1 SPEC Live facts 2026-11-16); body not captured"
   },
   {
     "id": "text-billing",
@@ -168,8 +221,8 @@
     "class": "billing",
     "routerClass": "quota",
     "terminal": true,
-    "label": "unverified",
-    "evidence": "25-RESEARCH 2.2 CONTEXT, wrapper reproduced"
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 CONTEXT; seen through direct calls in past runs (v1.3-OWNER-FOLLOWUP.md section 1, router limit texts)"
   },
   {
     "id": "text-spending-limit",
@@ -224,8 +277,8 @@
     "class": "billing",
     "routerClass": "quota",
     "terminal": true,
-    "label": "unverified",
-    "evidence": "25-RESEARCH 2.2 Go wording"
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 Go wording; seen through direct calls in past runs (v1.3-OWNER-FOLLOWUP.md section 1, router limit texts)"
   },
   {
     "id": "text-run-out-credits",
@@ -252,8 +305,36 @@
     "class": "billing",
     "routerClass": "quota",
     "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 Zen wording; seen through direct calls in past runs (v1.3-OWNER-FOLLOWUP.md section 1, router limit texts)"
+  },
+  {
+    "id": "text-policy-budget-exceeded",
+    "tier": 2,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "policy budget exceeded",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
     "label": "unverified",
-    "evidence": "25-RESEARCH 2.2 Zen wording"
+    "evidence": "name recorded in the 21.1 research and the 2026-10-11 todo; body not re-observed"
+  },
+  {
+    "id": "text-account-budget-exceeded",
+    "tier": 2,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "account budget exceeded",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "name recorded in the 21.1 research and the 2026-10-11 todo; body not re-observed"
   },
   {
     "id": "text-named-models",
@@ -804,6 +885,19 @@
     "terminal": false,
     "label": "verified",
     "evidence": "prior table"
+  },
+  {
+    "id": "text-connection-capacity",
+    "tier": 5,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "connection capacity reached",
+    "class": "transient",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "text recorded in real runs without a status code (38.1 SPEC Live facts 2026-11-16); body not captured"
   },
   {
     "id": "text-is-locked",
