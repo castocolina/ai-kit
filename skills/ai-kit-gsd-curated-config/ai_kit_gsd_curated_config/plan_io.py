@@ -874,10 +874,7 @@ def _validate_execution_coupling(plan: dict) -> str | None:
     return _validate_runner_timeout(plan)
 
 
-def timeout_problem(label: str, value) -> str | None:
-    if cross_ai.timeout_ok(value):
-        return None
-    return f"{label} must be an integer >= {cross_ai.MIN_TIMEOUT_S} (got {value!r})"
+timeout_problem = cross_ai.timeout_problem
 
 
 def _validate_runner_timeout(plan: dict) -> str | None:

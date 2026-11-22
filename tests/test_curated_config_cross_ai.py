@@ -7,6 +7,7 @@ import re
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(
@@ -14,6 +15,7 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-gsd-curated-config"),
 )
 
+from ai_kit_gsd_curated_config import apply as apply_mod
 from ai_kit_gsd_curated_config import (
     cross_ai,
     gsd_catalog,
@@ -833,6 +835,128 @@ TEMPLATE_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "skills", "ai-kit-spec-review", "references", "cross-ai.mjs",
 )
+
+
+class TestTimeoutPlanEntry(unittest.TestCase):
+    """38 R10: the plan entry shows the current and the new workflow.cross_ai_timeout."""
+
+    KEY = "workflow.cross_ai_timeout"
+    WHY = "cross-AI outer timeout (18 D-12); minimum 1800s"
+
+    def _plan(self, workflow: dict) -> tuple[dict, dict]:
+        inv = _all_runners_inv("claude")
+        inv["existing_config"] = {"exists": True, "values": {"workflow": workflow}}
+        return inv, build(inv, rigor="standard", cross_ai_exec="y")
+
+    def _entry(self, workflow: dict) -> dict:
+        return entry_map(self._plan(workflow)[1])[self.KEY]
+
+    def _replaced(self, bad) -> str:
+        return f"{self.WHY}; replaced by 1800: {self.KEY} must be an integer >= 1800 (got {bad!r})"
+
+    def test_lower_value_is_raised_and_shown(self):
+        entry = self._entry({"cross_ai_timeout": 1799})
+        self.assertEqual(entry["existing"], 1799)
+        self.assertEqual(entry["value"], 1800)
+        self.assertEqual(entry["op"], "set")
+        self.assertEqual(entry["why"], self._replaced(1799))
+
+    def test_minimum_and_higher_values_are_kept(self):
+        for current in (1800, 3600):
+            with self.subTest(current=current):
+                entry = self._entry({"cross_ai_timeout": current})
+                self.assertEqual(entry["existing"], current)
+                self.assertEqual(entry["value"], current)
+                self.assertEqual(entry["why"], self.WHY)
+
+    def test_absent_shows_new_value_and_no_current(self):
+        for workflow in ({}, {"cross_ai_timeout": None}):
+            with self.subTest(workflow=workflow):
+                entry = self._entry(workflow)
+                self.assertIsNone(entry["existing"])
+                self.assertEqual(entry["value"], 1800)
+                self.assertEqual(entry["why"], self.WHY)
+
+    def test_second_apply_shows_current_equal_to_new(self):
+        first = self._entry({"cross_ai_timeout": 1799})
+        second = self._entry({"cross_ai_timeout": first["value"]})
+        self.assertEqual(second["existing"], 1800)
+        self.assertEqual(second["value"], 1800)
+        self.assertEqual(second["why"], self.WHY)
+
+    def test_apply_diff_changes_then_keeps(self):
+        inv1, plan1 = self._plan({"cross_ai_timeout": 1799})
+        row1 = next(r for r in apply_mod.diff_entries(
+            plan1, {"workflow": {"cross_ai_timeout": 1799}}, inv1
+        ) if r["key"] == self.KEY)
+        self.assertEqual((row1["kind"], row1["from"], row1["to"]), ("change", 1799, 1800))
+        inv2, plan2 = self._plan({"cross_ai_timeout": 1800})
+        row2 = next(r for r in apply_mod.diff_entries(
+            plan2, {"workflow": {"cross_ai_timeout": 1800}}, inv2
+        ) if r["key"] == self.KEY)
+        self.assertEqual((row2["kind"], row2["from"], row2["to"]), ("keep", 1800, 1800))
+
+    def test_invalid_current_is_kept_raw_and_named(self):
+        for bad in (True, "3600", 2400.5):
+            with self.subTest(bad=bad):
+                entry = self._entry({"cross_ai_timeout": bad})
+                self.assertEqual(entry["existing"], bad)
+                self.assertIs(type(entry["existing"]), type(bad))
+                self.assertEqual(entry["value"], 1800)
+                if isinstance(bad, str):
+                    expected = (f"{self.WHY}; replaced by 1800: {self.KEY} holds a str, "
+                                "not an integer >= 1800")
+                    self.assertNotIn("3600", entry["why"])
+                else:
+                    expected = self._replaced(bad)
+                self.assertEqual(entry["why"], expected)
+
+    def test_plan_io_alias_is_the_moved_rule(self):
+        self.assertIs(plan_io.timeout_problem, cross_ai.timeout_problem)
+
+
+class TestTimeoutDocClaims(unittest.TestCase):
+    """38 R10: no doc says a flow never touches or restores the user's timeout."""
+
+    REPO = Path(__file__).resolve().parents[1]
+    GLOBS = ("skills/**/*.md", "docs/**/*.md", "README.md", "tools/**/README.md",
+             "tests/**/README.md")
+    CLAIM = re.compile(r"never touch|\brestor(?:e|es|ed|ing)\b", re.I)
+    TOPIC = re.compile(r"cross_ai_timeout|(?:workflow|runner|outer|lower|user's)\s+timeout", re.I)
+
+    @classmethod
+    def claim_sentences(cls, text: str) -> list[str]:
+        hits = []
+        for para in re.split(r"\n\s*\n", text):
+            flat = " ".join(para.split())
+            for sentence in re.split(r"(?<=[.!?])\s+", flat):
+                if cls.TOPIC.search(sentence) and cls.CLAIM.search(sentence):
+                    hits.append(sentence)
+        return hits
+
+    def test_matcher_flags_planted_claims(self):
+        self.assertEqual(len(self.claim_sentences(
+            "Cleanup restores the user's lower timeout. Other text."
+        )), 1)
+        self.assertEqual(len(self.claim_sentences(
+            "The inventory never touches\nworkflow.cross_ai_timeout at all."
+        )), 1)
+        self.assertEqual(len(self.claim_sentences(
+            "The lower timeout is kept; cleanup restores it."
+        )), 1)
+        self.assertEqual(self.claim_sentences(
+            "A failed apply restores the backup bytes. A git_timeout status stops the call."
+        ), [])
+        self.assertEqual(self.claim_sentences("The runner reads the workflow timeout."), [])
+
+    def test_no_doc_claims_a_timeout_restore(self):
+        paths = sorted({
+            p for pattern in self.GLOBS for p in self.REPO.glob(pattern) if p.is_file()
+        })
+        self.assertGreater(len(paths), 100)
+        hits = [f"{p.relative_to(self.REPO)}: {s[:160]}" for p in paths
+                for s in self.claim_sentences(p.read_text(encoding="utf-8"))]
+        self.assertEqual(hits, [])
 
 
 class TestEffortLevelToken(unittest.TestCase):
