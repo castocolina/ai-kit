@@ -75,6 +75,8 @@ import {
   forbiddenHits,
   groupMembers,
   hardWaitFor,
+  statedResetS,
+  resetCheckS,
   shortHardWait,
   idleBudgetNote,
   killGroup,
@@ -4757,6 +4759,110 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       })),
       {
+        name: 'pure-reset-stated', kind: 'logic',
+        pure: () => {
+          const now = Date.parse('2026-11-22T12:00:00Z');
+          const examples = [
+            [{ retry_after: 120 }, 120], [{ retry_after: '90.9' }, 90],
+            [{ reset_after_s: 3600, retry_after_seconds: 400 }, 400], [{ reset_seconds: 52 }, 52],
+            [{ reset_at: '2026-11-22T12:10:00.000Z' }, 600], [{ resetsAt: Math.trunc(now / 1000) + 300 }, 300],
+            [{ resetsAt: now + 45000 }, 45], [{ reset_at: '2026-10-23T04:01:04.472Z' }, null],
+            ...[{ retry_after: '<redacted>' }, { retry_after: true }, { retry_after: -5 }, { retry_after: -0.5 },
+              { resetsAt: now - 1 }, { reset_at: '2026-02-30T00:00:00Z' },
+              { reset_at: 'Sun, 22 Nov 2026 12:10:00 GMT' }, { retryAfterMs: 60000 }, { resetsAt: 12345 }, {}, null].map((v) => [v, null]),
+            [{ resetsAt: now }, 0], [{ retry_after: '2026-11-22T12:05:00Z' }, 300],
+            ...['2026-11-22T11:59:59Z', '2026-02-30T00:00:00Z', 'Sun, 22 Nov 2026 12:10:00 GMT'].map((v) => [{ retry_after: v }, null]),
+            [upstreamFields('[WARN] [AUTH] all 3 active accounts cooling down for model fake/model (reset after 2m)'), 120],
+            [upstreamFields('429: {"error":{"code":"model_cooldown","reset_seconds":30}}'), 30],
+            [upstreamFields('429: {"error":{"message":"cooling down"},"recovery_hint":{"retry_after_seconds":45}}'), 45],
+          ];
+          for (const [input, expected] of examples) {
+            const got = statedResetS(input, now);
+            if (got !== expected) return `${JSON.stringify(input)}=${got}`;
+          }
+          return null;
+        },
+      },
+      {
+        name: 'pure-reset-check', kind: 'logic',
+        pure: () => {
+          for (const [stated, next, cap, expected] of [[120, 300, 14400, 240], [180, 300, 14400, null], [179, 300, 14400, 299], [120, 600, 240, null], [120, 600, 241, 240], [100000, 600, 14400, null], [0, 600, 14400, 120], [-1, 600, 14400, null], [null, 600, 14400, null]]) {
+            const got = resetCheckS(stated, next, cap);
+            if (got !== expected) return `${JSON.stringify([stated, next, cap])}=${got}`;
+          }
+          return null;
+        },
+      },
+      {
+        name: 'retry-reset-check', kind: 'logic',
+        setup: (c) => { writePriorRecord(c, 'pi', 'fake/router402', 'router', 'quota', 0); return null; },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router402', '--route-pi', 'router'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: 75, status: /^AIKIT-XAI status=quota cli=pi model=fake\/router402 exit=75 .* action=stop$/,
+        check: (r, ctx) => {
+          const tail = statusTail(r.stderr || '');
+          if (tail?.retry_after_s !== '240' || tail.cycle !== '1') return `tail=${JSON.stringify(tail)}`;
+          const report = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: report '));
+          if (!report?.endsWith(' check=reset')) return `report=${report}`;
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/router402', 'router'));
+          if (saved?.check !== 'reset' || saved.retry_after_s !== 240 || saved.cycle !== 1 || typeof saved.reset_check !== 'number' || saved.reset_check - saved.last_attempt_at !== 240000 || Object.hasOwn(saved, 'pending_normal')) return `record=${JSON.stringify(saved)}`;
+          return null;
+        },
+      },
+      ...['retry-reset-first-wins', 'retry-reset-once', 'retry-reset-no-lift', 'retry-check-early-reentry', 'retry-reset-lifecycle'].map((name) => ({
+        name, kind: 'logic',
+        setup: (c) => {
+          if (name === 'retry-reset-once') {
+            c.plantedReset = Date.now() - 1000;
+            writePriorRecord(c, 'pi', 'fake/router402', 'router', 'quota', 1, { reset_check: c.plantedReset });
+          } else if (name === 'retry-reset-no-lift') {
+            writePriorRecord(c, 'pi', 'fake/router402', 'router', 'quota', 2, { first_seen: Date.now() - (14400 - 300) * 1000 });
+          } else if (name === 'retry-check-early-reentry') {
+            const file = writePriorRecord(c, 'pi', 'fake/router402', 'router', 'quota', 1, { due_at: Date.now() + 120000, retry_after_s: 240, check: 'reset' });
+            c.pendingBytes = fs.readFileSync(file, 'utf8');
+          } else if (name === 'retry-reset-lifecycle') writePriorRecord(c, 'pi', 'fake/router402', 'router', 'quota', 0);
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router402', '--route-pi', 'router'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: name === 'retry-reset-no-lift' ? 69 : 75,
+        status: name === 'retry-reset-no-lift' ? /^AIKIT-XAI status=quota cli=pi model=fake\/router402 exit=69 .* action=stop$/ : /^AIKIT-XAI status=quota cli=pi model=fake\/router402 exit=75 .* action=stop$/,
+        ...(name === 'retry-reset-lifecycle' ? {
+          second: { exit: 75, status: /^AIKIT-XAI status=quota cli=pi model=fake\/router402 exit=75 .* action=stop$/ },
+          between: (c) => { const file = caseCycleFile(c, 'pi', 'fake/router402', 'router'); c.firstReset = readCycleState(file).reset_check; return ageDue(file); },
+        } : {}),
+        check: (result, ctx) => {
+          const r = name === 'retry-reset-lifecycle' ? result.again : result;
+          const tail = statusTail(r.stderr || '');
+          const report = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: report '));
+          const file = caseCycleFile(ctx, 'pi', 'fake/router402', 'router');
+          const saved = readCycleState(file);
+          if (name === 'retry-check-early-reentry') {
+            if (ctx.calls.some((line) => line.startsWith('pi ') && line !== 'pi rpc') || /cross-ai: attempt n=/.test(r.stderr || '')) return 'lane called';
+            if (!tail || !/^\d+$/.test(tail.retry_after_s) || Number(tail.retry_after_s) < 1 || Number(tail.retry_after_s) > 120) return `tail=${JSON.stringify(tail)}`;
+            if (fs.readFileSync(file, 'utf8') !== ctx.pendingBytes) return 'record rewritten';
+            return report?.endsWith(' check=reset') ? null : `report=${report}`;
+          }
+          if (name === 'retry-reset-no-lift') {
+            if (tail?.retry_after_s !== undefined) return `tail=${JSON.stringify(tail)}`;
+            if (!report?.includes('stopped=cap') || !report.endsWith(' check=-')) return `report=${report}`;
+            return saved?.stopped === 'cap' ? null : `record=${JSON.stringify(saved)}`;
+          }
+          const first = name === 'retry-reset-first-wins';
+          if (tail?.retry_after_s !== (first ? '60' : '600') || tail.cycle !== (first ? '0' : '2')) return `tail=${JSON.stringify(tail)}`;
+          if (!report?.endsWith(first ? ' check=first' : ' check=periodic')) return `report=${report}`;
+          if (saved?.check !== (first ? 'first' : 'periodic') || (first && Object.hasOwn(saved, 'reset_check')) || (name === 'retry-reset-once' && saved.reset_check !== ctx.plantedReset)) return `record=${JSON.stringify(saved)}`;
+          if (name === 'retry-reset-lifecycle') {
+            const firstTail = statusTail(result.first.stderr);
+            const firstReport = result.first.stderr.split('\n').find((line) => line.startsWith('cross-ai: report '));
+            if (firstTail?.retry_after_s !== '240' || firstTail.cycle !== '1') return `tail=${JSON.stringify(firstTail)}`;
+            if (!firstReport?.endsWith(' check=reset')) return `report=${firstReport}`;
+            if (saved.cycle !== 2 || saved.retry_after_s !== 600 || saved.reset_check !== ctx.firstReset || Object.hasOwn(saved, 'pending_normal')) return `record=${JSON.stringify(saved)}`;
+          }
+          return null;
+        },
+      })),
+      {
         // A stopped record refuses every call on the lane without a model call, logs the state
         // path and the owner reset line, and holds its bytes until stale or deleted (D-08).
         name: 'hard-tier-stopped-refused',
@@ -5180,7 +5286,8 @@ async function blackBoxSelfTest(listOnly = false) {
             if (Math.abs(a[i] - expected) > expected * 0.1 || Math.abs(b[i] - expected) > expected * 0.1) return `wait outside configured series: ${a[i]} vs ${b[i]}`;
           }
           const tails = [statusTail(both.first.stderr), statusTail(both.again.stderr)];
-          return tails.every((tail) => tail?.retry_after_s === '600' && tail.cycle === '0') ? null : 'hard hint changed';
+          // The first lane states retry_after 120, so its hint is the reset check 120 + 120 s (SPEC R5, D-11); the second states nothing and keeps the 600 s list wait.
+          return tails[0]?.retry_after_s === '240' && tails[1]?.retry_after_s === '600' && tails.every((tail) => tail?.cycle === '0') ? null : 'hard hint changed';
         },
       },
       {

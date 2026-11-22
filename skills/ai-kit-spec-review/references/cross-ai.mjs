@@ -1555,7 +1555,7 @@ function reportAndFinish(status, fields, stopped) {
   if (status !== 'ok' && !fields.reportDone) {
     logReport(status, fields.cli ?? '-', fields.model ?? '-', fields.route, fields.attempts || 0,
       fields.cycles || 0, fields.firstFailureMs || 0, fields.lastFailureMs || 0, why,
-      fields.dueAtMs || 0, fields.upstream || null);
+      fields.dueAtMs || 0, fields.upstream || null, fields.check || '-');
     if (fields.upstream?.body) {
       const raw = fields.upstream.raw || '';
       const extra = redactedValues(normalizeInput(raw));
@@ -3764,6 +3764,50 @@ function hardWaitFor(cycle, waits, capLeftS, everyS = 0) {
   return { retryAfterS: Math.trunc(wait), cycle };
 }
 
+// SPEC R5, D-11: a stated reset is untrusted data; it can only add one check, 60 s ahead at the earliest and before the cap's end.
+const RESET_RELATIVE_KEYS = ['retry_after', 'retry_after_seconds', 'reset_seconds', 'reset_after_s'];
+const RESET_ABSOLUTE_KEYS = ['reset_at', 'resetsAt'];
+// A window clears about 2 minutes after its stated reset (v1.3 recovery notes).
+const RESET_MARGIN_S = 120;
+
+// Whole seconds until the earliest stated reset that is not in the past, else null; relative fields are seconds, absolute ones epoch seconds, epoch ms or an ISO time.
+function statedResetS(fields, nowMs) {
+  if (!fields || typeof fields !== 'object') return null;
+  const num = (v) => {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    return typeof v === 'string' && /^\d+(\.\d+)?$/.test(v) ? Number(v) : null;
+  };
+  const iso = (v) => {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(v)) return null;
+    const t = Date.parse(v);
+    return Number.isFinite(t) && new Date(t).toISOString().slice(0, 19) === v.slice(0, 19) ? t : null;
+  };
+  const found = [];
+  const ahead = (ms) => { if (ms !== null && ms - nowMs >= 0) found.push(Math.trunc((ms - nowMs) / 1000)); };
+  for (const key of RESET_RELATIVE_KEYS) {
+    const v = fields[key];
+    const n = num(v);
+    if (n !== null) { if (n >= 0) found.push(Math.trunc(n)); }
+    else if (key === 'retry_after' && typeof v === 'string') ahead(iso(v));
+  }
+  for (const key of RESET_ABSOLUTE_KEYS) {
+    const v = fields[key];
+    const n = num(v);
+    let ms = null;
+    if (n !== null) ms = n >= 1e12 ? n : (n >= 1e9 ? n * 1000 : null);
+    else if (typeof v === 'string') ms = iso(v);
+    ahead(ms);
+  }
+  return found.length ? Math.min(...found) : null;
+}
+
+// The extra check's wait: stated + 120 s, only when at least 60 s, before the cap's end and earlier than the next check.
+function resetCheckS(statedS, nextWaitS, capLeftS) {
+  if (!Number.isInteger(statedS) || statedS < 0) return null;
+  const at = statedS + RESET_MARGIN_S;
+  return at >= 60 && at < capLeftS && at < nextWaitS ? at : null;
+}
+
 // A short hard wait, including zero, runs in the call only with a 60 second reserve.
 function shortHardWait(waitS, atMs, deadlineMs) {
   if (!(waitS >= 0 && waitS < 60)) return { waitS, inCall: false };
@@ -5440,13 +5484,13 @@ function logAttempt(n, rung, cycle, sid, status, rule, pattern, startedMs) {
 
 // One report line before the status line of every run that does not end ok. due_at is the
 // ISO-8601 UTC time (seconds) of a hint exit's wait end, `-` on every other stop.
-function logReport(status, cli, model, route, attempts, cycles, firstMs, lastMs, stopped, dueMs = 0, upstream = null) {
+function logReport(status, cli, model, route, attempts, cycles, firstMs, lastMs, stopped, dueMs = 0, upstream = null, check = '-') {
   const iso = (ms) => (ms ? new Date(ms).toISOString() : '-');
   const dueIso = (ms) => (ms ? new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z') : '-');
   log(`cross-ai: report status=${status} lane=${cli}/${model} route=${route || 'unknown'} ` +
     `attempts=${attempts} cycles=${cycles} first_failure=${iso(firstMs)} ` +
     `last_failure=${iso(lastMs)} due_at=${dueIso(dueMs)} stopped=${stopped} ` +
-    `upstream=${upstream?.body ? 'present' : '-'}`);
+    `upstream=${upstream?.body ? 'present' : '-'} check=${check}`);
 }
 
 function stoppedWhy(step, dirty) {
@@ -5595,6 +5639,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         attempts: loaded.attempts || 0, cycles: loaded.cycle || 0,
         retryAfterS: left, cycle: loaded.cycle || 0, stopped: 'rungs',
         dueAtMs: loaded.due_at,
+        check: ['first', 'periodic', 'reset'].includes(loaded.check) ? loaded.check : '-',
       };
     } else {
       cycleCount = (loaded.cycle || 0) + 1;
@@ -5605,6 +5650,8 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     }
   }
   let firstFailureMs = persisted ? persisted.first_seen : 0;
+  // One reset check per episode (D-11); every save carries it, because saveCycle rebuilds the record.
+  let resetCheck = persisted && Number.isFinite(persisted.reset_check) ? persisted.reset_check : null;
   let lastFailureMs = 0;
   let attempts = priorAttempts;
   // The label of the step that produced the attempt about to run: a reset starts a fresh
@@ -5631,7 +5678,8 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     try {
       writeCycleState(stateFile, {
         first_seen: ladder.firstMs, last_attempt_at: at, cycle: ladder.cycle,
-        attempts, last_sid: sid || null, task_digest: digest, ...record,
+        attempts, last_sid: sid || null, task_digest: digest,
+        ...(resetCheck === null ? {} : { reset_check: resetCheck }), ...record,
       });
       logState();
     } catch (e) {
@@ -5658,18 +5706,23 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       return {
         ok: false, status: cls, timedOut: false,
         outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(),
-        cycle: ladder.cycle, exit: 69, stopped: step.stop,
+        cycle: ladder.cycle, exit: 69, stopped: step.stop, check: '-',
       };
     }
     const plan = shortHardWait(step.retryAfterS, at, why === 'soft-spent' ? runDeadline : 0);
-    const waitS = plan.waitS;
+    let waitS = plan.waitS;
     const capLeftS = ladder.firstMs ? (ladder.firstMs + capMs - at) / 1000 : -1;
     if (waitS > capLeftS) {
       saveCycle(sid, at, { class: cls, stopped: 'cap', stopped_at: at, retry_after_s: null, due_at: null });
-      return { ok: false, status: cls, timedOut: false, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(), cycle: ladder.cycle, exit: 69, stopped: 'cap' };
+      return { ok: false, status: cls, timedOut: false, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(), cycle: ladder.cycle, exit: 69, stopped: 'cap', check: '-' };
+    }
+    let check = step.cycle < retryCfg.hard_waits_s.length ? 'first' : 'periodic';
+    if (resetCheck === null && !plan.inCall) {
+      const extra = resetCheckS(statedResetS(evidence.upstream?.fields, at), waitS, capLeftS);
+      if (extra !== null) { waitS = extra; check = 'reset'; resetCheck = at + extra * 1000; }
     }
     const dueAtMs = at + waitS * 1000;
-    const record = { class: cls, retry_after_s: waitS, due_at: dueAtMs };
+    const record = { class: cls, retry_after_s: waitS, due_at: dueAtMs, check };
     // The loop writes this only after its tree checks pass.
     if (plan.inCall) return { inCallS: waitS, cycle: step.cycle, at, record };
     saveCycle(sid, at, record);
@@ -5678,7 +5731,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(),
       retryAfterS: stateWritable ? waitS : undefined,
       dueAtMs: stateWritable ? dueAtMs : undefined,
-      cycle: step.cycle, exit: 75, stopped,
+      cycle: step.cycle, exit: 75, stopped, check: stateWritable ? check : '-',
     };
   };
   try {
@@ -7009,7 +7062,7 @@ async function main(argv) {
     attempts: r.attempts || 0, cycles: r.cycles || 0,
     retryAfterS: r.retryAfterS, cycle: r.cycle, reportDone: r.reportDone,
     firstFailureMs: r.firstFailureMs, lastFailureMs: r.lastFailureMs,
-    dueAtMs: r.dueAtMs,
+    dueAtMs: r.dueAtMs, check: r.check,
   };
   const why = r.stopped || (r.timedOut ? 'timeout' : 'class');
   // The snapshot reads against the finalize window, not the call deadline: an attempt may
@@ -7159,6 +7212,8 @@ export {
   forbiddenHits,
   groupMembers,
   hardWaitFor,
+  statedResetS,
+  resetCheckS,
   shortHardWait,
   idleBudgetNote,
   killGroup,
