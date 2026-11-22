@@ -3626,10 +3626,11 @@ function lockVerdict(rec, probe, ownRunId = null) {
   const runnerAlive = now !== null && (typeof rec.pid_start !== 'string' || rec.pid_start === '-' || now === '-' || now === rec.pid_start);
   if (runnerAlive) return 'held';
   if (probe.groupAlive(rec.child_pgid, rec.child_start)) return 'orphan';
+  if ((Number.isInteger(rec.launcher_pgid) || typeof rec.token === 'string') && probe.launcherAlive && probe.launcherAlive(rec)) return 'orphan';
   return 'stale';
 }
 function lockProbe() {
-  return { host: os.hostname(), alive: lockPidAlive, start: (pid) => lockStartTime(pid), groupAlive: (pgid, start) => lockGroupAlive(pgid, start) };
+  return { host: os.hostname(), alive: lockPidAlive, start: (pid) => lockStartTime(pid), groupAlive: (pgid, start) => lockGroupAlive(pgid, start), launcherAlive: (rec) => hostedLaunchAlive(rec) };
 }
 function lockSince(rec) {
   return Number.isFinite(rec?.started_ms) && Math.abs(rec.started_ms) <= 8.64e15 ? new Date(rec.started_ms).toISOString() : '-';
@@ -3637,6 +3638,18 @@ function lockSince(rec) {
 function lockHeldLine(rec) {
   const r = rec && typeof rec === 'object' ? rec : {};
   return `cross-ai: run lock held by pid ${lockText(r.pid)} (lane ${lockText(r.cli)}/${lockText(r.model)}, since ${lockSince(r)}); not starting`;
+}
+// 38 D-26: a refusal names a hosted holder's launcher group and tab (never the tab as liveness).
+function lockHostedLine(rec) {
+  if (!rec || (!Number.isInteger(rec.launcher_pgid) && typeof rec.token !== 'string')) return null;
+  return redactSecrets(redactSecrets(`cross-ai: lock: held by a hosted lane, launcher group ${lockText(rec.launcher_pgid ?? '-')}, herdr tab ${lockText(rec.tab_id ?? '-')}`).replace(/[\x00-\x1f\x7f-\x9f]/g, ''));
+}
+function hostedLaunchAlive(rec) {
+  if (Number.isInteger(rec.launcher_pgid)) return lockGroupAlive(rec.launcher_pgid, rec.launcher_start);
+  if (typeof rec.token !== 'string' || !/^[0-9a-f]{12}$/.test(rec.token)) return false;
+  const pidText = readOr(path.join(hostRunDir(path.resolve(stateHome()), rec.token), HOST_FILES.pid), '');
+  if (/^\d+\n?$/.test(pidText)) return lockPidAlive(Number(pidText)) && procGroup(Number(pidText)) === Number(pidText);
+  return !pidText && Number.isFinite(rec.host_ms) && Date.now() - rec.host_ms < HOST_PID_GRACE_MS;
 }
 function lockForeignLine(rec) {
   return `cross-ai: run lock held by pid ${lockText(rec.pid)} on host ${lockText(rec.host_name)} (lane ${lockText(rec.cli)}/${lockText(rec.model)}, since ${lockSince(rec)}); this host cannot probe it; not starting`;
@@ -3721,10 +3734,16 @@ async function acquireLock(root, lane) {
     if (seen.unreadable) return { ok: false, line: `cross-ai: run lock record ${lockText(file)} is unreadable (age ${seen.ageS}s); not cleared; not starting` };
     const verdict = lockVerdict(seen.rec, lockProbe(), record.run_id);
     if (verdict === 'own') { liveLock = { file, runId: record.run_id, record: seen.rec }; return { ok: true }; }
-    if (verdict === 'held') return { ok: false, line: lockHeldLine(seen.rec) };
+    if (verdict === 'held') return { ok: false, line: lockHeldLine(seen.rec), hosted: lockHostedLine(seen.rec) };
     if (verdict === 'foreign') return { ok: false, line: lockForeignLine(seen.rec) };
-    if (verdict === 'orphan') return { ok: false, line: `cross-ai: run lock: pid ${lockText(seen.rec.pid)} is gone but its child group ${lockText(seen.rec.child_pgid)} still runs; not starting` };
-    if (clearStaleLock(file, seen)) log(`cross-ai: stale run lock from pid ${lockText(seen.rec.pid)} (since ${lockSince(seen.rec)}) cleared`);
+    if (verdict === 'orphan') {
+      if (typeof seen.rec.token === 'string') return { ok: false, line: lockHostedLine(seen.rec) };
+      return { ok: false, line: `cross-ai: run lock: pid ${lockText(seen.rec.pid)} is gone but its child group ${lockText(seen.rec.child_pgid)} still runs; not starting` };
+    }
+    if (clearStaleLock(file, seen)) {
+      log(`cross-ai: stale run lock from pid ${lockText(seen.rec.pid)} (since ${lockSince(seen.rec)}) cleared`);
+      if (typeof seen.rec.token === 'string') await sweepRuns({ explicit: false, hostingOff: Boolean(lane.hostingOff), onlyToken: seen.rec.token });
+    }
   }
   return { ok: false, line: lockHeldLine(parseJson(readOr(file, ''))) };
 }
@@ -4317,6 +4336,7 @@ async function hostedChild(bin, argv, opts) {
     if (!HOST_ID_RX.test(paneId || '')) return startupEnd({ hostFailed: 'tab create failed (no pane id in its answer)', rerun: true });
     record = { ...made.record, tab_id: tabId, pane_id: paneId };
     writeCycleState(made.files.run, record);
+    lockUpdate({ token: made.record.token, tab_id: tabId, host_ms: Date.now() });
     log(`cross-ai: host herdr tab=${tabId} label=${made.label}`);
     typedSent = true;
     const typed = herdrCall('pane run', [paneId, hostTypedLine(made.files)]);
@@ -4376,6 +4396,8 @@ async function hostedChild(bin, argv, opts) {
       noteChildPgid('spawn', launcherPid);
       record = { ...record, launcher_pid: launcherPid, launcher_pgid: group, launcher_start: launcherStart };
       writeCycleState(made.files.run, record);
+      // 38 D-26: the lock record names the hosted lane's token, tab and launcher group (a review lane holds no lock: no-op).
+      lockUpdate({ token: made.record.token, tab_id: record.tab_id, launcher_pid: launcherPid, launcher_pgid: group, launcher_start: launcherStart });
     };
     const finalize = async (reason, rc = null) => {
       if (settled) return;
@@ -4492,7 +4514,7 @@ function readRunRecord(dir, token) {
 }
 
 // Claim dead runs, remove secrets, and close only a tab proven by the complete label.
-async function sweepRuns({ explicit, hostingOff }) {
+async function sweepRuns({ explicit, hostingOff, onlyToken = null }) {
   const root = path.join(path.resolve(stateHome()), 'ai-kit', 'spec', 'host');
   let names = [];
   try { names = fs.readdirSync(root).sort(); } catch { /* nothing to sweep */ }
@@ -4506,6 +4528,7 @@ async function sweepRuns({ explicit, hostingOff }) {
     const m = SWEEP_DIR_RX.exec(name);
     if (!m) continue;
     const [, token, claimPid, claimStart] = m;
+    if (onlyToken !== null && token !== onlyToken) continue;
     if (claimPid !== undefined) {
       const pid = Number(claimPid);
       if (lockPidAlive(pid)) { const start = lockStartTime(pid); if (claimStart === '-' || start === '-' || start === claimStart) continue; }
@@ -4703,6 +4726,25 @@ function inGitTree(cwd) {
   }
 }
 
+// 38 D-29: exclude only the runner's own state subtree, even when state home is the checkout.
+function stateExcludeRel(cwd) {
+  let base;
+  try { base = fs.realpathSync(cwd); } catch { return null; }
+  let probe = path.join(path.resolve(stateHome()), 'ai-kit', 'spec');
+  let rest = '', real = null;
+  while (real === null) {
+    try { real = path.join(fs.realpathSync(probe), rest); } catch {
+      const parent = path.dirname(probe);
+      if (parent === probe) return null;
+      rest = path.join(path.basename(probe), rest);
+      probe = parent;
+    }
+  }
+  const rel = path.relative(base, real);
+  if (rel === '' || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) return null;
+  return rel.split(path.sep).join('/');
+}
+
 async function treeState(cwd, limit, depth = 0, bg = null) {
   const git = which('git', process.env.PATH || '');
   if (!git) { gitFailure = { kind: 'error', what: 'not found' }; return null; }
@@ -4717,7 +4759,8 @@ async function treeState(cwd, limit, depth = 0, bg = null) {
   const idxDir = makeTemp('xai-idx-');
   const env = { ...process.env, GIT_INDEX_FILE: path.join(idxDir, 'index') };
   try {
-    const addR = await runChild(git, ['add', '-A'], { cwd, env, capMs: GIT_CAP_MS, limit, bg });
+    const ex = stateExcludeRel(cwd);
+    const addR = await runChild(git, ex ? ['add', '-A', '--', `:(exclude,literal)${ex}`] : ['add', '-A'], { cwd, env, capMs: GIT_CAP_MS, limit, bg });
     if (bg?.cancelled) return null;
     if (addR.timedOut || addR.spawnErr || addR.code !== 0) {
       gitFailed(addR, 'add -A'); return null;
@@ -4737,7 +4780,7 @@ async function treeState(cwd, limit, depth = 0, bg = null) {
       gitFailed(ignR, 'ls-files'); return null;
     }
     const ignHash = crypto.createHash('sha256');
-    for (const rel of ignR.stdout.split('\0').filter((r) => r && !r.endsWith('/')).sort()) {
+    for (const rel of ignR.stdout.split('\0').filter((r) => r && !r.endsWith('/') && !(ex && (r === ex || r.startsWith(ex + '/')))).sort()) {
       let sig = 'gone';
       try {
         const st = fs.lstatSync(path.join(cwd, rel));
@@ -6498,9 +6541,10 @@ async function main(argv) {
   await sweepRuns({ explicit: false, hostingOff: hostSettingValue(o.host, process.env.AIKIT_HOST).value === 'none' });
   const lockRoot = checkoutRoot(process.cwd());
   if (o.mode === 'exec') {
-    const got = await acquireLock(lockRoot, { cli: c.name, model: c.model });
+    const got = await acquireLock(lockRoot, { cli: c.name, model: c.model, hostingOff: hostSettingValue(o.host, process.env.AIKIT_HOST).value === 'none' });
     if (!got.ok) {
       log(got.line);
+      if (got.hosted) log(got.hosted);
       return reportAndFinish('locked', { ...liveFields, cli: c.name, model: c.model, tree: 'clean', exit: 75, cli_rc: '-', out: 0 });
     }
   } else if (lockSeen(lockRoot)) log('cross-ai: note: an execute run holds this checkout; the tree check may void this review');

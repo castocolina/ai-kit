@@ -1279,13 +1279,30 @@ const model = argOf('--model');
 const fakeMode = model.startsWith('fake/') ? model.slice(5).replace(/:[a-z]+$/, '') : '';
 const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('gc', pid); };
 const STICKY_FAKE = new Set([
-  'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'lockhold', 'big', 'sentinelsplit', 'hdrip', 'hcommit', 'hflood',
+  'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'lockhold', 'big', 'sentinelsplit', 'hdrip', 'hcommit', 'hflood', 'hstateloop',
   'limit-mid', 'limit-partial', 'limit-flood', 'limit-partial-flood', 'auth-then-noise',
   'transient-hang', 'bare-429-hang', 'retry-notice', 'retry-notice-429', 'slowquota',
   'capclamp', 'reason-code-hang', 'slow-lines', 'router-stop-hang', 'ticker', 'quiet-commit', 'quiet-edit', 'quiet-idle', 'chatty-nochange', 'quiet-gitfail', 'quiet-githang', 'review-slow', 'quiet-headonly', 'change-then-stall', 'githang-silent',
 ]);
 let stdinBuf = '';
 const FAKE_MODES = {
+  hstate: () => {
+    const base = (process.env.XDG_STATE_HOME || '.') + '/ai-kit/spec';
+    fs.mkdirSync(base + '/host/abcdefabcdef', { recursive: true });
+    fs.mkdirSync(base + '/locks', { recursive: true });
+    fs.writeFileSync(base + '/host/abcdefabcdef/out', 'o'.repeat(1000));
+    fs.writeFileSync(base + '/host/abcdefabcdef/run.log', 'l\n');
+    fs.writeFileSync(base + '/locks/k.json', '{}');
+    if (process.env.FAKE_HSTATE === 'edit') fs.appendFileSync('a.txt', 'hs\n');
+    if (process.env.FAKE_HSTATE === 'log') fs.writeFileSync('x.log', 'x\n');
+    process.stdout.write('# Summary\nok');
+  },
+  hstateloop: () => {
+    const dir = (process.env.XDG_STATE_HOME || '.') + '/ai-kit/spec/host/abcdefabcdef';
+    fs.mkdirSync(dir, { recursive: true });
+    let n = 0;
+    setInterval(() => fs.writeFileSync(dir + '/out', 'o'.repeat(++n)), 300);
+  },
   hflood: () => {
     const steps = [65536, 65536, 1, 65536], sizes = [];
     let i = 0;
@@ -1346,6 +1363,7 @@ const FAKE_MODES = {
     process.stdout.write('# Summary\nok');
   },
   ansi: () => { fs.appendFileSync('a.txt', 'x\n'); process.stdout.write('\x1B[0mDone.## Summary\nC# is fine. Use ## inline'); },
+  hscan: () => { const root = (process.env.XDG_STATE_HOME || '') + '/ai-kit/spec/host'; const names = new Set(); let found = false; const key = process.env.AIKIT_XAI_SENTINEL || ''; let dirs = []; try { dirs = fs.readdirSync(root); } catch { /* headless */ } for (const d of dirs) { for (const f of fs.readdirSync(root + '/' + d)) { names.add(f); try { if (key && fs.readFileSync(root + '/' + d + '/' + f, 'utf8').includes(key)) found = true; } catch { /* vanished */ } } } fs.appendFileSync((process.env.HOME || '.') + '/hscan.txt', 'files ' + [...names].sort().join(',') + '\nkey ' + (!key ? 'none' : found ? 'found' : 'absent') + '\n'); fs.appendFileSync('a.txt', 'hs\n'); process.stdout.write('# Summary\nok'); },
   nochange: () => { process.stdout.write('# Summary\nno edits'); },
   okwarn: () => {
     fs.appendFileSync('a.txt', 'w\n');
@@ -2292,6 +2310,8 @@ async function runTwice(spec, c, second) {
   const calls1 = fs.existsSync(c.calls)
     ? fs.readFileSync(c.calls, 'utf8').trim().split('\n').filter(Boolean) : [];
   fs.writeFileSync(c.calls, '');
+  // A pair that compares findings starts its second run from the first run's starting work tree.
+  spec.between?.(c);
   const again = await runCaseProcess({
     ...spec, args: second.args || c.args || spec.args, stdin: second.stdin ?? spec.stdin, exit: second.exit,
   }, c);
@@ -2581,7 +2601,7 @@ async function blackBoxSelfTest(listOnly = false) {
       const line = r.stderr.split('\n').filter((s) => s.startsWith('AIKIT-XAI ')).at(-1) || '';
       const fields = Object.fromEntries(line.split(' ').slice(1).map((s) => s.split('=')));
       const selected = {};
-      for (const key of 'status cli model exit cli_rc out tree route rule pattern attempts cycles session unknown escalate'.split(' ')) selected[key] = fields[key];
+      for (const key of 'status cli model exit cli_rc out tree route rule pattern attempts cycles session unknown escalate coverage findings'.split(' ')) selected[key] = fields[key];
       for (const key of ['applied', 'ignored']) selected[key] = (fields[key] || '-').split(',').filter((s) => s !== 'host' && s !== '-').join(',') || '-';
       return JSON.stringify(selected);
     };
@@ -2607,6 +2627,7 @@ async function blackBoxSelfTest(listOnly = false) {
       if (JSON.stringify(lines(both.first, 'cross-ai: argv=')) !== JSON.stringify(lines(both.again, 'cross-ai: argv='))) return 'argv lines differ';
       const settings = (r) => lines(r, 'cross-ai: setting ').filter((s) => !s.startsWith('cross-ai: setting host='));
       if (JSON.stringify(settings(both.first)) !== JSON.stringify(settings(both.again))) return 'settings lines differ';
+      if (JSON.stringify(lines(both.first, 'cross-ai: finding ')) !== JSON.stringify(lines(both.again, 'cross-ai: finding '))) return 'finding lines differ';
       if (statusFields(both.first) !== statusFields(both.again)) return `status fields differ: ${statusFields(both.first)} | ${statusFields(both.again)}`;
       if (both.first.stderr.includes(c.env.AIKIT_XAI_SENTINEL) || both.again.stderr.includes(c.env.AIKIT_XAI_SENTINEL)) return 'a key reached stderr';
       for (const name of extra.dead || []) for (const pid of recordedPids(c.pidFile)[name] || []) if (pidLingers(pid)) return `${name} ${pid} still alive`;
@@ -2617,9 +2638,15 @@ async function blackBoxSelfTest(listOnly = false) {
       if (!lines(both.first, 'cross-ai: host herdr tab=t1 label=aikit:execute:pi:').length) return 'no host line';
       return hostLogProblem(c, 1, extra.closeTail || '') || (extra.after ? extra.after(c) : null);
     };
+    // The headless run must see the hosted run's starting tree, or its uncommitted-edit findings differ; commits stay.
+    const hostPairReset = (c) => {
+      const env = hermeticEnv(c.tmp, { HOME: path.join(c.tmp, 'home-git') });
+      spawnSync('git', ['checkout', '-q', '--', '.'], { cwd: c.repo, env });
+      spawnSync('git', ['clean', '-fq'], { cwd: c.repo, env });
+    };
     const hostPair = (name, model, exit, status, extra = {}) => {
       const base = ['--runtime', 'pi', '--model', model, '--session-id', 'placeholder-sid-' + name, ...(extra.args || [])];
-      return { name, kind: 'runtime', args: [...base, '--host', 'auto'], env: { HERDR_ENV: '1', PATH: hostedPath, ...(extra.env || {}) }, exit, status, second: { args: [...base, '--host', 'none'], exit, status }, check: (both, c) => statusLineOk(both.first.stderr || '', status) || hostPairCheck(both, c, extra) };
+      return { name, kind: 'runtime', args: [...base, '--host', 'auto'], env: { HERDR_ENV: '1', PATH: hostedPath, ...(extra.env || {}) }, exit, status, second: { args: [...base, '--host', 'none'], exit, status }, between: hostPairReset, check: (both, c) => statusLineOk(both.first.stderr || '', status) || hostPairCheck(both, c, extra) };
     };
     const keptRecords = (c) => {
       const root = path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host');
@@ -10606,6 +10633,102 @@ async function blackBoxSelfTest(listOnly = false) {
         return null;
       } },
     ];
+
+    const cleanState = /^AIKIT-XAI status=no_change cli=pi model=fake\/hstate exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/;
+    const dirtyState = /^AIKIT-XAI status=ok cli=pi model=fake\/hstate exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/;
+    for (const [name, home, mode, exit, status] of [
+      ['state-inside-nochange', 'inside', '', 1, cleanState],
+      ['state-root-nochange', 'root', '', 1, cleanState],
+      ['state-inside-edit', 'inside', 'edit', 0, dirtyState],
+      ['state-inside-ignored', 'inside', 'log', 0, dirtyState],
+    ]) cases.push({ name, kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/hstate'], exit, status,
+      setup: (c) => {
+        fs.writeFileSync(path.join(c.repo, '.gitignore'), '*.log\n');
+        const env = hermeticEnv(c.tmp, { HOME: path.join(c.tmp, 'home-git') });
+        for (const args of [['add', '.gitignore'], ['commit', '-q', '-m', 'ignore']]) {
+          if (spawnSync('git', args, { cwd: c.repo, env }).status !== 0) return 'git setup failed';
+        }
+        c.env.XDG_STATE_HOME = home === 'root' ? c.repo : path.join(c.repo, 'st[x]');
+        c.env.FAKE_HSTATE = mode;
+        return null;
+      },
+      check: (r) => r.stderr.includes('reason=outside_plan_files') ? 'outside_plan_files reported' : null,
+    });
+    cases.push({ name: 'state-idle-expires', kind: 'runtime', args: ['--runtime', 'pi', '--model', 'fake/hstateloop', '--timeout', '20', '--idle-timeout', '2'], exit: 124,
+      status: /^AIKIT-XAI status=timeout cli=pi model=fake\/hstateloop exit=124 .* action=stop$/,
+      setup: (c) => { c.env.XDG_STATE_HOME = path.join(c.repo, 'st'); return null; },
+      check: (r) => r.stderr.includes('rule=idle-watchdog') ? null : 'idle watchdog missing',
+    });
+    const hostStateStatus = /^AIKIT-XAI status=no_change cli=pi model=fake\/nochange exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/;
+    for (const [name, root] of [['host-state-in-checkout', false], ['host-state-is-root', true]]) {
+      cases.push({ ...hostPair(name, 'fake/nochange', 1, hostStateStatus, { absent: ['reason=outside_plan_files'] }),
+        setup: (c) => { c.env.XDG_STATE_HOME = root ? c.repo : path.join(c.repo, 'st'); return null; } });
+    }
+
+    const killedHostedRun = (c, { keepLauncher }) => {
+      const out = fs.openSync(path.join(c.home, 'kill-out.txt'), 'w'), err = fs.openSync(path.join(c.home, 'kill-err.txt'), 'w');
+      const input = path.join(c.home, 'kill-input.txt'); fs.writeFileSync(input, 'prompt\n');
+      const infd = fs.openSync(input, 'r');
+      const child = spawn(process.execPath, [c.copy, '--runtime', 'pi', '--model', 'fake/hang', '--timeout', '60', '--host', 'auto'], { cwd: c.repo, env: c.env, stdio: [infd, out, err], detached: true });
+      fs.closeSync(infd); fs.closeSync(out); fs.closeSync(err);
+      caseRunners.add(child); child.once('exit', () => caseRunners.delete(child));
+      let rec, dir;
+      const deadline = Date.now() + 10000;
+      if (hostedUsable(c)) {
+        while (Date.now() < deadline) {
+          const names = hostDirNames(c);
+          if (names.length === 1) { dir = names[0]; try { rec = JSON.parse(fs.readFileSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host', dir, 'run.json'), 'utf8')); } catch { /* pending */ } }
+          if (Number.isInteger(rec?.launcher_pgid)) {
+            try { const locks = fs.readdirSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'locks')).filter((n) => n.endsWith('.json')); const lock = JSON.parse(fs.readFileSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'locks', locks[0]), 'utf8')); if (locks.length === 1 && lock.token === dir && lock.tab_id === 't1' && ['launcher_pid', 'launcher_pgid', 'launcher_start'].every((k) => lock[k] === rec[k])) break; } catch { /* pending */ }
+          }
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+        }
+      }
+      child.kill('SIGKILL');
+      if (hostedUsable(c) && Date.now() >= deadline) return 'hosted lock record missing';
+      if (keepLauncher && rec) {
+        const file = path.join(c.home, 'herdr-state.json'); const state = JSON.parse(fs.readFileSync(file, 'utf8')); state.tabs.t1.closed = true; fs.writeFileSync(file, JSON.stringify(state));
+        c.lockPgid = rec.launcher_pgid; c.lockDir = dir;
+      } else {
+        if (rec) { if (procStartTime(rec.launcher_pgid) !== rec.launcher_start || rec.launcher_start === '-') return 'launcher identity changed'; try { process.kill(-rec.launcher_pgid, 'SIGKILL'); } catch { /* gone */ } }
+        const pids = pidsUnder(c.repo).filter((pid) => procStartTime(pid) !== '-');
+        for (const pid of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+        const end = Date.now() + 3000;
+        while (pids.some(pidAlive) && Date.now() < end) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+        if (pids.some(pidAlive)) return 'lane lingers';
+      }
+      return null;
+    };
+    for (const live of [false, true]) cases.push({ name: live ? 'host-lock-live-group' : 'host-lock-stale-swept', kind: 'runtime', keepsTmp: true,
+      args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'auto'], env: { HERDR_ENV: '1', PATH: hostedPath }, exit: live && hostedHere ? 75 : 0,
+      status: live && hostedHere ? /^AIKIT-XAI status=locked cli=pi model=fake\/ok exit=75 .* action=stop$/ : /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+      setup: (c) => killedHostedRun(c, { keepLauncher: live }),
+      check: (r, c) => {
+        if (!hostedUsable(c)) return r.stderr.includes('cross-ai: lock: held by a hosted lane') ? 'unexpected hosted lock' : null;
+        const calls = hostCalls(c); const safety = hostSafety(calls); if (safety) return safety;
+        if (live) {
+          if (!r.stderr.split('\n').includes(`cross-ai: lock: held by a hosted lane, launcher group ${c.lockPgid}, herdr tab t1`)) return 'hosted refusal';
+          if (!r.stderr.includes('cross-ai: sweep: closed 0 tab(s), removed 0 run director(ies), kept 1 (live launcher 1)')) return 'live sweep';
+          if (calls.filter((a) => a[0] === 'tab' && a[1] === 'create').length !== 1 || calls.some((a) => a[0] === 'tab' && a[1] === 'close') || JSON.stringify(hostDirNames(c)) !== JSON.stringify([c.lockDir]) || c.calls.includes('pi ok')) return 'live lane touched';
+        } else {
+          if (!r.stderr.includes('cross-ai: stale run lock from pid ') || !r.stderr.includes('cross-ai: sweep: closed 1 tab(s), removed 1 run director(ies), kept 0 (-)')) return 'stale sweep';
+          if (calls.filter((a) => JSON.stringify(a) === '["tab","close","t1"]').length !== 1 || hostDirNames(c).length || !fakeTabs(c).t1?.closed || !fakeTabs(c).t2?.closed) return 'stale cleanup';
+        }
+        return null;
+      },
+    });
+    const findingsPair = hostPair('host-findings-partial', 'fake/plan-commit', 1, /^AIKIT-XAI status=partial cli=pi model=fake\/plan-commit exit=1 .* action=stop$/, { args: ['--role', 'execute'] });
+    cases.push({ ...findingsPair, stdin: planPrompt([['t1', 'one.txt'], ['t2', 'two.txt'], ['t3', 'three.txt']]), env: { ...findingsPair.env, FAKE_PLAN: JSON.stringify({ commits: [all3[0]] }) } });
+    cases.push({ name: 'host-key-scan', kind: 'runtime', args: ['--runtime', 'pi', '--model', 'fake/hscan', '--host', 'auto'], env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0,
+      status: /^AIKIT-XAI status=ok cli=pi model=fake\/hscan exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+      check: (r, c) => {
+        if (!hostedUsable(c)) return hostFailedOnly(r, c);
+        const text = readOr(path.join(c.home, 'hscan.txt'), ''); const lines = text.trimEnd().split('\n'); const names = (lines[0] || '').slice(6).split(',');
+        if (!c.env.AIKIT_XAI_SENTINEL || !lines[0]?.startsWith('files ') || !names.includes('out') || !names.includes('run.json') || names.includes('env') || names.includes('prompt') || lines[1] !== 'key absent') return `hscan ${JSON.stringify(text)}`;
+        if (r.stderr.includes(c.env.AIKIT_XAI_SENTINEL)) return 'a key reached stderr';
+        return stateKeyLeft(c) || hostLogProblem(c, 1);
+      },
+    });
 
     const unkinded = cases.filter((c) => c.kind !== 'logic' && c.kind !== 'runtime').map((c) => c.name);
     if (unkinded.length) {
