@@ -396,7 +396,9 @@ class SelfTestCeilingPins(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.text = TEMPLATE.read_text(encoding="utf-8")
+        # 38-08: the harness lives beside the runner; the pins read both files.
+        sibling = TEMPLATE.with_name("cross-ai-selftest.mjs")
+        cls.text = TEMPLATE.read_text(encoding="utf-8") + "\n" + sibling.read_text(encoding="utf-8")
 
     def test_every_elapsed_ceiling_is_scaled(self):
         self.assertEqual(unscaled_ceilings(self.text), [])
