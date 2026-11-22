@@ -39,9 +39,9 @@ only, never a request).
 
 These are this CLI's exits. The rendered runner (`cross-ai.mjs`) has its own; read its stop from
 the `AIKIT-XAI` line's `status=`, never from the exit code alone: 1 covers `git_error`,
-`git_timeout`, `crash`, `no_change`, `empty_answer` and `contract_violation`; 2 `usage`,
-`no_model`, `empty_stdin`; 69 a terminal stop; 75 quota or transient (with `retry_after_s=` the
-hard tier, bare an owner stop); 124 `timeout`; 127
+`git_timeout`, `crash`, `no_change`, `empty_answer`, `contract_violation` and `partial`; 2 `usage`,
+`no_model`, `empty_stdin`; 69 a terminal stop; 75 quota, transient or `locked` (with `retry_after_s=` the
+hard tier, bare an owner stop, as `locked` always is); 124 `timeout` (the deadline or the idle watchdog); 127
 `not_installed` (the runner's stop, not a missing shell command); 128+N `signal`.
 
 ## Resolve the entrypoint
@@ -109,12 +109,12 @@ python3 "$ENTRYPOINT" recommend --inventory "$WORK/inventory.json" --profile <pr
    `effect`/unverified flag, and the plan's `router_backed` value per runner. `router_backed` is
    what authorizes a router lane's quota cycles, and a name-only guess does not. `recommend` sets
    it from the inventory: a candidate whose `is_router` and `router_confirmed` are both true (and
-   whose declared purpose is `execute`) starts that runner at `true`. There is no key to edit it
+   whose declared purpose is `execute`) starts that runner at `true`. `router_confirmed` is true when the router fallback is owner-stated, or assumed for an alias that follows the owner's router naming convention; a judged hint never confirms it, and an owner `false` wins. There is no key to edit it
    directly. Re-picking a model with `plan-set script:cross-ai.model.<runner>` recomputes it from
    that same inventory rule, so re-picking the confirmed router keeps it `true` and re-picking a
    direct model sets it `false`. Resolve each choice with `plan-set` or decline it with
    `plan-unset` — never skip one. Values are JSON for lists, booleans and numbers
-   (`'["ponytail"]'`, `true`, `1800`) and bare text for strings. An `agent_skills.<agent>`
+   (`'["ponytail"]'`, `true`, `1800`) and bare text for strings. A `workflow.cross_ai_timeout` that is not an integer of at least 1800 is replaced by 1800; its plan entry shows the current value beside the new one, and its reason says why the current value is refused. An `agent_skills.<agent>`
    value is that agent's whole list.
 
 ```bash
@@ -304,18 +304,13 @@ than `ok` comes up.
     Any other healthy reference (a namespaced `global:<plugin>:<name>`, a project path
     outside `skills/`, a `global:<name>` a project copy would shadow) is named for an
     explicit decision, never dropped or switched.
-- **Refusals `--force` cannot bypass:** `plan-set` and `plan-unset` refuse an `agent_skills`
-  entry gsd-core would skip, and `apply` and `apply --dry-run` refuse such a plan
-  (hand-edited included) before any write. What is checked:
-  - a kept `global:<name>`: live, as gsd-core checks it (the host skills dir entry exists and
-    holds a SKILL.md whose realpath is inside the host skills dir or an effective trusted
-    root, `~/` expanded and symlinks resolved);
-  - a kept project path: relative, inside the project, with a SKILL.md;
-  - a kept `global:` name outside gsd-core's grammar, or a namespaced one on a non-claude
-    host: skipped;
-  - a newly wired entry: against the inventory snapshot only, where a configured root is
-    compared as written (a root reached through a symlink needs its real path). Re-run
-    `inventory` after skills move.
+- **Refusals `--force` cannot bypass:** `apply` and `apply --dry-run` refuse a plan
+  (hand-edited included) holding an `agent_skills` entry gsd-core would skip, before any write;
+  `plan-set` and `plan-unset` only print a note that this check runs at apply. What is checked:
+  each kept or newly wired entry, by the project's own gsd-core (its `buildAgentSkillsBlock`,
+  called once per reference): an entry whose block comes back empty is refused as gsd-core would
+  skip it, with gsd-core's warning as the cause. With no project-local gsd-core, on pi, or when
+  gsd-core cannot answer, the check is skipped with a named note.
 - Unknown installed skills get capped proposals (one per name, wireable only) — never
   auto-install or auto-wire them.
 - **Jev session gate:** inventory detects the jev (System One) backend, `system_one_backend`, by a TCP
