@@ -591,71 +591,6 @@ def effective_trusted_roots(plan: dict, inv: dict) -> list[str]:
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
-def _root_covers(path: str, root: str) -> bool:
-    """gsd-core's containment: both realpaths exist and ``path`` stays inside ``root``.
-
-    Like gsd-core (``loadTrustedGlobalRoots``), ``~``/``~/`` expand against the home dir, a
-    root that is not absolute after expansion is dropped, and the filesystem root and the
-    home dir itself are too broad to trust."""
-    if root == "~" or root.startswith("~/"):
-        root = os.path.expanduser(root)
-    if not os.path.isabs(root):
-        return False
-    root_real, path_real = skill_scan._real(root), skill_scan._real(path)  # pylint: disable=protected-access
-    if root_real in (os.path.abspath(os.sep), skill_scan._real(os.path.expanduser("~"))):  # pylint: disable=protected-access
-        return False
-    return (
-        root_real is not None
-        and path_real is not None
-        and skill_scan._inside(path_real, root_real)  # pylint: disable=protected-access
-    )
-
-
-def _live_global_problem(name: str, inv: dict, roots: list[str]) -> str | None:
-    """Why a kept ``global:<name>`` no longer resolves the way inventory recorded it.
-
-    Re-reads the host skills dir: the entry must exist, hold a ``SKILL.md``, and that file's
-    realpath must sit inside the host skills dir or an effective trusted root (gsd-core's
-    rule). None when it still resolves, or when inventory recorded no host skills dir.
-    """
-    skills_dir = skills_mod.host_skills_dir(inv)
-    if skills_dir is None:
-        return None
-    skill_md = os.path.join(skills_dir, name, "SKILL.md")
-    if not os.path.isfile(skill_md):
-        return f"{name}: the host skills dir no longer holds its SKILL.md"
-    if _root_covers(skill_md, skills_dir) or any(_root_covers(skill_md, r) for r in roots):
-        return None
-    return (
-        f"{name}: its SKILL.md realpath is outside the host skills dir and no trusted root "
-        "covers it"
-    )
-
-
-# gsd-core's accepted global skill name: [A-Za-z0-9_-]+ segments joined by single colons.
-_GLOBAL_NAME_RE = re.compile(r"[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*")
-
-
-def _kept_global_skip(item: str, inv: dict, roots: list[str]) -> tuple[str, str] | None:
-    """A kept ``global:`` ref gsd-core skips: a name outside gsd-core's grammar, a bare
-    ``global:<name>`` judged live against the filesystem (gsd-core's own check, which
-    resolves symlinked roots; the inventory's lexical verdict only when inventory recorded no
-    host skills dir), or a namespaced ``global:<plugin>:<name>`` on a non-claude host."""
-    name = item[len("global:"):]
-    if not _GLOBAL_NAME_RE.fullmatch(name):
-        return name, f"global:{name} is not a valid gsd-core skill name"
-    if item.count(":") == 1:
-        if skills_mod.host_skills_dir(inv) is not None:
-            cause = _live_global_problem(name, inv, roots)
-        else:
-            cause = skills_mod.global_ref_skip_reason(name, inv, roots)
-        return (name, cause) if cause else None
-    if inv.get("host") != "claude":
-        name = item[len("global:"):]
-        return name, f"global:{name} is namespaced and gsd-core skips it on a non-claude host"
-    return None
-
-
 class SkillCheck(NamedTuple):
     """What apply binds before gsd-core's skill check runs (38 D-20): node, the
     project-local gsd-tools.cjs, apply's GSD environment with the inventory's HOME,
@@ -764,76 +699,6 @@ def gsd_skill_verdicts(
     return parsed, None
 
 
-def _project_root_of(inv: dict) -> str | None:
-    """The project dir the inventory was taken for: the parent of its ``.planning`` dir."""
-    recorded = (inv.get("existing_config") or {}).get("path")
-    if not isinstance(recorded, str) or not recorded:
-        return None
-    # The lexical path first: a symlinked .planning or config.json realpaths elsewhere.
-    for start in (os.path.abspath(recorded), os.path.realpath(recorded)):
-        probe = os.path.dirname(start)
-        while os.path.basename(probe) != ".planning":
-            parent = os.path.dirname(probe)
-            if parent == probe:
-                break
-            probe = parent
-        else:
-            return os.path.dirname(probe)
-    return None
-
-
-def _project_ref_skip_reason(ref: str, inv: dict) -> tuple[str, str] | None:
-    """gsd-core's rule for a project-relative reference (any path without the ``global:``
-    prefix, ``skills/<name>`` included): the skill directory must resolve inside the project
-    and hold a SKILL.md (``SKILL.md`` itself is not resolved). ``(name, cause)`` when it
-    would be skipped, else None; ``name`` is the bare name for ``skills/<name>``, else the
-    path."""
-    tail = ref[len("skills/"):] if ref.startswith("skills/") else ""
-    name = tail if tail and "/" not in tail and tail not in (".", "..") else ref
-    if os.path.isabs(ref):
-        return name, f"{name}: gsd-core takes only a project-relative path, not {ref}"
-    project = _project_root_of(inv)
-    if project is None:
-        return name, f"{name}: the inventory records no project to confine it to"
-    skill_dir = os.path.join(project, ref)
-    if skill_scan._escapes_project(skill_dir, project):  # pylint: disable=protected-access
-        return name, f"{name}: {ref} resolves outside the project"
-    if not os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
-        return name, f"{name}: no SKILL.md at {ref}"
-    return None
-
-
-def _kept_skip(item: str, inv: dict, roots: list[str]) -> tuple[str, str] | None:
-    """(name, cause) when a kept config reference is one gsd-core skips; None otherwise."""
-    if item.startswith("global:"):
-        return _kept_global_skip(item, inv, roots)
-    return _project_ref_skip_reason(item, inv)
-
-
-def _skipped_items(entry: dict, inv: dict, roots: list[str]) -> list[tuple[str, str]]:
-    """(bare name, cause) for each item gsd-core would skip; not-installed names are apply's
-    own refusal. A kept entry is checked both as ``global:<name>`` and as ``skills/<name>``
-    (a project copy must resolve inside the project and hold a SKILL.md)."""
-    value = entry_effective_value(entry)
-    items = [value] if isinstance(value, str) else value if isinstance(value, list) else []
-    found: list[tuple[str, str]] = []
-    for item in items:
-        if not isinstance(item, str):
-            continue
-        if entry.get("op") == "set":
-            # shortcut: a newly wired name is checked against the inventory snapshot only;
-            # re-run inventory after the filesystem changes (kept refs are revalidated live)
-            cause = skills_mod.skip_reason(item, inv, roots)
-            skipped = (item, cause) if cause and cause != skills_mod.NOT_INSTALLED else None
-        elif entry.get("op") == "keep":
-            skipped = _kept_skip(item, inv, roots)
-        else:
-            skipped = None
-        if skipped:
-            found.append(skipped)
-    return found
-
-
 def _candidate_refs(entry: dict, inv: dict) -> list[tuple[str, str]]:
     value = entry_effective_value(entry)
     items = [value] if isinstance(value, str) else value if isinstance(value, list) else []
@@ -917,13 +782,6 @@ def _kept_names(items: list, skipped: list[str], inv: dict) -> tuple[list[str], 
     return keep, note
 
 
-def _skip_message(entry: dict, inv: dict, roots: list[str]) -> str | None:
-    skipped = _skipped_items(entry, inv, roots)
-    if not skipped:
-        return None
-    return _skip_text(entry, inv, roots, skipped)
-
-
 def _skip_text(entry: dict, inv: dict, roots: list[str], skipped: list[tuple[str, str]]) -> str:
     key = entry["key"]
     names = [name for name, _cause in skipped]
@@ -940,23 +798,6 @@ def _skip_text(entry: dict, inv: dict, roots: list[str], skipped: list[tuple[str
         f"{key}: gsd-core would skip {', '.join(names)} ({causes}); fix: "
         + " or ".join(fixes) + note
     )
-
-
-def skipped_skill_problem(plan: dict, inv: dict, keys: set[str] | None = None) -> str | None:
-    """A decided agent_skills entry gsd-core would skip, with cause and fix; None when none.
-    Plan edits and apply both call this; it is not reachable through ``--force``."""
-    roots = effective_trusted_roots(plan, inv)
-    messages: list[str] = []
-    for entry in plan.get("entries") or []:
-        key = entry.get("key")
-        if not (isinstance(key, str) and key.startswith("agent_skills.")):
-            continue
-        if entry.get("status") == "needs_choice" or (keys is not None and key not in keys):
-            continue
-        message = _skip_message(entry, inv, roots)
-        if message:
-            messages.append(message)
-    return "; ".join(messages) or None
 
 
 def _recorded_skills_base(inv: dict, base: dict, refs: list[str]) -> str | None:

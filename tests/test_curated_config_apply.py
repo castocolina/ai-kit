@@ -2902,71 +2902,8 @@ class TestWritePathDiscipline(unittest.TestCase):
         self.assertEqual(_apply_write_path_findings(allowed), [])
 
 
-class TestLiveRootCoverage(unittest.TestCase):
-    """The live re-check reads trusted roots the way gsd-core does (``~/`` expanded, the
-    home dir, the filesystem root and relative roots never trusted)."""
-
-    def _tree(self, tmp):
-        home = os.path.join(tmp, "home")
-        kit = os.path.join(home, "kit", "skills", "jev")
-        host = os.path.join(home, ".claude", "skills")
-        os.makedirs(kit)
-        os.makedirs(host)
-        with open(os.path.join(kit, "SKILL.md"), "w", encoding="utf-8") as handle:
-            handle.write("---\n---\n# skill\n")
-        os.symlink(kit, os.path.join(host, "jev"))
-        inv = {"host": "claude", "gsd_core": {"skills_roots": {"claude": host}}}
-        return home, host, inv
-
-    def test_home_relative_root_covers_a_linked_skill(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            home, host, inv = self._tree(tmp)
-            skill_md = os.path.join(host, "jev", "SKILL.md")
-            with mock.patch.dict(os.environ, {"HOME": home}):
-                self.assertTrue(plan_io._root_covers(skill_md, "~/kit/skills"))
-                self.assertIsNone(plan_io._live_global_problem("jev", inv, ["~/kit/skills"]))
-                self.assertIsNotNone(plan_io._live_global_problem("jev", inv, []))
-
-    def test_too_broad_or_relative_roots_never_cover(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            home, host, _inv = self._tree(tmp)
-            skill_md = os.path.join(host, "jev", "SKILL.md")
-            with mock.patch.dict(os.environ, {"HOME": home}):
-                for root in ("~", "~/", home, os.sep, "kit/skills"):
-                    with self.subTest(root=root):
-                        self.assertFalse(plan_io._root_covers(skill_md, root))
-
-
 class TestLiveReferenceChecks(unittest.TestCase):
-    """Skill-judge round 3: every project path is checked like gsd-core does, a newly wired
-    reference is revalidated live, and the printed fix never switches or drops a healthy
-    reference."""
-
-    def _project(self, tmp, symlinked=False):
-        project = os.path.join(tmp, "project")
-        real_planning = os.path.join(tmp, "real-planning")
-        os.makedirs(project)
-        planning = os.path.join(project, ".planning")
-        if symlinked:
-            os.makedirs(real_planning)
-            os.symlink(real_planning, planning)
-        else:
-            os.makedirs(planning)
-        for rel in (".claude/skills/house", "skills/proj"):
-            os.makedirs(os.path.join(project, rel))
-            with open(os.path.join(project, rel, "SKILL.md"), "w", encoding="utf-8") as handle:
-                handle.write("---\n---\n# skill\n")
-        inv = {"existing_config": {"path": os.path.join(planning, "config.json")}}
-        return project, inv
-
-    def test_any_project_path_follows_gsd_cores_rule(self) -> None:
-        for symlinked in (False, True):
-            with self.subTest(symlinked=symlinked), tempfile.TemporaryDirectory() as tmp:
-                _project, inv = self._project(tmp, symlinked)
-                self.assertIsNone(plan_io._project_ref_skip_reason(".claude/skills/house", inv))
-                self.assertIsNone(plan_io._project_ref_skip_reason("skills/proj", inv))
-                self.assertIsNotNone(plan_io._project_ref_skip_reason("../outside/x", inv))
-                self.assertIsNotNone(plan_io._project_ref_skip_reason("skills/missing", inv))
+    """The printed fix identifies references that cannot round-trip."""
 
     def test_printed_fix_names_refs_that_cannot_round_trip(self) -> None:
         inv = {"skills": [
@@ -2986,37 +2923,12 @@ class TestLiveReferenceChecks(unittest.TestCase):
 
 
 class TestRoundFiveReferenceChecks(unittest.TestCase):
-    """Skill-judge round 4: bare names survive the printed fix, kept globals are judged by
-    the live (symlink-resolving) check, and names and paths follow gsd-core's grammar."""
+    """Bare names survive the printed fix."""
 
     def test_bare_names_survive_the_printed_fix(self) -> None:
         keep, note = plan_io._kept_names(["jev", "ponytail"], ["jev"], {"skills": []})
         self.assertEqual(keep, ["ponytail"])
         self.assertEqual(note, "")
-
-    def test_kept_global_covered_through_a_symlinked_root(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            store = os.path.join(tmp, "store", "skills", "foo")
-            os.makedirs(store)
-            with open(os.path.join(store, "SKILL.md"), "w", encoding="utf-8") as handle:
-                handle.write("---\n---\n# skill\n")
-            os.symlink(os.path.join(tmp, "store"), os.path.join(tmp, "link"))
-            host = os.path.join(tmp, "host-skills")
-            os.makedirs(host)
-            os.symlink(store, os.path.join(host, "foo"))
-            inv = {"host": "claude", "gsd_core": {"skills_roots": {"claude": host}},
-                   "skills": []}
-            root = os.path.join(tmp, "link", "skills")
-            self.assertIsNone(plan_io._kept_global_skip("global:foo", inv, [root]))
-            self.assertIsNotNone(plan_io._kept_global_skip("global:foo", inv, []))
-
-    def test_malformed_global_names_and_absolute_paths_are_skipped(self) -> None:
-        inv = {"host": "claude"}
-        for ref in ("global:plugin::skill", "global:plugin:bad.name", "global:a/b"):
-            with self.subTest(ref=ref):
-                self.assertIsNotNone(plan_io._kept_global_skip(ref, inv, []))
-        self.assertIsNotNone(plan_io._project_ref_skip_reason("/abs/skills/x", inv))
-
 
 if __name__ == "__main__":
     unittest.main()

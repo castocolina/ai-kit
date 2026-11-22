@@ -1195,30 +1195,13 @@ class TestPlanUnset(unittest.TestCase):
             keys = [e["key"] for e in reloaded["entries"]]
             self.assertEqual(keys, sorted(keys))
 
-    def test_decline_trusted_roots_refused_until_dependents_dropped(self):
+    def test_decline_trusted_roots_defers_to_apply(self):
         key = "agent_skills_security.trusted_global_roots"
         with tempfile.TemporaryDirectory() as tmp:
-            inv_path, plan_path, _inv, plan = _write_pair(tmp)
-            raw = _read_bytes(plan_path)
-            holders = [
-                e["key"] for e in plan["entries"]
-                if e["key"].startswith("agent_skills.") and "react-dev" in (e["value"] or [])
-            ]
-            self.assertTrue(holders)
-            code, _, err = _run_plan_unset(plan_path, inv_path, key)
-            self.assertEqual(code, 2, err)
-            self.assertEqual(_read_bytes(plan_path), raw)
-            for holder in holders:
-                self.assertIn(holder, err)
-            commands = re.findall(r"plan-set (agent_skills\.[\w-]+) ('\[[^']*\]')", err)
-            self.assertEqual({k for k, _ in commands}, set(holders))
-            for holder, payload in commands:
-                code, _, err = _run_plan_set(
-                    plan_path, inv_path, holder, shlex.split(payload)[0]
-                )
-                self.assertEqual(code, 0, err)
+            inv_path, plan_path, _inv, _plan = _write_pair(tmp)
             code, _, err = _run_plan_unset(plan_path, inv_path, key)
             self.assertEqual(code, 0, err)
+            self.assertIn("the skipped-skill check runs at apply", err)
             reloaded, _ = plan_io.load_plan(plan_path)
             assert reloaded is not None
             row = next(e for e in reloaded["entries"] if e["key"] == key)
@@ -1227,9 +1210,8 @@ class TestPlanUnset(unittest.TestCase):
             self.assertEqual(row["source"], "user")
             self.assertNotIn("status", row)
 
-    def test_unset_keeping_skipped_project_skill_refused(self):
-        """A kept skills/<name> that escapes the project, or whose SKILL.md is missing,
-        is refused before plan-unset writes."""
+    def test_unset_keeping_skipped_project_skill_defers_to_apply(self):
+        """Project skill validation is deferred until apply."""
         with tempfile.TemporaryDirectory() as tmp:
             inv_path, plan_path, inv, plan = _write_pair(tmp)
             project = os.path.join(tmp, "project")
@@ -1249,13 +1231,11 @@ class TestPlanUnset(unittest.TestCase):
                 with self.subTest(ref=ref):
                     entry["op"], entry["existing"] = "set", [ref, "skills/keepme"]
                     _save_plan(plan_path, inv, plan)
-                    raw = _read_bytes(plan_path)
                     code, _, err = _run_plan_unset(plan_path, inv_path, entry["key"])
-                    self.assertEqual(code, 2, err)
-                    self.assertIn(ref.split("/")[1], err)
-                    self.assertEqual(_read_bytes(plan_path), raw)
+                    self.assertEqual(code, 0, err)
+                    self.assertIn("the skipped-skill check runs at apply", err)
 
-    def test_unset_agent_skills_holding_skipped_global_ref_refused(self):
+    def test_unset_agent_skills_holding_skipped_global_ref_defers_to_apply(self):
         with tempfile.TemporaryDirectory() as tmp:
             _inv_path, _plan_path, inv, plan = _write_pair(tmp)
             plan["entries"] = [
@@ -1267,11 +1247,12 @@ class TestPlanUnset(unittest.TestCase):
                 with self.subTest(ref=ref):
                     entry["op"], entry["existing"] = "set", [ref, "skills/keepme"]
                     call = plan_edit.EditCall(plan, inv, False, _strict_encode())
-                    with self.assertRaisesRegex(
-                        plan_edit.PlanEditError, r"plan-set agent_skills\.gsd-executor"
-                    ) as ctx:
-                        plan_edit.plan_unset(call, "agent_skills.gsd-executor")
-                    self.assertIn(ref.split(":")[1], str(ctx.exception))
+                    stderr = io.StringIO()
+                    with redirect_stderr(stderr):
+                        updated, _ = plan_edit.plan_unset(call, "agent_skills.gsd-executor")
+                    self.assertIn("the skipped-skill check runs at apply", stderr.getvalue())
+                    row = next(e for e in updated["entries"] if e["key"] == entry["key"])
+                    self.assertEqual(row["value"], entry["existing"])
 
     def test_kept_namespaced_ref_not_reduced_to_a_bare_name(self):
         """A kept global:<plugin>:<name> cannot round-trip through a bare name: the printed
@@ -1287,9 +1268,14 @@ class TestPlanUnset(unittest.TestCase):
             entry["op"] = "set"
             entry["existing"] = ["global:react-dev", "global:ponytail:ponytail"]
             call = plan_edit.EditCall(plan, inv, False, _strict_encode())
-            with self.assertRaises(plan_edit.PlanEditError) as ctx:
-                plan_edit.plan_unset(call, "agent_skills.gsd-executor")
-            message = str(ctx.exception)
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                updated, _ = plan_edit.plan_unset(call, "agent_skills.gsd-executor")
+            self.assertIn("the skipped-skill check runs at apply", stderr.getvalue())
+            entry = next(e for e in updated["entries"] if e["key"] == entry["key"])
+            message = plan_io._skip_text(
+                entry, inv, [], [("react-dev", "react-dev: no trusted root")]
+            )
             self.assertIn("decide it explicitly", message)
             self.assertIn("ponytail:ponytail", message)
             matched = re.search(
@@ -1337,8 +1323,13 @@ class TestPlanUnset(unittest.TestCase):
                  "escapes_root": n == "b", "addressable": True, "description": ""}
                 for n in ("a", "b")
             ]
-            message = plan_io.skipped_skill_problem(plan, inv)
-            assert message is not None
+            call = plan_edit.EditCall(plan, inv, False, _strict_encode())
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                updated, _ = plan_edit.plan_unset(call, entry["key"])
+            self.assertIn("the skipped-skill check runs at apply", stderr.getvalue())
+            entry = next(e for e in updated["entries"] if e["key"] == entry["key"])
+            message = plan_io._skip_text(entry, inv, [], [("b", "b: escapes the skills dir")])
             self.assertIn("b", message)
             matched = re.search(
                 r"plan-set agent_skills\.gsd-executor ('\[[^']*\]')", message
@@ -1465,7 +1456,7 @@ class TestExecutionToggle(unittest.TestCase):
 
 
 class TestSkippedSkillRefusals(unittest.TestCase):
-    def test_trusted_roots_without_needed_root_refused_even_forced(self):
+    def test_trusted_roots_without_needed_root_defers_to_apply_even_forced(self):
         key = "agent_skills_security.trusted_global_roots"
         with tempfile.TemporaryDirectory() as tmp:
             inv_path, plan_path, inv, plan = _write_pair(tmp)
@@ -1479,16 +1470,17 @@ class TestSkippedSkillRefusals(unittest.TestCase):
             with open(inv_path, "w", encoding="utf-8") as handle:
                 handle.write(plan_io.canonical_json(inv))
             _save_plan(plan_path, inv, plan)
-            raw = _read_bytes(plan_path)
             for force in (False, True):
                 code, _, err = _run_plan_set(plan_path, inv_path, key, json.dumps([vault]),
                                              force=force)
-                self.assertEqual(code, 2, err)
-                self.assertEqual(_read_bytes(plan_path), raw)
-            code, _, err = _run_plan_set(plan_path, inv_path, key, json.dumps([vault]),
-                                         force=True)
-            self.assertIn("react-dev", err)
-            self.assertIn("~/.local/share/ai-kit/skills", err)
+                self.assertEqual(code, 0, err)
+                self.assertIn("the skipped-skill check runs at apply", err)
+            entry = next(e for e in plan["entries"] if e["key"] == "agent_skills.gsd-executor")
+            message = plan_io._skip_text(
+                entry, inv, [vault], [("react-dev", "react-dev: no trusted root")]
+            )
+            self.assertIn("plan-set agent_skills_security.trusted_global_roots", message)
+            self.assertIn("~/.local/share/ai-kit/skills", message)
 
     def test_agent_skills_with_declined_root_names_the_trusted_roots_fix(self):
         key = "agent_skills_security.trusted_global_roots"
@@ -1502,12 +1494,18 @@ class TestSkippedSkillRefusals(unittest.TestCase):
                 elif entry["key"].startswith("agent_skills."):
                     entry["value"] = [n for n in entry["value"] if n != "react-dev"]
             call = plan_edit.EditCall(plan, inv, True, _strict_encode())
-            with self.assertRaises(plan_edit.PlanEditError) as ctx:
-                plan_edit.plan_set(call, "agent_skills.gsd-executor", '["react-dev"]')
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                updated, _ = plan_edit.plan_set(call, "agent_skills.gsd-executor", '["react-dev"]')
+            self.assertIn("the skipped-skill check runs at apply", stderr.getvalue())
+            entry = next(e for e in updated["entries"] if e["key"] == "agent_skills.gsd-executor")
+            message = plan_io._skip_text(
+                entry, inv, [], [("react-dev", "react-dev: no trusted root")]
+            )
             self.assertIn(
                 "plan-set agent_skills_security.trusted_global_roots "
                 "'[\"~/.local/share/ai-kit/skills\"]'",
-                str(ctx.exception),
+                message,
             )
 
 
