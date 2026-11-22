@@ -3562,6 +3562,11 @@ function deleteCycleState(file) {
 
 // D-06 to D-09: the per-checkout run lock of an execute run (SPEC R3).
 const LOCK_RECORD_VERSION = 1;
+// SPEC R3: an unparseable record is re-read until it is this old, then refused and kept.
+const LOCK_REREAD_MS = 2000;
+const LOCK_MAX_BYTES = 65536;
+// A .clearing mutex older than this was abandoned by a killed clearer.
+const LOCK_CLEAR_STALE_MS = 10000;
 function lockPath(root, home = path.resolve(stateHome())) {
   return path.join(home, 'ai-kit', 'spec', 'locks', sha16(root) + '.json');
 }
@@ -3583,18 +3588,73 @@ function checkoutRoot(cwd) {
 function lockText(value) {
   return redactSecrets(redactSecrets(String(value ?? '-')).replace(/[\x00-\x1f\x7f-\x9f]/g, ''));
 }
+function procReadable() {
+  try { fs.readFileSync('/proc/self/stat', 'utf8'); return true; } catch { return false; }
+}
+// D-06/D-32: /proc start ticks where /proc reads; ps lstart (whole seconds, LC_ALL=C) only where it does not; '-' when neither.
+function lockStartTime(pid, procOk = procReadable(), env = process.env) {
+  if (procOk) return procStartTime(pid);
+  const r = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'], env: { ...env, LC_ALL: 'C' } });
+  const text = String(r.stdout || '').trim().replace(/\s+/g, ' ');
+  return r.status === 0 && text && !/[\x00-\x1f]/.test(text) ? text : '-';
+}
+function lockPidAlive(pid) {
+  try { process.kill(pid, 0); } catch (e) { return e.code === 'EPERM'; }
+  return pidAlive(pid);
+}
+function lockRecordValid(rec) {
+  return Boolean(rec) && typeof rec === 'object' && !Array.isArray(rec) && rec.version === LOCK_RECORD_VERSION && typeof rec.run_id === 'string' && rec.run_id !== '' && Number.isInteger(rec.pid) && rec.pid > 0 && typeof rec.pid_start === 'string' && typeof rec.host_name === 'string' && rec.host_name !== '' && (rec.child_pgid === null || Number.isInteger(rec.child_pgid)) && (rec.child_start === null || typeof rec.child_start === 'string');
+}
+function lockGroupAlive(pgid, start, procOk = procReadable()) {
+  if (!Number.isInteger(pgid) || pgid <= 1) return false;
+  // A detached child leads its own group and session; a leader whose start changed is a reused pid.
+  if (procOk) return groupMembers(pgid, pgid).some((m) => m !== pgid || !start || start === '-' || procStartTime(pgid) === start);
+  try { process.kill(-pgid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+function lockVerdict(rec, probe, ownRunId = null) {
+  if (ownRunId && rec.run_id === ownRunId) return 'own';
+  if (rec.host_name !== probe.host) return 'foreign';
+  const now = Number.isInteger(rec.pid) && probe.alive(rec.pid) ? probe.start(rec.pid) : null;
+  const runnerAlive = now !== null && (typeof rec.pid_start !== 'string' || rec.pid_start === '-' || now === '-' || now === rec.pid_start);
+  if (runnerAlive) return 'held';
+  if (probe.groupAlive(rec.child_pgid, rec.child_start)) return 'orphan';
+  return 'stale';
+}
+function lockProbe() {
+  return { host: os.hostname(), alive: lockPidAlive, start: (pid) => lockStartTime(pid), groupAlive: (pgid, start) => lockGroupAlive(pgid, start) };
+}
+function lockSince(rec) {
+  return Number.isFinite(rec?.started_ms) && Math.abs(rec.started_ms) <= 8.64e15 ? new Date(rec.started_ms).toISOString() : '-';
+}
 function lockHeldLine(rec) {
   const r = rec && typeof rec === 'object' ? rec : {};
-  const since = Number.isFinite(r.started_ms) ? new Date(r.started_ms).toISOString() : '-';
-  return `cross-ai: run lock held by pid ${lockText(r.pid)} (lane ${lockText(r.cli)}/${lockText(r.model)}, since ${since}); not starting`;
+  return `cross-ai: run lock held by pid ${lockText(r.pid)} (lane ${lockText(r.cli)}/${lockText(r.model)}, since ${lockSince(r)}); not starting`;
 }
-async function acquireLock(root, lane) {
-  const file = lockPath(root);
-  // baseline is plan 38-15's; launcher_pgid, token and tab_id are a hosted lane's (38-21).
-  const record = { version: LOCK_RECORD_VERSION, run_id: crypto.randomUUID(), pid: process.pid,
-    pid_start: procStartTime(process.pid), host_name: os.hostname(), started_ms: Date.now(),
-    cli: lane.cli, model: lane.model, role: 'execute', root, child_pgid: null, child_start: null,
-    baseline: null, launcher_pgid: null, token: null, tab_id: null };
+function lockForeignLine(rec) {
+  return `cross-ai: run lock held by pid ${lockText(rec.pid)} on host ${lockText(rec.host_name)} (lane ${lockText(rec.cli)}/${lockText(rec.model)}, since ${lockSince(rec)}); this host cannot probe it; not starting`;
+}
+function readLockOnce(file) {
+  let st;
+  try { st = fs.lstatSync(file); } catch (e) { return e.code === 'ENOENT' ? { gone: true } : { bad: true, mtimeMs: null }; }
+  if (!st.isFile() || st.size > LOCK_MAX_BYTES || st.mtimeMs > Date.now() + 1000) return { bad: true, mtimeMs: st.mtimeMs };
+  try {
+    const fd = fs.openSync(file, 'r');
+    let raw, fst;
+    try { raw = fs.readFileSync(fd, 'utf8'); fst = fs.fstatSync(fd); } finally { fs.closeSync(fd); }
+    const rec = parseJson(raw);
+    return lockRecordValid(rec) ? { rec, raw, dev: fst.dev, ino: fst.ino } : { bad: true, mtimeMs: st.mtimeMs };
+  } catch (e) { return e.code === 'ENOENT' ? { gone: true } : { bad: true, mtimeMs: st.mtimeMs }; }
+}
+async function readLockRecord(file) {
+  const t0 = Date.now();
+  for (;;) {
+    const seen = readLockOnce(file);
+    if (!seen.bad) return seen;
+    if (Date.now() - t0 >= LOCK_REREAD_MS) return { unreadable: true, ageS: seen.mtimeMs === null ? '-' : Math.max(0, Math.round((Date.now() - seen.mtimeMs) / 1000)) };
+    await sleep(100);
+  }
+}
+function createLockFile(file, record) {
   let created = false;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -3602,14 +3662,63 @@ async function acquireLock(root, lane) {
     const fd = fs.openSync(file, 'wx', 0o600);
     created = true;
     try { fs.writeFileSync(fd, JSON.stringify(record)); } finally { fs.closeSync(fd); }
+    return true;
   } catch (e) {
-    if (e.code === 'EEXIST') return { ok: false, line: lockHeldLine(parseJson(readOr(file, ''))) };
+    if (e.code === 'EEXIST') return false;
     if (created) { try { fs.rmSync(file, { force: true }); } catch { /* best effort */ } }
-    log(`cross-ai: run lock not taken (${e.code || e.message}); running without a lock`);
-    return { ok: true };
+    throw e;
   }
-  liveLock = { file, runId: record.run_id, record };
-  return { ok: true };
+}
+function clearStaleLock(file, seen) {
+  const mutex = file + '.clearing';
+  try { fs.mkdirSync(mutex, { mode: 0o700 }); } catch (e) {
+    if (e.code !== 'EEXIST') return false;
+    try {
+      if (Date.now() - fs.statSync(mutex).mtimeMs <= LOCK_CLEAR_STALE_MS) return false;
+      fs.rmdirSync(mutex);
+      fs.mkdirSync(mutex, { mode: 0o700 });
+    } catch { return false; }
+  }
+  try {
+    let fd;
+    try { fd = fs.openSync(file, 'r'); } catch { return false; }
+    let fst, raw;
+    try { fst = fs.fstatSync(fd); raw = fs.readFileSync(fd, 'utf8'); } finally { fs.closeSync(fd); }
+    if (fst.dev !== seen.dev || fst.ino !== seen.ino || raw !== seen.raw) return false;
+    const moved = file + '.stale-' + process.pid + '-' + crypto.randomUUID();
+    fs.renameSync(file, moved);
+    fs.rmSync(moved, { force: true });
+    return true;
+  } catch { return false; } finally { try { fs.rmdirSync(mutex); } catch { /* best effort */ } }
+}
+async function acquireLock(root, lane) {
+  const file = lockPath(root);
+  // baseline is plan 38-15's; launcher_pgid, token and tab_id are a hosted lane's (38-21).
+  const record = { version: LOCK_RECORD_VERSION, run_id: crypto.randomUUID(), pid: process.pid,
+    pid_start: lockStartTime(process.pid), host_name: os.hostname(), started_ms: Date.now(),
+    cli: lane.cli, model: lane.model, role: 'execute', root, child_pgid: null, child_start: null,
+    baseline: null, launcher_pgid: null, token: null, tab_id: null };
+  for (let round = 0; round < 3; round++) {
+    try {
+      if (createLockFile(file, record)) {
+        liveLock = { file, runId: record.run_id, record };
+        return { ok: true };
+      }
+    } catch (e) {
+      log(`cross-ai: run lock not taken (${e.code || e.message}); running without a lock`);
+      return { ok: true };
+    }
+    const seen = await readLockRecord(file);
+    if (seen.gone) continue;
+    if (seen.unreadable) return { ok: false, line: `cross-ai: run lock record ${lockText(file)} is unreadable (age ${seen.ageS}s); not cleared; not starting` };
+    const verdict = lockVerdict(seen.rec, lockProbe(), record.run_id);
+    if (verdict === 'own') { liveLock = { file, runId: record.run_id, record: seen.rec }; return { ok: true }; }
+    if (verdict === 'held') return { ok: false, line: lockHeldLine(seen.rec) };
+    if (verdict === 'foreign') return { ok: false, line: lockForeignLine(seen.rec) };
+    if (verdict === 'orphan') return { ok: false, line: `cross-ai: run lock: pid ${lockText(seen.rec.pid)} is gone but its child group ${lockText(seen.rec.child_pgid)} still runs; not starting` };
+    if (clearStaleLock(file, seen)) log(`cross-ai: stale run lock from pid ${lockText(seen.rec.pid)} (since ${lockSince(seen.rec)}) cleared`);
+  }
+  return { ok: false, line: lockHeldLine(parseJson(readOr(file, ''))) };
 }
 function lockUpdate(fields, lock = liveLock) {
   if (!lock) return;
@@ -3630,7 +3739,13 @@ function releaseLock() {
     if (rec && rec.run_id === runId) fs.rmSync(file, { force: true });
   } catch { /* best effort */ }
 }
-function lockSeen(root) { return fs.existsSync(lockPath(root)); }
+function lockSeen(root) {
+  // D-09: a review notes a live, orphaned or unprobeable lock and never waits, clears or rewrites one.
+  const rec = parseJson(readOr(lockPath(root), ''));
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return false;
+  const v = lockVerdict(rec, lockProbe());
+  return v === 'held' || v === 'orphan' || v === 'foreign';
+}
 
 function stateSig(st) {
   if (!st) return null;
@@ -6024,6 +6139,7 @@ export {
   clampAttemptTimeout,
   clampCapS,
   classifyStop,
+  clearStaleLock,
   composePrompt,
   confirmReport,
   current,
@@ -6042,8 +6158,12 @@ export {
   launcherVerified,
   liveCheck,
   liveMatch,
+  lockGroupAlive,
   lockPath,
+  lockRecordValid,
+  lockStartTime,
   lockUpdate,
+  lockVerdict,
   log,
   makeLineRelay,
   mergeCatalog,
@@ -6067,6 +6187,7 @@ export {
   pushCapped,
   readCallFile,
   readCycleState,
+  readLockOnce,
   readOr,
   redactSecrets,
   redactedValues,

@@ -52,6 +52,7 @@ import {
   clampAttemptTimeout,
   clampCapS,
   classifyStop,
+  clearStaleLock,
   composePrompt,
   confirmReport,
   current,
@@ -70,8 +71,11 @@ import {
   launcherVerified,
   liveCheck,
   liveMatch,
+  lockGroupAlive,
   lockPath,
+  lockStartTime,
   lockUpdate,
+  lockVerdict,
   log,
   makeLineRelay,
   mergeCatalog,
@@ -95,6 +99,7 @@ import {
   pushCapped,
   readCallFile,
   readCycleState,
+  readLockOnce,
   readOr,
   redactSecrets,
   redactedValues,
@@ -2340,6 +2345,7 @@ function plantLock(c, overrides = {}) {
   c.planted = fs.readFileSync(c.lockFile);
   return null;
 }
+function deadPid() { return spawnSync(process.execPath, ['-e', '']).pid; }
 function plantLiveLock(c) { return plantLock(c); }
 function plantedUnchanged(c) {
   return fs.existsSync(c.lockFile) && fs.readFileSync(c.lockFile).equals(c.planted);
@@ -10023,6 +10029,172 @@ async function blackBoxSelfTest(listOnly = false) {
           } finally { fs.rmSync(dir, { recursive: true, force: true }); }
         },
       },
+    {
+      name: 'pure-lock-verdict', kind: 'logic', pure: () => {
+        const base = { run_id: 'r1', host_name: 'h1', pid: 4242, pid_start: '100', child_pgid: 4343, child_start: '200' };
+        const probe = (o) => ({ host: 'h1', alive: () => o.alive, start: () => o.now, groupAlive: () => o.group });
+        const rows = [
+          ['foreign', { host_name: 'placeholder-host-1' }, {}, null, 'foreign'],
+          ['alive', {}, { alive: true, now: '100' }, null, 'held'],
+          ['unknown recorded', { pid_start: '-' }, { alive: true, now: '101' }, null, 'held'],
+          ['unknown current', {}, { alive: true, now: '-' }, null, 'held'],
+          ['reused', {}, { alive: true, now: '101', group: false }, null, 'stale'],
+          ['orphan', {}, { alive: false, group: true }, null, 'orphan'],
+          ['dead', {}, { alive: false, group: false }, null, 'stale'],
+          ['own', {}, {}, 'r1', 'own'],
+        ];
+        for (const [name, overrides, options, own, expected] of rows) {
+          const got = lockVerdict({ ...base, ...overrides }, probe(options), own);
+          if (got !== expected) return `verdict ${name}: ${got}`;
+        }
+        return lockGroupAlive(null, null) || lockGroupAlive(1, null) ? 'verdict invalid group: alive' : null;
+      },
+    }, {
+      name: 'lock-stale-cleared', kind: 'logic',
+      args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 0,
+      status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+      setup: (c) => { c.deadPid = deadPid(); return plantLock(c, { pid: c.deadPid, pid_start: '1', child_pgid: null }); },
+      check: (r, c) => {
+        if (!r.stderr.split('\n').includes(`cross-ai: stale run lock from pid ${c.deadPid} (since 2026-11-21T00:00:00.000Z) cleared`)) return 'missing stale line';
+        const names = fs.readdirSync(path.dirname(c.lockFile)).filter((n) => n.endsWith('.json') || n.includes('.stale-'));
+        return names.length ? `lock left: ${names.join(',')}` : null;
+      },
+    },
+    {
+      name: 'lock-orphan-refuses', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 75,
+      status: /^AIKIT-XAI status=locked cli=pi model=fake\/ok exit=75 .* action=stop$/,
+      setup: (c) => {
+        c.sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { cwd: c.repo, detached: true, stdio: 'ignore' });
+        caseRunners.add(c.sleeper);
+        c.deadPid = deadPid();
+        return plantLock(c, { pid: c.deadPid, pid_start: '1', child_pgid: c.sleeper.pid, child_start: procStartTime(c.sleeper.pid) });
+      },
+      check: (r, c) => {
+        try { process.kill(-c.sleeper.pid, 'SIGKILL'); } catch { /* gone */ }
+        caseRunners.delete(c.sleeper);
+        if (!r.stderr.split('\n').includes(`cross-ai: run lock: pid ${c.deadPid} is gone but its child group ${c.sleeper.pid} still runs; not starting`)) return 'missing orphan line';
+        return plantedUnchanged(c) ? null : 'planted record changed';
+      },
+    }, {
+      name: 'lock-foreign-refuses', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 75,
+      status: /^AIKIT-XAI status=locked cli=pi model=fake\/ok exit=75 .* action=stop$/,
+      setup: (c) => plantLock(c, { host_name: 'placeholder-host-1' }),
+      check: (r, c) => {
+        if (!r.stderr.split('\n').includes(`cross-ai: run lock held by pid ${process.pid} on host placeholder-host-1 (lane pi/fake/planted, since 2026-11-21T00:00:00.000Z); this host cannot probe it; not starting`)) return 'missing foreign line';
+        return plantedUnchanged(c) ? null : 'planted record changed';
+      },
+    }, {
+      name: 'lock-unreadable-refuses', kind: 'runtime', args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 75,
+      status: /^AIKIT-XAI status=locked cli=pi model=fake\/ok exit=75 .* action=stop$/,
+      setup: (c) => {
+        c.lockFile = lockPath(fs.realpathSync(c.repo), c.env.XDG_STATE_HOME);
+        fs.mkdirSync(path.dirname(c.lockFile), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(c.lockFile, '');
+        const old = new Date(Date.now() - 10000); fs.utimesSync(c.lockFile, old, old);
+        return null;
+      },
+      check: (r, c) => {
+        const match = r.stderr.split('\n').map((line) => line.match(/^cross-ai: run lock record .*\.json is unreadable \(age (\d+)s\); not cleared; not starting$/)).find(Boolean);
+        if (!match || Number(match[1]) < 10) return 'missing unreadable line';
+        return fs.existsSync(c.lockFile) && fs.statSync(c.lockFile).size === 0 ? null : 'record removed';
+      },
+    }, {
+      name: 'lock-invalid-refuses', kind: 'runtime', args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 75,
+      status: /^AIKIT-XAI status=locked cli=pi model=fake\/ok exit=75 .* action=stop$/,
+      setup: (c) => {
+        c.lockFile = lockPath(fs.realpathSync(c.repo), c.env.XDG_STATE_HOME);
+        writeCycleState(c.lockFile, { version: 1, host_name: os.hostname(), started_ms: 0 });
+        c.planted = fs.readFileSync(c.lockFile); return null;
+      },
+      check: (r, c) => {
+        if (!r.stderr.split('\n').some((line) => /^cross-ai: run lock record .*\.json is unreadable \(age \d+s\); not cleared; not starting$/.test(line))) return 'missing unreadable line';
+        return plantedUnchanged(c) ? null : 'planted record changed';
+      },
+    }, {
+      name: 'lock-unreadable-reread', kind: 'runtime', args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 0,
+      status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* action=stop$/,
+      setup: (c) => {
+        c.lockFile = lockPath(fs.realpathSync(c.repo), c.env.XDG_STATE_HOME);
+        fs.mkdirSync(path.dirname(c.lockFile), { recursive: true, mode: 0o700 }); fs.writeFileSync(c.lockFile, '');
+        c.deadPid = deadPid();
+        setTimeout(() => plantLock(c, { pid: c.deadPid, pid_start: '1', child_pgid: null }), 1000);
+        return null;
+      },
+      check: (r, c) => {
+        if (!r.stderr.split('\n').includes(`cross-ai: stale run lock from pid ${c.deadPid} (since 2026-11-21T00:00:00.000Z) cleared`)) return 'missing stale line';
+        const waited = r.elapsedMs;
+        return waited >= 900 ? null : `waited ${waited}ms`;
+      },
+    }, {
+      name: 'lock-review-no-note-stale', kind: 'logic', args: ['--mode', 'review', '--runtime', 'pi', '--model', 'fake/review-ok'], exit: 0,
+      status: /^AIKIT-XAI status=ok cli=pi model=fake\/review-ok exit=0 .* tree=clean action=stop$/,
+      setup: (c) => plantLock(c, { pid: deadPid(), pid_start: '1', child_pgid: null }),
+      check: (r, c) => {
+        if (r.stderr.split('\n').includes('cross-ai: note: an execute run holds this checkout; the tree check may void this review')) return 'note printed for a stale record';
+        return plantedUnchanged(c) ? null : 'planted record changed';
+      },
+    }, {
+      name: 'pure-lock-start-ps', kind: 'logic', pure: () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-ps-'));
+        try {
+          const bin = path.join(dir, 'bin'); fs.mkdirSync(bin);
+          fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+          writeExe(bin, 'ps', '', String.raw`if (argOf('-p') === '4242') { process.stdout.write('Sat Nov 21 10:00:00 2026\n'); process.exit(0); } process.exit(1);`);
+          const start = lockStartTime(4242, false, { PATH: bin });
+          if (start !== 'Sat Nov 21 10:00:00 2026') return `ps start ${start}`;
+          const dead = lockStartTime(4343, false, { PATH: bin });
+          if (dead !== '-') return `dead pid start ${dead}`;
+          fs.mkdirSync(path.join(dir, 'empty'));
+          const missing = lockStartTime(4242, false, { PATH: path.join(dir, 'empty') });
+          if (missing !== '-') return `ps start ${missing}`;
+          return lockStartTime(process.pid, true) === procStartTime(process.pid) ? null : 'proc start differs';
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+      },
+    }, {
+      name: 'pure-lock-clear-race', kind: 'logic', pure: () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-lock-'));
+        try {
+          const file = path.join(dir, 'l.json');
+          const stale = { version: 1, run_id: 's', pid: 4242, pid_start: '1', host_name: os.hostname(), child_pgid: null, child_start: null };
+          const fresh = { ...stale, run_id: 'f' };
+          writeCycleState(file, stale); let seen = readLockOnce(file); writeCycleState(file, fresh);
+          if (clearStaleLock(file, seen) || JSON.parse(fs.readFileSync(file)).run_id !== 'f' || JSON.stringify(fs.readdirSync(dir)) !== '["l.json"]') return 'race: fresh replaced';
+          writeCycleState(file, stale); seen = readLockOnce(file); fs.mkdirSync(file + '.clearing');
+          if (clearStaleLock(file, seen) || JSON.parse(fs.readFileSync(file)).run_id !== 's') return 'race: fresh mutex';
+          const old = new Date(Date.now() - 11000); fs.utimesSync(file + '.clearing', old, old);
+          if (!clearStaleLock(file, seen) || fs.readdirSync(dir).length) return 'race: old mutex';
+          writeCycleState(file, stale); seen = readLockOnce(file);
+          if (!clearStaleLock(file, seen) || fs.readdirSync(dir).length) return 'race: clear';
+          return null;
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+      },
+    }, {
+      name: 'lock-stale-race', kind: 'runtime', args: ['--runtime', 'pi', '--model', 'fake/lockhold', '--print-argv'], exit: 0,
+      status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+      setup: (c) => plantLock(c, { pid: deadPid(), pid_start: '1', child_pgid: null }),
+      check: async (r, c) => {
+        const spec = { args: ['--runtime', 'pi', '--model', 'fake/lockhold'] };
+        const runs = [runCaseProcess(spec, c), runCaseProcess(spec, c)];
+        const first = await Promise.race(runs);
+        fs.writeFileSync(path.join(c.home, 'lock-release'), '');
+        const both = await Promise.all(runs);
+        for (const run of both) if (run.reason) return `contender: ${run.reason}`;
+        if (first.status !== 75) return `first to end exited ${first.status}`;
+        const exits = both.map((run) => run.status).sort((a, b) => a - b);
+        if (JSON.stringify(exits) !== '[0,75]') return `exits ${exits.join(',')}`;
+        const loser = both.find((run) => run.status === 75);
+        const lose = statusLineOk(loser.stderr, /^AIKIT-XAI status=locked cli=pi model=fake\/lockhold exit=75 .* action=stop$/);
+        if (lose) return `loser: ${lose}`;
+        const calls = readOr(path.join(c.tmp, 'calls-lock-stale-race.log'), '').trim().split('\n').filter(Boolean);
+        const held = calls.filter((line) => line === 'pi lockhold').length;
+        const rpc = calls.filter((line) => line === 'pi rpc').length;
+        if (held !== 1) return `pi lockhold calls ${held}`;
+        if (rpc > 1) return `pi rpc calls ${rpc}`;
+        const dir = path.dirname(c.lockFile);
+        const names = fs.readdirSync(dir).filter((n) => n.endsWith('.json') || n.endsWith('.clearing') || n.includes('.stale-'));
+        return names.length ? `lock left: ${names.join(',')}` : null;
+      },
+    },
     ];
 
     const unkinded = cases.filter((c) => c.kind !== 'logic' && c.kind !== 'runtime').map((c) => c.name);
