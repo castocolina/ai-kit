@@ -3771,6 +3771,8 @@ function logDeadline(cwd, env, o) {
   return d;
 }
 
+// Kept on purpose (38 R10): clampAttemptTimeout (read by attemptCapMs), clampCapS (the 4-hour bound, T-25-13),
+// liveMatch and armLimit (the live limit watcher, CR-01) are live code, not Phase 25 leftovers.
 // A per-attempt cap is 0 (none) or 10..1800 s.
 function clampAttemptTimeout(value) {
   const n = Math.trunc(Number(value));
@@ -4447,7 +4449,6 @@ function readOr(p, dflt) { try { return fs.readFileSync(p, 'utf8'); } catch { re
 
 // Quota cycles span calls. The file is keyed by lane and model under the XDG state dir
 // (the home fallback is ~/.local/state, so a scratch HOME never reaches the real one).
-const STATE_DELETE = new Set(['ok', 'auth', 'billing', 'permission_blocked', 'bad_model']);
 const QUOTA_KEEP = new Set(['quota', 'transient', 'timeout']);
 
 function stateHome() {
@@ -5307,7 +5308,7 @@ function armLimit(state, cls) {
   }, LIMIT_GRACE_MS);
 }
 
-function watchChunk(cli, source, relay, state, chunk) {
+function watchChunk(relay, chunk) {
   relay.push(chunk);
 }
 
@@ -5354,7 +5355,7 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
   const errDecoder = new StringDecoder('utf8');
   const onErrText = (text) => {
     if (!text) return;
-    watchChunk(cli, 'stderr', errRelay, state, text);
+    watchChunk(errRelay, text);
     errTail = (errTail + text).slice(-INPUT_CAP);
   };
   const childOpts = {
@@ -5362,7 +5363,7 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
     limit: childLimit,
     onStdout: (d) => {
       outBytes += d.length;
-      watchChunk(cli, 'stdout', outRelay, state, outDecoder.write(d));
+      watchChunk(outRelay, outDecoder.write(d));
     },
     onStderr: (d) => onErrText(errDecoder.write(d)),
   };
@@ -5621,7 +5622,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     firstFailureMs, lastFailureMs,
   });
   const dropState = (status) => {
-    if (STATE_DELETE.has(status) || (status !== 'quota' && !QUOTA_KEEP.has(status))) {
+    if (!QUOTA_KEEP.has(status)) {
       dropStateFile();
     }
   };
@@ -14740,6 +14741,37 @@ async function blackBoxSelfTest(listOnly = false) {
           if (!Array.isArray(records) || records.length !== 2 || records[0].tab_id !== 't1' || records[1].tab_id !== 't2') return 'dead launcher records';
           const tabs = fakeTabs(c);
           return tabs.t1?.closed === false && tabs.t2?.closed === false ? null : 'dead launcher tabs';
+        },
+      },
+      {
+        // 38 D-22 (backlog 999.21): ok, failure, signal and timeout exits each leave no runner temp folder in the case TMPDIR.
+        name: 'temp-dirs-gone',
+        kind: 'runtime',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        check: async (_r, ctx) => {
+          const left = () => fs.readdirSync(ctx.tmpdir).filter((n) => n.startsWith('cross-ai-') || n.startsWith('xai-idx-'));
+          let names = left();
+          if (names.length) return `ok run left ${names.join(',')}`;
+          const gcPid = path.join(ctx.repo, 'gc.pid');
+          const runs = [
+            ['failure', 69, /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 .* action=stop$/, false, { args: ['--prefer', 'pi', '--model-pi', 'fake/auth'] }],
+            ['signal', 143, /^AIKIT-XAI status=signal cli=pi model=fake\/hang exit=143 .* action=stop$/, true, { args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '60'], signal: { when: (cc) => fs.existsSync(path.join(cc.repo, 'gc.pid')), sig: 'SIGTERM' } }],
+            ['timeout', 124, /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 .* action=stop$/, true, { args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '2'] }],
+          ];
+          for (const [label, want, status, started, spec] of runs) {
+            fs.rmSync(gcPid, { force: true });
+            const got = await runCaseProcess(spec, ctx);
+            if (got.reason) return `${label}: ${got.reason}`;
+            if (got.status !== want) return `${label} exit ${got.status} expected ${want}`;
+            const bad = statusLineOk(got.stderr || '', status);
+            if (bad) return `${label}: ${bad}`;
+            if (started && !fs.existsSync(gcPid)) return `${label}: the fake lane never started`;
+            names = left();
+            if (names.length) return `${label} run left ${names.join(',')}`;
+          }
+          return null;
         },
       },
     ];
