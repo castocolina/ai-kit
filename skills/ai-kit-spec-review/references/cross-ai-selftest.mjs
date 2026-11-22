@@ -1252,7 +1252,7 @@ const STICKY_FAKE = new Set([
   'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big', 'sentinelsplit',
   'limit-mid', 'limit-partial', 'limit-flood', 'limit-partial-flood', 'auth-then-noise',
   'transient-hang', 'bare-429-hang', 'retry-notice', 'retry-notice-429', 'slowquota',
-  'capclamp', 'reason-code-hang', 'slow-lines', 'router-stop-hang',
+  'capclamp', 'reason-code-hang', 'slow-lines', 'router-stop-hang', 'ticker',
 ]);
 let stdinBuf = '';
 const FAKE_MODES = {
@@ -1295,6 +1295,12 @@ const FAKE_MODES = {
   slowok: () => {
     fs.writeFileSync('started', '1');
     setTimeout(() => { fs.appendFileSync('a.txt', 'slow\n'); process.stdout.write('# Summary\nok'); process.exit(0); }, 2500);
+  },
+  ticker: () => {
+    // Each stream alone is silent for 2.4 s; together the gap is never over 1.2 s.
+    const parts = ['tick\n', Buffer.from([0xE2]), 'tick\n', Buffer.from([0x82, 0xAC, 0x0A])];
+    [1200, 2400, 3600, 4800].forEach((ms, i) => setTimeout(() => (i % 2 ? process.stdout : process.stderr).write(parts[i]), ms));
+    setTimeout(() => { fs.appendFileSync('a.txt', 'tick\n'); process.stdout.write('# Summary\nok'); process.exit(0); }, 4900);
   },
   empty: () => {},
   crash: () => { process.exit(7); },
@@ -9629,6 +9635,103 @@ async function blackBoxSelfTest(listOnly = false) {
           if (c.status !== 0 || JSON.stringify(notes) !== JSON.stringify(['cross-ai: note: idle timeout 59s is under 60s; a slow, quiet model may be ended'])) return 'short note';
           const d = await run(['--idle-timeout', '1.5']);
           return d.status === 2 && (d.stderr || '').split('\n').includes('cross-ai: --idle-timeout must be an integer from 0 to 86400 or default') ? null : 'invalid';
+        },
+      },
+      {
+        name: 'idle-silent-ended', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/hang', '--timeout', '20', '--idle-timeout', '2'],
+        config: { heartbeatS: 1 }, exit: 124,
+        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 cli_rc=.* elapsed=\d+s out=\d+ tree=.* action=stop$/,
+        check: (r, ctx) => {
+          const lines = (r.stderr || '').split('\n');
+          if (lines.filter((s) => s === 'cross-ai: idle watchdog: pi printed nothing for 2s; ending its process group').length !== 1) return 'idle line';
+          if (!lines.some((s) => s.startsWith('cross-ai: pi running '))) return 'heartbeat';
+          if (lines.filter((s) => /^cross-ai: attempt n=1 rung=first cycle=0 session=\S+ status=timeout rule=idle-watchdog pattern=- at=\S+ took=\d+s$/.test(s)).length !== 1) return 'attempt line';
+          if (!lines.includes('cross-ai: idle watchdog on timeout=2s')) return 'on line';
+          const calls = ctx.calls.filter((s) => s.startsWith('pi ') && s !== 'pi rpc');
+          if (calls.length !== 1 || calls[0] !== 'pi hang') return `calls ${calls.join('|')}`;
+          return deadCheck(ctx, ['gc']);
+        },
+      },
+      {
+        name: 'idle-keeps-printing', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/ticker', '--outer-timeout', '1830', '--idle-timeout', '2'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/ticker exit=0 .* action=stop$/,
+        check: (r, ctx) => {
+          if ((r.stderr || '').split('\n').some((s) => s.startsWith('cross-ai: idle watchdog:'))) return 'idle fired';
+          const calls = ctx.calls.filter((s) => s.startsWith('pi ') && s !== 'pi rpc');
+          return calls.length === 1 && calls[0] === 'pi ticker' ? null : `calls ${calls.join('|')}`;
+        },
+      },
+      {
+        name: 'idle-slow-quiet-default', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/slowok', '--outer-timeout', '1830', '--idle-timeout', 'default'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/slowok exit=0 .* action=stop$/,
+        check: (r, ctx) => {
+          const lines = (r.stderr || '').split('\n');
+          if (!lines.includes('cross-ai: idle watchdog on timeout=900s')) return 'missing on line';
+          if (lines.some((s) => s.startsWith('cross-ai: idle watchdog:'))) return 'idle fired';
+          const calls = ctx.calls.filter((s) => s.startsWith('pi ') && s !== 'pi rpc');
+          return calls.length === 1 && calls[0] === 'pi slowok' ? null : `calls ${calls.join('|')}`;
+        },
+      },
+      {
+        name: 'idle-off-never-fires', kind: 'runtime', config: { idleTimeoutS: 0 },
+        args: ['--runtime', 'pi', '--model', 'fake/hang', '--timeout', '4'],
+        exit: 124, status: /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 .* action=stop$/,
+        check: (r, ctx) => {
+          const lines = (r.stderr || '').split('\n');
+          if (lines.some((s) => s.startsWith('cross-ai: idle watchdog'))) return 'idle line';
+          if (lines.filter((s) => /^cross-ai: attempt n=1 rung=first cycle=0 session=\S+ status=timeout rule=- /.test(s)).length !== 1) return 'attempt line';
+          return deadCheck(ctx, ['gc']);
+        },
+      },
+      {
+        name: 'idle-then-resume', kind: 'runtime', config: { backoffS: [0, 0] },
+        args: ['--runtime', 'pi', '--model', 'fake/hangonce', '--timeout', '120', '--idle-timeout', '2'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/hangonce exit=0 .* action=stop$/,
+        check: (r, ctx) => {
+          const lines = (r.stderr || '').split('\n');
+          if (lines.filter((s) => s === 'cross-ai: idle watchdog: pi printed nothing for 2s; ending its process group').length !== 1) return 'idle line';
+          if (!lines.some((s) => /^cross-ai: attempt n=1 rung=first cycle=0 session=\S+ status=timeout rule=idle-watchdog pattern=- /.test(s))) return 'attempt line';
+          if (!lines.includes('cross-ai: ladder pi next=same why=soft-retry')) return 'ladder line';
+          if (!lines.some((s) => s.startsWith('cross-ai: wait ms=0 next=same retry=1'))) return 'wait line';
+          const calls = ctx.calls.filter(Boolean);
+          if (calls.some((s) => s !== 'pi rpc' && s !== 'pi hangonce') || calls.filter((s) => s === 'pi hangonce').length !== 2) return `calls ${calls.join('|')}`;
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').filter(Boolean).map((l) => l.split(' ')).filter((row) => row[0]);
+          if (rows.length !== 2 || rows[0][0] !== rows[1][0] || rows[0][1] !== 'prompt' || rows[1][1] !== 'resume') return `sessions ${JSON.stringify(rows)}`;
+          return deadCheck(ctx, ['pi']);
+        },
+      },
+      {
+        name: 'idle-loses-to-deadline', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/hang', '--timeout', '2', '--idle-timeout', '5'],
+        exit: 124, status: /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 .* action=stop$/,
+        check: (r, ctx) => {
+          const lines = (r.stderr || '').split('\n');
+          if (!lines.some((s) => /^cross-ai: note: idle timeout 5s is not below the attempt budget of \d+s; it cannot fire before the deadline$/.test(s))) return 'budget note';
+          if (!lines.includes('cross-ai: note: idle timeout 5s is under 60s; a slow, quiet model may be ended')) return 'short note';
+          if (lines.some((s) => s.startsWith('cross-ai: idle watchdog:') || s.includes('rule=idle-watchdog'))) return 'idle fired';
+          return deadCheck(ctx, ['gc']);
+        },
+      },
+      {
+        name: 'idle-loses-to-limit', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/limit-mid', '--timeout', '60', '--idle-timeout', '1'],
+        exit: 75, status: /^AIKIT-XAI status=quota cli=pi model=fake\/limit-mid exit=75 .* action=stop$/,
+        check: (r, ctx) => {
+          if ((r.stderr || '').split('\n').some((s) => s.startsWith('cross-ai: idle watchdog:') || s.includes('rule=idle-watchdog'))) return 'idle fired';
+          return deadCheck(ctx, ['pi']);
+        },
+      },
+      {
+        name: 'idle-loses-to-signal', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/hang', '--timeout', '60', '--idle-timeout', '5'],
+        signal: { when: (c) => fs.existsSync(path.join(c.repo, 'gc.pid')), sig: 'SIGTERM' },
+        exit: 143, status: /^AIKIT-XAI status=signal cli=pi model=fake\/hang exit=143 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          if ((r.stderr || '').split('\n').some((s) => s.startsWith('cross-ai: idle watchdog:') || s.includes('rule=idle-watchdog'))) return 'idle fired';
+          return deadCheck(ctx, ['gc']);
         },
       },
     ];

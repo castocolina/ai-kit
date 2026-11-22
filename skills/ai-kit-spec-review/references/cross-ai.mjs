@@ -80,7 +80,7 @@
  * then CONFIG.retry, per key. A legacy workflow.cross_ai_retry block in the GSD config and the user
  * cross-ai.json are migrated into those files once (migrateRetrySources). The error catalog is PATTERNS (generated from cross-ai-errors.json) plus the owner
  * overlay ${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai-errors.json.
- * No idle watchdog in this version (D-43); only the overall deadline bounds each child.
+ * Idle watchdog (opt-in, --idle-timeout or CONFIG.idleTimeoutS): a child that printed no byte for that long is ended like a timed-out attempt.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -3586,6 +3586,9 @@ function runChild(bin, argv, opts = {}) {
     let timedOut = false;
     let limited = false;
     let spawnErr = null;
+    let idle = false;
+    let idleTimer = null;
+    let lastByteMs = 0;
     let code = null;
     let signal = null;
     const out = { chunks: [], bytes: 0, dropped: false };
@@ -3596,6 +3599,7 @@ function runChild(bin, argv, opts = {}) {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (idleTimer) clearTimeout(idleTimer);
       if (currentFinalize === finalize) currentFinalize = null;
       if (child) {
         killGroup(child, 'SIGTERM');
@@ -3618,7 +3622,7 @@ function runChild(bin, argv, opts = {}) {
         if (buf.dropped) log(`cross-ai: child ${label} passed ${CAPTURE_MAX_BYTES} bytes; kept the newest ${buf.bytes}`);
       }
       resolve({
-        code, signal, timedOut, limited, spawnErr,
+        code, signal, timedOut, limited, idle, spawnErr,
         stdout: Buffer.concat(out.chunks).toString('utf8'),
         stderr: Buffer.concat(err.chunks).toString('utf8'),
       });
@@ -3639,6 +3643,37 @@ function runChild(bin, argv, opts = {}) {
     }
     noteChildPgid('spawn', child.pid);
     current = child;
+    // SPEC R1 / D-01: opt-in (runOnce only); any child byte resets the clock, the runner's own lines never do; finalize settles once.
+    if (opts.idleMs > 0) {
+      lastByteMs = performance.now();
+      const idleQuiet = () => performance.now() - lastByteMs;
+      const idleCheck = () => {
+        idleTimer = null;
+        if (settled || aborting) return;
+        if (idleQuiet() < opts.idleMs) {
+          idleTimer = setTimeout(idleCheck, opts.idleMs - idleQuiet());
+          return;
+        }
+        // The setImmediate turn lets a data event already queued at the boundary reset the clock first: activity wins the tie.
+        setImmediate(() => {
+          if (settled || aborting || idleTimer) return;
+          if (idleQuiet() < opts.idleMs) {
+            idleTimer = setTimeout(idleCheck, opts.idleMs - idleQuiet());
+            return;
+          }
+          if (opts.onIdle && opts.onIdle() === false) {
+            idleTimer = setTimeout(idleCheck, opts.idleMs);
+            return;
+          }
+          idle = true;
+          timedOut = true;
+          finalize('idle');
+        });
+      };
+      idleTimer = setTimeout(idleCheck, opts.idleMs);
+      // Seam for plan 38-16: reset() counts as a child byte (a changed tree read); recheck() re-runs the idle decision once a deferred read is in; onIdle returning false defers an expiry.
+      opts.idleResetter?.({ reset: () => { if (!settled) lastByteMs = performance.now(); }, recheck: () => { if (settled) return; if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } idleCheck(); } });
+    }
     currentFinalize = finalize;
     if (opts.input === null) {
       // stdin is `ignore`: there is no stream to write or end.
@@ -3649,10 +3684,12 @@ function runChild(bin, argv, opts = {}) {
       child.stdin.end();
     }
     child.stdout.on('data', (d) => {
+      if (opts.idleMs > 0) lastByteMs = performance.now();
       pushCapped(out, d);
       opts.onStdout?.(d);
     });
     child.stderr.on('data', (d) => {
+      if (opts.idleMs > 0) lastByteMs = performance.now();
       pushCapped(err, d);
       opts.onStderr?.(d);
     });
@@ -4363,6 +4400,8 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
       watchChunk(outRelay, outDecoder.write(d));
     },
     onStderr: (d) => onErrText(errDecoder.write(d)),
+    idleMs: (opts.idleS || 0) * 1000,
+    onIdle: () => { if (state.liveHit) return false; log(redactSecrets(`cross-ai: idle watchdog: ${cli} printed nothing for ${opts.idleS}s; ending its process group`)); return true; },
   };
   let r = null;
   if (opts.host && !opts.host.failed) {
@@ -4692,6 +4731,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       }
     }
     liveSettings.sessionId = sessionShown(attemptSid) ? attemptSid : null;
+    let idleNoteShown = false;
     for (let attempt = 0; ; attempt++) {
       // Before the child runs: the snapshot after it would race the next attempt's edits.
       if (mode === 'exec' && seenSig !== null) {
@@ -4700,13 +4740,15 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       }
       const startedMs = Date.now();
       const childCap = attemptCapMs(opts, startedMs, episodeEnd());
+      // SPEC R1: the cannot-fire note against the live attempt cap, once per call (plan 38-10's idleBudgetNote; compared in ms).
+      if ((opts.idleS || 0) > 0 && !idleNoteShown && opts.idleS * 1000 >= childCap) { idleNoteShown = true; log(idleBudgetNote(opts.idleS, childCap)); }
       const left = Math.max(0, Math.round(childCap / 1000));
       log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${left}s`);
       log(`cross-ai: argv=${JSON.stringify(shownArgv(rt, displayArgv(argv, rt.argvPrompt ? ctx.promptArg : undefined)))}`);
       const childLimit = episodeEnd() ? Math.min(runDeadline, episodeEnd()) : runDeadline;
       const route = opts.route || 'unknown';
       const r = await runOnce(binPath, argv, input, env, ctx.cwd, name,
-        { capMs: childCap, limit: childLimit, route, model, host: opts.host, promptArg: rt.argvPrompt ? ctx.promptArg : undefined });
+        { capMs: childCap, limit: childLimit, route, model, host: opts.host, promptArg: rt.argvPrompt ? ctx.promptArg : undefined, idleS: opts.idleS || 0 });
       // Self-test fakes only (FAKE_CALLS): a fake child stalls the post-run git snapshot only
       // while it is alive. A real run never touches the caller's home.
       if (process.env.FAKE_CALLS) {
@@ -4810,7 +4852,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const sid = usedSid;
       const rung = rungOf();
       logAttempt(attempts, rung, ladder.cycle, sid, hit || (r.timedOut ? 'timeout' : 'crash'),
-        hit ? evidence.rule : '-', hit ? evidence.pattern : '-', startedMs);
+        r.idle ? 'idle-watchdog' : (hit ? evidence.rule : '-'), hit ? evidence.pattern : '-', startedMs);
       const soft = cls === 'transient' || cls === 'quota';
       if (soft && !ladder.firstMs) ladder.firstMs = Date.now();
       const sig = r.signal ? ' ' + r.signal : '';
@@ -5722,6 +5764,7 @@ async function main(argv) {
     route: liveFields.route, retry: resolved.retry, capS: resolved.capS,
     profileFlags,
     host: hostPlan,
+    idleS: idlePlan.idleS,
   });
   liveFields.out = r.outBytes || 0;
   liveFields.cli_rc = r.cli_rc ?? '-';
