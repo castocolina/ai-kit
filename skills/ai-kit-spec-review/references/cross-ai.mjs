@@ -46,6 +46,7 @@
  *                                            {model}, {effort}, {session} are the only placeholders;
  *                                            the prompt goes on stdin; a setting with no placeholder is reported no_slot)
  *   --describe                               describe runner capabilities
+ *   --sweep                                  remove dead run directories, secrets and tabs and exit (no spawn, no lock)
  *   --tools-profile exec|review|none         named tool set from the runtime's table row
  *                                            (review accepts review or none)
  *   --timeout <s>                            inner deadline (lowers default; never above derived inner)
@@ -4046,7 +4047,7 @@ const HERDR_TIMEOUT_MS = 5000;
 // The one herdr spawn site (arch rule): a verb outside HERDR_VERBS throws.
 function herdrCall(verb, args, timeoutMs = HERDR_TIMEOUT_MS) {
   if (!HERDR_VERBS.includes(verb)) throw new Error(`herdr verb ${verb} is not one of ${HERDR_VERBS.join(', ')}`);
-  const r = spawnSync(HERDR_BIN, [...verb.split(' '), ...args], { encoding: 'utf8', timeout: Math.max(1, timeoutMs), stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+  const r = spawnSync(HERDR_BIN, [...verb.split(' '), ...args], { encoding: 'utf8', timeout: Math.max(1, timeoutMs), killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
   let detail = null;
   if (r.error) detail = r.error.code === 'ETIMEDOUT' ? 'timeout' : `spawn ${r.error.code || r.error.message}`;
   else if (r.signal) detail = `signal ${r.signal}`;
@@ -4448,6 +4449,126 @@ function hostFailedNote(host, reason, rerun) {
   log(`cross-ai: host: ${reason}; ${rerun ? 'the lane runs headless' : 'the lane may have started, so it is not rerun'}`);
   host.failed = true; host.entry.state = 'ignored'; host.entry.reason = 'host_failed';
   for (const line of reportLines([host.entry])) log(line);
+}
+
+const SWEEP_HERDR_TIMEOUT_MS = 2000;
+const SWEEP_BUDGET_MS = 4000;
+const SWEEP_REREAD_MS = 2000;
+const RUN_RECORD_MAX_BYTES = 65536;
+const SWEEP_DIR_RX = /^([0-9a-f]{12})(?:\.sweep-(\d+)-(\d+|-))?$/;
+const SWEEP_REASONS = Object.freeze(['unreadable', 'other host', 'live launcher', 'hosting off', 'herdr unreachable', 'tab unproven', 'close failed', 'cleanup failed']);
+
+function runnerAlive(rec) {
+  if (!lockPidAlive(rec.runner_pid)) return false;
+  const now = lockStartTime(rec.runner_pid);
+  return rec.runner_start === '-' || now === '-' || now === rec.runner_start;
+}
+function launcherGroupAlive(rec) {
+  return Number.isInteger(rec.launcher_pgid) && lockGroupAlive(rec.launcher_pgid, rec.launcher_start);
+}
+function readRunRecord(dir, token) {
+  const file = path.join(dir, HOST_FILES.run);
+  try {
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.size > RUN_RECORD_MAX_BYTES) return null;
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    let raw;
+    try {
+      const fst = fs.fstatSync(fd);
+      if (!fst.isFile() || fst.size > RUN_RECORD_MAX_BYTES || fst.ino !== st.ino || fst.dev !== st.dev) return null;
+      raw = fs.readFileSync(fd, 'utf8');
+      if (Buffer.byteLength(raw) > RUN_RECORD_MAX_BYTES) return null;
+    } finally { fs.closeSync(fd); }
+    const rec = parseJson(raw);
+    return rec && typeof rec === 'object' && rec.version === RUN_RECORD_VERSION && rec.token === token &&
+      ['review', 'execute'].includes(rec.role) && typeof rec.runtime === 'string' &&
+      rec.label === hostLabel(rec.role, rec.runtime, token) && rec.label.length <= 63 &&
+      Number.isInteger(rec.runner_pid) && rec.runner_pid > 0 && typeof rec.runner_start === 'string' &&
+      typeof rec.host_name === 'string' && rec.host_name !== '' &&
+      (rec.tab_id === null || (typeof rec.tab_id === 'string' && HOST_ID_RX.test(rec.tab_id))) &&
+      (rec.launcher_pgid === null || (Number.isInteger(rec.launcher_pgid) && rec.launcher_pgid > 1)) &&
+      (rec.launcher_start === null || typeof rec.launcher_start === 'string') ? rec : null;
+  } catch { return null; }
+}
+
+// Claim dead runs, remove secrets, and close only a tab proven by the complete label.
+async function sweepRuns({ explicit, hostingOff }) {
+  const root = path.join(path.resolve(stateHome()), 'ai-kit', 'spec', 'host');
+  let names = [];
+  try { names = fs.readdirSync(root).sort(); } catch { /* nothing to sweep */ }
+  const counts = Object.fromEntries(SWEEP_REASONS.map((r) => [r, 0]));
+  let closed = 0, removed = 0, tabs;
+  const me = `${process.pid}-${procStartTime(process.pid)}`;
+  const safe = (s) => redactSecrets(redactSecrets(String(s)).replace(/[\x00-\x1f\x7f-\x9f]/g, ''));
+  const budgetStart = performance.now();
+  const timeout = () => Math.min(SWEEP_HERDR_TIMEOUT_MS, Math.max(0, Math.floor(SWEEP_BUDGET_MS - (performance.now() - budgetStart))));
+  for (const name of names) {
+    const m = SWEEP_DIR_RX.exec(name);
+    if (!m) continue;
+    const [, token, claimPid, claimStart] = m;
+    if (claimPid !== undefined) {
+      const pid = Number(claimPid);
+      if (lockPidAlive(pid)) { const start = lockStartTime(pid); if (claimStart === '-' || start === '-' || start === claimStart) continue; }
+    }
+    const dir = path.join(root, name);
+    try { if (!fs.lstatSync(dir).isDirectory()) continue; } catch { continue; }
+    let rec = readRunRecord(dir, token), mtime;
+    const t0 = performance.now();
+    try { mtime = fs.lstatSync(dir).mtimeMs; } catch { continue; }
+    while (!rec && Date.now() - mtime < SWEEP_REREAD_MS && performance.now() - t0 < SWEEP_REREAD_MS) {
+      await sleep(100);
+      rec = readRunRecord(dir, token);
+      try { mtime = fs.lstatSync(dir).mtimeMs; } catch { mtime = null; break; }
+    }
+    if (mtime === null) continue;
+    if (!rec) {
+      counts.unreadable++;
+      log(safe(`cross-ai: sweep: unreadable record ${name} age ${Math.max(0, Math.floor((Date.now() - mtime) / 1000))}s; left alone`));
+      continue;
+    }
+    if (rec.host_name !== os.hostname()) { counts['other host']++; continue; }
+    if (runnerAlive(rec)) continue;
+    if (launcherGroupAlive(rec)) { counts['live launcher']++; continue; }
+    const claimed = path.join(root, `${token}.sweep-${me}`);
+    if (claimed !== dir) { try { fs.renameSync(dir, claimed); } catch { continue; } }
+    dropSecrets(claimed);
+    try { for (const f of fs.readdirSync(claimed)) if (f !== HOST_FILES.run) fs.rmSync(path.join(claimed, f), { recursive: true, force: true }); } catch { /* checked below */ }
+    let keep = null;
+    try { if (fs.readdirSync(claimed).some((f) => f !== HOST_FILES.run)) keep = 'cleanup failed'; } catch { keep = 'cleanup failed'; }
+    if (!keep && !explicit && hostingOff) keep = 'hosting off';
+    else if (!keep && !hostAvailable(process.env)) keep = 'herdr unreachable';
+    else if (!keep) {
+      if (tabs === undefined) {
+        const ms = timeout();
+        const r = ms ? herdrCall('tab list', [], ms) : null;
+        const listed = r?.ok ? parseJson(r.stdout.trim())?.result?.tabs : null;
+        tabs = Array.isArray(listed) && listed.every((t) => t && typeof t === 'object' && typeof t.tab_id === 'string' && typeof t.label === 'string') ? listed : null;
+      }
+      if (tabs === null) keep = 'herdr unreachable';
+      else {
+        const matches = tabs.filter((t) => t.label === rec.label && (rec.tab_id === null || t.tab_id === rec.tab_id));
+        if (rec.tab_id === null && matches.length > 1) keep = 'tab unproven';
+        else if (matches.length && HOST_ID_RX.test(matches[0].tab_id)) {
+          const ms = timeout();
+          const r = ms ? herdrCall('tab close', [matches[0].tab_id], ms) : null;
+          if (r?.ok) closed++;
+          else if (!r || r.code === 'server_not_running' || r.detail === 'timeout') { tabs = null; keep = 'herdr unreachable'; }
+          else if (r.code !== 'tab_not_found') keep = 'close failed';
+        } else if (matches.length) keep = 'tab unproven';
+      }
+    }
+    if (!keep) { try { fs.rmSync(claimed, { recursive: true, force: true }); removed++; } catch { keep = 'cleanup failed'; } }
+    if (keep) {
+      counts[keep]++;
+      try { fs.renameSync(claimed, path.join(root, token)); } catch { /* retain claim for a later sweep */ }
+    }
+  }
+  const kept = SWEEP_REASONS.reduce((n, r) => n + counts[r], 0);
+  if (explicit || closed || removed || kept) {
+    const reasons = kept ? SWEEP_REASONS.filter((r) => counts[r]).map((r) => `${r} ${counts[r]}`).join(', ') : '-';
+    log(safe(`cross-ai: sweep: closed ${closed} tab(s), removed ${removed} run director(ies), kept ${kept} (${reasons})`));
+  }
+  return { closed, removed, kept };
 }
 
 function parsePiListingIds(stdout) {
@@ -5869,7 +5990,7 @@ function parseArgs(argv) {
     codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
     role: null, effort: null, context: null, escalateRuntime: false, escalateModel: false,
-    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, baseline: null, idleTimeout: null, forbid: [], planId: null,
+    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, sweep: false, baseline: null, idleTimeout: null, forbid: [], planId: null,
   };
   let modeFlag = null;
   for (let i = 0; i < argv.length; i++) {
@@ -5949,6 +6070,7 @@ function parseArgs(argv) {
     } else if (a === '--baseline') {
       o.baseline = v(); if (!/^[0-9a-fA-F]{7,64}$/.test(o.baseline)) throw new Error('--baseline must be 7 to 64 hex characters');
     } else if (a === '--describe') o.describe = true;
+    else if (a === '--sweep') o.sweep = true;
     else if (a === '--forbid') {
       const raw = v();
       if (!raw.trim()) throw new Error('--forbid needs a repo-relative path');
@@ -5959,6 +6081,7 @@ function parseArgs(argv) {
     else if (a === '--plan-id') { o.planId = v(); if (!PLAN_ID_RE.test(o.planId)) throw new Error(`--plan-id must match ${PLAN_ID_RE.source}`); }
     else throw new Error(`unknown argument: ${a}`);
   }
+  if (o.sweep && (o.printArgv || o.classifyOnly !== null)) throw new Error('--sweep cannot be combined with --print-argv or --classify-only');
   if (o.effort !== null && o.codexEffort !== null && o.effort !== o.codexEffort) throw new Error('--effort and --codex-effort disagree');
   if (o.effort === null) o.effort = o.codexEffort;
   if (o.role !== null) {
@@ -6146,6 +6269,10 @@ async function main(argv) {
   }
   if (o.describe) {
     process.stdout.write(`${JSON.stringify(describeValue(describeJson(process.env)), null, 2)}\n`);
+    return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
+  }
+  if (o.sweep) {
+    await sweepRuns({ explicit: true, hostingOff: false });
     return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
   }
   TABLE = mergeCatalog(PATTERNS, loadOverlay(process.env));
@@ -6368,6 +6495,7 @@ async function main(argv) {
     }
     baselineHead = { head, treeId };
   }
+  await sweepRuns({ explicit: false, hostingOff: hostSettingValue(o.host, process.env.AIKIT_HOST).value === 'none' });
   const lockRoot = checkoutRoot(process.cwd());
   if (o.mode === 'exec') {
     const got = await acquireLock(lockRoot, { cli: c.name, model: c.model });
@@ -6537,6 +6665,7 @@ export {
   HERDR_BIN,
   HERDR_VERBS,
   HOST_PATH_SAFE,
+  SWEEP_HERDR_TIMEOUT_MS,
   IDLE_DEFAULT_S,
   IDLE_MAX_S,
   KEY_SHAPES,
@@ -6593,6 +6722,7 @@ export {
   ladderNext,
   ladderStop,
   launcherVerified,
+  launcherGroupAlive,
   liveCheck,
   liveMatch,
   lockGroupAlive,
@@ -6648,6 +6778,7 @@ export {
   statusGroup,
   strictJson,
   stripCode,
+  sweepRuns,
   taskDigest,
   upsertTomlKeys,
   upstreamFields,

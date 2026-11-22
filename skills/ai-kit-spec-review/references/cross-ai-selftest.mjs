@@ -107,6 +107,7 @@ import {
   procGroup,
   procSession,
   procStartTime,
+  SWEEP_HERDR_TIMEOUT_MS,
   promptFiles,
   providerAdmits,
   pushCapped,
@@ -2068,12 +2069,15 @@ if (verb === 'tab create') {
 } else if (verb === 'tab close') {
   const tab = state.tabs[args[2]];
   hlog('close ' + args[2] + ' dir=' + (tab && tab.dir ? (fs.existsSync(tab.dir) ? 'present' : 'gone') : '-') + (tab && tab.closed ? ' already-closed' : ''));
+  if (fail === 'close-hang') { unlock(); setTimeout(() => process.exit(0), 30000); }
   if (fail === 'close') { console.error('{"error":"fake close failure"}'); process.exit(1); }
+  if (fail === 'close-notfound') { if (tab) { tab.closed = true; save(); } console.error(JSON.stringify({ error: { code: 'tab_not_found', message: 'tab ' + args[2] + ' not found' }, id: 'cli:tab:close' })); process.exit(1); }
   if (!tab || tab.closed) { console.error(JSON.stringify({ error: { code: 'tab_not_found', message: 'tab ' + args[2] + ' not found' }, id: 'cli:tab:close' })); process.exit(1); }
   if (tab && !tab.closed && tab.pgid) { try { process.kill(-tab.pgid, 'SIGHUP'); } catch { /* gone */ } }
   if (tab) tab.closed = true;
   save(); console.log('{"result":{"type":"ok"}}');
 } else if (verb === 'tab list') {
+  if (fail === 'list-slow') { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500); }
   if (fail === 'list-hang') { unlock(); setTimeout(() => process.exit(0), 30000); }
   else if (fail === 'list-fail') { console.error('{"error":"fake list failure"}'); process.exit(1); }
   else console.log(JSON.stringify({ result: { tabs: Object.entries(state.tabs).filter(([, t]) => !t.closed).map(([id, t]) => ({ tab_id: id, workspace_id: 'w1', label: t.label })) } }));
@@ -2637,6 +2641,48 @@ async function blackBoxSelfTest(listOnly = false) {
       if (calls.some((a) => ['t0', 'p0', 'tx', 'px'].some((id) => a.includes(id)))) return 'a foreign tab (t0 or tx) was touched';
       return null;
     };
+    const plantRun = (c, spec) => {
+      const dir = path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host', spec.name || spec.token);
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const record = { version: 1, token: spec.token, runner_pid: process.pid, runner_start: '1', host_name: os.hostname(), checkout_root: c.repo, role: 'execute', runtime: 'pi', label: 'aikit:execute:pi:' + spec.token, tab_id: null, pane_id: null, launcher_pid: null, launcher_pgid: null, launcher_start: null, created_ms: Date.now() - 60000, ...(spec.rec || {}) };
+      if (spec.record !== false) fs.writeFileSync(path.join(dir, 'run.json'), spec.raw ?? JSON.stringify(record), { mode: 0o600 });
+      fs.writeFileSync(path.join(dir, 'env'), "export AIKIT_XAI_SENTINEL='" + c.env.AIKIT_XAI_SENTINEL + "'\n", { mode: 0o600 });
+      fs.writeFileSync(path.join(dir, 'prompt'), 'planted prompt\n', { mode: 0o600 });
+      fs.writeFileSync(path.join(dir, 'out'), 'planted out\n');
+      if (spec.ageMs) { const t = (Date.now() - spec.ageMs) / 1000; fs.utimesSync(dir, t, t); }
+      return dir;
+    };
+    const plantTabs = (c, tabs, foreignClosed = false) => {
+      const make = (label, pane, closed = false) => ({ label, pane, cwd: c.home, pgid: null, dir: null, closed });
+      const all = { t0: make('aikit:review:pi:000000000000', 'p0', foreignClosed), tx: make('aikit:execute:pi:ffffffffffff', 'px', foreignClosed) };
+      for (const [id, label] of Object.entries(tabs)) all[id] = make(label, 'p' + id.slice(1));
+      fs.writeFileSync(path.join(c.home, 'herdr-state.json'), JSON.stringify({ next: 1, tabs: all }));
+    };
+    const stateKeyLeft = (c, dir = c.env.XDG_STATE_HOME) => {
+      let entries; try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+      for (const entry of entries) {
+        const file = path.join(dir, entry.name);
+        if (entry.isDirectory()) { const found = stateKeyLeft(c, file); if (found) return found; }
+        else if (entry.isFile() && fs.readFileSync(file, 'utf8').includes(c.env.AIKIT_XAI_SENTINEL)) return `a key is left in ${path.relative(c.env.XDG_STATE_HOME, file)}`;
+      }
+      return null;
+    };
+    const hostDirNames = (c) => { try { return fs.readdirSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host')).sort(); } catch { return []; } };
+    const callsJson = (c) => JSON.stringify(hostCalls(c));
+    const sweepCheck = (r, c, explicit) => {
+      const lines = (r.stderr || '').split('\n').filter((s) => s.startsWith('cross-ai: sweep: closed '));
+      if (lines.length !== 1 || lines[0] !== 'cross-ai: sweep: closed 1 tab(s), removed 1 run director(ies), kept 0 (-)') return 'sweep line';
+      if (callsJson(c) !== '[["tab","list"],["tab","close","t5"]]') return `herdr calls ${callsJson(c)}`;
+      if (hostDirNames(c).length) return `run dirs left: ${hostDirNames(c)}`;
+      const tabs = fakeTabs(c);
+      if (!tabs.t5?.closed) return 't5 not closed';
+      if (tabs.t0?.closed || tabs.tx?.closed) return 'a foreign tab was closed';
+      const left = stateKeyLeft(c); if (left) return left;
+      if (explicit && r.stdout) return 'stdout not empty';
+      if (explicit && readOr(c.env.FAKE_CALLS, '').trim()) return 'lane called';
+      return null;
+    };
+    const sweepSetup = (c) => { plantRun(c, { token: 'aaaaaaaaaaa1', rec: { tab_id: 't5', pane_id: 'p5' } }); plantTabs(c, { t5: 'aikit:execute:pi:aaaaaaaaaaa1' }); return null; };
     // One task digest for every baseline case: the caller part holds one objective block.
     const BASELINE_TASK = '<objective>\nlock baseline task\n</objective>\n';
     const gitValue = (c, args, env = c.env) => {
@@ -7933,6 +7979,7 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       ...[
+        ['vocab-sweep-print-argv', ['--sweep'], '--sweep cannot be combined with --print-argv or --classify-only'],
         ['vocab-role-mode-disagree', ['--role', 'review', '--mode', 'exec'], '--role and --mode disagree'],
         ['vocab-role-mode-disagree-exec', ['--mode', 'review', '--role', 'execute'], '--role and --mode disagree'],
         ['vocab-role-bad', ['--role', 'exec'], '--role must be review or execute'],
@@ -10471,6 +10518,74 @@ async function blackBoxSelfTest(listOnly = false) {
       planCase('plan-merge-clean', { merge: { files: ['one.txt'], subject: 'feat(38-18): t1' }, commits: [all3[1], all3[2]], status: 'ok', coverage: '3/3', codes: '-' }),
       planCase('plan-no-git-admission', { setup: (c) => { fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true }); c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo); return null; }, commits: [], answer: '# Summary\nThe last task is not implemented.\n', status: 'partial', coverage: 'n/a', codes: 'admits_skipped', lines: ['cross-ai: finding reason=admits_skipped detail=phrase "not implemented"'] }),
       { name: 'plan-out-of-table', kind: 'logic', setup: (c) => { fs.writeFileSync(path.join(c.repo, '.gitignore'), 'ign/\n'); fs.mkdirSync(path.join(c.repo, 'ign')); fs.writeFileSync(path.join(c.repo, 'ign', 'argv.json'), JSON.stringify(['placeholder-cli-1', '--model', '{model}', '--session={session}'])); for (const args of [['add', '.gitignore'], ['commit', '-q', '-m', 'ignore']]) { const g = spawnSync('git', args, { cwd: c.repo, env: c.env, encoding: 'utf8' }); if (g.status !== 0) return `setup git ${args.join(' ')}: ${g.stderr}`; } return null; }, stdin: planPrompt([['t1', 'one.txt'], ['t2', 'two.txt'], ['t3', 'three.txt']]), args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'ign/argv.json', '--model', 'fake-edit-then-ok', '--session-id', 'placeholder-sid-9'], exit: 1, status: /^AIKIT-XAI status=partial cli=placeholder-cli-1 model=fake-edit-then-ok exit=1 .* action=stop$/, check: (r) => (r.stderr || '').split('\n').includes('cross-ai: finding reason=no_commit detail=no commit since the baseline for 3 planned tasks') && !r.stdout ? null : 'missing finding or stdout not empty' },
+      ...[
+        { name: 'sweep-foreign-safe', plants: [['aaaaaaaaaaa2', 't5'], ['aaaaaaaaaaa3', 't6'], ['aaaaaaaaaaa4', null]], tabs: { t5: 'aikit:execute:pi:aaaaaaaaaaa3', t8: 'aikit:execute:pi:aaaaaaaaaaa' }, expect: { line: [0, 3, 0], calls: [['tab', 'list']], open: ['t0', 'tx', 't5', 't8'] } },
+        { name: 'sweep-null-id', plants: [['bbbbbbbbbbb1', null]], tabs: { t5: 'aikit:execute:pi:bbbbbbbbbbb1' }, expect: { line: [1, 1, 0], calls: [['tab', 'list'], ['tab', 'close', 't5']], closedTabs: ['t5'] } },
+        { name: 'sweep-zero-tabs', plants: [['bbbbbbbbbbb2', 't5']], tabs: {}, foreignClosed: true, expect: { line: [0, 1, 0], calls: [['tab', 'list']] } },
+        { name: 'sweep-down', plants: [['ccccccccccc1', 't5']], env: { FAKE_HERDR_DOWN: '1' }, expect: { line: [0, 0, 1, 'herdr unreachable 1'], calls: [['tab', 'list']], dirs: ['ccccccccccc1'], again: { env: { FAKE_HERDR_DOWN: '' } } } },
+        { name: 'sweep-host-none', plants: [['ddddddddddd1', 't5']], args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'none'], expect: { line: [0, 0, 1, 'hosting off 1'], dirs: ['ddddddddddd1'], again: {} } },
+        { name: 'sweep-env-none', plants: [['ddddddddddd1', 't5']], args: ['--runtime', 'pi', '--model', 'fake/ok'], env: { AIKIT_HOST: 'none' }, expect: { line: [0, 0, 1, 'hosting off 1'], dirs: ['ddddddddddd1'], again: {} } },
+        { name: 'sweep-live-untouched', live: true, plants: [['eeeeeeeeeee1', 't5'], ['eeeeeeeeeee2', 't6']], expect: { line: [0, 0, 1, 'live launcher 1'], dirs: ['eeeeeeeeeee1', 'eeeeeeeeeee2'], open: ['t5', 't6'], untouched: true } },
+        { name: 'sweep-unreadable', plants: [{ token: 'fffffffffff1', raw: '', ageMs: 5000 }, { token: 'fffffffffff2', record: false, ageMs: 5000 }], expect: { line: [0, 0, 2, 'unreadable 2'], dirs: ['fffffffffff1', 'fffffffffff2'], untouched: true, ages: true } },
+        { name: 'sweep-other-host', plants: [{ token: 'abcabcabcab1', rec: { host_name: 'placeholder-host-1', tab_id: 't5' } }], expect: { line: [0, 0, 1, 'other host 1'], dirs: ['abcabcabcab1'], untouched: true } },
+        { name: 'sweep-notfound', plants: [['abcabcabcab2', 't5']], env: { FAKE_HERDR_FAIL: 'close-notfound' }, expect: { line: [0, 1, 0], calls: [['tab', 'list'], ['tab', 'close', 't5']], again: { empty: true } } },
+        { name: 'sweep-claim-takeover', claim: true, plants: [['9999999999b1', 't5']], expect: { line: [1, 1, 0], calls: [['tab', 'list'], ['tab', 'close', 't5']] } },
+        { name: 'sweep-bad-record', plants: [{ token: 'cccccccccc99', rec: { version: 2, tab_id: 't5' }, ageMs: 5000 }], expect: { line: [0, 0, 1, 'unreadable 1'], dirs: ['cccccccccc99'], untouched: true } },
+      ].map((t) => ({
+        name: t.name, kind: 'logic', args: t.args || ['--sweep'], env: { HERDR_ENV: '1', PATH: hostedPath, ...t.env }, exit: 0,
+        status: t.args ? /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/ : /^AIKIT-XAI status=ok cli=- model=- exit=0 cli_rc=- elapsed=\d+s out=0 tree=clean action=stop$/,
+        setup: (c) => {
+          let sleeper;
+          if (t.live) { sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { cwd: c.repo, detached: true, stdio: 'ignore' }); sleeper.unref(); }
+          const tabs = { ...t.tabs };
+          for (const [i, p] of t.plants.entries()) {
+            const spec = Array.isArray(p) ? { token: p[0], rec: { tab_id: p[1] } } : { ...p, rec: { ...p.rec } };
+            if (t.live && i === 0) spec.rec.runner_start = procStartTime(process.pid);
+            if (t.live && i === 1) Object.assign(spec.rec, { launcher_pid: sleeper.pid, launcher_pgid: sleeper.pid, launcher_start: procStartTime(sleeper.pid) });
+            if (t.claim) spec.name = spec.token + '.sweep-' + deadPid() + '-1';
+            plantRun(c, spec);
+            if (t.claim) for (const file of ['env', 'prompt', 'out']) fs.unlinkSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host', spec.name, file));
+            if (!t.tabs && spec.rec.tab_id) tabs[spec.rec.tab_id] = 'aikit:execute:pi:' + spec.token;
+          }
+          plantTabs(c, tabs, t.foreignClosed); return null;
+        },
+        check: async (r, c) => {
+          const line = (a) => `cross-ai: sweep: closed ${a[0]} tab(s), removed ${a[1]} run director(ies), kept ${a[2]} (${a[3] || '-'})`;
+          const got = r.stderr.split('\n').find((s) => s.startsWith('cross-ai: sweep: closed '));
+          if (got !== line(t.expect.line)) return `${t.name}: sweep line ${got}`;
+          if (t.expect.calls ? callsJson(c) !== JSON.stringify(t.expect.calls) : fs.existsSync(path.join(c.home, 'herdr.log'))) return `${t.name}: calls ${callsJson(c)}`;
+          if (JSON.stringify(hostDirNames(c)) !== JSON.stringify(t.expect.dirs || [])) return `${t.name}: dirs ${hostDirNames(c)}`;
+          for (const id of t.expect.open || []) if (fakeTabs(c)[id]?.closed !== false) return `${t.name}: open ${id}`;
+          for (const id of t.expect.closedTabs || []) if (fakeTabs(c)[id]?.closed !== true) return `${t.name}: closed ${id}`;
+          const safety = hostSafety(hostCalls(c)); if (safety) return `${t.name}: ${safety}`;
+          for (const dir of t.expect.dirs || []) { const files = fs.readdirSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host', dir)).sort(); if (JSON.stringify(files) !== JSON.stringify(t.expect.untouched ? (dir === 'fffffffffff2' ? ['env', 'out', 'prompt'] : ['env', 'out', 'prompt', 'run.json']) : ['run.json'])) return `${t.name}: files ${files}`; }
+          if (!t.expect.untouched) { const left = stateKeyLeft(c); if (left) return `${t.name}: ${left}`; }
+          if (t.expect.ages) for (const token of ['fffffffffff1', 'fffffffffff2']) if (!new RegExp(`^cross-ai: sweep: unreadable record ${token} age [56]s; left alone$`, 'm').test(r.stderr)) return `${t.name}: age ${token}`;
+          if (t.expect.again) { const next = await runCaseProcess({ args: ['--sweep'] }, { ...c, env: { ...c.env, ...t.expect.again.env } }); const expected = t.expect.again.empty ? [0, 0, 0] : [1, 1, 0]; if (next.status !== 0 || !next.stderr.split('\n').includes(line(expected)) || hostDirNames(c).length || (!t.expect.again.empty && !fakeTabs(c).t5?.closed)) return `${t.name}: again ${next.stderr}`; }
+          return null;
+        },
+      })),
+      ...['list-hang', 'close-hang'].map((fail) => ({
+        name: fail === 'list-hang' ? 'sweep-herdr-hang' : 'sweep-close-hang', kind: 'runtime', args: ['--sweep'], env: { HERDR_ENV: '1', PATH: hostedPath, FAKE_HERDR_FAIL: fail }, exit: 0,
+        status: /^AIKIT-XAI status=ok cli=- model=- exit=0 cli_rc=- elapsed=\d+s out=0 tree=clean action=stop$/,
+        setup: (c) => { const p = fail === 'list-hang' ? '8888888888a' : '8888888888b'; for (const [n, id] of [['1', 't5'], ['2', 't6']]) plantRun(c, { token: p + n, rec: { tab_id: id } }); plantTabs(c, { t5: 'aikit:execute:pi:' + p + '1', t6: 'aikit:execute:pi:' + p + '2' }); return null; },
+        check: (r, c) => { if (SWEEP_HERDR_TIMEOUT_MS !== 2000) return 'sweep timeout'; const expected = fail === 'list-hang' ? [['tab', 'list']] : [['tab', 'list'], ['tab', 'close', 't5']]; if (!r.stderr.includes('cross-ai: sweep: closed 0 tab(s), removed 0 run director(ies), kept 2 (herdr unreachable 2)') || callsJson(c) !== JSON.stringify(expected) || hostDirNames(c).length !== 2 || !Array.isArray(keptRecords(c))) return 'hung herdr'; return null; },
+      })),
+      { name: 'sweep-race', kind: 'logic', args: ['--sweep'], env: { HERDR_ENV: '1', PATH: hostedPath, FAKE_HERDR_FAIL: 'list-slow' }, exit: 0, status: /^AIKIT-XAI status=ok cli=- model=- exit=0 cli_rc=- elapsed=\d+s out=0 tree=clean action=stop$/,
+        setup: (c) => { plantRun(c, { token: '9999999999a1', rec: { tab_id: 't5' } }); plantTabs(c, { t5: 'aikit:execute:pi:9999999999a1' }); const out = fs.openSync(path.join(c.home, 'race-out.txt'), 'w'), err = fs.openSync(path.join(c.home, 'race-err.txt'), 'w'); const child = spawn(process.execPath, [c.copy, '--sweep'], { cwd: c.repo, env: c.env, stdio: ['ignore', out, err], detached: true }); fs.closeSync(out); fs.closeSync(err); caseRunners.add(child); c.raceExit = new Promise((resolve) => child.once('exit', (code) => { caseRunners.delete(child); resolve(code); })); const deadline = Date.now() + 10000; while (!readOr(path.join(c.home, 'herdr.log'), '').includes('argv ["tab","list"]') && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25); return Date.now() >= deadline ? 'race claim missing' : null; },
+        check: async (r, c) => { const code = await c.raceExit; const bg = readOr(path.join(c.home, 'race-err.txt'), ''); return code === 0 && r.stderr.includes('cross-ai: sweep: closed 0 tab(s), removed 0 run director(ies), kept 0 (-)') && bg.includes('cross-ai: sweep: closed 1 tab(s), removed 1 run director(ies), kept 0 (-)') && hostCalls(c).filter((a) => JSON.stringify(a) === '["tab","close","t5"]').length === 1 && !hostDirNames(c).length ? null : 'race outcome'; },
+      },
+      { name: 'sweep-fresh-unreadable', kind: 'runtime', args: ['--sweep'], env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0, status: /^AIKIT-XAI status=ok cli=- model=- exit=0 cli_rc=- elapsed=\d+s out=0 tree=clean action=stop$/,
+        setup: (c) => { const dir = plantRun(c, { token: '7777777777a1' }); const record = fs.readFileSync(path.join(dir, 'run.json')); fs.writeFileSync(path.join(dir, 'run.json'), ''); plantTabs(c, {}); setTimeout(() => fs.writeFileSync(path.join(dir, 'run.json'), record), 500); return null; },
+        check: (r, c) => r.stderr.includes('cross-ai: sweep: closed 0 tab(s), removed 1 run director(ies), kept 0 (-)') && !hostDirNames(c).length ? null : 'fresh record not used',
+      },
+      { name: 'sweep-sigkill-e2e', kind: 'runtime', keepsTmp: true, args: ['--sweep'], env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0, status: /^AIKIT-XAI status=ok cli=- model=- exit=0 cli_rc=- elapsed=\d+s out=0 tree=clean action=stop$/,
+        setup: (c) => { const out = fs.openSync(path.join(c.home, 'kill-out.txt'), 'w'), err = fs.openSync(path.join(c.home, 'kill-err.txt'), 'w'); const input = path.join(c.home, 'kill-input.txt'); fs.writeFileSync(input, 'prompt\n'); const infd = fs.openSync(input, 'r'); const child = spawn(process.execPath, [c.copy, '--runtime', 'pi', '--model', 'fake/hang', '--timeout', '60', '--host', 'auto'], { cwd: c.repo, env: c.env, stdio: [infd, out, err], detached: true }); fs.closeSync(infd); fs.closeSync(out); fs.closeSync(err); caseRunners.add(child); child.once('exit', () => caseRunners.delete(child)); if (!hostedUsable(c)) { child.kill('SIGKILL'); return null; } const deadline = Date.now() + 10000; let rec; while (Date.now() < deadline) { const names = hostDirNames(c); try { rec = JSON.parse(fs.readFileSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host', names[0], 'run.json'), 'utf8')); } catch { /* not written */ } if (Number.isInteger(rec?.launcher_pgid)) break; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); } if (!Number.isInteger(rec?.launcher_pgid)) { child.kill('SIGKILL'); return 'no launcher pgid recorded'; } child.kill('SIGKILL'); if (procStartTime(rec.launcher_pgid) !== rec.launcher_start) return 'launcher identity changed'; try { process.kill(-rec.launcher_pgid, 'SIGKILL'); } catch { /* already gone */ } const end = Date.now() + 3000; while (groupMembers(rec.launcher_pgid, rec.launcher_pgid).length && Date.now() < end) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); return groupMembers(rec.launcher_pgid, rec.launcher_pgid).length ? 'launcher group lingers' : null; },
+        check: (r, c) => { if (!hostedUsable(c)) return hostDirNames(c).length ? 'unexpected run directory' : null; return r.stderr.includes('cross-ai: sweep: closed 1 tab(s), removed 1 run director(ies), kept 0 (-)') && hostCalls(c).filter((a) => JSON.stringify(a) === '["tab","close","t1"]').length === 1 && !hostSafety(hostCalls(c)) && !hostDirNames(c).length && fakeTabs(c).t1?.closed && !stateKeyLeft(c) && !r.stderr.includes(c.env.AIKIT_XAI_SENTINEL) ? null : 'SIGKILL cleanup'; },
+      },
+      { name: 'sweep-empty', kind: 'logic', args: ['--sweep'], env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0, status: /^AIKIT-XAI status=ok cli=- model=- exit=0 cli_rc=- elapsed=\d+s out=0 tree=clean action=stop$/, second: { args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/ }, check: (both, c) => both.first.stderr.includes('cross-ai: sweep: closed 0 tab(s), removed 0 run director(ies), kept 0 (-)') && !both.again.stderr.includes('cross-ai: sweep:') && !fs.existsSync(path.join(c.home, 'herdr.log')) ? null : 'sweep-empty: output or calls' },
+      { name: 'sweep-dead-closes', kind: 'logic', setup: sweepSetup, args: ['--sweep'], env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0, status: /^AIKIT-XAI status=ok cli=- model=- exit=0 cli_rc=- elapsed=\d+s out=0 tree=clean action=stop$/, check: (r, c) => sweepCheck(r, c, true) },
+      { name: 'sweep-auto-run', kind: 'logic', setup: sweepSetup, args: ['--runtime', 'pi', '--model', 'fake/ok'], env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/, check: (r, c) => sweepCheck(r, c, false) },
       { name: 'host-fake-shapes', kind: 'logic', pure: () => {
         const home = path.join(tmp, 'fake-shapes-home');
         fs.mkdirSync(home, { recursive: true });
