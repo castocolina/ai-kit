@@ -3,7 +3,6 @@
 import io
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,6 +16,8 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-gsd-curated-config
 from ai_kit_gsd_curated_config import cross_ai_build
 from ai_kit_spec import execute_dispatch, lane_settings, runner_dispatch, tooling_guidance
 from ai_kit_spec.cli import main
+
+from tests.cross_ai_selftest import _real_node_executable
 
 RUNTIMES = ("pi", "opencode", "cursor", "codex", "claude", "copilot")
 
@@ -73,11 +74,13 @@ class TestRunnerFlagsGolden(unittest.TestCase):
 
 
 class TestTemplateAcceptsPythonFlags(unittest.TestCase):
-    @unittest.skipIf(shutil.which("node") is None, "node not on PATH")
     def test_every_python_flag_parses(self):
-        node = shutil.which("node")
+        # The real node, never a launcher shim that may run itself again under the scratch HOME.
+        node = _real_node_executable()
+        if node is None:
+            self.skipTest("no real node executable on PATH")
         template = tooling_guidance.resolve_cross_ai_template_path()
-        assert node is not None and template is not None
+        assert template is not None
         with tempfile.TemporaryDirectory() as tmp:
             env = runner_dispatch.child_env()
             env.update(HOME=tmp, AI_KIT_REFUSE_REAL_HOME="1")
@@ -135,6 +138,13 @@ class TestEscalationThroughLaneSettings(unittest.TestCase):
             spec._replace(context="1m", session_id="placeholder-session-1"))
         self.assertIn("--context", flags)
         self.assertIn("--session-id", flags)
+
+    def test_integer_effort_becomes_a_string_and_spec_has_no_ignored_field(self):
+        spec = runner_dispatch.review_spec("pi", "fake/placeholder-model-1", {"effort": 3}, 30)
+        self.assertEqual(spec.effort, "3")
+        self.assertEqual(runner_dispatch.runner_flags(spec)[6:8], ["--effort", "3"])
+        # 37-14: the runner reports an ignored setting itself; the spec no longer carries one.
+        self.assertNotIn("ignored", runner_dispatch.RunnerSpec._fields)
 
     def test_other_knobs_unchanged(self):
         spec = runner_dispatch.review_spec("codex", "placeholder-model-1",

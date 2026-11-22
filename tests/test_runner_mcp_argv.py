@@ -2,10 +2,11 @@
 
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 import unittest
+
+from tests.cross_ai_selftest import _real_node_executable
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TEMPLATE = os.path.join(REPO_ROOT, "skills", "ai-kit-spec-review", "references", "cross-ai.mjs")
@@ -20,8 +21,11 @@ SERVERS = {"placeholder-server-b": {"command": "placeholder-cmd"},
 
 class _McpCase(unittest.TestCase):
     def setUp(self):
-        if shutil.which("node") is None:
-            self.skipTest("node not on PATH")
+        # The real node: a launcher shim may run itself again under the scratch HOME below.
+        node = _real_node_executable()
+        if node is None:
+            self.skipTest("no real node executable on PATH")
+        self.node: str = node
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.cwd = os.path.realpath(self._tmp.name)
@@ -30,7 +34,7 @@ class _McpCase(unittest.TestCase):
         env = os.environ.copy()
         env.update(HOME=self.cwd, XDG_CONFIG_HOME=os.path.join(self.cwd, "config"),
                    XDG_STATE_HOME=os.path.join(self.cwd, "state"), AI_KIT_REFUSE_REAL_HOME="1")
-        return subprocess.run(["node", TEMPLATE, "--print-argv", *args], cwd=self.cwd,
+        return subprocess.run([self.node, TEMPLATE, "--print-argv", *args], cwd=self.cwd,
                               capture_output=True, text=True, timeout=60, env=env)
 
     @staticmethod

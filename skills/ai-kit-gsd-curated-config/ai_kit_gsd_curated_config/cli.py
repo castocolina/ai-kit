@@ -227,8 +227,8 @@ def _cmd_ensure_runner(args, which_fn, run_fn, env_fn):
 
 def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
     # D-15 (Phase 16.1): validate `--cli` BEFORE the first config-set, workflow.cross_ai_execution
-    # included -- a rejected executor (claude/grok, or any unsupported name) must leave the GSD
-    # config completely untouched, on every run.
+    # included, so a rejected executor leaves the GSD config untouched. 37 R9: only a recorded
+    # runner fact refuses (none is passed here); the runner refuses an unusable runtime itself.
     if args.cli:
         rejection = cross_ai_build.reject_execute_cli(args.cli)
         if rejection:

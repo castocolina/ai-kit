@@ -52,8 +52,15 @@ class TestStatusGroup(unittest.TestCase):
             self.assertIsNotNone(status)
             assert status is not None
             spec = RunnerSpec("pi", "fake/ok", "exec", 0)
+            # --print-argv names no lane, so its line counts only through the "-" fallback.
+            self.assertEqual((status["cli"], status["model"]), ("-", "-"))
             self.assertTrue(_trailer_counts(status, spec, 0))
             self.assertFalse(_trailer_counts(status, spec, 1))
+            # A named lane must match this run's runtime and model; the group keys change nothing.
+            named = {**status, "cli": "pi", "model": "fake/ok"}
+            self.assertTrue(_trailer_counts(named, spec, 0))
+            self.assertFalse(_trailer_counts({**named, "cli": "codex"}, spec, 0))
+            self.assertFalse(_trailer_counts({**named, "model": "fake/other"}, spec, 0))
 
     def test_escalation_echo_parses(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -153,33 +153,33 @@ E2E_MODULES = frozenset({
 # there: 57.7 s at most, against 360.5 s for tests.test_cross_ai_runner_e2e).
 COMMIT_E2E_BUDGET_SECS = 60
 # Whole seconds per e2e module, rounded up from the `=== <module>: ok in <s>` lines of one
-# `--group e2e` run on the frozen tree (2026-11-04, 24 CPUs, one-minute load 1.57 at start). These
-# are this machine's times and are not scaled by CPU count. Refresh on a quiet machine with that
-# command. A module missing from this table is over the budget.
+# e2e group run of `make test` on the phase 37 tree (2026-11-21, 24 CPUs, under the run's watchdog).
+# These are this machine's times and are not scaled by CPU count. Refresh on a quiet machine with
+# `--group e2e`. A module missing from this table is over the budget.
 E2E_RECORDED_SECS = {
-    "tests.test_flow_index_e2e": 9,
-    "tests.test_ai_kit_commit_fold_e2e": 15,
-    "tests.test_ai_kit_gsd_curated_config_matrix": 1,
+    "tests.test_flow_index_e2e": 12,
+    "tests.test_ai_kit_commit_fold_e2e": 20,
+    "tests.test_ai_kit_gsd_curated_config_matrix": 252,
     "tests.test_ai_kit_gsd_spec_discuss_e2e": 1,
-    "tests.test_ai_kit_project_rules_all_e2e": 1,
-    "tests.test_ai_kit_spec_e2e": 1,
-    "tests.test_ai_kit_spec_goal_prompt_e2e": 1,
-    "tests.test_cross_ai_runner_e2e": 17,
-    "tests.test_cross_ai_selftest_logic_1_e2e": 24,
-    "tests.test_cross_ai_selftest_logic_2_e2e": 24,
-    "tests.test_cross_ai_selftest_logic_3_e2e": 24,
-    "tests.test_cross_ai_selftest_logic_4_e2e": 24,
-    "tests.test_cross_ai_selftest_runtime_1_e2e": 24,
-    "tests.test_cross_ai_selftest_runtime_2_e2e": 24,
-    "tests.test_cross_ai_selftest_runtime_3_e2e": 24,
-    "tests.test_cross_ai_selftest_runtime_4_e2e": 24,
-    "tests.test_curated_config_apply_e2e": 1,
-    "tests.test_curated_config_e2e": 6,
-    "tests.test_hook_registry_e2e": 2,
+    "tests.test_ai_kit_project_rules_all_e2e": 2,
+    "tests.test_ai_kit_spec_e2e": 3,
+    "tests.test_ai_kit_spec_goal_prompt_e2e": 2,
+    "tests.test_cross_ai_runner_e2e": 18,
+    "tests.test_cross_ai_selftest_logic_1_e2e": 40,
+    "tests.test_cross_ai_selftest_logic_2_e2e": 40,
+    "tests.test_cross_ai_selftest_logic_3_e2e": 40,
+    "tests.test_cross_ai_selftest_logic_4_e2e": 40,
+    "tests.test_cross_ai_selftest_runtime_1_e2e": 31,
+    "tests.test_cross_ai_selftest_runtime_2_e2e": 31,
+    "tests.test_cross_ai_selftest_runtime_3_e2e": 31,
+    "tests.test_cross_ai_selftest_runtime_4_e2e": 32,
+    "tests.test_curated_config_apply_e2e": 29,
+    "tests.test_curated_config_e2e": 11,
+    "tests.test_hook_registry_e2e": 3,
     "tests.test_jev_skill_install_e2e": 1,
-    "tests.test_markdown_to_pdf_e2e": 1,
+    "tests.test_markdown_to_pdf_e2e": 2,
     "tests.test_precompact_shims_e2e": 13,
-    "tests.test_staged_commit_e2e": 4,
+    "tests.test_staged_commit_e2e": 5,
     "tests.test_system_memory_e2e": 1,
     "tests.test_worktree_e2e": 1,
 }

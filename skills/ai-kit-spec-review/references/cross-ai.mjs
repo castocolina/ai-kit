@@ -4439,6 +4439,10 @@ function displayArgv(argv, promptEl) {
   if (promptEl === undefined) return argv;
   return argv.map((el) => (el === promptEl ? '<prompt>' : el));
 }
+// 37 R4: an argv file is caller-written and may carry a key; the printed copy is redacted, the spawned argv stays raw.
+function shownArgv(rt, argv) {
+  return rt?.argvFile ? argv.map((el) => redactSecrets(el)) : argv;
+}
 function readOr(p, dflt) { try { return fs.readFileSync(p, 'utf8'); } catch { return dflt; } }
 
 // Quota cycles span calls. The file is keyed by lane and model under the XDG state dir
@@ -4750,6 +4754,32 @@ function procGroup(pid) {
   } catch { return null; }
 }
 
+// Field 6 (session id), parsed after the last ')' like procGroup.
+function procSession(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/);
+    return /^\d+$/.test(fields[3]) ? Number(fields[3]) : null;
+  } catch { return null; }
+}
+
+// Live members of process group `pgid` inside session `sid`. Neither id is reused while a member
+// lives, so a signal to -pgid then reaches only that group.
+function groupMembers(pgid, sid) {
+  if (!Number.isInteger(pgid) || pgid <= 1 || !Number.isInteger(sid)) return [];
+  let names;
+  try { names = fs.readdirSync('/proc'); } catch { return []; }
+  const members = [];
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    let stat;
+    try { stat = fs.readFileSync(`/proc/${name}/stat`, 'utf8'); } catch { continue; }
+    const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/);
+    if (fields[0] !== 'Z' && Number(fields[2]) === pgid && Number(fields[3]) === sid) members.push(Number(name));
+  }
+  return members;
+}
+
 function hostTypedLine(files) {
   return 'sh ' + files.launcher;
 }
@@ -4928,7 +4958,7 @@ async function hostedChild(bin, argv, opts) {
     const out = { chunks: [], bytes: 0, dropped: false }, err = { chunks: [], bytes: 0, dropped: false };
     const pos = { out: 0, err: 0 };
     const fds = { out: fs.openSync(made.files.out, 'r'), err: fs.openSync(made.files.err, 'r') };
-    let launcherPid = null, launcherStart = null, verified = false, pseudo = null;
+    let launcherPid = null, launcherStart = null, launcherSid = null, verified = false, pseudo = null;
     const pidDeadline = Date.now() + HOST_PID_GRACE_MS;
     const readNew = (key) => {
       const buf = Buffer.alloc(65536);
@@ -4940,6 +4970,27 @@ async function hostedChild(bin, argv, opts) {
         if (key === 'out') opts.onStdout?.(d); else opts.onStderr?.(d);
       }
     };
+    // One path for the poll and for a finalize that runs before the first poll saw the pid: the
+    // group is registered and run.json names the launcher, so a kept record can still be swept.
+    const leaderAlive = () => launcherVerified(launcherPid, launcherStart, procStartTime(launcherPid), procGroup(launcherPid));
+    // R12: the lane's group ends on every exit, like the headless kill. A live verified leader, or a
+    // member left in the leader's group and session, keeps the group id in use. A launcher already gone
+    // when its pid was first read cannot be verified; then only members of the session it made itself
+    // (session id = group id = its pid, from setsid) are signalled.
+    const groupAlive = () => launcherPid !== null && ((verified && leaderAlive()) || groupMembers(launcherPid, verified ? launcherSid : launcherPid).length > 0);
+    const signalGroup = (sig) => { try { process.kill(-launcherPid, sig); } catch { /* gone */ } };
+    const adoptPid = () => {
+      const pidText = readOr(made.files.pid, '');
+      if (launcherPid !== null || !/^\d+\n?$/.test(pidText)) return;
+      launcherPid = Number(pidText); launcherStart = procStartTime(launcherPid);
+      const group = procGroup(launcherPid);
+      verified = launcherVerified(launcherPid, launcherStart, launcherStart, group);
+      if (verified) { launcherSid = procSession(launcherPid); pseudo = { pid: launcherPid, kill: (sig) => { try { if (leaderAlive()) process.kill(launcherPid, sig); } catch { /* gone */ } } }; current = pseudo; }
+      else log(`cross-ai: host: launcher ${launcherPid} is not a verified group leader; not signalled`);
+      noteChildPgid('spawn', launcherPid);
+      record = { ...record, launcher_pid: launcherPid, launcher_pgid: group, launcher_start: launcherStart };
+      writeCycleState(made.files.run, record);
+    };
     const finalize = async (reason, rc = null) => {
       if (settled) return;
       settled = true;
@@ -4947,18 +4998,11 @@ async function hostedChild(bin, argv, opts) {
       if (currentFinalize === finalize) currentFinalize = null;
       if (reason === 'limit') limited = true;
       // A signal can arrive after the launcher starts but before the first poll.
-      if (launcherPid === null) {
-        const pidText = readOr(made.files.pid, '');
-        if (/^\d+\n?$/.test(pidText)) {
-          launcherPid = Number(pidText); launcherStart = procStartTime(launcherPid);
-          verified = launcherVerified(launcherPid, launcherStart, launcherStart, procGroup(launcherPid));
-          if (verified) pseudo = { pid: launcherPid, kill: (sig) => { try { process.kill(launcherPid, sig); } catch { /* gone */ } } };
-        }
-      }
-      if (verified && launcherVerified(launcherPid, launcherStart, procStartTime(launcherPid), procGroup(launcherPid))) {
-        killGroup(pseudo, 'SIGTERM');
+      adoptPid();
+      if (groupAlive()) {
+        signalGroup('SIGTERM');
         if (!['exit', 'dead', 'nopid'].includes(reason)) await waitDead(launcherPid, budgetMs(aborting ? SIGNAL_GRACE_MS : KILL_GRACE_MS, finalizeBy));
-        if (launcherVerified(launcherPid, launcherStart, procStartTime(launcherPid), procGroup(launcherPid))) killGroup(pseudo, 'SIGKILL');
+        if (groupAlive()) signalGroup('SIGKILL');
       }
       readNew('out'); readNew('err');
       fs.closeSync(fds.out); fs.closeSync(fds.err);
@@ -4983,17 +5027,7 @@ async function hostedChild(bin, argv, opts) {
       if (settled) return;
       try {
         readNew('out'); readNew('err');
-        const pidText = readOr(made.files.pid, '');
-        if (launcherPid === null && /^\d+\n?$/.test(pidText)) {
-          launcherPid = Number(pidText); launcherStart = procStartTime(launcherPid);
-          const group = procGroup(launcherPid);
-          verified = launcherVerified(launcherPid, launcherStart, launcherStart, group);
-          if (verified) { pseudo = { pid: launcherPid, kill: (sig) => { try { process.kill(launcherPid, sig); } catch { /* gone */ } } }; current = pseudo; }
-          else log(`cross-ai: host: launcher ${launcherPid} is not a verified group leader; not signalled`);
-          noteChildPgid('spawn', launcherPid);
-          record = { ...record, launcher_pid: launcherPid, launcher_pgid: group, launcher_start: launcherStart };
-          writeCycleState(made.files.run, record);
-        }
+        adoptPid();
         const rc = parseRc(readOr(made.files.rc, ''));
         if (rc !== null) { finalize('exit', rc); return; }
         if (launcherPid !== null && !pidAlive(launcherPid)) { const late = parseRc(readOr(made.files.rc, '')); finalize(late ? 'exit' : 'dead', late); }
@@ -5670,7 +5704,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const childCap = attemptCapMs(opts, startedMs, episodeEnd());
       const left = Math.max(0, Math.round(childCap / 1000));
       log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${left}s`);
-      log(`cross-ai: argv=${JSON.stringify(displayArgv(argv, rt.argvPrompt ? ctx.promptArg : undefined))}`);
+      log(`cross-ai: argv=${JSON.stringify(shownArgv(rt, displayArgv(argv, rt.argvPrompt ? ctx.promptArg : undefined)))}`);
       const childLimit = episodeEnd() ? Math.min(runDeadline, episodeEnd()) : runDeadline;
       const route = opts.route || 'unknown';
       const r = await runOnce(binPath, argv, input, env, ctx.cwd, name,
@@ -6651,6 +6685,13 @@ const FAKE_MODES = {
     const gc = spawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{});while(true){}'], { stdio: 'inherit' });
     recordGc(gc.pid);
     fs.appendFileSync('a.txt', 'gt\n');
+    process.stdout.write('# Summary\nok');
+  },
+  gcleft: () => {
+    const gc = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'], { stdio: 'ignore' });
+    recordGc(gc.pid);
+    gc.unref();
+    fs.appendFileSync('a.txt', 'gl\n');
     process.stdout.write('# Summary\nok');
   },
   gcescape: () => {
@@ -8124,13 +8165,15 @@ async function blackBoxSelfTest(listOnly = false) {
       },
       {
         name: 'argv-file-exec-ok', kind: 'logic',
-        files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}', '--effort={effort}'] },
+        // A key the caller wrote into the argv file reaches the child raw but no printed line.
+        files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}', '--effort={effort}', '--api-key', 'sk-' + 'b'.repeat(24)] },
         env: { FAKE_DECLARED_SEEN: path.join(tmp, 'declared-exec-ok.json') },
         args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'argv.json', '--model', 'fake-ok', '--effort', 'high', '--context', '1m'],
         exit: 0, status: /^AIKIT-XAI status=ok cli=placeholder-cli-1 model=fake-ok exit=0 .* tree=dirty action=stop$/,
         check: (r, ctx) => {
           const seen = JSON.parse(fs.readFileSync(ctx.env.FAKE_DECLARED_SEEN, 'utf8'));
-          if (JSON.stringify(seen.argv) !== JSON.stringify(['--model', 'fake-ok', '--effort=high'])) return 'argv';
+          if (JSON.stringify(seen.argv) !== JSON.stringify(['--model', 'fake-ok', '--effort=high', '--api-key', 'sk-' + 'b'.repeat(24)])) return 'argv';
+          if (`${r.stdout || ''}${r.stderr || ''}`.includes('b'.repeat(24)) || !(r.stderr || '').includes('"--api-key","<redacted>"')) return 'key printed';
           if (!seen.stdin.startsWith('prompt\n') || seen.argv.some((el) => el.includes('prompt'))) return 'stdin';
           const lines = (r.stderr || '').split('\n');
           for (const line of ['cross-ai: setting model=fake-ok applied', 'cross-ai: setting effort=high applied', 'cross-ai: setting context=1m ignored reason=no_slot']) if (!lines.includes(line)) return `missing ${line}`;
@@ -8140,12 +8183,13 @@ async function blackBoxSelfTest(listOnly = false) {
       },
       {
         name: 'argv-file-print-argv', kind: 'logic',
-        files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}', '--effort={effort}'] },
+        files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}', '--effort={effort}', 'https://example.invalid/x?token=' + 'c'.repeat(20)] },
         args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'argv.json', '--model', 'fake-ok', '--effort', 'high', '--print-argv'],
         exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
         check: (r) => {
           const line = (r.stdout || '').split('\n').find((s) => s.startsWith('placeholder-cli-1\t'));
-          if (line !== `placeholder-cli-1\t${path.join(tmp, 'bin', 'placeholder-cli-1')}\t["--model","fake-ok","--effort=high"]`) return 'argv';
+          if (line !== `placeholder-cli-1\t${path.join(tmp, 'bin', 'placeholder-cli-1')}\t["--model","fake-ok","--effort=high","https://example.invalid/x?token=<redacted>"]`) return 'argv';
+          if ((r.stderr || '').includes('c'.repeat(20)) || !(r.stderr || '').includes('cross-ai: rung2 placeholder-cli-1 argv=')) return 'rung2 key';
           return (r.stderr || '').split('\n').includes('cross-ai: rung1 placeholder-cli-1 unavailable') ? null : 'rung1';
         },
       },
@@ -13007,7 +13051,8 @@ async function blackBoxSelfTest(listOnly = false) {
           const e = entry(['--effort', 'high']);
           if (confirmReport(e, ['-p', '--effort', 'high'], '', 'exec') !== e || !fails(e, ['-p', '--effort', 'low']) || !fails(e, ['--effort', 'x', 'high'])) return 'flag';
           if (fails(entry({ slot: 'b' }), ['--model', 'b', 'x']) || fails(entry({ slot: 'b' }), ['-m', 'b']) || !fails(entry({ slot: 'b' }), ['--model', 'a', 'x', 'b'])) return 'slot';
-          if (fails(entry({ slotPrefix: 'fake/' }), ['--model', 'fake/ok']) || !fails(entry({ slotPrefix: 'fake/ok/' }), ['--model', 'fake/other'])) return 'prefix';
+          // 'ake/' sits inside 'fake/ok' but not at its start: only a real prefix match passes.
+          if (fails(entry({ slotPrefix: 'fake/' }), ['--model', 'fake/ok']) || !fails(entry({ slotPrefix: 'fake/ok/' }), ['--model', 'fake/other']) || !fails(entry({ slotPrefix: 'ake/' }), ['--model', 'fake/ok'])) return 'prefix';
           if (!fails(entry({ mode: 'review' }), [], 'exec') || fails(entry({ runs: [['exec', 'resume'], ['s-1', '-']] }), ['exec', 'resume', 's-1', '-']) || !fails(entry({ runs: [['exec', 'resume'], ['s-1', '-']] }), ['exec', 'resume'])) return 'mode or runs';
           if (!fails([{ name: 'effort', state: 'applied' }], []) || fails([{ state: 'ignored' }, { state: 'unknown' }], [])) return 'missing proof';
           for (const row of [RUNTIMES.pi, RUNTIMES.claude]) if (planSettings(row, 'review', { model: 'fake-ok', effort: 'high' }).report.some(x => x.state === 'applied' && !x.proof)) return 'planner proof';
@@ -14546,6 +14591,7 @@ async function blackBoxSelfTest(listOnly = false) {
       hostPair('host-auth', 'fake/auth', 69, /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/),
       hostPair('host-empty', 'fake/empty', 1, /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/),
       hostPair('host-timeout', 'fake/hang', 124, /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 cli_rc=.* elapsed=\d+s out=\d+ tree=.* action=stop$/, { args: ['--timeout', '2'], dead: ['gc'] }),
+      hostPair('host-group-left', 'fake/gcleft', 0, /^AIKIT-XAI status=ok cli=pi model=fake\/gcleft exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/, { dead: ['gc'] }),
       {
         name: 'host-env-none', kind: 'logic',
         args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'auto'],
@@ -14901,7 +14947,7 @@ async function main(argv) {
     const formula = rt[o.mode];
     const argvOut = (c.model && typeof formula === 'function')
       ? withExtra(name, plan.resume ? rt.resume(plan.model, ctx, plan.sessionId, o.mode) : formula(plan.model, ctx)) : null;
-    process.stdout.write(`${name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(argvOut) : 'NO MODEL'}\n`);
+    process.stdout.write(`${name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(shownArgv(rt, argvOut)) : 'NO MODEL'}\n`);
     if (plan && argvOut) {
       confirmReport(plan.report, argvOut, composePrompt(skillPlan.promptPrefix, null, '<prompt>', ''), o.mode);
       for (const line of reportLines(plan.report)) log(line);
@@ -14912,10 +14958,10 @@ async function main(argv) {
       liveSettings.escalation = { runtime: Boolean(o.escalateRuntime), model: Boolean(o.escalateModel) };
       log(`cross-ai: model-id ${redactKeyShapes(String(plan.model).replace(/[\x00-\x1f\x7f-\x9f]/g, ''))}`);
       const rung1 = sameSessionArgv(name, rt, plan.model, ctx, '<sid>', o.mode);
-      if (rung1) log(`cross-ai: rung1 ${name} argv=${JSON.stringify(rung1.argv)}`);
+      if (rung1) log(`cross-ai: rung1 ${name} argv=${JSON.stringify(shownArgv(rt, rung1.argv))}`);
       else log(`cross-ai: rung1 ${name} unavailable`);
       const rung2 = newSessionArgv(name, rt, plan.model, ctx, o.mode, '<prompt>');
-      log(`cross-ai: rung2 ${name} argv=${JSON.stringify(rung2.argv)}`);
+      log(`cross-ai: rung2 ${name} argv=${JSON.stringify(shownArgv(rt, rung2.argv))}`);
     }
     return reportAndFinish('ok', {
       ...liveFields, tree: 'clean', exit: 0, out: 0,

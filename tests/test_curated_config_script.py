@@ -8,7 +8,6 @@ import io
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,6 +23,8 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "skills", "ai-kit-spec-review"))
 from ai_kit_gsd_curated_config import cli, cross_ai, cross_ai_script
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
+
+from tests.cross_ai_selftest import _real_node_executable
 
 TEMPLATE_PATH = os.path.join(
     REPO_ROOT, "skills", "ai-kit-spec-review", "references", "cross-ai.mjs"
@@ -511,10 +512,11 @@ class TestEnsureRunner(unittest.TestCase):
             tokens = command.split()
             self.assertEqual(tokens[0], "node")
             self.assertEqual(tokens[1], ".planning/scripts/cross-ai.mjs")
-            if shutil.which("node") is None:
-                self.skipTest("node not on PATH")
+            node = _real_node_executable()
+            if node is None:
+                self.skipTest("no real node executable on PATH")
             proc = subprocess.run(
-                ["node", target, "--print-argv", *tokens[2:]],
+                [node, target, "--print-argv", *tokens[2:]],
                 cwd=tmp, capture_output=True, text=True, timeout=60,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
