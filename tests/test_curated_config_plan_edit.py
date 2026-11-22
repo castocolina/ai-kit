@@ -1648,6 +1648,7 @@ class TestScriptRouterBacked(unittest.TestCase):
         entry = {
             "provider": "router-env",
             "is_router": True,
+            "fallback_quota": True,
             "runtimes": {"pi": {"model_id": "router-env/x"}},
         }
         if confirmed:

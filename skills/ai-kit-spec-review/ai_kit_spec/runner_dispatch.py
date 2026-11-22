@@ -25,6 +25,7 @@ from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS, bounded_run, run_in_own_
 from ai_kit_spec.error_classifier import classify_error, reason_for_status
 from ai_kit_spec.lane_settings import lane_escalation
 from ai_kit_spec.model_catalog import cache_catalog_path, split_catalog_meta
+from ai_kit_spec.model_heuristics import router_statement
 from ai_kit_spec.routing import strip_model_suffix
 from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
@@ -232,37 +233,32 @@ def runner_flags(spec: RunnerSpec) -> list[str]:
     return flags
 
 
-def _confirmed_quota(entry, runtime: str, model: str) -> bool | None:
-    """The entry's confirmed boolean for this runtime and model, else None."""
+def _row_matches(entry, runtime: str, model: str) -> bool:
+    """True when the entry's runtime row for this runtime names this model."""
     if not isinstance(entry, dict):
-        return None
+        return False
     runtimes = entry.get("runtimes")
     if not isinstance(runtimes, dict):
-        return None
+        return False
     row = runtimes.get(runtime)
-    if not isinstance(row, dict) or row.get("model_id") != model:
-        return None
-    confirmed = entry.get("heuristic_confirmed")
-    quota = entry.get("fallback_quota")
-    if not isinstance(confirmed, list) or "fallback_quota" not in confirmed:
-        return None
-    return quota if isinstance(quota, bool) else None
+    return isinstance(row, dict) and row.get("model_id") == model
 
 
 def resolve_route(runtime: str, model: str, env: dict) -> str | None:
-    """The catalog's user-confirmed route for this runtime and model (D-05).
+    """The catalog's route for this runtime and model through the one router rule (38 D-17).
 
-    `"router"` or `"unknown"` only when `fallback_quota` is a boolean the user confirmed
-    for the normalized model. A missing, unreadable or malformed catalog, and every entry
-    that is not that shape, yields None: the runner's own heuristic then decides and labels
-    the result. Never raises, never writes."""
+    "router" for a confirmed router lane, "unknown" when the owner said it is not one,
+    None otherwise (a missing, unreadable or malformed catalog, no matching row, or no
+    confirming statement): the runner's own heuristic then decides and labels the result.
+    Never raises, never writes."""
     raw = cache_read_json(cache_catalog_path(env))
     entries, _meta = split_catalog_meta(raw)
     bare = strip_model_suffix(runtime, model)
-    for entry in entries.values():
-        quota = _confirmed_quota(entry, runtime, bare)
-        if quota is not None:
-            return "router" if quota else "unknown"
+    for key in sorted(entries):
+        entry = entries[key]
+        if _row_matches(entry, runtime, bare):
+            statement = router_statement(entry)
+            return None if statement is None else "router" if statement else "unknown"
     return None
 
 
@@ -270,11 +266,10 @@ def build_runner_argv(spec: RunnerSpec, runner_path: str, node: str) -> list[str
     """`node`, the template, the flags, and the two timeouts. Never a shell string."""
     timeout = str(spec.timeout_s)
     outer = str(spec.timeout_s + RUNNER_OUTER_MARGIN_S)
-    argv = [
+    return [
         node, runner_path, *runner_flags(spec),
         "--timeout", timeout, "--outer-timeout", outer, "--no-preamble",
     ]
-    return argv
 
 
 def parse_status_line(line: str) -> dict | None:

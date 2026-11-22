@@ -1124,6 +1124,7 @@ def _catalog_entry(runtime, model_id, quota, confirmed):
         "confidence": "high",
         "last_verified": "2026-01-01",
         "fallback_quota": quota,
+        "is_router": quota,
     }
     if confirmed:
         entry["heuristic_confirmed"] = ["fallback_quota"]
@@ -1146,6 +1147,29 @@ class TestResolveRoute(unittest.TestCase):
     def _resolve(self, cache_home, runtime, model):
         env = {"XDG_CACHE_HOME": cache_home, "HOME": cache_home}
         return rd.resolve_route(runtime, model, env)
+
+    def test_alias_assumed_entry_is_router(self):
+        entry = {
+            "provider": "router-env",
+            "runtimes": {"pi": {"model_id": "router-env/x"}},
+            "is_router": True,
+            "fallback_quota": True,
+            "batch_mode": False,
+            "source": {},
+            "confidence": "low",
+            "last_verified": "2026-01-01",
+            "facts": {"class": {"value": "router", "label": "assumed",
+                                "source": "router-env alias naming",
+                                "fetched_at": "2026-01-01T00:00:00Z"}},
+        }
+        owner_false = {**entry, "fallback_quota": False,
+                       "heuristic_confirmed": ["fallback_quota"]}
+        no_facts = {key: value for key, value in entry.items() if key != "facts"}
+        for variant, expected in ((entry, "router"), (owner_false, "unknown"),
+                                  (no_facts, None)):
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as cache_home:
+                _write_catalog(cache_home, {"router-env/x": variant})
+                self.assertEqual(self._resolve(cache_home, "pi", "router-env/x"), expected)
 
     def test_confirmed_false_and_its_variants_are_unknown(self):
         cases = (

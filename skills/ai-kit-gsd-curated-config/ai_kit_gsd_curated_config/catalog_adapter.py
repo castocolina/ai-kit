@@ -11,6 +11,7 @@ import os
 import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from typing import NamedTuple
 
 from . import gsd_catalog, model_detect
@@ -31,7 +32,6 @@ _PROBE_WARN = "opencode 2.x image probe failed; image_input unverified for openc
 CANDIDATE_HEURISTIC_FIELDS = ("family", "fast_twin_of", "vendor")
 
 _SCORE_AXIS_NAMES = ("intelligence_index", "coding_index", "agentic_index")
-_ROUTER_PURPOSES = frozenset({"review", "execute"})
 
 
 class CatalogState(NamedTuple):
@@ -48,6 +48,7 @@ class _JoinCtx(NamedTuple):
     entries: dict
     purpose_by_key: dict
     vendor_mod: object
+    router_rule: Callable[[dict], bool] | None = None
 
 
 class _RuntimeCtx(NamedTuple):
@@ -281,6 +282,14 @@ def _catalog_is_scored(entries: dict) -> bool:
     return any(_score_axes(entry) > 0 for entry in entries.values())
 
 
+def _router_rule():
+    """The one router rule (38 D-17), loaded once per build; None when the sibling is missing
+    or predates it (fail closed)."""
+    return getattr(
+        gsd_catalog.load_ai_kit_spec_module("model_heuristics"), "is_confirmed_router", None
+    )
+
+
 def build_candidates(runtimes, entries, host, weights) -> list[dict]:
     """One candidate per installed runtime model id, joined to catalog entries when present.
     Raises ImportError when the ai-kit-spec-review sibling modules are missing."""
@@ -295,6 +304,7 @@ def build_candidates(runtimes, entries, host, weights) -> list[dict]:
         entries,
         _purpose_scores_by_key(entries, join_index, weights, ranker),
         vendor_mod,
+        router_rule=_router_rule(),
     )
     out: list[dict] = []
     clis = (runtimes or {}).get("clis") or {}
@@ -380,8 +390,7 @@ def _one_candidate(join: _JoinCtx, ctx: _RuntimeCtx, model: str) -> dict:
     axes = _score_axes(entry) if entry else 0
     is_router = bool(entry and entry.get("is_router"))
     declared = entry.get("name_declared_purpose") if entry else None
-    confirmed = entry and "is_router" in (entry.get("heuristic_confirmed") or [])
-    router_ok = is_router and confirmed and declared in _ROUTER_PURPOSES
+    router_ok = bool(entry) and join.router_rule is not None and join.router_rule(entry) is True
     reasoning = ctx.mode_map.get(model)
     if not isinstance(reasoning, list):
         reasoning = entry.get("reasoning_modes") if entry else None

@@ -861,6 +861,7 @@ def _route_catalog(cache_home: str) -> None:
             "confidence": "high",
             "last_verified": "2026-01-01",
             "fallback_quota": True,
+            "is_router": True,
             "heuristic_confirmed": ["fallback_quota"],
         },
     }
