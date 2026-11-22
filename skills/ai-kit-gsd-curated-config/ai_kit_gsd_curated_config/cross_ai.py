@@ -57,7 +57,7 @@ def runner_floor_problem(label: str, value) -> str | None:
 
 SCRIPT_PATH = ".planning/scripts/cross-ai.mjs"
 TEMPLATE_NAME = "cross-ai.mjs"
-TEMPLATE_VERSION = 9
+TEMPLATE_VERSION = 10
 MIN_TIMEOUT_S = 1800
 DEFAULT_PREFER = ("pi", "cursor", "opencode")
 RUNNER_IDS = ("pi", "cursor", "opencode", "codex")
