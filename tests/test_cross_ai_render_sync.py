@@ -19,7 +19,8 @@ sys.path.insert(0, str(REPO_ROOT / "skills" / "ai-kit-spec-review"))
 
 from ai_kit_gsd_curated_config import cross_ai, cross_ai_script
 
-from tests.cross_ai_selftest import TEMPLATE, _real_node_executable, runner_env
+from tests.cross_ai_selftest import SIBLING, TEMPLATE, _real_node_executable, run_group, runner_env
+from tests.test_cross_ai_runner_e2e import _git_init, write_fake_opencode
 
 _SPEC = importlib.util.spec_from_file_location(
     "check_dogfood", REPO_ROOT / "tools" / "check_dogfood.py")
@@ -38,6 +39,9 @@ CHOSEN_RUNTIMES = ("copilot", "pi")
 RUNTIMES_UNDER_TEST = ("claude", "codex", "copilot", "cursor", "opencode", "pi")
 PROBE_IDS = {"pi": "fake/placeholder-model-1", "opencode": "fake/placeholder-model-1"}
 LANE_ARGV = ["placeholder-cli-1", "--model", "{model}", "--effort", "{effort}"]
+SELF_TEST_REFUSAL = "cross-ai: the self-test is not shipped in this copy; run it from the template"
+HARNESS_MARKERS = (b"async function blackBoxSelfTest(", b"const FAKE_PRELUDE = String.raw\x60",
+                   b"const CLASSIFY_CASES = [", b"function hermeticEnv(")
 
 
 def normalized(text: str, generated: bool) -> str:
@@ -146,6 +150,83 @@ class TestRenderedCopyInSync(unittest.TestCase):
             self.assertEqual(cross_ai_script.template_version(copy),
                              cross_ai_script.template_version(template))
             self.assertEqual(sync_problems(template, copy), [])
+
+
+class TestRenderedCopyWithoutHarness(unittest.TestCase):
+    """38-08 / SPEC R8: a rendered copy carries no harness, runs lanes and refuses the self-test."""
+
+    def test_copy_lacks_the_harness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            project.mkdir()
+            _, copy_path = render_copy(str(project))
+            copy = copy_path.read_bytes()
+            template = Path(TEMPLATE).read_bytes()
+            sibling = Path(SIBLING).read_bytes()
+            for marker in HARNESS_MARKERS:
+                with self.subTest(marker=marker):
+                    self.assertNotIn(marker, copy)
+                    self.assertIn(marker, sibling)
+            self.assertFalse((copy_path.parent / "cross-ai-selftest.mjs").exists())
+            self.assertLessEqual(abs(len(copy) - len(template)), 4096)
+            self.assertGreater(len(sibling), len(copy) // 2)
+
+    def test_copy_runs_print_argv_and_a_fake_lane(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            project.mkdir()
+            _, copy_path = render_copy(str(project))
+            node = _real_node_executable()
+            if node is None:
+                self.skipTest("no node executable")
+            env = runner_env(tmp)
+            write_fake_opencode(os.path.join(tmp, "bin"))
+            repo = os.path.join(tmp, "repo")
+            os.makedirs(repo)
+            _git_init(repo)
+            calls = os.path.join(tmp, "calls.log")
+            env["FAKE_CALLS"] = calls
+            args = ["--runtime", "opencode", "--role", "review", "--model", "fake/ok"]
+            preview = subprocess.run([node, str(copy_path), "--print-argv", *args], cwd=repo,
+                                     env=env, capture_output=True, text=True, timeout=60,
+                                     check=False)
+            self.assertEqual(preview.returncode, 0, preview.stderr)
+            self.assertTrue(
+                any(line.startswith("opencode\t") for line in preview.stdout.splitlines()),
+                preview.stdout)
+            prompt = os.path.join(tmp, "prompt.txt")
+            Path(prompt).write_text("Review the change.\n", encoding="utf-8")
+            with open(prompt, encoding="utf-8") as stdin:
+                lane = run_group([node, str(copy_path), *args], 120, cwd=repo, env=env, stdin=stdin)
+            self.assertEqual(lane.returncode, 0, lane.stderr)
+            self.assertTrue(lane.stderr.splitlines()[-1].startswith(
+                "AIKIT-XAI status=ok cli=opencode model=fake/ok "), lane.stderr)
+            self.assertTrue(lane.stdout.strip(), lane.stderr)
+            self.assertIn("opencode fake/ok", Path(calls).read_text(encoding="utf-8"))
+
+    def test_copy_refuses_the_self_test(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            project.mkdir()
+            _, copy_path = render_copy(str(project))
+            node = _real_node_executable()
+            if node is None:
+                self.skipTest("no node executable")
+            env = runner_env(tmp)
+
+            def refusal(flag):
+                return subprocess.run([node, str(copy_path), flag], cwd=tmp, env=env,
+                                      capture_output=True, text=True, timeout=60, check=False)
+
+            for flag in ("--self-test", "--self-test-list"):
+                with self.subTest(flag=flag):
+                    proc = refusal(flag)
+                    self.assertEqual(proc.returncode, 2, proc.stderr)
+                    self.assertIn(SELF_TEST_REFUSAL, proc.stderr.splitlines())
+            (copy_path.parent / "cross-ai-selftest.mjs").write_bytes(b"")
+            proc = refusal("--self-test")
+            self.assertEqual(proc.returncode, 2, proc.stderr)
+            self.assertIn(SELF_TEST_REFUSAL, proc.stderr.splitlines())
 
 
 class TestPrintArgvMatrix(unittest.TestCase):
