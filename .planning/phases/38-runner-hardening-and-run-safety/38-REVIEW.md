@@ -12,8 +12,8 @@ findings:
   low: 16
   info: 10
   total: 38
-fixed: 19
-deferred: 8
+fixed: 20
+deferred: 7
 kept: 1
 status: fixed_or_tracked
 ---
@@ -139,6 +139,10 @@ Fixed:
   (`cross-ai: run lock not taken (<code>); running without a lock`).
 - LOW-7 (5db3e4e): superpowers `references/dispatch-external-cli.md` now says a 69/75 with no token or one token is the
   `quota` owner stop, as `dispatch_classification` does.
+- LOW-11 (77ebda5, after the phase verification): the state-home exclusion was computed against the cwd, so a runner
+  started in a subdirectory snapshotted a state home elsewhere in the checkout. `stateExclude` now resolves it against the
+  checkout top (the lock's root) and passes `:(top,exclude,literal)<path>` to `git add`; new self-test cases start in a
+  subdirectory (no-op, planned execute, idle watchdog, hosted pair) and fail on the previous template.
 
 Deferred (todo file):
 - LOW-8: curated-config `apply` does not compare its writes with the approved preview. Binding them needs a stored digest
@@ -148,8 +152,6 @@ Deferred (todo file):
   keys the rule on `fallback_quota` with its label. Owner decision before any change.
 - LOW-10: `parseTasks` counts every non-checkpoint type (a planning decision); SPEC R5/D-12 name absent, `auto`, `tdd` and
   `tracer`. Amend the SPEC or narrow the code.
-- LOW-11: `stateExcludeRel` is computed against the cwd, so a runner started in a subdirectory can snapshot a state home
-  that sits elsewhere in the checkout.
 - LOW-12: after three lost lock rounds the refusal names `pid -`.
 - LOW-13: `lockVerdict`'s `own` branch is unreachable.
 - LOW-14: the admission seed phrase `remaining work` also matches "no remaining work".

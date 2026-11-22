@@ -33,9 +33,6 @@ owner's answer for the three decision items before any code changes.
 - Decision (owner): `parseTasks` counts every task type that is not a checkpoint (an orchestrator decision during
   planning), while SPEC R5 and D-12 name absent, `auto`, `tdd` and `tracer`. Amend R5/D-12 to the code, or narrow the
   code to that list and count other types as unchecked.
-- The state-home exclusion (`stateExcludeRel`) is computed against the working directory, so a runner started in a
-  subdirectory of a checkout whose state home sits elsewhere inside the checkout snapshots the state dir. Resolve the
-  path against the work-tree top and use a `:(top,exclude,literal)` pathspec.
 - After three lost create-or-clear rounds `acquireLock` prints `run lock held by pid -`, naming no holder; print a
   distinct "not acquired after 3 attempts" line instead.
 - `lockVerdict`'s `own` branch cannot be reached (a fresh run id is never read back); delete it or name the case it

@@ -1265,6 +1265,8 @@ const sub = process.argv.slice(2);
 const verb = sub[0] === '-c' ? sub[2] : sub[0];
 const verbFail = home && verb ? path.join(home, '.fake-git-fail-' + verb) : '';
 if (verbFail && fs.existsSync(verbFail)) { fs.appendFileSync(path.join(home, 'git-switch.log'), 'fail ' + verb + ' ' + process.pid + '\\n'); process.exit(Number(fs.readFileSync(verbFail, 'utf8').trim()) || 128); }
+// The state-home cases record each snapshot's add argv and cwd.
+if (sub[0] === 'add' && process.env.FAKE_GIT_ADDLOG) fs.appendFileSync(process.env.FAKE_GIT_ADDLOG, JSON.stringify({ cwd: process.cwd(), argv: sub }) + '\\n');
 if (sub[0] === 'write-tree') {
   // Positive evidence for poll cases; logs live outside the repository in the case HOME.
   if (home) fs.appendFileSync(path.join(home, 'git-calls.log'), 'write-tree\\n');
@@ -1305,6 +1307,7 @@ const FAKE_MODES = {
     fs.writeFileSync(base + '/locks/k.json', '{}');
     if (process.env.FAKE_HSTATE === 'edit') fs.appendFileSync('a.txt', 'hs\n');
     if (process.env.FAKE_HSTATE === 'log') fs.writeFileSync('x.log', 'x\n');
+    if (process.env.FAKE_HSTATE === 'up') fs.appendFileSync('../../a.txt', 'hs\n'); // a top-level edit from src/deep
     process.stdout.write('# Summary\nok');
   },
   hstateloop: () => {
@@ -2274,7 +2277,7 @@ function runCaseProcess(spec, c) {
   return new Promise((resolve) => {
     const t0 = Date.now();
     const child = spawn(process.execPath, [c.copy, ...(spec.args || [])], {
-      cwd: c.repo, env: c.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true,
+      cwd: c.cwd || c.repo, env: c.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true,
     });
     caseRunners.add(child);
     let stdout = '';
@@ -10687,11 +10690,26 @@ async function blackBoxSelfTest(listOnly = false) {
 
     const cleanState = /^AIKIT-XAI status=no_change cli=pi model=fake\/hstate exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/;
     const dirtyState = /^AIKIT-XAI status=ok cli=pi model=fake\/hstate exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/;
-    for (const [name, home, mode, exit, status] of [
-      ['state-inside-nochange', 'inside', '', 1, cleanState],
-      ['state-root-nochange', 'root', '', 1, cleanState],
-      ['state-inside-edit', 'inside', 'edit', 0, dirtyState],
-      ['state-inside-ignored', 'inside', 'log', 0, dirtyState],
+    // A start in src/deep anchors the exclusion at the checkout top exactly like a start at the root.
+    const startIn = (c, start) => { if (start) { c.cwd = path.join(c.repo, start); fs.mkdirSync(c.cwd, { recursive: true }); } };
+    const addLogBad = (c, home) => {
+      const want = JSON.stringify(['add', '-A', '--', `:(top,exclude,literal)${{ root: '', inside: 'st[x]/', local: 'src/deep/st[x]/' }[home]}ai-kit/spec`]);
+      const lines = readOr(path.join(c.home, 'git-add.log'), '').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      if (!lines.length) return 'no snapshot add recorded';
+      const bad = lines.find((l) => l.cwd !== fs.realpathSync(c.cwd || c.repo) || JSON.stringify(l.argv) !== want);
+      return bad ? `snapshot add ${JSON.stringify(bad)}` : null;
+    };
+    for (const [name, home, mode, exit, status, start] of [
+      ['state-inside-nochange', 'inside', '', 1, cleanState, ''],
+      ['state-root-nochange', 'root', '', 1, cleanState, ''],
+      ['state-inside-edit', 'inside', 'edit', 0, dirtyState, ''],
+      ['state-inside-ignored', 'inside', 'log', 0, dirtyState, ''],
+      ['state-subdir-nochange', 'inside', '', 1, cleanState, 'src/deep'],
+      ['state-subdir-root-nochange', 'root', '', 1, cleanState, 'src/deep'],
+      ['state-subdir-ignored', 'inside', 'log', 0, dirtyState, 'src/deep'],
+      ['state-subdir-top-edit', 'inside', 'up', 0, dirtyState, 'src/deep'],
+      // State home under the start directory: ls-files names the ignored run.log relative to it.
+      ['state-subdir-local', 'local', '', 1, cleanState, 'src/deep'],
     ]) cases.push({ name, kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/hstate'], exit, status,
       setup: (c) => {
         fs.writeFileSync(path.join(c.repo, '.gitignore'), '*.log\n');
@@ -10699,21 +10717,36 @@ async function blackBoxSelfTest(listOnly = false) {
         for (const args of [['add', '.gitignore'], ['commit', '-q', '-m', 'ignore']]) {
           if (spawnSync('git', args, { cwd: c.repo, env }).status !== 0) return 'git setup failed';
         }
-        c.env.XDG_STATE_HOME = home === 'root' ? c.repo : path.join(c.repo, 'st[x]');
+        c.env.XDG_STATE_HOME = { root: c.repo, inside: path.join(c.repo, 'st[x]'), local: path.join(c.repo, 'src', 'deep', 'st[x]') }[home];
         c.env.FAKE_HSTATE = mode;
+        c.env.FAKE_GIT_ADDLOG = path.join(c.home, 'git-add.log');
+        startIn(c, start);
         return null;
       },
-      check: (r) => r.stderr.includes('reason=outside_plan_files') ? 'outside_plan_files reported' : null,
+      check: (r, c) => r.stderr.includes('reason=outside_plan_files') ? 'outside_plan_files reported' : addLogBad(c, home),
     });
-    cases.push({ name: 'state-idle-expires', kind: 'runtime', args: ['--runtime', 'pi', '--model', 'fake/hstateloop', '--timeout', '20', '--idle-timeout', '2'], exit: 124,
+    // A planned execute run whose lane also writes the state home (out, lock, run log): no
+    // changed path outside the plan and no uncommitted edit, from the root and from src/deep.
+    for (const [name, start] of [['state-plan-root', ''], ['state-plan-subdir', 'src/deep']]) cases.push(planCase(name, {
+      tasks: [['t1', 'one.txt']], commits: [], status: 'ok', coverage: '1/1', codes: '-',
+      setup: (c) => {
+        c.env.XDG_STATE_HOME = path.join(c.repo, 'st[x]');
+        startIn(c, start);
+        const spec = path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec');
+        const edits = [path.join(spec, 'host', 'abcdefabcdef', 'out'), path.join(spec, 'host', 'abcdefabcdef', 'run.json'), path.join(spec, 'locks', 'k.json')];
+        c.env.FAKE_PLAN = JSON.stringify({ commits: [{ files: [(start ? '../../' : '') + 'one.txt'], subject: 'feat(38-18): t1' }], edits });
+        return null;
+      },
+    }));
+    for (const [name, start] of [['state-idle-expires', ''], ['state-idle-expires-subdir', 'src/deep']]) cases.push({ name, kind: 'runtime', args: ['--runtime', 'pi', '--model', 'fake/hstateloop', '--timeout', '20', '--idle-timeout', '2'], exit: 124,
       status: /^AIKIT-XAI status=timeout cli=pi model=fake\/hstateloop exit=124 .* action=stop$/,
-      setup: (c) => { c.env.XDG_STATE_HOME = path.join(c.repo, 'st'); return null; },
+      setup: (c) => { c.env.XDG_STATE_HOME = path.join(c.repo, 'st'); startIn(c, start); return null; },
       check: (r) => r.stderr.includes('rule=idle-watchdog') ? null : 'idle watchdog missing',
     });
     const hostStateStatus = /^AIKIT-XAI status=no_change cli=pi model=fake\/nochange exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/;
-    for (const [name, root] of [['host-state-in-checkout', false], ['host-state-is-root', true]]) {
+    for (const [name, root, start] of [['host-state-in-checkout', false, ''], ['host-state-is-root', true, ''], ['host-state-subdir', false, 'src/deep']]) {
       cases.push({ ...hostPair(name, 'fake/nochange', 1, hostStateStatus, { absent: ['reason=outside_plan_files'] }),
-        setup: (c) => { c.env.XDG_STATE_HOME = root ? c.repo : path.join(c.repo, 'st'); return null; } });
+        setup: (c) => { c.env.XDG_STATE_HOME = root ? c.repo : path.join(c.repo, 'st'); startIn(c, start); return null; } });
     }
 
     const killedHostedRun = (c, { keepLauncher }) => {

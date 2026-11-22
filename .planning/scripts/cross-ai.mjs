@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=10 sha256=7292bf8c76a7bf64d6d741386326abe6a1be4e9872bf0b06b3225377d533f3e7
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=10 sha256=1940a7b9792dba6b2e30e77013cdbb3def36e0117d88c9fd2515588967ee40a9
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v10).
  *
@@ -4756,9 +4756,12 @@ function inGitTree(cwd) {
 }
 
 // 38 D-29: exclude only the runner's own state subtree, even when state home is the checkout.
-function stateExcludeRel(cwd) {
-  let base;
-  try { base = fs.realpathSync(cwd); } catch { return null; }
+// Anchored at the checkout top (the lock's root), so a start in a subdirectory excludes it too:
+// `pathspec` for git add, `local` (relative to cwd, as ls-files prints) for the ignored listing.
+function stateExclude(cwd) {
+  let here;
+  try { here = fs.realpathSync(cwd); } catch { return null; }
+  const base = checkoutRoot(here);
   let probe = path.join(path.resolve(stateHome()), 'ai-kit', 'spec');
   let rest = '', real = null;
   while (real === null) {
@@ -4771,7 +4774,8 @@ function stateExcludeRel(cwd) {
   }
   const rel = path.relative(base, real);
   if (rel === '' || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) return null;
-  return rel.split(path.sep).join('/');
+  const posix = (p) => p.split(path.sep).join('/');
+  return { pathspec: `:(top,exclude,literal)${posix(rel)}`, local: posix(path.relative(here, real)) };
 }
 
 async function treeState(cwd, limit, depth = 0, bg = null) {
@@ -4788,8 +4792,8 @@ async function treeState(cwd, limit, depth = 0, bg = null) {
   const idxDir = makeTemp('xai-idx-');
   const env = { ...process.env, GIT_INDEX_FILE: path.join(idxDir, 'index') };
   try {
-    const ex = stateExcludeRel(cwd);
-    const addR = await runChild(git, ex ? ['add', '-A', '--', `:(exclude,literal)${ex}`] : ['add', '-A'], { cwd, env, capMs: GIT_CAP_MS, limit, bg });
+    const ex = stateExclude(cwd);
+    const addR = await runChild(git, ex ? ['add', '-A', '--', ex.pathspec] : ['add', '-A'],{ cwd, env, capMs: GIT_CAP_MS, limit, bg });
     if (bg?.cancelled) return null;
     if (addR.timedOut || addR.spawnErr || addR.code !== 0) {
       gitFailed(addR, 'add -A'); return null;
@@ -4809,7 +4813,7 @@ async function treeState(cwd, limit, depth = 0, bg = null) {
       gitFailed(ignR, 'ls-files'); return null;
     }
     const ignHash = crypto.createHash('sha256');
-    for (const rel of ignR.stdout.split('\0').filter((r) => r && !r.endsWith('/') && !(ex && (r === ex || r.startsWith(ex + '/')))).sort()) {
+    for (const rel of ignR.stdout.split('\0').filter((r) => r && !r.endsWith('/') && !(ex && (r === ex.local || r.startsWith(ex.local + '/')))).sort()) {
       let sig = 'gone';
       try {
         const st = fs.lstatSync(path.join(cwd, rel));
