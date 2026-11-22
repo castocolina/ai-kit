@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   ADMISSION_PHRASES_SEED,
   ARGV_PROMPT_MAX,
+  BLOCKED_POOL_RE,
   CLAUDE_EXEC_FORMULA_RECORD,
   CLI_NAME_RE,
   CONFIG,
@@ -54,6 +55,14 @@ import {
   argvPromptProblem,
   baselinePath,
   baselineVerdict,
+  blockedAfterStop,
+  blockedClearAfterOk,
+  blockedFilePath,
+  blockedNext,
+  blockedPoolKey,
+  blockedPoolRow,
+  blockedStatedS,
+  blockedWithLock,
   capCodePoints,
   captureMaxBytes,
   checkGroup,
@@ -77,6 +86,7 @@ import {
   hardWaitFor,
   statedResetS,
   resetCheckS,
+  readBlocked,
   shortHardWait,
   idleBudgetNote,
   killGroup,
@@ -158,6 +168,18 @@ function codexPair(message) {
 
 function ocError(error) {
   return JSON.stringify({ type: 'error', sessionID: 'ses_1', error });
+}
+
+function checkFreeLimitRecord(r, ctx) {
+  if (ctx.calls.filter((line) => line === 'opencode fake/ok').length !== 1) return 'unexpected attempts';
+  if (/^cross-ai: ladder /m.test(r.stderr)) return 'direct lane entered ladder';
+  const file = path.join(ctx.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'blocked', 'fake%3Afree.json');
+  try {
+    const rec = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (rec.rule !== 'opencode-free-limit' || rec.basis !== 'retry_after_ms' || rec.failures !== 1 ||
+        (Date.parse(rec.blocked_until) - Date.parse(rec.written_at)) / 1000 !== 24360) return `invalid record: ${JSON.stringify(rec)}`;
+  } catch { return 'missing record'; }
+  return null;
 }
 
 const CLASSIFY_CASES = [
@@ -253,6 +275,11 @@ const CLASSIFY_CASES = [
       response: { body: JSON.stringify({ type: 'FreeUsageLimitError' }) },
     }),
     expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'blocked-free-limit-event', cli: 'opencode',
+    stdout: ocError({ type: 'provider.free-limit', message: 'Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.', status: 429, retryAfterMs: 24240000 }),
+    expect: { status: 'quota', pattern: 'unverified', rule: 'opencode-free-limit' },
   },
   {
     name: 'opencode-requires-key', cli: 'opencode',
@@ -818,6 +845,16 @@ function narrowViolations(rows) {
     generic.some((text) => new RegExp(row.match, 'i').test(text))).map((row) => row.id);
 }
 
+const LOCKREC = (pid) => JSON.stringify({ version: 1, run_id: 'placeholder-run-1', pid,
+  pid_start: '-', host_name: os.hostname(), started_ms: 1700000000000, child_pgid: null, child_start: null });
+const blockedResult = (ms) => ({ status: 'quota', route: 'unknown', rule: 'vendor-free-usage',
+  upstream: { fields: { retryAfterMs: ms } } });
+const blockedEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function blockedHome(fn) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-blocked-'));
+  try { return fn(home); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+}
+
 function classifyCases() {
   const generated = CLASSIFY_CASES.map((entry) => ({
     name: `pure-classify-${entry.name}`,
@@ -998,6 +1035,130 @@ function classifyCases() {
         if (!providerAdmits(row, 'router', 'placeholder-model-1')) return 'router lane refused';
         return null;
       },
+    },
+    {
+      name: 'blocked-time-stated', kind: 'logic', pure: () => {
+        if (blockedStatedS({ retryAfterMs: 24240000 }) !== 24240 || blockedStatedS({ retryAfterMs: 1999 }) !== 1) return 'stated seconds';
+        return blockedEqual(blockedNext(null, 1700000000, 24240), { untilS: 1700024360, failures: 1, basis: 'retry_after_ms' }) ? null : 'stated deadline';
+      },
+    },
+    {
+      name: 'blocked-time-default', kind: 'logic', pure: () => {
+        for (const fields of [undefined, null, {}, { retryAfterMs: 0 }, { retryAfterMs: -5 }, { retryAfterMs: 1.5 }, { retryAfterMs: '24240000' }]) {
+          if (blockedStatedS(fields) !== null) return 'invalid stated time';
+        }
+        if (!blockedEqual(blockedNext(null, 1700000000, null), { untilS: 1700086400, failures: 1, basis: 'default_24h' })) return 'default deadline';
+        return blockedStatedS({ retryAfterMs: 1 }) === 0 && blockedNext(null, 1700000000, 0).untilS === 1700000120 ? null : 'subsecond deadline';
+      },
+    },
+    {
+      name: 'blocked-time-cap', kind: 'logic', pure: () =>
+        blockedStatedS({ retryAfterMs: 86400000 }) === 86400 && blockedStatedS({ retryAfterMs: 86401000 }) === 86400 ? null : 'cap',
+    },
+    {
+      name: 'blocked-second-failure', kind: 'logic', pure: () => {
+        const prev = { untilS: 1700000000, failures: 1, basis: 'retry_after_ms' };
+        const inside = { untilS: 1700000500, failures: 1, basis: 'default_24h' };
+        const pairs = [
+          [blockedNext(prev, 1700000010, 24240), { untilS: 1700086410, failures: 2, basis: 'floor_24h' }],
+          [blockedNext({ ...prev, failures: 2 }, 1700000010, 86400), { untilS: 1700086530, failures: 3, basis: 'retry_after_ms' }],
+          [blockedNext(inside, 1700000010, 60), inside],
+          [blockedNext(inside, 1700000010, 24240), { untilS: 1700024370, failures: 1, basis: 'retry_after_ms' }],
+        ];
+        return pairs.every(([a, b]) => blockedEqual(a, b)) ? null : 'failure deadline';
+      },
+    },
+    {
+      name: 'blocked-key', kind: 'logic', pure: () => {
+        const row = { pool: 'free' };
+        if (blockedPoolKey(null, row, 'fake/placeholder-model-1') !== 'fake:free' || blockedPoolKey('fake-go:free', row, 'fake/placeholder-model-1') !== 'fake-go:free') return 'pool key';
+        for (const model of ['placeholder-model-1', 'faké/placeholder-model-1', 'fa\u0001ke/placeholder-model-1']) if (blockedPoolKey(null, row, model) !== null) return 'invalid provider';
+        if (blockedPoolKey(null, {}, 'fake/placeholder-model-1') !== null || BLOCKED_POOL_RE.test('fake/free') || BLOCKED_POOL_RE.test(':free')) return 'invalid pool';
+        const a = blockedFilePath('x:free', '/h');
+        const b = blockedFilePath('x-go:free', '/h');
+        return a !== b && a.endsWith('x%3Afree.json') && b.endsWith('x-go%3Afree.json') ? null : 'file key';
+      },
+    },
+    {
+      name: 'blocked-file', kind: 'logic', pure: () => blockedHome((home) => {
+        blockedAfterStop('fake-go:free', 'fake/placeholder-model-1', { status: 'quota', route: 'unknown', rule: 'code-429', upstream: null }, 1700000000000, home);
+        const named = JSON.parse(fs.readFileSync(blockedFilePath('fake-go:free', home), 'utf8'));
+        if (named.basis !== 'default_24h' || named.blocked_until !== '2023-11-15T22:13:20Z') return 'named pool';
+        blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(24240000), 1700000000000, home);
+        const file = blockedFilePath('fake:free', home);
+        const bytes = fs.readFileSync(file, 'utf8');
+        const rec = JSON.parse(bytes);
+        if ((fs.statSync(file).mode & 0o777) !== 0o600 || !blockedEqual(Object.keys(rec).sort(), ['basis', 'blocked_until', 'failures', 'pool', 'rule', 'written_at']) || rec.blocked_until !== '2023-11-15T04:59:20Z' || rec.failures !== 1 || rec.basis !== 'retry_after_ms' || bytes.includes('placeholder-model') || bytes.includes('/')) return 'record contents';
+        if (!readBlocked('fake:free', home) || fs.readFileSync(file, 'utf8') !== bytes) return 'read changed record';
+        blockedAfterStop(null, 'fake/placeholder-model-2', blockedResult(24240000), 1700000000000, home);
+        if (!blockedEqual(fs.readdirSync(path.dirname(file)).sort(), ['fake%3Afree.json', 'fake-go%3Afree.json'])) return 'temporary files';
+        blockedClearAfterOk(null, home);
+        if (!fs.existsSync(file)) return 'unnamed clear';
+        blockedClearAfterOk('fake:free', home);
+        if (fs.existsSync(file)) return 'named clear';
+        return blockedHome((fresh) => {
+          for (const r of [{ ...blockedResult(1), route: 'router' }, { ...blockedResult(1), rule: 'code-429' }, { ...blockedResult(1), status: 'bad_model' }]) {
+            if (blockedAfterStop(null, 'fake/placeholder-model-1', r, 1700000000000, fresh) !== null) return 'unexpected write';
+          }
+          return fs.existsSync(path.dirname(blockedFilePath('fake:free', fresh))) ? 'unexpected folder' : null;
+        });
+      }),
+    },
+    {
+      name: 'blocked-malformed', kind: 'logic', pure: () => blockedHome((home) => {
+        const file = blockedFilePath('fake:free', home);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        for (const text of ['', '{}', 'not json', '[]', '{"pool":"fake:free","blocked_until":"x","failures":1}', '{"pool":"other:free","blocked_until":"2023-11-15T06:39:20Z","failures":1}', '{"pool":"fake:free","blocked_until":"2023-11-15T06:39:20Z","failures":0}']) {
+          fs.writeFileSync(file, text);
+          if (readBlocked('fake:free', home) !== null) return `accepted malformed ${text}`;
+        }
+        blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(60000), 1700000000000, home);
+        return JSON.parse(fs.readFileSync(file, 'utf8')).failures === 1 ? null : 'malformed not replaced';
+      }),
+    },
+    {
+      name: 'blocked-later-wins', kind: 'logic', pure: () => blockedHome((home) => {
+        blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(86400000), 1700000000000, home);
+        blockedAfterStop(null, 'fake/placeholder-model-2', blockedResult(60000), 1700000000000, home);
+        const rec = JSON.parse(fs.readFileSync(blockedFilePath('fake:free', home), 'utf8'));
+        if (rec.blocked_until !== '2023-11-15T22:15:20Z' || rec.failures !== 1) return 'later deadline lost';
+        return blockedHome((fresh) => {
+          const file = blockedFilePath('fake:free', fresh);
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          fs.writeFileSync(`${file}.lock`, LOCKREC(2147483646));
+          blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(60000), 1700000000000, fresh);
+          return blockedEqual(fs.readdirSync(path.dirname(file)), ['fake%3Afree.json']) ? null : 'stale lock';
+        });
+      }),
+    },
+    {
+      name: 'blocked-lock-held-skips', kind: 'logic', pure: () => blockedHome((home) => {
+        blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(60000), 1700000000000, home);
+        const file = blockedFilePath('fake:free', home);
+        const bytes = fs.readFileSync(file, 'utf8');
+        const lock = `${file}.lock`;
+        const lockBytes = LOCKREC(process.pid);
+        fs.writeFileSync(lock, lockBytes);
+        if (blockedWithLock(file, () => 'unexpected', 1).done || blockedAfterStop(null, 'fake/placeholder-model-2', blockedResult(86400000), 1700000000000, home, 1) !== null || fs.readFileSync(file, 'utf8') !== bytes || fs.readFileSync(lock, 'utf8') !== lockBytes) return 'held lock changed';
+        fs.unlinkSync(lock);
+        blockedAfterStop(null, 'fake/placeholder-model-2', blockedResult(86400000), 1700000000000, home);
+        return JSON.parse(fs.readFileSync(file, 'utf8')).blocked_until === '2023-11-15T22:15:20Z' ? null : 'unlocked write';
+      }),
+    },
+    {
+      name: 'blocked-pool-row-fallback', kind: 'logic', pure: () => blockedHome((home) => {
+        const raw = JSON.stringify({ type: 'error', sessionID: 'ses_fake', error: { type: 'provider.free-limit', message: 'Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.', status: 429, retryAfterMs: 24240000 } });
+        const rr = { status: 'quota', route: 'unknown', rule: 'text-usage-limit', cli: 'opencode', upstream: { raw, fields: { retryAfterMs: 24240000 } } };
+        if (blockedPoolRow(rr, 'fake/placeholder-model-1')?.id !== 'opencode-free-limit') return 'opencode row';
+        blockedAfterStop(null, 'fake/placeholder-model-1', rr, 1700000000000, home);
+        const rec = JSON.parse(fs.readFileSync(blockedFilePath('fake:free', home), 'utf8'));
+        if (rec.rule !== 'opencode-free-limit' || rec.basis !== 'retry_after_ms') return 'fallback record';
+        return blockedHome((fresh) => {
+          const other = { ...rr, cli: 'pi' };
+          if (blockedPoolRow(other, 'fake/placeholder-model-1')?.id !== 'text-usage-limit' || blockedAfterStop(null, 'fake/placeholder-model-1', other, 1700000000000, fresh) !== null) return 'other cli row';
+          return fs.existsSync(path.dirname(blockedFilePath('fake:free', fresh))) ? 'other cli folder' : null;
+        });
+      }),
     },
     {
       name: 'pure-overlay-regex-timeout',
@@ -1759,6 +1920,7 @@ const FAKE_MODES = {
   'router-env-billing': () => { process.stderr.write('402 payment required\n'); process.exit(1); },
   spend403: () => { process.stderr.write('Error 403: spending limit reached for this team\n'); process.exit(1); },
   freetier: () => { process.stderr.write('403: {"type":"FreeTierError"}\n'); process.exit(1); },
+  freelimit: () => { process.stderr.write('429: {"type":"error","error":{"type":"FreeUsageLimitError","status":429,"retryAfterMs":24240000}}\n'); process.exit(1); },
   auth: () => { process.stderr.write('401 unauthorized\n'); process.exit(1); },
   perm: () => { process.stderr.write('permission denied\n'); process.exit(1); },
   quota: () => { process.stderr.write('quota exceeded\n'); process.exit(1); },
@@ -2164,6 +2326,10 @@ let input = '';
 process.stdin.on('data', (d) => { input += d; }).on('end', () => {
   const given = argOf('--session');
   recordSession('opencode', given, input);
+  if (model === 'fake/ok' && ['free-limit', 'free-limit-exit0'].includes(process.env.FAKE_OPENCODE_MODE)) {
+    console.log(JSON.stringify({ type: 'error', sessionID: 'ses_fake', error: { type: 'provider.free-limit', message: 'Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.', status: 429, retryAfterMs: 24240000 } }));
+    process.exit(process.env.FAKE_OPENCODE_MODE === 'free-limit' ? 1 : 0);
+  }
   if (model === 'fake/ok' && ['upstream-event', 'two-events'].includes(process.env.FAKE_OPENCODE_MODE)) {
     const acct = 'acct-' + process.pid;
     const token = process.env.AIKIT_XAI_SENTINEL || 'sentinel';
@@ -4027,6 +4193,66 @@ async function blackBoxSelfTest(listOnly = false) {
         config: { routerBacked: { pi: true } },
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/spend403 exit=75 cli_rc=1 .* tree=clean action=stop$/,
+      },
+      {
+        name: 'blocked-pool-bad-value', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok', '--pool', 'fake/free'],
+        exit: 2, status: /^AIKIT-XAI status=usage /,
+        check: (r) => (r.stderr.includes('cross-ai: --pool must look like <provider>:free') &&
+          !/^cross-ai: attempt n=/m.test(r.stderr) ? null : 'invalid pool was not rejected before attempt'),
+      },
+      {
+        name: 'blocked-router-lane-cycles', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/freelimit'],
+        config: { routerBacked: { pi: true } }, exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/freelimit exit=75 cli_rc=1 .* tree=clean action=stop$/,
+        check: (r, ctx) => (/^cross-ai: ladder pi next=/m.test(r.stderr) &&
+          !r.stderr.includes('blocked-until') &&
+          !fs.existsSync(path.join(ctx.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'blocked'))
+          ? null : 'router lane did not cycle without a blocked record'),
+      },
+      {
+        name: 'blocked-opencode-free-limit', kind: 'logic', fakeOpencodeMode: 'free-limit',
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=opencode model=fake\/ok exit=75 .* action=stop$/,
+        check: checkFreeLimitRecord,
+      },
+      {
+        name: 'blocked-opencode-free-limit-exit0', kind: 'logic', fakeOpencodeMode: 'free-limit-exit0',
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=opencode model=fake\/ok exit=75 .* action=stop$/,
+        check: checkFreeLimitRecord,
+      },
+      {
+        name: 'blocked-fake-lane-write', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/freelimit'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/freelimit exit=75 cli_rc=1 .* tree=clean action=stop$/,
+        second: { args: ['--prefer', 'pi', '--model-pi', 'fake/ok', '--pool', 'fake:free'], exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 / },
+        check: (both) => {
+          const err = statusLineOk(both.first.stderr || '', /^AIKIT-XAI status=quota cli=pi model=fake\/freelimit exit=75 cli_rc=1 .* tree=clean action=stop$/);
+          if (err) return err;
+          if (!/^cross-ai: blocked-until pool=fake:free until=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z failures=1 basis=retry_after_ms$/m.test(both.first.stderr)) return 'missing blocked record';
+          if (both.calls1.filter((line) => line === 'pi freelimit').length !== 1 || (both.first.stderr.match(/^cross-ai: attempt n=/gm) || []).length !== 1) return 'unexpected attempts';
+          if (!both.again.stderr.includes('cross-ai: blocked-until cleared pool=fake:free')) return 'missing clear';
+          if ([...both.first.stderr.split('\n'), ...both.again.stderr.split('\n')].some((line) => line.includes('blocked-until') && (line.includes('freelimit') || line.includes('fake/')))) return 'model leaked';
+          return null;
+        },
+      },
+      {
+        name: 'blocked-paid-ok-keeps', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/freelimit'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/freelimit exit=75 cli_rc=1 .* tree=clean action=stop$/,
+        second: { args: ['--prefer', 'pi', '--model-pi', 'fake/ok'], exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 / },
+        check: (both) => {
+          if (!/^cross-ai: blocked-until pool=fake:free until=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z failures=1 basis=retry_after_ms$/m.test(both.first.stderr) || both.again.stderr.includes('blocked-until')) return 'unexpected blocked log';
+          const dir = path.join(both.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'blocked');
+          const file = path.join(dir, 'fake%3Afree.json');
+          try {
+            const rec = JSON.parse(fs.readFileSync(file, 'utf8'));
+            if (rec.failures !== 1 || rec.basis !== 'retry_after_ms' || (fs.statSync(file).mode & 0o777) !== 0o600 || fs.readdirSync(dir).length !== 1) return 'invalid record';
+          } catch { return 'missing record'; }
+          return null;
+        },
       },
       {
         name: 'billing-free-tier',

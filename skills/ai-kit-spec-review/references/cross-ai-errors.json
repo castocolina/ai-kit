@@ -466,7 +466,22 @@
     "class": "quota",
     "terminal": true,
     "label": "verified",
-    "evidence": "25-RESEARCH 2.2 probe"
+    "evidence": "25-RESEARCH 2.2 probe",
+    "pool": "free"
+  },
+  {
+    "id": "opencode-free-limit",
+    "tier": 3,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "event",
+    "match": "^opencode-type:provider\\.free-limit$",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "typed event shape from the opencode pull request text and a live probe on 2026-11-16 (429 with retryAfterMs); full body not stored (38.1 D-24)",
+    "pool": "free"
   },
   {
     "id": "vendor-go-usage",

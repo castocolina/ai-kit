@@ -633,7 +633,22 @@ const PATTERNS = [
     "class": "quota",
     "terminal": true,
     "label": "verified",
-    "evidence": "25-RESEARCH 2.2 probe"
+    "evidence": "25-RESEARCH 2.2 probe",
+    "pool": "free"
+  },
+  {
+    "id": "opencode-free-limit",
+    "tier": 3,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "event",
+    "match": "^opencode-type:provider\\.free-limit$",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "typed event shape from the opencode pull request text and a live probe on 2026-11-16 (429 with retryAfterMs); full body not stored (38.1 D-24)",
+    "pool": "free"
   },
   {
     "id": "vendor-go-usage",
@@ -1442,6 +1457,7 @@ function validateRow(row, known) {
   try { new RegExp(row.match, 'i'); } catch { return 'match is not a regex'; }
   if (!ROW_CLASSES.includes(row.class)) return 'class is not a known class';
   if (row.routerClass !== undefined && row.routerClass !== 'quota') return 'routerClass is not quota';
+  if (row.pool !== undefined && (typeof row.pool !== 'string' || !ROW_POOL_RE.test(row.pool))) return 'pool is not a pool tier';
   if (typeof row.terminal !== 'boolean') return 'terminal is not a boolean';
   if (row.label !== 'verified' && row.label !== 'unverified') return 'label is not verified or unverified';
   if (typeof row.evidence !== 'string' || !row.evidence) return 'evidence is empty';
@@ -2575,7 +2591,7 @@ function upstreamFields(raw) {
     const body = outer.error?.response?.body;
     const nested = typeof body === 'string' ? parseJson(body) : null;
     const objects = [outer, outer.error, nested, nested?.error, outer.recovery_hint];
-    const keys = ['retry_after', 'reset_at', 'retry_after_seconds', 'resetsAt', 'reset_seconds'];
+    const keys = ['retry_after', 'reset_at', 'retry_after_seconds', 'resetsAt', 'reset_seconds', 'retryAfterMs'];
     for (const key of keys) {
       for (const object of objects) {
         if (!object || typeof object !== 'object' || !Object.hasOwn(object, key)) continue;
@@ -3922,6 +3938,103 @@ function writeCycleState(file, data) {
   }
   fs.renameSync(tmp, file);
   try { fs.chmodSync(file, 0o600); } catch { /* the create mode already is 0600 */ }
+}
+
+// 38.1 R11 (D-23..D-25): a usage-limited pool's blocked-until record; the runner never acts on it.
+// Mirrors Phase 36's POOL_RX (lane_settings.py) so a caller's --pool equals the recorded string.
+const BLOCKED_POOL_RE = /^[A-Za-z0-9._-]{1,64}:[a-z]{1,16}$/;
+const ROW_POOL_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const BLOCKED_DAY_S = 86400;
+const BLOCKED_MARGIN_S = 120;
+function blockedIso(s) { return new Date(s * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'); }
+function blockedStatedS(fields) {
+  const ms = fields ? fields.retryAfterMs : undefined;
+  return typeof ms === 'number' && Number.isInteger(ms) && ms > 0 ? Math.min(Math.trunc(ms / 1000), BLOCKED_DAY_S) : null;
+}
+function blockedNext(prev, nowS, statedS) {
+  const base = statedS === null ? BLOCKED_DAY_S : statedS + BLOCKED_MARGIN_S;
+  const basis = statedS === null ? 'default_24h' : 'retry_after_ms';
+  if (!prev) return { untilS: nowS + base, failures: 1, basis };
+  if (nowS < prev.untilS) return { untilS: Math.max(prev.untilS, nowS + base), failures: prev.failures, basis: nowS + base > prev.untilS ? basis : prev.basis };
+  const failures = prev.failures + 1;
+  return { untilS: nowS + Math.max(base, BLOCKED_DAY_S), failures, basis: base >= BLOCKED_DAY_S ? basis : 'floor_24h' };
+}
+function blockedPoolKey(poolOpt, row, model) {
+  if (poolOpt) return poolOpt;
+  if (!row || !row.pool) return null;
+  const cut = String(model || '').indexOf('/');
+  if (cut <= 0) return null;
+  const key = `${model.slice(0, cut)}:${row.pool}`;
+  return BLOCKED_POOL_RE.test(key) ? key : null;
+}
+function blockedFilePath(pool, home = stateHome()) { return path.join(home, 'ai-kit', 'spec', 'blocked', `${encodeURIComponent(pool)}.json`); }
+const BLOCKED_BASES = new Set(['retry_after_ms', 'default_24h', 'floor_24h']);
+const BLOCKED_MAX_BYTES = 4096;
+function readBlocked(pool, home = stateHome()) {
+  let rec;
+  try {
+    const file = blockedFilePath(pool, home);
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.size > BLOCKED_MAX_BYTES) return null;
+    rec = parseJson(fs.readFileSync(file, 'utf8'));
+  } catch { return null; }
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec) || rec.pool !== pool || typeof rec.blocked_until !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(rec.blocked_until) || !Number.isFinite(Date.parse(rec.blocked_until)) || !Number.isInteger(rec.failures) || rec.failures < 1 || !BLOCKED_BASES.has(rec.basis) || typeof rec.rule !== 'string' || (rec.rule !== '-' && !ROW_ID_RE.test(rec.rule))) return null;
+  return { pool, untilS: Date.parse(rec.blocked_until) / 1000, failures: rec.failures, basis: rec.basis, rule: rec.rule };
+}
+const BLOCKED_WAIT = new Int32Array(new SharedArrayBuffer(4));
+const BLOCKED_LOCK_ROUNDS = 40;
+// A writer publishes only while it holds the pool lock; a busy lock skips the write (R11: the later blocked_until wins).
+function blockedWithLock(file, fn, rounds = BLOCKED_LOCK_ROUNDS) {
+  const lock = `${file}.lock`;
+  const record = { version: LOCK_RECORD_VERSION, run_id: crypto.randomUUID(), pid: process.pid, pid_start: lockStartTime(process.pid), host_name: os.hostname(), started_ms: Date.now(), child_pgid: null, child_start: null };
+  for (let round = 0; round < rounds; round += 1) {
+    if (createLockFile(lock, record)) {
+      try { return { done: true, value: fn() }; } finally {
+        const mine = readLockOnce(lock);
+        if (mine.rec && mine.rec.run_id === record.run_id) fs.rmSync(lock, { force: true });
+      }
+    }
+    const seen = readLockOnce(lock);
+    if (seen.gone) continue;
+    if (!seen.bad && lockVerdict(seen.rec, lockProbe()) === 'stale') { clearStaleLock(lock, seen); continue; }
+    if (round + 1 < rounds) Atomics.wait(BLOCKED_WAIT, 0, 0, 25);
+  }
+  return { done: false };
+}
+// The live watcher keeps the first terminal string (an opencode message comes before its type), so a pool row may match a later string of the same raw text.
+function blockedPoolRow(r, model) {
+  const hit = TABLE.find((item) => item.id === r.rule) || null;
+  if (hit && hit.pool) return hit;
+  const raw = String(r.upstream?.raw || '');
+  const { events, eventRaw } = eventsWithRaw(r.cli, raw, true);
+  const cls = classifyStop({ cli: r.cli, route: r.route || 'unknown', model, stderr: raw, events, eventRaw }, TABLE.filter((item) => item.pool));
+  return cls.status !== 'crash' ? TABLE.find((item) => item.id === cls.rule) || hit : hit;
+}
+function blockedAfterStop(poolOpt, model, r, nowMs = Date.now(), home = stateHome(), rounds = BLOCKED_LOCK_ROUNDS) {
+  if (!r || r.status !== 'quota' || confirmedRoute(r.route || 'unknown')) return null;
+  const row = blockedPoolRow(r, model);
+  const key = blockedPoolKey(poolOpt, row, model);
+  if (!key) return null;
+  try {
+    const nowS = Math.floor(nowMs / 1000);
+    const file = blockedFilePath(key, home);
+    const res = blockedWithLock(file, () => {
+      const prev = readBlocked(key, home);
+      const next = blockedNext(prev, nowS, blockedStatedS(r.upstream?.fields));
+      if (prev && prev.untilS > next.untilS) next.untilS = prev.untilS;
+      writeCycleState(file, { pool: key, blocked_until: blockedIso(next.untilS), failures: next.failures, basis: next.basis, rule: row && ROW_ID_RE.test(row.id) ? row.id : '-', written_at: blockedIso(nowS) });
+      return next;
+    }, rounds);
+    if (!res.done) { log('cross-ai: blocked-until write skipped (pool lock busy)'); return null; }
+    const next = res.value;
+    log(`cross-ai: blocked-until pool=${key} until=${blockedIso(next.untilS)} failures=${next.failures} basis=${next.basis}`);
+    return next;
+  } catch (e) { log(`cross-ai: blocked-until write failed (${e && e.code || 'error'})`); return null; }
+}
+// An ok attempt clears only a pool the caller named: a paid lane of the same provider is not in the pool.
+function blockedClearAfterOk(poolOpt, home = stateHome()) {
+  if (!poolOpt) return;
+  try { fs.unlinkSync(blockedFilePath(poolOpt, home)); log(`cross-ai: blocked-until cleared pool=${poolOpt}`); } catch { /* no record */ }
 }
 
 function deleteCycleState(file) {
@@ -6459,7 +6572,7 @@ function parseArgs(argv) {
     codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
     role: null, effort: null, context: null, escalateRuntime: false, escalateModel: false,
-    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, sweep: false, baseline: null, idleTimeout: null, forbid: [], planId: null,
+    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, sweep: false, baseline: null, idleTimeout: null, forbid: [], planId: null, pool: null,
   };
   let modeFlag = null;
   for (let i = 0; i < argv.length; i++) {
@@ -6492,6 +6605,7 @@ function parseArgs(argv) {
       if (!ROUTE_VALUES.has(route)) throw new Error(`${a} must be router or unknown`);
       o.routes[cli] = route;
     } else if (a === '--classify-only') o.classifyOnly = v();
+    else if (a === '--pool') { o.pool = v(); if (!BLOCKED_POOL_RE.test(o.pool)) throw new Error('--pool must look like <provider>:free'); }
     else if (a === '--mode') { o.mode = v(); if (!['exec', 'review'].includes(o.mode)) throw new Error('--mode must be exec or review'); modeFlag = o.mode; }
     else if (a === '--timeout') { o.timeout = Number(v()); if (!(o.timeout > 0)) throw new Error('--timeout must be > 0'); }
     else if (a === '--outer-timeout') {
@@ -7098,6 +7212,7 @@ async function main(argv) {
     }, 'class');
   }
   if (r.ok) {
+    blockedClearAfterOk(o.pool);
     if (!noTree && (after === null || before === null)) {
       const status = gitFailStatus();
       return reportAndFinish(status, { ...liveFields, tree: 'unknown', cli_rc: 0, exit: 1 });
@@ -7122,6 +7237,7 @@ async function main(argv) {
       ...liveFields, tree: 'unknown', cli_rc: r.cli_rc ?? '-', exit: 1,
     });
   }
+  blockedAfterStop(o.pool, c.model, { ...r, cli: c.name });
   const finalStatus = r.status || 'crash';
   return reportAndFinish(finalStatus, {
     ...liveFields, tree, cli_rc: r.cli_rc, cli: c.name, model: c.model,
@@ -7147,6 +7263,7 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
 export {
   ADMISSION_PHRASES_SEED,
   ARGV_PROMPT_MAX,
+  BLOCKED_POOL_RE,
   CLAUDE_EXEC_FORMULA_RECORD,
   CLI_NAME_RE,
   CONFIG,
@@ -7189,6 +7306,14 @@ export {
   argvFileAllowed,
   argvFileRow,
   argvPromptProblem,
+  blockedAfterStop,
+  blockedClearAfterOk,
+  blockedFilePath,
+  blockedNext,
+  blockedPoolKey,
+  blockedPoolRow,
+  blockedStatedS,
+  blockedWithLock,
   baselinePath,
   baselineVerdict,
   capCodePoints,
@@ -7257,6 +7382,7 @@ export {
   providerAdmits,
   pushCapped,
   readCallFile,
+  readBlocked,
   readCycleState,
   readLockOnce,
   readOr,
