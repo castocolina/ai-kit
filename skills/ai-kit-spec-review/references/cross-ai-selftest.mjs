@@ -9,6 +9,7 @@ import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  parseCommitLog,
   ADMISSION_PHRASES_SEED,
   ARGV_PROMPT_MAX,
   CLAUDE_EXEC_FORMULA_RECORD,
@@ -1598,6 +1599,8 @@ const FAKE_MODES = {
     process.exit(1);
   },
   'review-ok': () => { process.stdout.write('# Review\nok'); },
+  // 38-18: commit planned files, optionally merge a side branch and leave edits.
+  'plan-commit': () => { const plan = JSON.parse(process.env.FAKE_PLAN || '{}'); const write = (f, line) => { const dir = f.split('/').slice(0, -1).join('/'); if (dir) fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(f, line); }; const commit = (c) => { for (const f of c.files) write(f, 'line\n'); const a = spawnSync('git', ['add', '--', ...c.files]); if (a.status !== 0) process.exit(5); const m = spawnSync('git', ['commit', '-q', '-m', c.subject]); if (m.status !== 0) process.exit(6); }; if (plan.merge) { spawnSync('git', ['checkout', '-q', '-b', 'side']); commit(plan.merge); spawnSync('git', ['checkout', '-q', '-']); } for (const c of plan.commits || []) commit(c); if (plan.merge) { const g = spawnSync('git', ['merge', '-q', '--no-ff', 'side', '-m', 'merge side']); if (g.status !== 0) process.exit(7); } for (const f of plan.edits || []) write(f, 'edit\n'); if (plan.exitCode) process.exit(plan.exitCode); process.stdout.write(plan.answer || '# Summary\nok'); },
   // Silent commits exercise tree-driven idle resets.
   'quiet-commit': () => { let n = 0; const t = setInterval(() => { fs.appendFileSync('a.txt', 'tick ' + n + '\n'); spawnSync('git', ['add', 'a.txt']); spawnSync('git', ['commit', '-q', '-m', 'tick ' + n]); n += 1; if (n === 6) { clearInterval(t); process.stdout.write('# Summary\nok'); process.exit(0); } }, 700); },
   // Silent and unchanged until the watchdog ends it.
@@ -2604,6 +2607,15 @@ async function blackBoxSelfTest(listOnly = false) {
     // 38-17: builds plan markup for the plan-check cases.
     const tag = (name, attrs, body) => '<' + name + attrs + '>' + body + '</' + name + '>';
     const PLAN3 = tag('objective', '', 'x') + '\n\n' + tag('tasks', '', '\n' + tag('task', ' type="auto"', tag('name', '', 'one') + tag('files', '', 'a.txt')) + tag('task', ' type="tdd"', tag('name', '', 'two') + tag('files', '', 'src/b.js, docs/')) + tag('task', '', tag('name', '', 'three') + tag('files', '', 'c.txt')) + tag('task', ' type="checkpoint:human-verify"', tag('name', '', 'look')) + '\n');
+    const planPrompt = (tasks) => tasks.length === 0 ? 'Free-form task with no plan blocks.\n' : tag('objective', '', 'plan check') + '\n\n' + tag('tasks', '', '\n' + tasks.map(([n, files]) => tag('task', ' type="auto"', '\n' + tag('name', '', n) + '\n' + tag('files', '', files) + '\n')).join('\n') + '\n') + '\n';
+    const all3 = [{ files: ['one.txt'], subject: 'feat(38-18): t1' }, { files: ['two.txt'], subject: 'feat(38-18): t2' }, { files: ['three.txt'], subject: 'feat(38-18): t3' }];
+    const planCase = (name, { tasks = [['t1', 'one.txt'], ['t2', 'two.txt'], ['t3', 'three.txt']], commits, edits = [], answer = '# Summary\nok', args = [], status, coverage, codes, lines = [], setup, exitCode, merge }) => ({
+      name, kind: 'logic', stdin: planPrompt(tasks), env: { FAKE_PLAN: JSON.stringify({ commits, edits, answer, exitCode, merge }) },
+      args: ['--runtime', 'pi', '--role', 'execute', '--model', 'fake/plan-commit', ...args], exit: status === 'ok' ? 0 : 1,
+      status: new RegExp(`^AIKIT-XAI status=${status} cli=pi model=fake/plan-commit exit=${status === 'ok' ? 0 : 1} .* action=stop$`), ...(setup ? { setup } : {}),
+      check: (r) => { const err = (r.stderr || '').split('\n'); const line = err.find((l) => l.startsWith('AIKIT-XAI ')) || ''; const group = ` coverage=${coverage} findings=${codes}`; if (!line.includes(`${group} `) && !line.endsWith(group)) return `status group: ${line}`; for (const l of lines) if (!err.includes(l)) return `stderr lacks: ${l}`; if (status === 'ok' && !(r.stdout || '').startsWith('# Summary')) return 'ok without the answer on stdout'; if (status !== 'ok' && (r.stdout || '') !== '') return 'stdout not empty'; if (codes === '-' && err.some((l) => l.startsWith('cross-ai: finding '))) return 'unexpected finding line'; return null; },
+    });
+    const ownerSpec = { commits: all3, status: 'ok', coverage: '3/3', codes: '-', setup: (c) => { fs.appendFileSync(path.join(c.repo, 'a.txt'), 'owner\n'); return null; } };
     const equal = (got, want) => JSON.stringify(got) === JSON.stringify(want) ? null : `got ${JSON.stringify(got)}`;
     const task = (name, file) => ({ name, files: [file], checkable: true });
     const defaults = (overrides) => ({ tasks: [], commits: [], changed: [], uncommitted: [], answer: 'done', answered: true, phrases: ADMISSION_PHRASES_SEED, forbidden: FORBIDDEN_PATHS_SEED, named: new Set(), planId: null, ...overrides });
@@ -9288,7 +9300,7 @@ async function blackBoxSelfTest(listOnly = false) {
         status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 .* action=stop$/,
         check: (r) => {
           const line = (r.stderr || '').split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
-          if (!/ attempts=\d+ cycles=\d+ session=\S+ applied=\S+ ignored=\S+ unknown=\S+ escalate=\S+ coverage=- findings=- retry_after_s=\d+ cycle=\d+$/.test(line)) return `status=${line}`;
+          if (!/ attempts=\d+ cycles=\d+ session=\S+ applied=\S+ ignored=\S+ unknown=\S+ escalate=\S+ coverage=n\/a findings=- retry_after_s=\d+ cycle=\d+$/.test(line)) return `status=${line}`;
           const tail = statusTail(r.stderr || '');
           return tail?.retry_after_s === '600' && tail.escalate === '-' ? null : `tail=${JSON.stringify(tail)}`;
         },
@@ -10316,7 +10328,7 @@ async function blackBoxSelfTest(listOnly = false) {
         setup: (c) => { c.orphan = gitValue(c, ['commit-tree', 'HEAD^{tree}', '-m', 'orphan']); return plantBaseline(c, { head: c.orphan }); },
         check: (r, c) => {
           if (!r.stderr.split('\n').includes(`cross-ai: finding reason=baseline_replaced detail=rebased: HEAD does not descend from ${c.orphan.slice(0, 12)}`)) return 'missing rebased line';
-          if (!r.stderr.split('\n').some((s) => s.startsWith('AIKIT-XAI ') && s.includes(' findings=baseline_replaced'))) return 'findings group lacks baseline_replaced';
+          if (!r.stderr.split('\n').some((s) => s.startsWith('AIKIT-XAI ') && / findings=[^ ]*\bbaseline_replaced\b/.test(s))) return 'findings group lacks baseline_replaced';
           return JSON.parse(fs.readFileSync(path.join(c.home, 'lock.seen'), 'utf8')).rec.baseline.head === gitValue(c, ['rev-parse', 'HEAD']) ? null : 'baseline head';
         },
       },
@@ -10389,6 +10401,25 @@ async function blackBoxSelfTest(listOnly = false) {
       { name: 'vocab-forbid-control', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--forbid', 'a\x9bb'], exit: 2, status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/, check: (r) => r.stderr.split('\n').includes(`cross-ai: ${refusal}`) && !r.stderr.includes('\x9b') ? null : 'missing refusal or leaked control' },
       { name: 'vocab-forbid-plan-id-ok', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--forbid', 'gen/', '--forbid', 'x.txt', '--plan-id', '02.1-03b'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/ },
       { name: 'pure-plan-id-regex', kind: 'logic', pure: () => { for (const id of ['38-17', '2-1', '02.1-03', '38-17b', '38-17-fix.2']) if (!PLAN_ID_RE.test(id)) return `rejected ${id}`; for (const id of ['', '38', '-17', '38-', '38-x', 'a38-17', '38-17 ', '38.-17']) if (PLAN_ID_RE.test(id)) return `accepted ${id}`; const count = (id, subjects) => coverageOf([], subjects.map((subject) => ({ subject, paths: [] })), id).planIdCount; return equal([count('38-7', ['feat(38-07): a', 'fix(038-7)!: b', 'docs(38-17): c', 'feat(38-070): d', 'Feat(38-7): e']), count('02.1-03', ['feat(002.1-003): f', 'feat(2.01-03): g']), count('1-12345678901234567890', ['fix(1-12345678901234567891): h']), count('38-17-fix.2', ['feat(38-17-fix.2): i', 'feat(38-017-fix.2): j'])], [2, 1, 0, 1]); } },
+      { name: 'pure-commit-log', kind: 'logic', pure: () => { const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40), D = 'd'.repeat(40); return equal(parseCommitLog(A + '\x1f' + B + ' ' + C + '\x1fMerge side\x1e\n' + D + '\x1f' + B + '\x1ffeat(38-18): t1\x1e\n' + 'not-a-sha\x1fx\x1fjunk\x1e\n'), [{ sha: A, parents: [B, C], subject: 'Merge side', paths: [] }, { sha: D, parents: [B], subject: 'feat(38-18): t1', paths: [] }]); } },
+      planCase('plan-all-covered', { commits: all3, status: 'ok', coverage: '3/3', codes: '-' }),
+      planCase('plan-one-of-three', { commits: [all3[0]], status: 'partial', coverage: '1/3', codes: 'task_uncovered', lines: ['cross-ai: finding reason=task_uncovered detail=t2, t3'] }),
+      planCase('plan-no-commit', { commits: [], edits: ['one.txt'], status: 'partial', coverage: '0/3', codes: 'no_commit,uncommitted_edits', lines: ['cross-ai: finding reason=no_commit detail=no commit since the baseline for 3 planned tasks'] }),
+      planCase('plan-admits', { commits: all3, answer: '# Summary\nTask t3 was not implemented; its test is left for later.\n', status: 'partial', coverage: '3/3', codes: 'admits_skipped', lines: ['cross-ai: finding reason=admits_skipped detail=phrase "left for later", phrase "not implemented"'] }),
+      planCase('plan-deviations-ok', { commits: all3, answer: '# Summary\n## Deviations from Plan\nAuto-fixed one import; `not implemented` is a log key.\n```\nnot completed\n```\n', status: 'ok', coverage: '3/3', codes: '-' }),
+      planCase('plan-forbidden', { commits: [all3[0], all3[1], { files: ['three.txt', '.planning/STATE.md'], subject: 'feat(38-18): t3' }], status: 'contract_violation', coverage: '3/3', codes: 'forbidden_path,outside_plan_files', lines: ['cross-ai: finding reason=forbidden_path detail=.planning/STATE.md', 'cross-ai: finding reason=outside_plan_files detail=1 path: .planning/STATE.md'] }),
+      planCase('plan-forbidden-uncommitted', { commits: all3, edits: ['.planning/STATE.md'], status: 'contract_violation', coverage: '3/3', codes: 'forbidden_path,outside_plan_files,uncommitted_edits', lines: ['cross-ai: finding reason=forbidden_path detail=.planning/STATE.md'] }),
+      planCase('plan-forbid-flag', { args: ['--forbid', 'gen/'], commits: all3, edits: ['gen/out.js'], status: 'contract_violation', coverage: '3/3', codes: 'forbidden_path,outside_plan_files,uncommitted_edits', lines: ['cross-ai: finding reason=forbidden_path detail=gen/out.js'] }),
+      planCase('plan-forbidden-named', { tasks: [['t1', 'one.txt'], ['t2', 'two.txt'], ['t3', 'three.txt, .planning/STATE.md']], commits: [all3[0], all3[1], { files: ['three.txt', '.planning/STATE.md'], subject: 'feat(38-18): t3' }], status: 'ok', coverage: '3/3', codes: '-' }),
+      planCase('plan-no-tasks', { tasks: [], commits: [{ files: ['one.txt'], subject: 'feat: x' }], status: 'ok', coverage: 'n/a', codes: '-' }),
+      planCase('plan-id-match', { args: ['--plan-id', '38-18'], commits: [all3[0], { files: ['two.txt'], subject: 'test(038-18): t2' }, { files: ['three.txt'], subject: 'fix(38-018): t3' }], status: 'ok', coverage: '3/3', codes: '-' }),
+      planCase('plan-id-short', { args: ['--plan-id', '38-18'], commits: [{ files: ['one.txt', 'two.txt', 'three.txt'], subject: 'feat(38-18): all' }], status: 'partial', coverage: '3/3', codes: 'task_uncovered', lines: ['cross-ai: finding reason=task_uncovered detail=plan-id 38-18: 1 commits for 3 tasks'] }),
+      { ...planCase('plan-owner-dirty', ownerSpec), check: (r) => planCase('plan-owner-dirty', ownerSpec).check(r) || ((r.stderr || '').split('\n').some((l) => l.startsWith('cross-ai: finding ') && l.includes('a.txt')) ? 'owner file reported' : null) },
+      planCase('plan-list-cap', { tasks: [['t1', 'one.txt']], commits: [{ files: ['one.txt', ...Array.from({ length: 12 }, (_, i) => `x${String(i + 1).padStart(2, '0')}.txt`)], subject: 'feat(38-18): t1' }], status: 'ok', coverage: '1/1', codes: 'outside_plan_files', lines: ['cross-ai: finding reason=outside_plan_files detail=12 paths: x01.txt, x02.txt, x03.txt, x04.txt, x05.txt, x06.txt, x07.txt, x08.txt, x09.txt, x10.txt (+2 more)'] }),
+      planCase('plan-failed-lists-missing', { commits: [all3[0]], exitCode: 7, status: 'crash', coverage: '1/3', codes: 'task_uncovered', lines: ['cross-ai: finding reason=task_uncovered detail=t2, t3'] }),
+      planCase('plan-merge-clean', { merge: { files: ['one.txt'], subject: 'feat(38-18): t1' }, commits: [all3[1], all3[2]], status: 'ok', coverage: '3/3', codes: '-' }),
+      planCase('plan-no-git-admission', { setup: (c) => { fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true }); c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo); return null; }, commits: [], answer: '# Summary\nThe last task is not implemented.\n', status: 'partial', coverage: 'n/a', codes: 'admits_skipped', lines: ['cross-ai: finding reason=admits_skipped detail=phrase "not implemented"'] }),
+      { name: 'plan-out-of-table', kind: 'logic', setup: (c) => { fs.writeFileSync(path.join(c.repo, '.gitignore'), 'ign/\n'); fs.mkdirSync(path.join(c.repo, 'ign')); fs.writeFileSync(path.join(c.repo, 'ign', 'argv.json'), JSON.stringify(['placeholder-cli-1', '--model', '{model}', '--session={session}'])); for (const args of [['add', '.gitignore'], ['commit', '-q', '-m', 'ignore']]) { const g = spawnSync('git', args, { cwd: c.repo, env: c.env, encoding: 'utf8' }); if (g.status !== 0) return `setup git ${args.join(' ')}: ${g.stderr}`; } return null; }, stdin: planPrompt([['t1', 'one.txt'], ['t2', 'two.txt'], ['t3', 'three.txt']]), args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'ign/argv.json', '--model', 'fake-edit-then-ok', '--session-id', 'placeholder-sid-9'], exit: 1, status: /^AIKIT-XAI status=partial cli=placeholder-cli-1 model=fake-edit-then-ok exit=1 .* action=stop$/, check: (r) => (r.stderr || '').split('\n').includes('cross-ai: finding reason=no_commit detail=no commit since the baseline for 3 planned tasks') && !r.stdout ? null : 'missing finding or stdout not empty' },
     ];
 
     const unkinded = cases.filter((c) => c.kind !== 'logic' && c.kind !== 'runtime').map((c) => c.name);

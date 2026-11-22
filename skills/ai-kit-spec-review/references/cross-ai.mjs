@@ -1189,6 +1189,7 @@ const STATUS_TABLE = {
   empty_answer: { exit: 1 },
   crash: { exit: 1 },
   contract_violation: { exit: 1 },
+  partial: { exit: 1 }, // SPEC R5: a blocking execute finding (D-15)
   usage: { exit: 2 },
   no_model: { exit: 2 },
   empty_stdin: { exit: 2 },
@@ -3940,6 +3941,7 @@ function runChild(bin, argv, opts = {}) {
       }
       resolve({
         code, signal, timedOut, limited, idle, spawnErr,
+        stdoutDropped: out.dropped,
         stdout: Buffer.concat(out.chunks).toString('utf8'),
         stderr: Buffer.concat(err.chunks).toString('utf8'),
       });
@@ -5502,6 +5504,82 @@ function planFindings(input) {
   return { coverage: input.tasks.length === 0 ? 'n/a' : `${cov.covered}/${cov.checkable}`, findings: out, blocking };
 }
 
+// Sorted paths that differ between two tree-ish ids; null when git fails, times out or overflows.
+async function diffNames(a, b, cwd, limit = runDeadline) {
+  const git = which('git', process.env.PATH || '');
+  if (!git || !a || !b) return null;
+  const diff = await runChild(git, ['-c', 'core.quotepath=off', 'diff-tree', '-r', '--no-renames', '--name-only', '-z', a, b], { cwd, capMs: GIT_CAP_MS, limit });
+  if (diff.timedOut || diff.spawnErr || diff.code !== 0 || diff.stdoutDropped) { gitFailed(diff, 'diff-tree'); return null; }
+  return diff.stdout.split('\0').filter((p) => p.length > 0).sort();
+}
+
+// D-11: parse git log records separated by record and field separators.
+function parseCommitLog(text) {
+  const commits = [];
+  for (const record of String(text || '').split('\x1e')) {
+    const trimmed = record.replace(/^\n+/, '');
+    if (!trimmed) continue;
+    const [sha, parents, subject] = trimmed.split('\x1f');
+    if (!sha || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(sha)) continue;
+    commits.push({ sha, parents: (parents ?? '').split(' ').filter(Boolean), subject: subject ?? '', paths: [] });
+  }
+  return commits;
+}
+
+// D-11: ordinary commits contribute their paths; two-parent merges use remerge-diff.
+async function commitPaths(git, sha, parents, cwd, limit) {
+  const merge = parents.length > 1;
+  if (merge && parents.length !== 2) return [];
+  const args = ['-c', 'core.quotepath=off', 'show', merge ? '--remerge-diff' : '--first-parent', '--pretty=format:', '--name-only', '-z', sha];
+  const r = await runChild(git, args, { cwd, capMs: GIT_CAP_MS, limit });
+  if (merge && !r.timedOut && !r.spawnErr && r.code !== 0) return [];
+  if (r.timedOut || r.spawnErr || r.code !== 0 || r.stdoutDropped) { gitFailed(r, 'show'); return null; }
+  return r.stdout.split('\0').filter((p) => p.length > 0);
+}
+
+// D-11: read commits since the baseline and their paths; null on failure.
+async function commitsSince(baseHead, endHead, cwd, limit) {
+  if (!endHead) return [];
+  const git = which('git', process.env.PATH || '');
+  if (!git) { gitFailure = { kind: 'error', what: 'not found' }; return null; }
+  const range = baseHead ? `${baseHead}..${endHead}` : endHead;
+  const r = await runChild(git, ['log', '--format=%H%x1f%P%x1f%s%x1e', range], { cwd, capMs: GIT_CAP_MS, limit });
+  if (r.timedOut || r.spawnErr || r.code !== 0 || r.stdoutDropped) { gitFailed(r, 'log'); return null; }
+  const commits = parseCommitLog(r.stdout);
+  for (const c of commits) {
+    const paths = await commitPaths(git, c.sha, c.parents, cwd, limit);
+    if (paths === null) return null;
+    c.paths = paths;
+  }
+  return commits;
+}
+
+// SPEC R5: check spawned execute runs against the baseline; fail closed on missing git evidence.
+async function executeFindings(prompt, r, end, cwd, o, noTree) {
+  const common = { answer: r.ok ? (r.text || '') : '', answered: Boolean(r.ok), phrases: CONFIG.admissionPhrases ?? ADMISSION_PHRASES_SEED, forbidden: [...(CONFIG.forbiddenPaths ?? FORBIDDEN_PATHS_SEED), ...(o.forbid || [])], named: promptFiles(prompt), planId: o.planId ?? null };
+  let result;
+  if (noTree) result = planFindings({ ...common, tasks: [], commits: [], changed: [], uncommitted: [] });
+  else {
+    const b = liveBaseline; const limit = finalizeBy;
+    const commits = await commitsSince(b.head, end.head, cwd, limit);
+    if (commits === null) return { gitFailed: true };
+    const baseTree = String(b.tree).split('\t')[0]; const endTree = String(end.tree).split('\t')[0];
+    const changed = await diffNames(baseTree, endTree, cwd, limit);
+    if (changed === null) return { gitFailed: true };
+    let uncommitted = [];
+    if (b.head && end.head) {
+      const endDirty = await diffNames(end.head, endTree, cwd, limit);
+      const baseDirty = await diffNames(b.head, baseTree, cwd, limit);
+      if (endDirty === null || baseDirty === null) return { gitFailed: true };
+      uncommitted = endDirty.filter((p) => !baseDirty.includes(p));
+    }
+    result = planFindings({ ...common, tasks: parseTasks(prompt), commits, changed, uncommitted });
+  }
+  for (const f of result.findings) addFinding(f.code, f.detail);
+  liveCheck.coverage = result.coverage;
+  return result;
+}
+
 // Null when the ignored or nested parts differ, or git fails: those changes have no path to
 // account for. Otherwise the sorted paths that differ between the two write-tree ids.
 async function changedPaths(before, mid, cwd) {
@@ -5510,12 +5588,7 @@ async function changedPaths(before, mid, cwd) {
   if (beforeParts.slice(1).join('\t') !== midParts.slice(1).join('\t')) return null;
   const git = which('git', process.env.PATH || '');
   if (!git || !beforeParts[0] || !midParts[0]) return null;
-  const diff = await runChild(
-    git, ['diff-tree', '-r', '--name-only', '-z', beforeParts[0], midParts[0]],
-    { cwd, capMs: GIT_CAP_MS, limit: runDeadline },
-  );
-  if (diff.timedOut || diff.spawnErr || diff.code !== 0) return null;
-  return diff.stdout.split('\0').filter(Boolean).sort();
+  return diffNames(beforeParts[0], midParts[0], cwd);
 }
 
 // Rung 2 runs over an unchanged tree with the original prompt, or over a changed tree only
@@ -6331,6 +6404,9 @@ async function main(argv) {
   if (aborting) {
     return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
   }
+  // SPEC R5: check only spawned runs, including failed runs without replacing their status.
+  const checked = o.mode === 'exec' && (r.attempts || 0) > 0 && (noTree || (after && liveBaseline)) ? await executeFindings(raw, r, after, process.cwd(), o, noTree) : null;
+  if (aborting) return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal'); // Signal during post-run reads.
   if (
     r.status === 'contract_violation' || r.status === 'git_error' || r.status === 'git_timeout'
   ) {
@@ -6360,6 +6436,10 @@ async function main(argv) {
         ...liveFields, cli: c.name, model: c.model, tree, cli_rc: 0, ...counted,
       });
     }
+    // No change wins; unavailable git evidence fails closed before blocking findings.
+    if (checked?.gitFailed) return reportAndFinish(gitFailStatus(), { ...liveFields, tree, cli_rc: 0, exit: 1, ...counted });
+    if (checked?.blocking === 'contract_violation') return reportAndFinish('contract_violation', { ...liveFields, tree, cli_rc: 0, exit: 1, ...counted }, 'class');
+    if (checked?.blocking === 'partial') return reportAndFinish('partial', { ...liveFields, tree, cli_rc: 0, exit: 1, ...counted }, 'class');
     process.stdout.write(r.text);
     return reportAndFinish('ok', {
       ...liveFields, tree, exit: 0, cli_rc: 0, out: r.outBytes || 0, ...counted,
@@ -6394,6 +6474,7 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
 // 38-08: the names the self-test harness (cross-ai-selftest.mjs) imports. One list,
 // never per-declaration exports (the test extractors read `function name(` lines).
 export {
+  parseCommitLog,
   ADMISSION_PHRASES_SEED,
   ARGV_PROMPT_MAX,
   CLAUDE_EXEC_FORMULA_RECORD,
