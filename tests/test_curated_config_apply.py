@@ -542,7 +542,7 @@ def _run_apply(
     inv_path: str,
     project: str,
     env: dict,
-    fake: "FakeRun | _RecordingRun",
+    fake,
     *,
     dry_run: bool = True,
 ) -> tuple[int, dict | None, str, str]:
@@ -608,7 +608,8 @@ def _setup_scratch_project(tmp: str) -> tuple[str, dict, str]:
 def _tables_fake(config_path: str, home: str) -> FakeRun:
     return FakeRun(
         node_stdout=lambda argv, h=home: json.dumps(
-            tables_answer(json.loads(argv[6]), h)
+            [None] * len(json.loads(argv[4])["refs"]) if argv[2] == plan_io._GSD_SKILL_SCRIPT
+            else tables_answer(json.loads(argv[6]), h)
         ),
         config_path_stdout=config_path,
     )
@@ -644,6 +645,18 @@ def _assert_no_writes(project: str, fake: FakeRun) -> None:
             raise AssertionError("config-set was invoked")
 
 
+def fake_skill_child(run_fn, skipped: dict[str, str]):
+    def run(argv, **kwargs):
+        if len(argv) > 2 and argv[1] == "-e" and argv[2] == plan_io._GSD_SKILL_SCRIPT:
+            run_fn.argv_log.append(list(argv))
+            refs = json.loads(argv[4])["refs"]
+            return subprocess.CompletedProcess(
+                argv, 0, json.dumps([skipped.get(r) for r in refs]), ""
+            )
+        return run_fn(argv, **kwargs)
+    return run
+
+
 class TestApplyRefusals(unittest.TestCase):
     def test_missing_inventory_argparse(self) -> None:
         with self.assertRaises(SystemExit) as ctx:
@@ -651,6 +664,104 @@ class TestApplyRefusals(unittest.TestCase):
                 ["apply", "--plan", "p.json", "--project-dir", "d"]
             )
         self.assertEqual(ctx.exception.code, 2)
+
+    def test_no_child_before_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+            inv["existing_config"]["path"] = os.path.join(tmp, "other", ".planning", "config.json")
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(inv))
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan["inventory_digest"] = plan_schema.inventory_digest(inv)
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            fake.argv_log.clear()
+            code, _, out, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 2)
+            self.assertIn("not the config this inventory was taken for", out + err)
+            self.assertFalse(any(len(a) > 1 and a[1] == "-e" for a in fake.argv_log))
+
+    def test_skill_child_runs_after_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, _inv, fake = _decided_plan(tmp)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan["entries"].append({"key": "agent_skills.gsd-planner", "op": "keep",
+                                    "existing": ["skills/gone"], "value": ["skills/gone"],
+                                    "source": "user", "why": "test"})
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            fake.argv_log.clear()
+            before = _tree_snapshot(project)
+            child = fake_skill_child(
+                fake, {"skills/gone": 'Skill not found at "skills/gone/SKILL.md"'}
+            )
+            code, _, out, err = _run_apply(plan_path, inv_path, project, env, child)
+            self.assertEqual(code, 2)
+            self.assertIn('apply refused: agent_skills.gsd-planner: gsd-core would skip gone '
+                          '(Skill not found at "skills/gone/SKILL.md"', out + err)
+            self.assertIn("plan-set", out + err)
+            calls = fake.argv_log
+            children = [i for i, a in enumerate(calls)
+                        if len(a) > 2 and a[2] == plan_io._GSD_SKILL_SCRIPT]
+            self.assertEqual(len(children), 1)
+            self.assertTrue(any("config-path" in a for a in calls[:children[0]]))
+            self.assertEqual(before, _tree_snapshot(project))
+            _assert_no_writes(project, fake)
+
+    def test_messages_join_in_entry_order(self) -> None:
+        inv = {"existing_config": {"values": {}}}
+        entries = [{"key": f"agent_skills.gsd-{agent}", "op": "keep",
+                    "existing": [f"skills/{agent}"]} for agent in ("planner", "executor")]
+        def run(argv, **_kwargs):
+            return subprocess.CompletedProcess(argv, 0, json.dumps(["missing"] * 2), "")
+        check = plan_io.SkillCheck("node", "tools", {}, "project", run)
+        result = plan_io.gsd_skipped_skill_problem({"entries": entries}, inv, check)
+        assert result is not None
+        self.assertLess(result.index("agent_skills.gsd-planner"),
+                        result.index("agent_skills.gsd-executor"))
+        self.assertIn("; agent_skills.gsd-executor", result)
+
+    def test_global_core_is_a_note(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            inputs = apply_mod.Inputs(plan, plan_path, inv, inv_path, project)
+            core = mock.Mock(scope="global")
+            target = apply_mod.Target(mock.Mock(), core, "config", env)
+            deps = apply_mod.ApplyDeps(lambda _: None, fake, lambda: env)
+            fake.argv_log.clear()
+            output = io.StringIO()
+            with contextlib.redirect_stderr(output), mock.patch.object(
+                apply_mod, "resolve_target", return_value=(target, None)
+            ), mock.patch.object(apply_mod, "preflight", return_value=[]), mock.patch.object(
+                cross_ai_script, "load_template", return_value=(b"template", None)
+            ):
+                bound, template, error = apply_mod.prepare(inputs, deps, _strict_encode())
+            self.assertIs(bound, target)
+            self.assertEqual(template, b"template")
+            self.assertIsNone(error)
+            self.assertIn("gsd-core is not project-local for this project; "
+                          "the skipped-skill check did not run", output.getvalue())
+            self.assertFalse(any(len(a) > 1 and a[1] == "-e" for a in fake.argv_log))
+
+    def test_runtime_only_when_the_plan_writes_one(self) -> None:
+        cases = (([], None), ([{"key": "runtime", "op": "set", "value": "codex"}], "codex"))
+        for entries, expected in cases:
+            payloads = []
+            def run(argv, captured=payloads, **_kwargs):
+                captured.append(json.loads(argv[4]))
+                return subprocess.CompletedProcess(argv, 0, "[null]", "")
+            check = plan_io.SkillCheck("node", "tools", {}, "project", run)
+            plan = {"entries": [*entries, {"key": "agent_skills.gsd-planner", "op": "keep",
+                                           "existing": ["skills/test"]}]}
+            plan_io.gsd_skipped_skill_problem(plan, {"existing_config": {"values": {}}}, check)
+            base = payloads[0]["base"]
+            self.assertEqual(base.get("runtime"), expected)
+            if expected is None:
+                self.assertNotIn("runtime", base)
 
     def test_needs_choice_entry_named(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -692,6 +803,9 @@ class TestApplyRefusals(unittest.TestCase):
             os.symlink(outside, link)
             plan, _ = plan_io.load_plan(plan_path)
             assert plan is not None
+            fake_child = fake_skill_child(fake, {
+                "skills/escape": "escape outside project", "skills/missing": "missing skill",
+            })
             kept = ["skills/escape", "skills/missing"]
             plan["entries"].append({
                 "key": "agent_skills.gsd-planner", "op": "keep",
@@ -705,10 +819,13 @@ class TestApplyRefusals(unittest.TestCase):
             for dry_run in (True, False):
                 with self.subTest(dry_run=dry_run):
                     code, _report, out, err = _run_apply(
-                        plan_path, inv_path, project, env, fake, dry_run=dry_run
+                        plan_path, inv_path, project, env, fake_child, dry_run=dry_run
                     )
                     self.assertEqual(code, 2)
                     self.assertIn("apply refused", err + out)
+                    self.assertIn("escape outside project", err + out)
+                    self.assertIn("missing skill", err + out)
+                    self.assertIn("plan-set", err + out)
                     self.assertIn("escape", err + out)
                     self.assertIn("missing", err + out)
                     self.assertEqual(_tree_snapshot(project), before)
@@ -717,6 +834,7 @@ class TestApplyRefusals(unittest.TestCase):
     def test_hand_edited_skipped_skill_refused_before_any_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+            fake_child = fake_skill_child(fake, {"global:vaulted": "untrusted root"})
             inv["skills"].append({
                 "name": "vaulted", "root_kind": "global", "root": "~/.agents/skills",
                 "plugin": None, "real_dir": "/x/vault/vaulted",
@@ -739,10 +857,12 @@ class TestApplyRefusals(unittest.TestCase):
             for dry_run in (True, False):
                 with self.subTest(dry_run=dry_run):
                     code, _report, out, err = _run_apply(
-                        plan_path, inv_path, project, env, fake, dry_run=dry_run
+                        plan_path, inv_path, project, env, fake_child, dry_run=dry_run
                     )
                     self.assertEqual(code, 2)
                     self.assertIn("apply refused", err + out)
+                    self.assertIn("untrusted root", err + out)
+                    self.assertIn("plan-set", err + out)
                     self.assertIn("vaulted", err + out)
                     self.assertEqual(_tree_snapshot(project), before)
                     _assert_no_writes(project, fake)
@@ -772,14 +892,17 @@ class TestApplyRefusals(unittest.TestCase):
                 self._kept_global_plan(tmp, "gone")
             )
             shutil.rmtree(os.path.join(skills_dir, "gone"))
+            fake_child = fake_skill_child(fake, {"global:gone": "global skill missing"})
             before = _tree_snapshot(project)
             for dry_run in (True, False):
                 with self.subTest(dry_run=dry_run):
                     code, _report, out, err = _run_apply(
-                        plan_path, inv_path, project, env, fake, dry_run=dry_run
+                        plan_path, inv_path, project, env, fake_child, dry_run=dry_run
                     )
                     self.assertEqual(code, 2)
                     self.assertIn("apply refused", err + out)
+                    self.assertIn("global skill missing", err + out)
+                    self.assertIn("plan-set", err + out)
                     self.assertIn("gone", err + out)
                     self.assertEqual(_tree_snapshot(project), before)
                     _assert_no_writes(project, fake)
@@ -798,12 +921,15 @@ class TestApplyRefusals(unittest.TestCase):
             link = os.path.join(skills_dir, "moved", "SKILL.md")
             os.remove(link)
             os.symlink(os.path.join(outside, "SKILL.md"), link)
+            fake_child = fake_skill_child(fake, {"global:moved": "outside trusted roots"})
             before = _tree_snapshot(project)
             code, _report, out, err = _run_apply(
-                plan_path, inv_path, project, env, fake, dry_run=True
+                plan_path, inv_path, project, env, fake_child, dry_run=True
             )
             self.assertEqual(code, 2)
             self.assertIn("apply refused", err + out)
+            self.assertIn("outside trusted roots", err + out)
+            self.assertIn("plan-set", err + out)
             self.assertIn("moved", err + out)
             self.assertEqual(_tree_snapshot(project), before)
             _assert_no_writes(project, fake)
@@ -867,6 +993,8 @@ class TestApplyRefusals(unittest.TestCase):
             )
 
             def reject_profile(argv, h=env["HOME"]):
+                if argv[2] == plan_io._GSD_SKILL_SCRIPT:
+                    return json.dumps([None] * len(json.loads(argv[4])["refs"]))
                 body = tables_answer(json.loads(argv[6]), h)
                 body["valid_keys"]["rejected"] = sorted(
                     set(body["valid_keys"]["rejected"]) | {"model_profile"}
@@ -1324,9 +1452,10 @@ class TestDryRunTracer(unittest.TestCase):
             self.assertEqual(art_rows[0]["kind"], "add")
             self.assertEqual(_tree_snapshot(project), before)
             node_calls = [a for a in fake.argv_log if a and a[0] == "node"]
-            self.assertEqual(len(node_calls), 2)
+            self.assertEqual(len(node_calls), 3)
             self.assertEqual(node_calls[0][2], "config-path")
-            self.assertEqual(node_calls[1][1], "-e")
+            self.assertEqual(node_calls[1][2], plan_io._GSD_SKILL_SCRIPT)
+            self.assertEqual(node_calls[2][1], "-e")
             for cmd in fake.argv_log:
                 joined = " ".join(str(part) for part in cmd)
                 self.assertNotIn("config-set", joined)
@@ -1400,6 +1529,56 @@ def _mutate_config_file(config_path: str, key: str, value) -> None:
     with open(config_path, "w", encoding="utf-8") as handle:
         json.dump(live, handle)
         handle.write("\n")
+
+
+class TestGsdSkillVerdictNotes(unittest.TestCase):
+    class Recorder:
+        def __init__(self, result):
+            self.result = result
+            self.calls = []
+
+        def __call__(self, argv, **kwargs):
+            self.calls.append((argv, kwargs))
+            if isinstance(self.result, Exception):
+                raise self.result
+            return subprocess.CompletedProcess(argv, *self.result)
+
+    def make_check(self, result):
+        recorder = self.Recorder(result)
+        return plan_io.SkillCheck("node", "project/bin/gsd-tools.cjs", {}, "project", recorder)
+
+    def test_no_refs_start_no_child(self):
+        check = self.make_check((0, "null", ""))
+        self.assertEqual(plan_io.gsd_skill_verdicts([], {}, check), ([], None))
+        self.assertEqual(check.run_fn.calls, [])
+
+    def test_unreadable_answer_is_a_note(self):
+        check = self.make_check((0, "null", ""))
+        base = {"runtime": "claude"}
+        result = plan_io.gsd_skill_verdicts(["x"], base, check)
+        self.assertEqual(result, (None, plan_io._NOTE_FAILED.format(detail="unreadable answer")))
+        argv, kwargs = check.run_fn.calls[0]
+        self.assertEqual(argv, ["node", "-e", plan_io._GSD_SKILL_SCRIPT,
+                                os.path.join("project", "bin", "lib", "init.cjs"),
+                                json.dumps({"refs": ["x"], "base": base, "project": "project"})])
+        self.assertEqual(kwargs["capture_output"], True)
+        self.assertEqual(kwargs["encoding"], "utf-8")
+        self.assertEqual(kwargs["env"], check.env)
+        self.assertEqual(kwargs["timeout"], plan_io._GSD_SKILL_TIMEOUT_S)
+
+    def test_exit_and_timeout_are_notes(self):
+        for response, detail in (((3, "", ""), "exit 3"),
+                                 (subprocess.TimeoutExpired("node", 30), "timed out after 30 s")):
+            with self.subTest(detail=detail):
+                check = self.make_check(response)
+                self.assertEqual(plan_io.gsd_skill_verdicts(["x"], {}, check),
+                                 (None, plan_io._NOTE_FAILED.format(detail=detail)))
+
+    def test_cause_is_sanitized(self):
+        answer = ['[agent-skills] WARNING: Skill not found at "x\x1b[31m" — skipping']
+        check = self.make_check((0, json.dumps(answer), ""))
+        self.assertEqual(plan_io.gsd_skill_verdicts(["x"], {}, check),
+                         (['Skill not found at "x[31m"'], None))
 
 
 class _RecordingRun:

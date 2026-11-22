@@ -11,6 +11,10 @@ import os
 import posixpath
 import re
 import shlex
+import subprocess
+import sys
+from collections.abc import Callable
+from typing import NamedTuple
 
 from . import cross_ai, gsd_catalog, host, presets, roles, skill_scan
 from . import skills as skills_mod
@@ -652,6 +656,89 @@ def _kept_global_skip(item: str, inv: dict, roots: list[str]) -> tuple[str, str]
     return None
 
 
+class SkillCheck(NamedTuple):
+    """What apply binds before gsd-core's skill check runs (38 D-20): node, the
+    project-local gsd-tools.cjs, apply's GSD environment, the project dir and
+    the bounded runner.
+    """
+
+    node: str
+    tools_path: str
+    env: dict
+    project: str
+    run_fn: Callable[..., subprocess.CompletedProcess]
+
+
+_GSD_SKILL_TIMEOUT_S = 30
+# 38 D-20: gsd-core's own resolution, one call per reference: an empty block means
+# gsd-core skips it.
+_GSD_SKILL_SCRIPT = (
+    "try { const m = require(process.argv[1]); const p = JSON.parse(process.argv[2]); "
+    "const out = p.refs.map((ref) => { const d = { warnings: [] }; "
+    "const cfg = Object.assign({}, p.base, { agent_skills: { 'ai-kit-probe': [ref] } }); "
+    "return m.buildAgentSkillsBlock(cfg, 'ai-kit-probe', p.project, d) === '' "
+    "? (d.warnings[0] || 'skipped') : null; }); process.stdout.write(JSON.stringify(out)); "
+    "} catch (e) { process.stdout.write('null'); }"
+)
+_NOTE_FAILED = (
+    "ai-kit-gsd-curated-config: note: gsd-core's skill check failed ({detail}); "
+    "the skipped-skill check did not run"
+)
+
+
+def _cause_text(warning: str) -> str:
+    text = warning.removeprefix("[agent-skills] WARNING: ").removesuffix(" — skipping")
+    return re.sub(r"[\x00-\x1f\x7f]", "", text).strip()[:300]
+
+
+def _run_skill_child(check: SkillCheck, payload: str) -> tuple[str | None, str | None]:
+    init = os.path.join(os.path.dirname(check.tools_path), "lib", "init.cjs")
+    try:
+        proc = check.run_fn(
+            [check.node, "-e", _GSD_SKILL_SCRIPT, init, payload],
+            timeout=_GSD_SKILL_TIMEOUT_S, capture_output=True, encoding="utf-8",
+            errors="replace", check=False, env=check.env,
+        )
+    except subprocess.TimeoutExpired:
+        return None, _NOTE_FAILED.format(detail="timed out after 30 s")
+    except OSError as exc:
+        return None, _NOTE_FAILED.format(detail=exc.strerror or type(exc).__name__)
+    if proc.returncode != 0:
+        return None, _NOTE_FAILED.format(detail=f"exit {proc.returncode}")
+    return proc.stdout, None
+
+
+def _parse_verdicts(stdout: str, count: int) -> list | None:
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, list) or len(data) != count:
+        return None
+    if not all(item is None or isinstance(item, str) for item in data):
+        return None
+    return [_cause_text(item) if isinstance(item, str) else None for item in data]
+
+
+def gsd_skill_verdicts(
+    refs: list[str], base: dict, check: SkillCheck
+) -> tuple[list | None, str | None]:
+    """gsd-core's verdict per reference (None = resolves, a cause = skipped), or
+    (None, note) when gsd-core cannot answer (38 D-20).
+    """
+    if not refs:
+        return [], None
+    stdout, note = _run_skill_child(
+        check, json.dumps({"refs": refs, "base": base, "project": check.project})
+    )
+    if note:
+        return None, note
+    parsed = _parse_verdicts(stdout or "", len(refs))
+    if parsed is None:
+        return None, _NOTE_FAILED.format(detail="unreadable answer")
+    return parsed, None
+
+
 def _project_root_of(inv: dict) -> str | None:
     """The project dir the inventory was taken for: the parent of its ``.planning`` dir."""
     recorded = (inv.get("existing_config") or {}).get("path")
@@ -722,6 +809,37 @@ def _skipped_items(entry: dict, inv: dict, roots: list[str]) -> list[tuple[str, 
     return found
 
 
+def _candidate_refs(entry: dict, inv: dict) -> list[tuple[str, str]]:
+    value = entry_effective_value(entry)
+    items = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    pairs = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        if entry.get("op") == "keep":
+            tail = item.removeprefix("skills/") if item.startswith("skills/") else ""
+            name = item.removeprefix("global:") if item.startswith("global:") else (
+                tail if tail and "/" not in tail else item
+            )
+            pairs.append((name, item))
+        elif entry.get("op") == "set":
+            row = skills_mod.locate(item, inv)
+            if row is not None:
+                pairs.append((item, skills_mod.reference_for(row)))
+            elif skills_mod.skip_reason(item, inv, []) != skills_mod.NOT_INSTALLED:
+                pairs.append((item, f"skills/{item}"))
+    return pairs
+
+
+def _skill_base(plan: dict, roots: list[str]) -> dict:
+    base: dict = {"agent_skills_security": {"trusted_global_roots": roots}}
+    # orchestrator rule: runtime only when the plan writes one
+    value = entry_effective_value(_plan_entry(plan, "runtime"))
+    if isinstance(value, str) and value:
+        base["runtime"] = value
+    return base
+
+
 def _plan_set_command(key: str, value: list[str]) -> str:
     return f"plan-set {key} {shlex.quote(json.dumps(value, separators=(',', ':')))}"
 
@@ -778,6 +896,10 @@ def _skip_message(entry: dict, inv: dict, roots: list[str]) -> str | None:
     skipped = _skipped_items(entry, inv, roots)
     if not skipped:
         return None
+    return _skip_text(entry, inv, roots, skipped)
+
+
+def _skip_text(entry: dict, inv: dict, roots: list[str], skipped: list[tuple[str, str]]) -> str:
     key = entry["key"]
     names = [name for name, _cause in skipped]
     fixes = []
@@ -809,6 +931,31 @@ def skipped_skill_problem(plan: dict, inv: dict, keys: set[str] | None = None) -
         message = _skip_message(entry, inv, roots)
         if message:
             messages.append(message)
+    return "; ".join(messages) or None
+
+
+def gsd_skipped_skill_problem(plan: dict, inv: dict, check: SkillCheck) -> str | None:
+    """Apply's skipped-skill check through gsd-core (38 D-20), after binding.
+
+    None when none, or when gsd-core cannot answer (a named note on stderr).
+    """
+    entries = [e for e in plan.get("entries") or []
+               if isinstance(e.get("key"), str) and e["key"].startswith("agent_skills.")
+               and e.get("status") != "needs_choice"]
+    pairs = {id(e): _candidate_refs(e, inv) for e in entries}
+    refs = sorted({ref for p in pairs.values() for _n, ref in p})
+    roots = effective_trusted_roots(plan, inv)
+    found, note = gsd_skill_verdicts(refs, _skill_base(plan, roots), check)
+    if note:
+        print(note, file=sys.stderr)
+        return None
+    assert found is not None
+    verdicts = dict(zip(refs, found, strict=True))
+    messages = []
+    for entry in entries:
+        skipped = [(n, verdicts[r]) for n, r in pairs[id(entry)] if verdicts.get(r)]
+        if skipped:
+            messages.append(_skip_text(entry, inv, roots, skipped))
     return "; ".join(messages) or None
 
 
