@@ -895,7 +895,7 @@ Plans:
   6. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation. *(amended 2026-11-07, 32.1 D-01: `ai-kit-cross-ai` reaches the bar with new-shape evals and tests by this phase's close if Phase 37 did not bring it there)*
   7. A runner killed hard in the middle of a lane the runner hosts in a herdr tab leaves nothing that the next run or `--sweep` cannot clean: the secret files go at once, the recorded tab is closed by id only when its id and label match the record of a dead run, no other tab is touched, an unreachable herdr keeps only a secret-free record, and the lock, the idle clock and the execute checks behave for a hosted lane as for a headless one. *(added 2026-11-16, re-run 2, 38 D-25 to D-33, owner directive "herdr hosting": a `run.json` record per run directory, a sweep at the start of every real run and on demand with `--sweep`, the lane's launcher group as the lock's child group, the idle clock reading the lane's `out` and `err` files, an output bound by truncation, the launcher deleting the env and prompt files as its first steps, and the snapshot excluding a state home that lies inside the checkout; herdr's screen text, agent status and wait output, and the existence of a tab, are still never a verdict or a liveness signal)*
 
-**Plans**: 26/27 plans executed in 21 waves *(planned 2026-11-21; 38-01, the spike, and 38-26, the judge loop with the live sweep check and the final `make test`, are orchestrator actions; runner plans run one after another; the live runner copy is re-rendered only by 38-25)*
+**Plans**: 27/27 plans executed in 21 waves *(planned 2026-11-21; 38-01, the spike, and 38-26, the judge loop with the live sweep check and the final `make test`, are orchestrator actions; runner plans run one after another; the live runner copy is re-rendered only by 38-25)*
 **Wave 1**
 - [x] 38-01-PLAN.md (wave 1): spike: host output timing and pid start-time reads, `38-SPIKE.md` (orchestrator action)
 - [x] 38-02-PLAN.md (wave 1): runner dead code (`watchChunk`, `dropState`), kept-helpers comment, `temp-dirs-gone` case
@@ -929,7 +929,7 @@ Plans:
 - [x] 38-23-PLAN.md (wave 18): `ai-kit-cross-ai` SKILL.md and doc-contract test
 - [x] 38-24-PLAN.md (wave 19): dispatch doc, `runner.md`, READMEs, curated-config SKILL.md passages
 - [x] 38-25-PLAN.md (wave 20): template 10, live copy re-render, shard times re-recorded
-- [ ] 38-26-PLAN.md (wave 21): judge loop, live sweep check, final `make test` (orchestrator action)
+- [x] 38-26-PLAN.md (wave 21): judge loop, live sweep check, final `make test` (orchestrator action)
 
 ### Phase 38.1: Runner error classification and retry policy (INSERTED)
 
@@ -1298,7 +1298,7 @@ Plans:
 | 35. Model discovery and catalog | 28/28 | In Progress | - |
 | 36. spec-config as the hub | 29/29 | In Progress | - |
 | 37. Shared runner options and session ids | 26/26 | In Progress | - |
-| 38. Runner hardening and run safety | 26/27 | In Progress | - |
+| 38. Runner hardening and run safety | 27/27 | In Progress | - |
 | 38.1. Runner error classification and retry policy | 0/TBD | Not started | - |
 | 39. Lane capability blocks and lens skills | 0/TBD | Not started | - |
 | 40. Resilient review sized by jev | 0/TBD | Not started | - |

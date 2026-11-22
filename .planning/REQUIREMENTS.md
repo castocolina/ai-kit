@@ -149,7 +149,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   Phases 37-38 for `ai-kit-cross-ai`, Phases 39-40 for `ai-kit-spec-review`, and that next phase for
   `ai-kit-session-wake`; the 32.4 closing report shows every judged skill's evals, trigger-query and test state and
   names the phase for each one still missing; the requirement completes when every kept skill has them)*
-- [ ] **JDG-04**: Every phase of this milestone that adds or materially changes a SKILL.md (the batch phases and
+- [x] **JDG-04**: Every phase of this milestone that adds or materially changes a SKILL.md (the batch phases and
   every other phase that touches a skill, including the new `ai-kit-project-rules` skill) leaves each such skill
   with new-shape evals and tests, no critical or high finding or grade B or better, and no regression beyond judge
   variation, recorded in that phase's verification before it closes; each such phase carries a success criterion
@@ -450,7 +450,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   and with `AIKIT_HOST=none`. A pane has no exit code, so a hosted lane reports through its own files (output, error, exit code),
   never through herdr's screen text or agent status; the runner touches only the tab it opened. *(added 2026-11-16, 37 D-22 to D-29,
   owner directive "herdr hosting"; interactive agent TUIs, TUI apps, e2e runs and pane reuse are Phase 42's and the calling skills')*
-- [ ] **RUN-13**: A lane the runner hosts in a herdr tab (RUN-12) is as safe as a headless one: the run lock names the lane's
+- [x] **RUN-13**: A lane the runner hosts in a herdr tab (RUN-12) is as safe as a headless one: the run lock names the lane's
   launcher group as its child group, the opt-in idle watchdog reads the lane's own output files, the execute checks use the same
   inputs, a hosted lane's output files stay bounded, and the secret files of a hosted lane are deleted by the launcher as its first
   steps. A run killed hard leaves a secret-free record in its run directory, and a sweep (at the start of every real run, and on
@@ -1081,7 +1081,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | JDG-01 | Phase 32 | Complete |
 | JDG-02 | Phase 32 | Complete |
 | JDG-03 | Phase 32.4 | Complete |
-| JDG-04 | Phase 31, Phase 32 | Pending |
+| JDG-04 | Phase 31, Phase 32 | Complete |
 | JDG-05 | Phase 32 | Complete |
 | JDG-06 | Phase 32 | Complete |
 | JDG-07 | Phase 32 | Complete |
@@ -1131,7 +1131,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-10 | Phase 38.1 | Pending |
 | RUN-11 | Phase 38.1 | Pending |
 | RUN-12 | Phase 37 | Complete |
-| RUN-13 | Phase 38 | Pending |
+| RUN-13 | Phase 38 | Complete |
 | RUN-14 | Phase 38.1 | Pending |
 | RUN-15 | Phase 39.1 | Pending |
 | RULE-01 | Phase 45 | Pending |

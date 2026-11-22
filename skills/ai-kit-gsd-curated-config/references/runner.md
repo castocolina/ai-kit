@@ -29,9 +29,11 @@ read-only and still reaches that shared service.
   The review lane passes it; the GSD hook does not, so the live timeout lookup below applies.
 - `--prepend-file <path>` puts that file, minus its leading `<!-- … -->` stamp lines, before
   the prompt.
-- `--codex-sandbox workspace-write` confines a codex exec target: writes stay inside the project
-  dir plus `/tmp` and `$TMPDIR`, which workspace-write always allows. Whether `.git` is writable
-  under it is unverified. Without the flag, codex exec runs with
+- `--codex-sandbox workspace-write` asks Codex for its `workspace-write` sandbox, not a fixed
+  path allowlist: by default it allows writes in the project dir plus `/tmp` and `$TMPDIR`, but
+  the owner's Codex config can add writable roots or exclude both temp locations (its
+  `sandbox_workspace_write` settings; not verified here). Check the effective writable roots
+  before promising a boundary. Whether `.git` is writable under it is unverified. Without the flag, codex exec runs with
   `--dangerously-bypass-approvals-and-sandbox`; every other exec target always runs with full
   permissions (no sandbox, no ask mode), and any guidance it receives is prose, not a boundary.
 

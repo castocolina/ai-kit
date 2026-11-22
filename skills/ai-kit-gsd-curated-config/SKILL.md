@@ -168,7 +168,11 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
    and that list is what the user approves. Then end the turn and apply only after the user
    answers. A "go ahead" given before those rows were
    shown does not approve them: the plan review summarizes, and the dry run is the first
-   place the user sees every key that changes.
+   place the user sees every key that changes. `apply` recomputes its writes from the live
+   config and does not compare them with the approved preview, so right before the real apply
+   run the dry run again and compare its rows with the approved ones; any difference goes back
+   to the user for a fresh approval. This narrows, but does not close, the window for a
+   concurrent edit of the config.
    On a project with no config yet, `remove` rows marked `"predicted": true` are the keys
    `config-new-project` is expected to copy from the global defaults — unverified until apply.
 
@@ -232,8 +236,11 @@ receive `.new` on upgrade. The hook names the runner, never a raw vendor CLI str
   It also passes no `--prepend-file`/`--no-preamble`: the runner's own preamble is the only
   guidance. Never describe a v2-configured codex target as sandboxed.
 - **v1 `apply-execution`** names one runtime and model and adds `--codex-sandbox workspace-write`
-  for codex: writes stay inside the project dir plus `/tmp` and `$TMPDIR` (`.git` writability
-  unverified). Every other exec target still runs with full permissions.
+  for codex: Codex's `workspace-write` sandbox, not a fixed path allowlist (by default the project
+  dir plus `/tmp` and `$TMPDIR`; the owner's Codex config can add or exclude writable roots, so
+  check the effective ones before promising a boundary; `.git` writability unverified, see
+  [`references/runner.md`](references/runner.md)). Every other exec target still runs with full
+  permissions.
 
 This skill never dispatches a model call: check a runner with `--print-argv` only. A live dispatch
 runs with full permissions and only when the user asks for one. When you see a dispatch's output
@@ -351,7 +358,8 @@ than `ok` comes up.
 ## NEVER
 
 - **Never replace `gsd-settings` / `gsd-config`.** Power-user and integration knobs stay there;
-  route tuning questions to `gsd-settings --advanced`.
+  route tuning questions to `gsd-config --advanced` and integration questions (API keys, review
+  CLI routing, agent-skill injection) to `gsd-config --integrations`.
 - **In the v2 flow, never skip the plan review or the dry run, and never resolve a
   `needs_choice` yourself**, whatever the user says about speed or trust ("just apply it"):
   those two steps are where the user sees what changes and what is removed. The v1 path has
