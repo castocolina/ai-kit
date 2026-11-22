@@ -54,6 +54,31 @@ def source_list(name) -> list[str]:
     return re.findall(r"['\"]([^'\"]+)['\"]", match.group(1))
 
 
+BLOCKING = {"no_commit": "partial", "task_uncovered": "partial", "admits_skipped": "partial",
+            "forbidden_path": "contract_violation"}
+
+
+def status_table() -> dict[str, int]:
+    text = TEMPLATE.read_text(encoding="utf-8")
+    match = re.search(r"^const STATUS_TABLE = \{(.*?)^\};", text, re.M | re.S)
+    assert match is not None
+    return {name: int(code) for name, code in
+            re.findall(r"^\s+([a-z_]+): \{ exit: (\d+) \}", match.group(1), re.M)}
+
+
+def key_problems(obj, statuses, codes, flags) -> list[str]:
+    problems = []
+    if obj["statuses"] != statuses:
+        problems.append("statuses differ")
+    if [item["code"] for item in obj["findings"]] != codes:
+        problems.append("finding codes differ")
+    if any(item["result"] != BLOCKING.get(item["code"], "info") for item in obj["findings"]):
+        problems.append("finding results differ")
+    if obj["supervision_flags"] != flags or flags != sorted(flags):
+        problems.append("flags differ")
+    return problems
+
+
 def unsorted_objects(text) -> list[list[str]]:
     result = []
 
@@ -180,6 +205,71 @@ class TestRunnerDescribe(unittest.TestCase):
         # 0b-10: 38.1 adds classes; an empty list here would claim there are none
         self.assertNotIn("classes", json.loads(describe()[1]))
 
+    def test_new_keys_beside_the_existing_ones(self):
+        obj = json.loads(describe()[1])
+        self.assertEqual(set(obj), {"findings", "host", "reasons", "runtimes", "schema", "settings",
+                                    "states", "statuses", "supervision_flags", "template_version"})
+        self.assertEqual(obj["schema"], 1)
+        self.assertEqual(obj["supervision_flags"],
+                         ["--baseline", "--forbid", "--idle-timeout", "--plan-id", "--sweep"])
+        self.assertIn("--sweep", obj["supervision_flags"])
+        self.assertEqual(obj["statuses"]["locked"], 75)
+        self.assertEqual(obj["statuses"]["partial"], 1)
+        self.assertEqual([item["code"] for item in obj["findings"]][:3],
+                         ["no_commit", "task_uncovered", "admits_skipped"])
+
+    def test_statuses_equal_the_status_table(self):
+        self.assertEqual(json.loads(describe()[1])["statuses"], status_table())
+
+    def test_findings_follow_the_closed_list(self):
+        findings = json.loads(describe()[1])["findings"]
+        self.assertEqual([item["code"] for item in findings], source_list("FINDING_CODES"))
+        for item in findings:
+            self.assertIn(item["result"], {"partial", "contract_violation", "info"})
+            self.assertEqual(item["result"], BLOCKING.get(item["code"], "info"))
+
+    def test_supervision_flags_are_parsed_flags(self):
+        flags = json.loads(describe()[1])["supervision_flags"]
+        self.assertEqual(flags, source_list("SUPERVISION_FLAGS"))
+        self.assertEqual(flags, sorted(flags))
+        values = {"--baseline": ["0000000"], "--forbid": ["docs/"],
+                  "--idle-timeout": ["0"], "--plan-id": ["12-03"], "--sweep": []}
+        assert NODE is not None
+        with tempfile.TemporaryDirectory(prefix="xai-flags-") as home:
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": home, "LANG": "C",
+                   "AI_KIT_REFUSE_REAL_HOME": "1"}
+            for flag in [*flags, "--made-up-flag"]:
+                with self.subTest(flag=flag):
+                    proc = subprocess.run([NODE, str(TEMPLATE), "--print-argv", "--runtime", "pi",
+                                           "--model", "fake/placeholder-model-1", flag,
+                                           *values.get(flag, [])], cwd=home, env=env,
+                                          capture_output=True, text=True, timeout=30, check=False)
+                    message = f"unknown argument: {flag}"
+                    if flag == "--made-up-flag":
+                        self.assertIn(message, proc.stderr)
+                    else:
+                        self.assertNotIn(message, proc.stderr)
+
+    def test_source_lock_catches_a_drift(self):
+        obj = json.loads(describe()[1])
+        sources = (status_table(), source_list("FINDING_CODES"), source_list("SUPERVISION_FLAGS"))
+        self.assertEqual(key_problems(obj, *sources), [])
+        variants = [copy.deepcopy(obj) for _ in range(3)]
+        variants[0]["statuses"]["made_up"] = 1
+        variants[1]["findings"][0], variants[1]["findings"][1] = (variants[1]["findings"][1],
+                                                                    variants[1]["findings"][0])
+        variants[2]["supervision_flags"].pop()
+        for variant in variants:
+            self.assertTrue(key_problems(variant, *sources))
+
+    def test_python_reader_accepts_the_new_keys(self):
+        from ai_kit_spec.runner_facts import read_runner_describe
+
+        obj = read_runner_describe(NODE, str(TEMPLATE))["describe"]
+        self.assertIsInstance(obj, dict)
+        assert isinstance(obj, dict)
+        self.assertTrue({"runtimes", "statuses", "findings", "supervision_flags"} <= obj.keys())
+        self.assertIsInstance(obj["runtimes"]["pi"]["formulas"]["exec"], bool)
 
     def test_runtimes_and_keys_sorted(self):
         out = describe()[1]

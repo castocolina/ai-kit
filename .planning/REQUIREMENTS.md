@@ -414,7 +414,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   refused run ends with the new status `locked` and a bare exit 75, and the baseline is reused by a later round for the
   same task until it ends ok)* *(amended 2026-11-16, re-run 2, 38 D-26, RUN-13: for a hosted lane the recorded child group is
   the launcher's group; a surviving tab is not a live lane and holds no lock)*
-- [ ] **RUN-08**: Before an execute result counts as done, the runner checks the planned tasks against the commits
+- [x] **RUN-08**: Before an execute result counts as done, the runner checks the planned tasks against the commits
   actually made: a planned task with no matching commit, an early exit, a summary that admits skipped work, or a
   diff touching forbidden files turns the result into partial or failed; fake-lane tests cover each case. *(amended
   2026-11-16, 38 D-11 to D-15: `partial` (new, exit 1) for an uncovered task, no commit or an admission phrase,
@@ -1126,7 +1126,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-05 | Phase 38.1 | Pending |
 | RUN-06 | Phase 37 | Complete |
 | RUN-07 | Phase 38 | Complete |
-| RUN-08 | Phase 38 | Pending |
+| RUN-08 | Phase 38 | Complete |
 | RUN-09 | Phase 38.1 | Pending |
 | RUN-10 | Phase 38.1 | Pending |
 | RUN-11 | Phase 38.1 | Pending |

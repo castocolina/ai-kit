@@ -5700,6 +5700,11 @@ function forbiddenHits(changed, forbidden, named) {
   const names = [...named];
   return [...new Set(changed)].filter((p) => forbidden.some((f) => pathCovers(f, p)) && !names.some((n) => pathCovers(n, p))).sort();
 }
+// SPEC R12 / D-24: the runner supervision flags (not lane settings), sorted; --describe lists them.
+const SUPERVISION_FLAGS = Object.freeze(['--baseline', '--forbid', '--idle-timeout', '--plan-id', '--sweep']);
+// SPEC R5: the result of each blocking finding code; every other code of FINDING_CODES is informational.
+const FINDING_RESULTS = Object.freeze({ no_commit: 'partial', task_uncovered: 'partial', admits_skipped: 'partial', forbidden_path: 'contract_violation' });
+
 function planFindings(input) {
   const cov = coverageOf(input.tasks, input.commits, input.planId); const out = [];
   if (input.answered && input.tasks.length > 0 && input.commits.length === 0) out.push({ code: 'no_commit', detail: `no commit since the baseline for ${input.tasks.length} planned task${input.tasks.length === 1 ? '' : 's'}` });
@@ -5713,7 +5718,8 @@ function planFindings(input) {
   if (input.uncommitted.length) out.push({ code: 'uncommitted_edits', detail: findingDetail(input.uncommitted) });
   if (cov.unchecked.length) out.push({ code: 'coverage_unchecked', detail: findingDetail(cov.unchecked) });
   const codes = out.map((f) => f.code);
-  const blocking = codes.includes('forbidden_path') ? 'contract_violation' : (codes.some((c) => c === 'no_commit' || c === 'task_uncovered' || c === 'admits_skipped') ? 'partial' : null);
+  const results = codes.map((c) => FINDING_RESULTS[c]).filter(Boolean);
+  const blocking = results.includes('contract_violation') ? 'contract_violation' : (results.includes('partial') ? 'partial' : null);
   return { coverage: input.tasks.length === 0 ? 'n/a' : `${cov.covered}/${cov.checkable}`, findings: out, blocking };
 }
 
@@ -6263,7 +6269,18 @@ function describeJson(env) {
     for (const [setting, form] of Object.entries(row.forms || {})) entry[setting] = form;
     runtimes[id] = entry;
   }
-  return { schema: 1, template_version: ownTemplateVersion(), settings: [...SETTING_NAMES], reasons: [...SETTING_REASONS], states: [...SETTING_STATES], runtimes, host: { available: hostAvailable(env) } };
+  return {
+    schema: 1,
+    template_version: ownTemplateVersion(),
+    settings: [...SETTING_NAMES],
+    reasons: [...SETTING_REASONS],
+    states: [...SETTING_STATES],
+    runtimes,
+    host: { available: hostAvailable(env) },
+    statuses: Object.fromEntries(Object.entries(STATUS_TABLE).map(([name, row]) => [name, row.exit])),
+    findings: FINDING_CODES.map((code) => ({ code, result: FINDING_RESULTS[code] ?? 'info' })),
+    supervision_flags: [...SUPERVISION_FLAGS],
+  };
 }
 
 // 38-08: the self-test harness ships only beside the template. A rendered copy has no

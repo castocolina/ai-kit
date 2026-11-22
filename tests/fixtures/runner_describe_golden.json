@@ -1,4 +1,42 @@
 {
+  "findings": [
+    {
+      "code": "no_commit",
+      "result": "partial"
+    },
+    {
+      "code": "task_uncovered",
+      "result": "partial"
+    },
+    {
+      "code": "admits_skipped",
+      "result": "partial"
+    },
+    {
+      "code": "forbidden_path",
+      "result": "contract_violation"
+    },
+    {
+      "code": "no_tree_change",
+      "result": "info"
+    },
+    {
+      "code": "outside_plan_files",
+      "result": "info"
+    },
+    {
+      "code": "uncommitted_edits",
+      "result": "info"
+    },
+    {
+      "code": "baseline_replaced",
+      "result": "info"
+    },
+    {
+      "code": "coverage_unchecked",
+      "result": "info"
+    }
+  ],
   "host": {
     "available": false
   },
@@ -575,6 +613,36 @@
     "applied",
     "ignored",
     "unknown"
+  ],
+  "statuses": {
+    "auth": 69,
+    "bad_model": 69,
+    "billing": 69,
+    "contract_violation": 1,
+    "crash": 1,
+    "empty_answer": 1,
+    "empty_stdin": 2,
+    "git_error": 1,
+    "git_timeout": 1,
+    "locked": 75,
+    "no_change": 1,
+    "no_model": 2,
+    "not_installed": 127,
+    "ok": 0,
+    "partial": 1,
+    "permission_blocked": 69,
+    "quota": 75,
+    "signal": 128,
+    "timeout": 124,
+    "transient": 75,
+    "usage": 2
+  },
+  "supervision_flags": [
+    "--baseline",
+    "--forbid",
+    "--idle-timeout",
+    "--plan-id",
+    "--sweep"
   ],
   "template_version": 9
 }
