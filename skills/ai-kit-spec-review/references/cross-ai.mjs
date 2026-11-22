@@ -109,10 +109,10 @@ const CONFIG = {
   "retry": {
     "base_s": 1,
     "factor": 1.5,
+    "hard_every_s": 600,
     "hard_waits_s": [
-      600,
-      900,
-      1800
+      60,
+      300
     ],
     "max_retries": 5,
     "session_resets": 1
@@ -3150,9 +3150,9 @@ function planIdle(call, config, role) {
 // hard wait stops the hard tier first (25.1-03 hardWaitFor), it does not drop a key.
 const RETRY_DEFAULTS = Object.freeze({
   base_s: 1, factor: 1.5, max_retries: 5, session_resets: 1,
-  hard_waits_s: Object.freeze([600, 900, 1800]),
+  hard_waits_s: Object.freeze([60, 300]), hard_every_s: 600,
 });
-const RETRY_KEYS = ['base_s', 'factor', 'max_retries', 'session_resets', 'hard_waits_s'];
+const RETRY_KEYS = ['base_s', 'factor', 'max_retries', 'session_resets', 'hard_waits_s', 'hard_every_s'];
 
 function validateRetryKey(key, value, capS) {
   if (!RETRY_KEYS.includes(key)) return 'unknown key';
@@ -3171,6 +3171,11 @@ function validateRetryKey(key, value, capS) {
     const hi = key === 'max_retries' ? 10 : 3;
     if (!Number.isInteger(value)) return typeof value === 'number' ? 'not an integer' : 'wrong type';
     if (value < 0 || value > hi) return `out of bounds (0..${hi})`;
+    return null;
+  }
+  if (key === 'hard_every_s') {
+    if (!Number.isInteger(value)) return typeof value === 'number' ? 'not an integer' : 'wrong type';
+    if (value !== 0 && (value < 60 || value > capS)) return `out of bounds (0 or 60..${capS})`;
     return null;
   }
   if (!Array.isArray(value)) return 'wrong type';
@@ -3258,7 +3263,7 @@ function resolveRetry(cwd, env) {
   }
   const waits = retry.hard_waits_s.join(',');
   log(`cross-ai: retry base_s=${retry.base_s} factor=${retry.factor} max_retries=${retry.max_retries} ` +
-    `session_resets=${retry.session_resets} hard_waits_s=${waits} cap_s=${capS}`);
+    `session_resets=${retry.session_resets} hard_waits_s=${waits} hard_every_s=${retry.hard_every_s} cap_s=${capS}`);
   return { retry, capS };
 }
 
@@ -3726,7 +3731,7 @@ function softWaitMs(retry, k, rand = Math.random, prevMs = 0) {
 // resets, canResume, firstMs, cycle}`, `lim = {maxRetries, sessionResets, deadlineMs, waitMs,
 // capMs}`. A CLI that cannot resume still walks the same-session retries, each as a new
 // session (D-10). Once the series and its resets are spent both soft classes hand the call to
-// the one hard handler; the call never sleeps a hard wait. The admission checks apply to both
+// the one hard handler, which can admit a short in-call wait. The admission checks apply to both
 // soft classes: one shared episode cap (D-07).
 function ladderNext(st, cls, nowMs, lim) {
   if (cls !== 'transient' && cls !== 'quota') return { next: 'stop', why: 'class' };
@@ -3749,13 +3754,20 @@ function ladderNext(st, cls, nowMs, lim) {
   return { next, why };
 }
 
-// The caller's hard tier (SPEC R3, D-08): cycle n waits hard_waits_s[n] as one exit-75 hint,
-// the list's end or a wait that would pass the episode cap is a terminal stop, and the call
-// itself never sleeps the wait. capLeftS is the seconds the episode cap still allows.
-function hardWaitFor(cycle, waits, capLeftS) {
-  if (cycle >= waits.length) return { stop: 'hard-waits' };
-  if (waits[cycle] > capLeftS) return { stop: 'cap' };
-  return { retryAfterS: Math.trunc(waits[cycle]), cycle };
+// The caller's hard tier (SPEC R5, D-10): cycle n waits hard_waits_s[n], then hard_every_s
+// after the list; 0 ends at the list's end (stopped=hard-waits),
+// and a wait past the episode cap left is the cap stop. capLeftS is the seconds still allowed.
+function hardWaitFor(cycle, waits, capLeftS, everyS = 0) {
+  if (cycle >= waits.length && !everyS) return { stop: 'hard-waits' };
+  const wait = cycle < waits.length ? waits[cycle] : everyS;
+  if (wait > capLeftS) return { stop: 'cap' };
+  return { retryAfterS: Math.trunc(wait), cycle };
+}
+
+// A short hard wait, including zero, runs in the call only with a 60 second reserve.
+function shortHardWait(waitS, atMs, deadlineMs) {
+  if (!(waitS >= 0 && waitS < 60)) return { waitS, inCall: false };
+  return atMs + waitS * 1000 + 60000 <= deadlineMs ? { waitS, inCall: true } : { waitS: 60, inCall: false };
 }
 
 // Rung 1 continues the captured session. Null when no session can be continued: no id,
@@ -5627,17 +5639,18 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       log(`cross-ai: cycle state unwritable: ${stateFile} (${e.code || e.message})`);
     }
   };
-  // One hard handler for both soft classes (D-07). The call never sleeps the hard wait: the
-  // next wait hard_waits_s[cycle] is one exit-75 hint the caller owns, and once the list is
-  // spent or the cap would pass it, the call exits 69 with the stop persisted on disk (D-08,
-  // D-09). A soft step refused for `cap` is already past the episode end, so it stops at once.
+  // One hard handler for both soft classes (D-07). A short wait may run in the call;
+  // otherwise the next list or periodic wait is an exit-75 hint. When the list is spent
+  // with no periodic wait, or the cap would pass the wait, the call persists a stop (D-09).
+  // A soft step refused for `cap` is already past the episode end, so it stops at once.
   const hardHandler = (r, evidence, why, sid, cls) => {
     const at = Date.now();
     const stopped = why === 'deadline' ? 'deadline' : 'rungs';
     const step = why === 'cap'
       ? { stop: 'cap' }
       : hardWaitFor(ladder.cycle, retryCfg.hard_waits_s,
-          ladder.firstMs ? (ladder.firstMs + capMs - at) / 1000 : -1);
+          ladder.firstMs ? (ladder.firstMs + capMs - at) / 1000 : -1,
+          retryCfg.hard_every_s ?? RETRY_DEFAULTS.hard_every_s);
     if (step.stop) {
       saveCycle(sid, at, {
         class: cls, stopped: step.stop, stopped_at: at, retry_after_s: null, due_at: null,
@@ -5648,14 +5661,22 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         cycle: ladder.cycle, exit: 69, stopped: step.stop,
       };
     }
-    const dueAtMs = at + step.retryAfterS * 1000;
-    saveCycle(sid, at, {
-      class: cls, retry_after_s: step.retryAfterS, due_at: dueAtMs,
-    });
+    const plan = shortHardWait(step.retryAfterS, at, why === 'soft-spent' ? runDeadline : 0);
+    const waitS = plan.waitS;
+    const capLeftS = ladder.firstMs ? (ladder.firstMs + capMs - at) / 1000 : -1;
+    if (waitS > capLeftS) {
+      saveCycle(sid, at, { class: cls, stopped: 'cap', stopped_at: at, retry_after_s: null, due_at: null });
+      return { ok: false, status: cls, timedOut: false, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(), cycle: ladder.cycle, exit: 69, stopped: 'cap' };
+    }
+    const dueAtMs = at + waitS * 1000;
+    const record = { class: cls, retry_after_s: waitS, due_at: dueAtMs };
+    // The loop writes this only after its tree checks pass.
+    if (plan.inCall) return { inCallS: waitS, cycle: step.cycle, at, record };
+    saveCycle(sid, at, record);
     return {
       ok: false, status: cls, timedOut: false,
       outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(),
-      retryAfterS: stateWritable ? step.retryAfterS : undefined,
+      retryAfterS: stateWritable ? waitS : undefined,
       dueAtMs: stateWritable ? dueAtMs : undefined,
       cycle: step.cycle, exit: 75, stopped,
     };
@@ -5812,18 +5833,24 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const prevMs = k === 1 ? 0 : ladder.prevWaitMs;
       const nominal = softWaitMs(retryCfg, k, Math.random, prevMs);
       const end = episodeEnd();
-      const step = ladderNext(ladder, cls, Date.now(), {
+      let step = ladderNext(ladder, cls, Date.now(), {
         maxRetries: retryCfg.max_retries, sessionResets: pinned ? 0 : retryCfg.session_resets,
         deadlineMs: runDeadline, waitMs: nominal, capMs,
       });
-      const wait = end ? Math.min(nominal, Math.max(0, end - Date.now())) : nominal;
+      let wait = end ? Math.min(nominal, Math.max(0, end - Date.now())) : nominal;
       log(`cross-ai: ladder ${name} next=${step.next} why=${step.why}`);
+      let inCallHard = null;
+      if (step.next === 'hard') {
+        inCallHard = hardHandler(r, evidence, step.why, sid, cls);
+        if (inCallHard.inCallS === undefined) return inCallHard;
+        step = { next: ladder.canResume ? 'same' : 'new', why: 'hard-in-call' };
+        wait = inCallHard.inCallS * 1000;
+      }
       if (pinned && (step.next === 'new' || step.next === 'reset')) {
         log(`cross-ai: --session-id was given; no fresh session is started (next=${step.next} refused)`);
         dropState(hit || 'crash');
         return { ok: false, status: hit || 'crash', outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(), stopped: 'class' };
       }
-      if (step.next === 'hard') return hardHandler(r, evidence, step.why, sid, cls);
       if (step.next === 'stop') {
         // A no-budget timeout, the first attempt stopped before any retry was admitted, stays
         // timeout/124 (ladderStop). Any other soft deadline or cap stop is the hard handler's.
@@ -5888,6 +5915,12 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         seriesInput = `${RESUME_MSG}\n\n${prompt}`;
       }
       const nextInput = seriesInput;
+      if (inCallHard) {
+        saveCycle(sid, inCallHard.at, inCallHard.record);
+        if (!stateWritable) return { ok: false, status: cls, timedOut: false, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(), cycle: inCallHard.cycle, exit: 75, stopped: 'rungs' };
+        log(`cross-ai: hard wait in call s=${inCallHard.inCallS} cycle=${inCallHard.cycle}`);
+        ladder.cycle = inCallHard.cycle + 1;
+      }
       log(`cross-ai: wait ms=${wait} next=${step.next} retry=${k}`);
       await sleep(budgetMs(wait, runDeadline));
       if (aborting) return { ok: false, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...counts() };
@@ -7126,6 +7159,7 @@ export {
   forbiddenHits,
   groupMembers,
   hardWaitFor,
+  shortHardWait,
   idleBudgetNote,
   killGroup,
   ladderNext,

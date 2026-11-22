@@ -402,7 +402,7 @@ class SelfTestCeilingPins(unittest.TestCase):
 
     def test_every_elapsed_ceiling_is_scaled(self):
         self.assertEqual(unscaled_ceilings(self.text), [])
-        self.assertEqual(len(re.findall(r"\belapsed\w*\s*>=\s*scaledMs\(", self.text)), 16)
+        self.assertEqual(len(re.findall(r"\belapsed\w*\s*>=\s*scaledMs\(", self.text)), 17)
 
     def test_floors_stay_unscaled_literals(self):
         self.assertEqual(len(re.findall(r"elapsedMs < 2500\b", self.text)), 3)

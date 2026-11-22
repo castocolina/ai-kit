@@ -945,7 +945,7 @@ Plans:
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
   6. A quota stop of a usage-limited lane (a free pool's `provider.free-limit` or a lane the caller names) writes a secret-free "blocked until" record in the runner's state directory, keyed by the lane's pool (provider plus tier) so lanes sharing a pool block together: now plus the stated `retryAfterMs` plus the 120 s margin of D-11 when stated, else now plus 24 hours, and a floor of 24 hours from the second consecutive failure after that time; a read-only query prints the record; `FreeTierError` is never retried and writes no record; a removed free model is `bad_model`, terminal, with no record; the captured free-limit event is a fixture. *(added 2026-11-16, 38.1 D-23 to D-27, free-lane pool study, PROVISIONAL, needs owner confirmation: the 24-hour floor against the stated reset, the second-failure rule, and the margin; source `.planning/research/2026-11-16-opencode-free-models.md`)*
 
-**Plans**: 5/14 plans executed in 14 waves *(planned 2026-11-22; runner plans run one after another; the live runner copy is re-rendered only by 38.1-12; 38.1-13, the judge loop, and 38.1-14, the closing gate with the final `make test`, are orchestrator actions; criterion 6 (RUN-14) is carried from unit 39's commit 0b925b7)*
+**Plans**: 6/14 plans executed in 14 waves *(planned 2026-11-22; runner plans run one after another; the live runner copy is re-rendered only by 38.1-12; 38.1-13, the judge loop, and 38.1-14, the closing gate with the final `make test`, are orchestrator actions; criterion 6 (RUN-14) is carried from unit 39's commit 0b925b7)*
 
 Plans:
 - [x] 38.1-01-PLAN.md (wave 1): class `bad_request` (exit 69), `--describe` `classes`, Python map and status drift test
@@ -953,7 +953,7 @@ Plans:
 - [x] 38.1-03-PLAN.md (wave 3): host-scoped model-missing rows, recorded fixtures in `tests/fixtures/cross_ai_errors/`, evidence demotion rule
 - [x] 38.1-04-PLAN.md (wave 4): plain stdout as a source for a failed attempt (`input: stdout`), claude's error fields
 - [x] 38.1-05-PLAN.md (wave 5): router-scoped cooldown rows as `quota`, `reset_after_s`, `reset_seconds`
-- [ ] 38.1-06-PLAN.md (wave 6): retry defaults `[60, 300]`, `hard_every_s` periodic checks to the cap, in-call short waits
+- [x] 38.1-06-PLAN.md (wave 6): retry defaults `[60, 300]`, `hard_every_s` periodic checks to the cap, in-call short waits
 - [ ] 38.1-07-PLAN.md (wave 7): one extra check after a stated reset, `check=` on the report line
 - [ ] 38.1-08-PLAN.md (wave 8): blocked-until record per pool, `--pool`, `retryAfterMs`
 - [ ] 38.1-09-PLAN.md (wave 9): `--blocked-status`, `--blocked-clear`, client-rule rows as `bad_request`
@@ -1315,7 +1315,7 @@ Plans:
 | 36. spec-config as the hub | 29/29 | In Progress | - |
 | 37. Shared runner options and session ids | 26/26 | In Progress | - |
 | 38. Runner hardening and run safety | 27/27 | Complete    | 2026-11-22 |
-| 38.1. Runner error classification and retry policy | 5/14 | In Progress | - |
+| 38.1. Runner error classification and retry policy | 6/14 | In Progress | - |
 | 39. Lane capability blocks and lens skills | 0/TBD | Not started | - |
 | 40. Resilient review sized by jev | 0/TBD | Not started | - |
 | 41. Superpowers adapter refactor with spec-config handoff | 0/TBD | Not started | - |

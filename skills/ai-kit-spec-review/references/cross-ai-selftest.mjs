@@ -75,6 +75,7 @@ import {
   forbiddenHits,
   groupMembers,
   hardWaitFor,
+  shortHardWait,
   idleBudgetNote,
   killGroup,
   ladderNext,
@@ -1515,7 +1516,7 @@ function writeCopy(tmp, name, override) {
     runtime: 'pi', routerBacked: {},
     scrubEnv: [...CONFIG.scrubEnv],
     ...rest,
-    retry: { base_s: 0, factor: 1.5, max_retries: 5, session_resets: 1, hard_waits_s: [0, 0, 0] },
+    retry: { base_s: 0, factor: 1.5, max_retries: 5, session_resets: 1, hard_waits_s: [60, 60, 60], hard_every_s: 0 },
   };
   if (Object.hasOwn(rest, 'prefer') && !Object.hasOwn(rest, 'runtime')) cfg.runtime = null;
   // Null normally removes an override; runtime null models prefer-only copies.
@@ -2742,9 +2743,16 @@ function writePriorRecord(c, cli, model, kind, cls, cycle, extra = {}) {
   return file;
 }
 
-// The shared hard_waits list of the 25.1-03 hard-tier cases: real waits, never slept.
+// Simulate the caller waiting until the recorded hint is due.
+function ageDue(file) {
+  const rec = readCycleState(file);
+  if (rec && typeof rec.due_at === 'number') writeCycleState(file, { ...rec, due_at: Date.now() - 1000 });
+  return null;
+}
+
+// The shared hard_waits list of the 25.1-03 hard-tier cases, the shipped pattern (list end stops, SPEC R5): real waits, never slept.
 const HARD_TIER_RETRY = Object.freeze({
-  max_retries: 0, session_resets: 0, hard_waits_s: [600, 900, 1800],
+  max_retries: 0, session_resets: 0, hard_waits_s: [600, 900, 1800], hard_every_s: 0,
 });
 
 // Scratch folders for the migration pure cases: a work folder and a home folder under one root that
@@ -4067,7 +4075,7 @@ async function blackBoxSelfTest(listOnly = false) {
           const n = ctx.calls.filter((l) => l === 'pi quota-until-8').length;
           if (n !== 6) return `calls=${n}`;
           const tail = statusTail(r.stderr || '');
-          if (!tail || tail.retry_after_s !== '0' || tail.cycle !== '0') {
+          if (!tail || tail.retry_after_s !== '60' || tail.cycle !== '0') {
             return `tail=${JSON.stringify(tail)}`;
           }
           if (tail.attempts !== '6' || tail.cycles !== '0') {
@@ -4082,6 +4090,7 @@ async function blackBoxSelfTest(listOnly = false) {
         // The second invocation resumes the same session and the fake answers on call 8.
         name: 'router-quota-second-cycle',
         kind: 'logic',
+        between: (c) => ageDue(caseCycleFile(c, 'pi', 'fake/quota-until-8')),
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8'],
         config: {
           routerBacked: { pi: true }, capS: 3600,
@@ -4119,6 +4128,7 @@ async function blackBoxSelfTest(listOnly = false) {
         // A different prompt never joins the previous task's session.
         name: 'router-quota-second-cycle-new-task',
         kind: 'logic',
+        between: (c) => ageDue(caseCycleFile(c, 'pi', 'fake/quota-until-8')),
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8', '--no-preamble'],
         config: {
           routerBacked: { pi: true }, capS: 3600,
@@ -4591,6 +4601,161 @@ async function blackBoxSelfTest(listOnly = false) {
           return sameLane(ctx, 'pi', 'fake/event400');
         },
       },
+      {
+        name: 'retry-every-first',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '60' || tail.cycle !== '0') return `tail=${JSON.stringify(tail)}`;
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'));
+          if (!saved || saved.retry_after_s !== 60) return `record=${JSON.stringify(saved)}`;
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        name: 'retry-every-second',
+        kind: 'logic',
+        setup: (c) => { writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0); return null; },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '300' || tail.cycle !== '1') return `tail=${JSON.stringify(tail)}`;
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        name: 'retry-every-periodic',
+        kind: 'logic',
+        setup: (c) => { writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 1); return null; },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '600' || tail.cycle !== '2') return `tail=${JSON.stringify(tail)}`;
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'));
+          if (!saved || saved.cycle !== 2 || saved.retry_after_s !== 600) return `record=${JSON.stringify(saved)}`;
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        name: 'retry-every-cap-stop',
+        kind: 'logic',
+        setup: (c) => {
+          writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 3, { first_seen: Date.now() - (14400 - 599) * 1000 });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: 69,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 exit=69 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const report = (r.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: report '));
+          if (!report || !report.includes('stopped=cap')) return `report=${report}`;
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== undefined) return `tail=${JSON.stringify(tail)}`;
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'));
+          if (!saved || saved.stopped !== 'cap') return `record=${JSON.stringify(saved)}`;
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        name: 'pure-hard-wait-short', kind: 'logic',
+        pure: () => {
+          const cases = [
+            [hardWaitFor(0, [59], 14400, 0), { retryAfterS: 59, cycle: 0 }],
+            [shortHardWait(59, 0, 119000), { waitS: 59, inCall: true }],
+            [shortHardWait(59, 0, 118999), { waitS: 60, inCall: false }],
+            [shortHardWait(60, 0, 1e9), { waitS: 60, inCall: false }],
+            [shortHardWait(0, 0, 60000), { waitS: 0, inCall: true }],
+            [shortHardWait(0, 0, 59999), { waitS: 60, inCall: false }],
+            [shortHardWait(1, 0, 0), { waitS: 60, inCall: false }],
+          ];
+          const bad = cases.find(([got, want]) => JSON.stringify(got) !== JSON.stringify(want));
+          return bad ? `result=${JSON.stringify(bad)}` : null;
+        },
+      },
+      ...[
+        { name: 'retry-hard-zero-in-call', model: 'fake/event400', retries: 1, calls: 3, rung: 'same', wait: 0 },
+        { name: 'retry-hard-zero-fresh-clean', cli: 'cursor', model: 'fake-event400-cursor', retries: 0, calls: 2, rung: 'new', wait: 0 },
+        { name: 'retry-hard-short-in-call', model: 'fake/event400', retries: 0, calls: 2, rung: 'same', wait: 1 },
+      ].map(({ name, cli = 'pi', model, retries, calls, rung, wait }) => ({
+        name, kind: wait ? 'runtime' : 'logic',
+        args: ['--prefer', cli, `--model-${cli}`, model],
+        config: { retry: { max_retries: retries, session_resets: 0, hard_waits_s: [wait], hard_every_s: 0 } },
+        exit: 69,
+        status: new RegExp(`^AIKIT-XAI status=transient cli=${cli} model=${model} exit=69 .* action=stop$`),
+        check: (r, ctx) => {
+          const label = cli === 'pi' ? 'pi event400' : 'cursor-agent fake-event400-cursor';
+          if (ctx.calls.filter((l) => l === label).length !== calls) return 'call count';
+          const lines = (r.stderr || '').split('\n');
+          if (lines.filter((l) => l === `cross-ai: hard wait in call s=${wait} cycle=0`).length !== 1) return 'in-call line';
+          if (!lines.some((l) => l.startsWith(`cross-ai: attempt n=${calls} `) && l.includes(` rung=${rung} cycle=1 `))) return 'rung line';
+          if (wait && (!lines.some((l) => l.startsWith('cross-ai: wait ms=1000 next=same')) || ctx.elapsedMs < 1000 || ctx.elapsedMs >= scaledMs(20000))) return 'wait';
+          if (!lines.some((l) => l.startsWith('cross-ai: report ') && l.includes('stopped=hard-waits'))) return 'report';
+          const saved = readCycleState(caseCycleFile(ctx, cli, model, 'other'));
+          if (!saved || saved.stopped !== 'hard-waits' || saved.cycle !== 1) return `record=${JSON.stringify(saved)}`;
+          return null;
+        },
+      })),
+      {
+        name: 'retry-hard-zero-fresh-dirty', kind: 'logic', stdin: 'prompt\n',
+        args: ['--runtime', 'cursor', '--model', 'fake-dirty400-cursor', '--no-preamble'],
+        config: { retry: { max_retries: 0, session_resets: 0, base_s: 0, hard_waits_s: [0], hard_every_s: 0 } },
+        exit: 75, status: /^AIKIT-XAI status=transient cli=cursor model=fake-dirty400-cursor exit=75 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'cursor-agent fake-dirty400-cursor').length !== 1) return 'call count';
+          if (!(r.stderr || '').includes('why=dirty-tree') || (r.stderr || '').includes('cross-ai: hard wait in call')) return 'in-call line';
+          return fs.existsSync(caseCycleFile(ctx, 'cursor', 'fake-dirty400-cursor', 'other')) ? 'record written' : null;
+        },
+      },
+      {
+        name: 'retry-hard-zero-review-dirty', kind: 'logic',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-flaky-edit'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [0], hard_every_s: 0 } },
+        exit: 1, status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/review-flaky-edit exit=1 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi review-flaky-edit').length !== 1) return 'call count';
+          if ((r.stderr || '').includes('cross-ai: hard wait in call')) return 'in-call line';
+          return fs.existsSync(caseCycleFile(ctx, 'pi', 'fake/review-flaky-edit', 'other')) ? 'record written' : null;
+        },
+      },
+      {
+        name: 'retry-hard-zero-unwritable', kind: 'logic',
+        setup: (c) => { const blocker = path.join(c.home, 'state-is-a-file'); fs.writeFileSync(blocker, 'x'); c.env.XDG_STATE_HOME = blocker; return null; },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [0], hard_every_s: 0 } },
+        exit: 75, status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 (?!.*retry_after_s=).* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          if (!(r.stderr || '').includes('cycle state unwritable') || (r.stderr || '').includes('cross-ai: hard wait in call')) return 'in-call line';
+          return null;
+        },
+      },
+      ...[1, 0].map((wait) => ({
+        name: wait ? 'retry-hard-short-hint' : 'retry-hard-zero-hint', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400', '--timeout', '3'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [wait], hard_every_s: 0 } },
+        exit: 75, status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '60' || tail.cycle !== '0') return `tail=${JSON.stringify(tail)}`;
+          return (r.stderr || '').includes('cross-ai: hard wait in call') ? 'in-call line' : null;
+        },
+      })),
       {
         // A stopped record refuses every call on the lane without a model call, logs the state
         // path and the owner reset line, and holds its bytes until stale or deleted (D-08).
@@ -5960,7 +6125,7 @@ async function blackBoxSelfTest(listOnly = false) {
           if (n !== 1) return `calls=${n}`;
           // 25.1-03: a deadline-cut transient series carries the caller's hint, not a bare 75.
           const tail = statusTail(r.stderr || '');
-          return tail && tail.retry_after_s === '0' && tail.cycle === '0'
+          return tail && tail.retry_after_s === '60' && tail.cycle === '0'
             ? null : `tail=${JSON.stringify(tail)}`;
         },
       },
@@ -6014,9 +6179,9 @@ async function blackBoxSelfTest(listOnly = false) {
           if (kinds[0] !== 'prompt' || kinds[6] !== 'resume-plus') return `inputs ${kinds.join(',')}`;
           if (kinds.slice(1, 6).some((k) => k !== 'resume')) return `series 1 ${kinds.join(',')}`;
           if (kinds.slice(7).some((k) => k !== 'resume-plus')) return `series 2 ${kinds.join(',')}`;
-          // 25.1-03: the spent transient series hands the caller its (zeroed) hard wait.
+          // The spent transient series hands the caller its hard wait.
           const tail = statusTail(r.stderr || '');
-          return tail && tail.retry_after_s === '0' && tail.cycle === '0'
+          return tail && tail.retry_after_s === '60' && tail.cycle === '0'
             ? null : `tail=${JSON.stringify(tail)}`;
         },
       },
@@ -6344,7 +6509,7 @@ async function blackBoxSelfTest(listOnly = false) {
         name: 'soft-ladder-transient-cap',
         kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
-        config: { capS: 2, retry: { base_s: 0.5 } },
+        config: { capS: 2, retry: { base_s: 0.5, hard_waits_s: [0, 0, 0] } },
         exit: 69,
         status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
           'exit=69 .* action=stop$'),
@@ -6511,7 +6676,14 @@ async function blackBoxSelfTest(listOnly = false) {
           const spent = hardWaitFor(3, waits, 14400);
           if (!spent || spent.stop !== 'hard-waits') return `spent=${JSON.stringify(spent)}`;
           const short = hardWaitFor(1, [60], 1e9);
-          return short && short.stop === 'hard-waits' ? null : `short=${JSON.stringify(short)}`;
+          if (!short || short.stop !== 'hard-waits') return `short=${JSON.stringify(short)}`;
+          for (const cycle of [2, 9, 30]) {
+            const got = hardWaitFor(cycle, [60, 300], cycle === 30 ? 600 : 14400, 600);
+            if (JSON.stringify(got) !== JSON.stringify({ retryAfterS: 600, cycle })) return `periodic=${JSON.stringify(got)}`;
+          }
+          if (hardWaitFor(30, [60, 300], 599, 600).stop !== 'cap') return 'periodic cap';
+          if (hardWaitFor(2, [60, 300], 14400, 0).stop !== 'hard-waits') return 'periodic disabled';
+          return null;
         },
       },
       {
@@ -6837,9 +7009,10 @@ async function blackBoxSelfTest(listOnly = false) {
           for (const [k, v] of Object.entries(want)) {
             if (RETRY_DEFAULTS[k] !== v) return `${k}=${RETRY_DEFAULTS[k]}`;
           }
-          if (JSON.stringify([...RETRY_DEFAULTS.hard_waits_s]) !== JSON.stringify([600, 900, 1800])) {
+          if (JSON.stringify([...RETRY_DEFAULTS.hard_waits_s]) !== JSON.stringify([60, 300])) {
             return `hard_waits_s=${RETRY_DEFAULTS.hard_waits_s}`;
           }
+          if (RETRY_DEFAULTS.hard_every_s !== 600) return `hard_every_s=${RETRY_DEFAULTS.hard_every_s}`;
           const secs = [1, 2, 3, 4, 5].map((k) => softWaitMs(RETRY_DEFAULTS, k, () => 0.5) / 1000);
           // 1, 1.5 and 2.25 are exact; one decimal only after 2.25 (SPEC R7 precision).
           const shown = secs.map((s) => (s === 1 || s === 1.5 || s === 2.25 ? s : Math.round(s * 10) / 10));
@@ -6861,6 +7034,7 @@ async function blackBoxSelfTest(listOnly = false) {
             ['base_s', 0], ['base_s', 60], ['factor', 1], ['factor', 3],
             ['max_retries', 0], ['max_retries', 10], ['session_resets', 0], ['session_resets', 3],
             ['hard_waits_s', [0]], ['hard_waits_s', [0, 1, 2, 3, 4, cap]],
+            ['hard_every_s', 0], ['hard_every_s', 60], ['hard_every_s', cap],
           ];
           for (const [key, value] of ok) {
             const reason = validateRetryKey(key, value, cap);
@@ -6871,6 +7045,8 @@ async function blackBoxSelfTest(listOnly = false) {
             ['max_retries', -1], ['max_retries', 1.5], ['max_retries', 11], ['session_resets', 4],
             ['hard_waits_s', []], ['hard_waits_s', [0, 1, 2, 3, 4, 5, 6]],
             ['hard_waits_s', [cap + 1]], ['hard_waits_s', [1.5]],
+            ['hard_every_s', 59], ['hard_every_s', cap + 1], ['hard_every_s', 600.5],
+            ['hard_every_s', '600'], ['hard_every_s', -1],
             ['base_s', true], ['factor', '1'], ['max_retries', NaN], ['cap_s', 1],
           ];
           for (const [key, value] of bad) {
@@ -6878,6 +7054,8 @@ async function blackBoxSelfTest(listOnly = false) {
               return `${key} ${JSON.stringify(value)} accepted`;
             }
           }
+          const every59 = validateRetryKey('hard_every_s', 59, cap);
+          if (every59 !== 'out of bounds (0 or 60..14400)') return `every59=${every59}`;
           if (validateRetryKey('hard_waits_s', [0], 0) !== null) return '[0] refused at capS 0';
           if (validateRetryKey('hard_waits_s', [1], 0) === null) return '[1] accepted at capS 0';
           return null;
@@ -6900,7 +7078,7 @@ async function blackBoxSelfTest(listOnly = false) {
           const lines = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: retry '));
           if (lines.length !== 1) return `retry lines=${lines.length}`;
           const want = 'cross-ai: retry base_s=0 factor=1.5 max_retries=1 session_resets=0 ' +
-            'hard_waits_s=0,0,0 cap_s=14400';
+            'hard_waits_s=60,60,60 hard_every_s=0 cap_s=14400';
           return lines[0] === want ? null : lines[0];
         },
       },
@@ -6948,6 +7126,88 @@ async function blackBoxSelfTest(listOnly = false) {
           return null;
         },
         check: (r) => retryLine(r, 'max_retries=1'),
+      },
+      {
+        name: 'retry-every-project',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => { writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nhard_every_s = 900\n'); return null; },
+        check: (r) => retryLine(r, 'hard_waits_s=60,60,60 hard_every_s=900 cap_s=14400'),
+      },
+      {
+        name: 'retry-every-user',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => { writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'config.toml'), '[runner.retry]\nhard_every_s = 1200\n'); return null; },
+        check: (r) => retryLine(r, 'hard_every_s=1200 cap_s=14400'),
+      },
+      {
+        name: 'retry-every-per-key',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nhard_every_s = 900\n');
+          writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'config.toml'), '[runner.retry]\nhard_every_s = 1200\nmax_retries = 2\n');
+          return null;
+        },
+        check: (r) => retryLine(r, 'max_retries=2 session_resets=1 hard_waits_s=60,60,60 hard_every_s=900 cap_s=14400'),
+      },
+      {
+        name: 'retry-every-scope',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        env: { GSD_WORKSTREAM: 'ws1' },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nhard_every_s = 900\n\n[runner.retry.scopes."workstreams/ws1"]\nhard_every_s = 1800\n');
+          return null;
+        },
+        check: (r) => retryLine(r, 'hard_every_s=1800 cap_s=14400'),
+      },
+      {
+        name: 'retry-every-refused',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => { writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nhard_every_s = 59\n'); return null; },
+        check: (r) => ((r.stderr || '').includes('cross-ai: config runner.retry.hard_every_s refused (.aikit/config.toml [runner.retry]): out of bounds (0 or 60..14400)') ? retryLine(r, 'hard_every_s=0 cap_s=14400') : 'missing refusal'),
+      },
+      {
+        name: 'retry-every-default',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        config: { retry: { hard_every_s: undefined } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => retryLine(r, 'hard_waits_s=60,60,60 hard_every_s=600 cap_s=14400'),
+      },
+      {
+        name: 'retry-every-soft-then-first',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 1, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 2) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '60' || tail.cycle !== '0') return `tail=${JSON.stringify(tail)}`;
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
       },
       {
         // A scoped file without the key falls through to the root config.
@@ -7019,7 +7279,7 @@ async function blackBoxSelfTest(listOnly = false) {
           const notice = 'cross-ai: config .aikit/config.toml line 2: unsupported value; ' +
             'retry keys from the next source';
           if (!(r.stderr || '').includes(notice)) return 'missing malformed notice';
-          return retryLine(r, 'base_s=0 factor=1.5 max_retries=5 session_resets=1 hard_waits_s=0,0,0 cap_s=14400');
+          return retryLine(r, 'base_s=0 factor=1.5 max_retries=5 session_resets=1 hard_waits_s=60,60,60 hard_every_s=0 cap_s=14400');
         },
       },
       {
@@ -7119,7 +7379,7 @@ async function blackBoxSelfTest(listOnly = false) {
         check: (r) => {
           const notice = 'cross-ai: config retry.hard_waits_s refused (CONFIG):';
           if (!(r.stderr || '').includes(notice)) return 'missing hard_waits_s refusal';
-          return retryLine(r, 'hard_waits_s=600,900,1800 cap_s=300');
+          return retryLine(r, 'hard_waits_s=60,300 hard_every_s=0 cap_s=300');
         },
       },
       {

@@ -11770,7 +11770,8 @@ class TestCrossAiTemplateText(unittest.TestCase):
             "retry": {
                 "base_s": 1,
                 "factor": 1.5,
-                "hard_waits_s": [600, 900, 1800],
+                "hard_every_s": 600,
+                "hard_waits_s": [60, 300],
                 "max_retries": 5,
                 "session_resets": 1,
             },
