@@ -7,7 +7,7 @@ import vm from 'node:vm';
 import os from 'node:os';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   ARGV_PROMPT_MAX,
   CLAUDE_EXEC_FORMULA_RECORD,
@@ -16,6 +16,7 @@ import {
   CONTEXT_RE,
   CURSOR_MODEL_ID,
   EXEC_PREAMBLE,
+  FINDING_CODES,
   HERDR_BIN,
   HERDR_VERBS,
   HOST_PATH_SAFE,
@@ -40,11 +41,13 @@ import {
   SKILL_NAME_RE,
   SKILL_PROSE,
   TABLE,
+  addFinding,
   aiKitConfigDir,
   argvFileAllowed,
   argvFileRow,
   argvPromptProblem,
   capCodePoints,
+  checkGroup,
   clampAttemptTimeout,
   clampCapS,
   classifyStop,
@@ -54,6 +57,8 @@ import {
   cycleFilePath,
   eventsWithRaw,
   extractEvents,
+  findingDetail,
+  findingLines,
   finish,
   groupMembers,
   hardWaitFor,
@@ -62,6 +67,7 @@ import {
   ladderNext,
   ladderStop,
   launcherVerified,
+  liveCheck,
   liveMatch,
   log,
   makeLineRelay,
@@ -1969,7 +1975,7 @@ if (verb === 'tab create') {
 
 const STATUS_HEAD_RE = new RegExp(
   '^(.* action=stop)(?: (route=\\S+ rule=\\S+ pattern=\\S+))?' +
-  '(?: (attempts=\\S+ cycles=\\S+))?(?: (session=\\S+ applied=\\S+ ignored=\\S+ unknown=\\S+ escalate=\\S+))?(?: (retry_after_s=\\S+ cycle=\\S+))?(?: upstream=\\S+)?$',
+  '(?: (attempts=\\S+ cycles=\\S+))?(?: (session=\\S+ applied=\\S+ ignored=\\S+ unknown=\\S+ escalate=\\S+))?(?: (coverage=\\S+ findings=\\S+))?(?: (retry_after_s=\\S+ cycle=\\S+))?(?: upstream=\\S+)?$',
 );
 
 function statusLineOk(stderr, pattern) {
@@ -2025,13 +2031,14 @@ function statusTail(stderr) {
   const line = stderr.split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
   const parts = STATUS_HEAD_RE.exec(line);
   if (!parts || !parts[2]) return null;
-  const tail = [parts[2], parts[3], parts[4], parts[5]].filter(Boolean).join(' ');
+  const tail = [parts[2], parts[3], parts[4], parts[5], parts[6]].filter(Boolean).join(' ');
   const tok = Object.fromEntries(tail.split(' ').map((t) => t.split('=')));
   return {
     route: tok.route, rule: tok.rule, pattern: tok.pattern,
     attempts: tok.attempts, cycles: tok.cycles,
     retry_after_s: tok.retry_after_s, cycle: tok.cycle,
     session: tok.session, applied: tok.applied, ignored: tok.ignored, unknown: tok.unknown, escalate: tok.escalate,
+    coverage: tok.coverage, findings: tok.findings,
   };
 }
 
@@ -9177,7 +9184,7 @@ async function blackBoxSelfTest(listOnly = false) {
         status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 .* action=stop$/,
         check: (r) => {
           const line = (r.stderr || '').split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
-          if (!/ attempts=\d+ cycles=\d+ session=\S+ applied=\S+ ignored=\S+ unknown=\S+ escalate=\S+ retry_after_s=\d+ cycle=\d+$/.test(line)) return `status=${line}`;
+          if (!/ attempts=\d+ cycles=\d+ session=\S+ applied=\S+ ignored=\S+ unknown=\S+ escalate=\S+ coverage=- findings=- retry_after_s=\d+ cycle=\d+$/.test(line)) return `status=${line}`;
           const tail = statusTail(r.stderr || '');
           return tail?.retry_after_s === '600' && tail.escalate === '-' ? null : `tail=${JSON.stringify(tail)}`;
         },
@@ -9732,6 +9739,75 @@ async function blackBoxSelfTest(listOnly = false) {
         check: (r, ctx) => {
           if ((r.stderr || '').split('\n').some((s) => s.startsWith('cross-ai: idle watchdog:') || s.includes('rule=idle-watchdog'))) return 'idle fired';
           return deadCheck(ctx, ['gc']);
+        },
+      },
+      {
+        name: 'check-group-no-spawn', kind: 'logic',
+        args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok'], exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n').filter(Boolean);
+          if (!lines.at(-1).endsWith(' escalate=- coverage=- findings=-')) return 'group';
+          const tail = statusTail(r.stderr);
+          if (tail?.coverage !== '-' || tail.findings !== '-') return 'tail';
+          return lines.some((line) => line.startsWith('cross-ai: finding ')) ? 'finding line' : null;
+        },
+      },
+      {
+        name: 'pure-finding-format', kind: 'logic', pure: () => {
+          try {
+            if (JSON.stringify(FINDING_CODES) !== JSON.stringify(['no_commit', 'task_uncovered', 'admits_skipped', 'forbidden_path', 'no_tree_change', 'outside_plan_files', 'uncommitted_edits', 'baseline_replaced', 'coverage_unchecked'])) return 'codes';
+            for (const coverage of ['-', '3/3', 'n/a']) if (checkGroup({ coverage, findings: [] }) !== `coverage=${coverage} findings=-`) return 'coverage';
+            for (const coverage of ['1/3 x', '0.5', '1/3/4']) if (checkGroup({ coverage, findings: [] }) !== 'coverage=- findings=-') return 'invalid coverage';
+            const check = { coverage: '1/3', findings: [{ code: 'outside_plan_files', detail: '2 paths' }, { code: 'task_uncovered', detail: ['b', 'a', 'b'] }, { code: 'outside_plan_files', detail: 'x' }] };
+            if (checkGroup(check) !== 'coverage=1/3 findings=task_uncovered,outside_plan_files') return 'group order';
+            if (JSON.stringify(findingLines(check)) !== JSON.stringify(['cross-ai: finding reason=task_uncovered detail=a, b', 'cross-ai: finding reason=outside_plan_files detail=2 paths', 'cross-ai: finding reason=outside_plan_files detail=x'])) return 'line order';
+            const items = Array.from({ length: 12 }, (_, i) => `p${String(i + 1).padStart(2, '0')}`);
+            if (findingDetail(items.slice(0, 10)) !== items.slice(0, 10).join(', ')) return 'cap 10';
+            if (findingDetail(items.slice(0, 11)) !== `${items.slice(0, 10).join(', ')} (+1 more)`) return 'cap 11';
+            if (findingDetail(items.toReversed()) !== `${items.slice(0, 10).join(', ')} (+2 more)`) return 'cap 12';
+            if (['', [], undefined].some((v) => findingDetail(v) !== '-')) return 'empty';
+            if (findingDetail('a\x07b\x9bc') !== 'abc' || findingDetail('a\u2028b\u2029c') !== 'abc') return 'controls';
+            const key = 'sk-' + 'a'.repeat(16);
+            if ([key, '\x07' + key, 'sk-' + 'a'.repeat(4) + '\x07' + 'a'.repeat(12)].some((v) => findingDetail(v) !== '<redacted>')) return 'redact';
+            const array = findingDetail(['src/x.ts', '\x07' + key]);
+            if (array.includes('sk-') || !array.includes('<redacted>')) return 'redact array';
+            addFinding('no_commit', 'x');
+            if (JSON.stringify(liveCheck.findings.at(-1)) !== JSON.stringify({ code: 'no_commit', detail: 'x' })) return 'add';
+            const count = liveCheck.findings.length;
+            try { addFinding('made_up', 'x'); return 'unknown accepted'; } catch (e) { if (e.message !== 'unknown finding code: made_up') return 'unknown error'; }
+            if (liveCheck.findings.length !== count) return 'unknown added';
+            return null;
+          } finally { liveCheck.findings.splice(0); }
+        },
+      },
+      {
+        name: 'pure-status-head-re', kind: 'logic', pure: () => {
+          const head = 'AIKIT-XAI status=quota cli=pi model=fake/ok exit=75 cli_rc=1 elapsed=1s out=0 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=- applied=model ignored=- unknown=- escalate=-';
+          const retry = ' retry_after_s=600 cycle=0';
+          const line = head + ' coverage=- findings=-' + retry;
+          const parts = STATUS_HEAD_RE.exec(line);
+          if (parts?.[5] !== 'coverage=- findings=-' || parts[6] !== 'retry_after_s=600 cycle=0') return 'groups';
+          const tail = statusTail(line + '\n');
+          if (tail?.retry_after_s !== '600' || tail.cycle !== '0' || tail.coverage !== '-' || tail.findings !== '-' || tail.escalate !== '-') return 'tail';
+          const old = STATUS_HEAD_RE.exec(head + retry);
+          const oldTail = statusTail(head + retry + '\n');
+          if (!old || old[5] !== undefined || old[6] !== 'retry_after_s=600 cycle=0' || oldTail?.retry_after_s !== '600' || oldTail.coverage !== undefined) return 'old';
+          const populated = statusTail(head + ' coverage=1/3 findings=task_uncovered,outside_plan_files\n');
+          return populated?.coverage === '1/3' && populated.findings === 'task_uncovered,outside_plan_files' ? null : 'populated';
+        },
+      },
+      {
+        name: 'finding-lines-through-finish', kind: 'logic',
+        args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok'], exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r, ctx) => {
+          const script = "const m = await import(process.argv[2]); m.addFinding('task_uncovered', ['b', 'a']); m.addFinding('no_commit', 'x'); m.finish('crash', { exit: 1 });";
+          const child = spawnSync(process.execPath, ['--input-type=module', '-e', script, ctx.repo, pathToFileURL(RUNNER_FILE).href], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8', timeout: scaledMs(20000) });
+          const lines = (child.stderr || '').split('\n').filter(Boolean);
+          if (child.status !== 0 || lines.length !== 3) return 'lines';
+          if (lines[0] !== 'cross-ai: finding reason=no_commit detail=x' || lines[1] !== 'cross-ai: finding reason=task_uncovered detail=a, b') return 'order';
+          return lines[2].startsWith('AIKIT-XAI status=crash ') && lines[2].endsWith(' escalate=- coverage=- findings=no_commit,task_uncovered') ? null : 'trailer';
         },
       },
     ];

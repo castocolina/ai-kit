@@ -1232,6 +1232,8 @@ let liveFields = {
 };
 // The settings report, session id and escalation flags the status line's 37 group prints (D-12); main fills it.
 let liveSettings = { report: [], sessionId: null, escalation: { runtime: false, model: false } };
+// SPEC R5: the execute check's coverage and findings for this call; finish prints them, main resets them.
+let liveCheck = { coverage: '-', findings: [] };
 let finished = false;
 let finishedExit = 1;
 let runDeadline = 0;
@@ -1293,6 +1295,36 @@ function reportAndFinish(status, fields, stopped) {
   return finish(status, fields);
 }
 
+// SPEC R5 closed list; this order is the print order (blocking first, then informational).
+const FINDING_CODES = Object.freeze(['no_commit', 'task_uncovered', 'admits_skipped', 'forbidden_path', 'no_tree_change', 'outside_plan_files', 'uncommitted_edits', 'baseline_replaced', 'coverage_unchecked']);
+const FINDING_ITEMS_MAX = 10;
+function addFinding(code, detail) {
+  if (!FINDING_CODES.includes(code)) throw new Error(`unknown finding code: ${code}`);
+  liveCheck.findings.push({ code, detail });
+}
+// Redact, strip control characters and Unicode line separators, then redact again so one finding stays one line.
+function findingText(value) {
+  return redactSecrets(redactSecrets(String(value)).replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, ''));
+}
+function findingDetail(detail) {
+  if (Array.isArray(detail)) {
+    const items = [...new Set(detail.map(findingText))].sort();
+    const shown = items.slice(0, FINDING_ITEMS_MAX).join(', ');
+    const text = items.length > FINDING_ITEMS_MAX ? `${shown} (+${items.length - FINDING_ITEMS_MAX} more)` : shown;
+    return text || '-';
+  }
+  const text = findingText(detail ?? '');
+  return text || '-';
+}
+function findingLines(check) {
+  return FINDING_CODES.flatMap((code) => check.findings.filter((f) => f.code === code).map((f) => `cross-ai: finding reason=${code} detail=${findingDetail(f.detail)}`));
+}
+function checkGroup(check) {
+  const coverage = /^(?:\d+\/\d+|n\/a|-)$/.test(String(check.coverage)) ? String(check.coverage) : '-';
+  const codes = FINDING_CODES.filter((code) => check.findings.some((f) => f.code === code)).join(',') || '-';
+  return `coverage=${coverage} findings=${codes}`;
+}
+
 function finish(status, fields) {
   if (finished) return finishedExit;
   const row = STATUS_TABLE[status] || { exit: 1 };
@@ -1311,6 +1343,10 @@ function finish(status, fields) {
   let group = 'session=- applied=- ignored=- unknown=- escalate=-';
   try { group = String(statusGroup(liveSettings.report, liveSettings.sessionId, liveSettings.escalation)).trim(); } catch { /* the one status line is printed whatever the group does (Pitfall 4) */ }
   line += ` ${group}`;
+  let check = 'coverage=- findings=-';
+  try { check = checkGroup(liveCheck); } catch { /* status codes do not depend on detail rendering */ }
+  try { for (const text of findingLines(liveCheck)) log(text); } catch { /* always print the status line */ }
+  line += ` ${check}`;
   if (fields.retryAfterS !== undefined && fields.retryAfterS !== null) {
     line += ` retry_after_s=${fields.retryAfterS} cycle=${fields.cycle ?? cycles}`;
   }
@@ -5492,6 +5528,7 @@ async function main(argv) {
     route: 'unknown', rule: '-', pattern: 'none',
   };
   liveSettings = { report: [], sessionId: null, escalation: { runtime: false, model: false } };
+  liveCheck = { coverage: '-', findings: [] };
   let o;
   try { o = parseArgs(argv); } catch (e) {
     log(`cross-ai: ${e.message}`);
@@ -5855,6 +5892,7 @@ export {
   CONTEXT_RE,
   CURSOR_MODEL_ID,
   EXEC_PREAMBLE,
+  FINDING_CODES,
   HERDR_BIN,
   HERDR_VERBS,
   HOST_PATH_SAFE,
@@ -5879,11 +5917,13 @@ export {
   SKILL_NAME_RE,
   SKILL_PROSE,
   TABLE,
+  addFinding,
   aiKitConfigDir,
   argvFileAllowed,
   argvFileRow,
   argvPromptProblem,
   capCodePoints,
+  checkGroup,
   clampAttemptTimeout,
   clampCapS,
   classifyStop,
@@ -5893,6 +5933,8 @@ export {
   cycleFilePath,
   eventsWithRaw,
   extractEvents,
+  findingDetail,
+  findingLines,
   finish,
   groupMembers,
   hardWaitFor,
@@ -5901,6 +5943,7 @@ export {
   ladderNext,
   ladderStop,
   launcherVerified,
+  liveCheck,
   liveMatch,
   log,
   makeLineRelay,

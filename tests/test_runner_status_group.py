@@ -14,6 +14,7 @@ from ai_kit_spec.runner_dispatch import RunnerSpec, _trailer_counts, parse_statu
 from tests.cross_ai_selftest import TEMPLATE, _real_node_executable, runner_env
 
 GROUP_KEYS = ("session", "applied", "ignored", "unknown", "escalate")
+CHECK_KEYS = ("coverage", "findings")
 
 
 def last_status(node: str, tmp: str, args: list[str]) -> str:
@@ -45,6 +46,18 @@ class TestStatusGroup(unittest.TestCase):
             self.assertEqual(status["escalate"], "-")
             self.assertTrue({"model", "role"}.issubset(status["applied"].split(",")))
 
+    def test_check_group_follows_escalate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            line = last_status(self.node, tmp, ["--runtime", "pi", "--model", "fake/ok"])
+            status = parse_status_line(line)
+            assert status is not None
+            keys = list(status)
+            pos = keys.index("escalate") + 1
+            self.assertEqual(keys[pos:pos + len(CHECK_KEYS)], list(CHECK_KEYS))
+            self.assertEqual(status["coverage"], "-")
+            self.assertEqual(status["findings"], "-")
+            self.assertTrue(line.endswith(" escalate=- coverage=- findings=-"))
+
     def test_trailer_counts_unchanged(self):
         with tempfile.TemporaryDirectory() as tmp:
             line = last_status(self.node, tmp, ["--runtime", "pi", "--model", "fake/ok"])
@@ -74,6 +87,37 @@ class TestStatusGroup(unittest.TestCase):
             self.assertTrue(
                 {"escalate_runtime", "escalate_model"}.issubset(status["ignored"].split(","))
             )
+
+
+class TestCheckGroupLine(unittest.TestCase):
+    def test_findings_parse_and_trailer_counts(self):
+        line = (
+            "AIKIT-XAI status=partial cli=pi model=fake/ok exit=1 cli_rc=0 elapsed=3s out=10 "
+            "tree=dirty action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 "
+            "session=- applied=model ignored=- unknown=- escalate=- coverage=1/3 "
+            "findings=task_uncovered,outside_plan_files"
+        )
+        status = parse_status_line(line)
+        assert status is not None
+        self.assertEqual(status["coverage"], "1/3")
+        self.assertEqual(status["findings"].split(","), ["task_uncovered", "outside_plan_files"])
+        spec = RunnerSpec("pi", "fake/ok", "exec", 0)
+        self.assertTrue(_trailer_counts(status, spec, 1))
+        self.assertFalse(_trailer_counts(status, spec, 0))
+
+    def test_group_sits_before_retry(self):
+        line = (
+            "AIKIT-XAI status=transient cli=pi model=fake/ok exit=75 cli_rc=1 elapsed=3s out=0 "
+            "tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 "
+            "session=- applied=model ignored=- unknown=- escalate=- coverage=- findings=- "
+            "retry_after_s=600 cycle=0"
+        )
+        status = parse_status_line(line)
+        assert status is not None
+        self.assertEqual(status["retry_after_s"], "600")
+        self.assertEqual(status["coverage"], "-")
+        keys = list(status)
+        self.assertEqual(keys.index("findings") + 1, keys.index("retry_after_s"))
 
 
 if __name__ == "__main__":
