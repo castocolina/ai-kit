@@ -65,9 +65,12 @@ These flags steer the runner's own supervision. They are not lane settings: they
 | Flag | Value | What it does |
 |---|---|---|
 | `--baseline <sha>` | a commit, 7 to 64 hex characters, checked against the repository | replaces the stored start-of-task baseline the execute checks compare against (section 4) |
+| `--blocked-clear <pool>` | a pool string such as `<provider>:free` | deletes the pool's blocked-until record (the owner's re-enable), spawns nothing and exits 0 (1 when the delete fails) |
+| `--blocked-status <pool>` | a pool string such as `<provider>:free` | prints `blocked_until=<time or -> failures=<n>` for the pool, spawns nothing and exits 0; a missing or malformed record prints `-` and `0` |
 | `--forbid <path>` | repeatable, relative to the repository; a trailing `/` covers a directory | adds a path an execute result may not change (section 4) |
 | `--idle-timeout <seconds>` or `--idle-timeout default` | 0 to 86400, 0 is off; `default` is 900 s | turns the idle watchdog on for this call (section 3) |
 | `--plan-id <id>` | a GSD plan id such as `12-03` | requires at least as many commits with the subject `<type>(<id>):` as the plan has tasks (section 4) |
+| `--pool <pool>` | a pool string such as `<provider>:free`, for a lane the owner flagged `usage_limited` | a quota stop on a lane that is not a confirmed router lane writes the pool's blocked-until record; the runner never skips or switches a lane because of one |
 | `--sweep` | no value | cleans up after runs that were killed hard, spawns nothing, takes no lock and exits 0 (section 2) |
 
 Their baked defaults sit beneath the call: `CONFIG.idleTimeoutS` (shipped as 0; 0 or absent is off), and two seed lists in the runner that an optional CONFIG key replaces: `CONFIG.forbiddenPaths` (seed `.planning/STATE.md`, `.planning/ROADMAP.md` and `.planning/REQUIREMENTS.md`, the files GSD's orchestrator owns) and `CONFIG.admissionPhrases` (a short seed of lowercase phrases, labeled judged). Neither key is in the shipped CONFIG; a value that is not a list of strings prints `cross-ai: note: CONFIG.<key> is not a list of strings; the seed list is used`. A seed never decides which runtime or model runs; the owner replaces it in CONFIG, and every match is printed.

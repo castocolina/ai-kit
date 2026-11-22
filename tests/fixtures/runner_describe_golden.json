@@ -674,9 +674,12 @@
   },
   "supervision_flags": [
     "--baseline",
+    "--blocked-clear",
+    "--blocked-status",
     "--forbid",
     "--idle-timeout",
     "--plan-id",
+    "--pool",
     "--sweep"
   ],
   "template_version": 10

@@ -288,6 +288,45 @@
     "evidence": "captured headless 2026-11-16, codex 0.169.0; fixture tests/fixtures/cross_ai_errors/codex-bad-model.json"
   },
   {
+    "id": "opencode-free-tier-error",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "FreeTierError",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "client rule reported in a pinned opencode maintainer post and issues; no body captured on this machine (38.1 D-27)"
+  },
+  {
+    "id": "opencode-missing-session-id",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "MissingSessionID",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "client rule reported in a pinned opencode maintainer post and issues; no body captured on this machine (38.1 D-27)"
+  },
+  {
+    "id": "opencode-free-tier-version-gate",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "or newer is required to use the free tier",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "client rule reported in a pinned opencode maintainer post and issues; no body captured on this machine (38.1 D-27)"
+  },
+  {
     "id": "text-billing",
     "tier": 2,
     "cli": "*",

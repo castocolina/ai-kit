@@ -268,7 +268,7 @@ class SupervisionDocs(unittest.TestCase):
     def test_flag_rows_match_runner_and_describe(self):
         rows = flag_rows(self.text)
         self.assertEqual(rows, runner_flags())
-        self.assertEqual(len(rows), 5)
+        self.assertEqual(len(rows), 8)
         if self.describe is None:
             self.skipTest("node not on PATH: the --describe leg is skipped")
         self.assertEqual(rows, self.describe["supervision_flags"])

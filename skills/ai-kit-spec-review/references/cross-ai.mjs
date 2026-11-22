@@ -455,6 +455,45 @@ const PATTERNS = [
     "evidence": "captured headless 2026-11-16, codex 0.169.0; fixture tests/fixtures/cross_ai_errors/codex-bad-model.json"
   },
   {
+    "id": "opencode-free-tier-error",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "FreeTierError",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "client rule reported in a pinned opencode maintainer post and issues; no body captured on this machine (38.1 D-27)"
+  },
+  {
+    "id": "opencode-missing-session-id",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "MissingSessionID",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "client rule reported in a pinned opencode maintainer post and issues; no body captured on this machine (38.1 D-27)"
+  },
+  {
+    "id": "opencode-free-tier-version-gate",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "or newer is required to use the free tier",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "client rule reported in a pinned opencode maintainer post and issues; no body captured on this machine (38.1 D-27)"
+  },
+  {
     "id": "text-billing",
     "tier": 2,
     "cli": "*",
@@ -4034,7 +4073,19 @@ function blockedAfterStop(poolOpt, model, r, nowMs = Date.now(), home = stateHom
 // An ok attempt clears only a pool the caller named: a paid lane of the same provider is not in the pool.
 function blockedClearAfterOk(poolOpt, home = stateHome()) {
   if (!poolOpt) return;
-  try { fs.unlinkSync(blockedFilePath(poolOpt, home)); log(`cross-ai: blocked-until cleared pool=${poolOpt}`); } catch { /* no record */ }
+  const done = blockedClear(poolOpt, home);
+  if (done !== 'cleared' && done !== 'absent') log(`cross-ai: blocked-until clear failed (${done})`);
+}
+
+function blockedStatusLine(pool, home = stateHome()) {
+  const rec = readBlocked(pool, home);
+  return `blocked_until=${rec ? blockedIso(rec.untilS) : '-'} failures=${rec ? rec.failures : 0}`;
+}
+
+function blockedClear(pool, home = stateHome()) {
+  try { fs.unlinkSync(blockedFilePath(pool, home)); } catch (e) { return e && e.code === 'ENOENT' ? 'absent' : String(e && e.code || 'error'); }
+  log(`cross-ai: blocked-until cleared pool=${pool}`);
+  return 'cleared';
 }
 
 function deleteCycleState(file) {
@@ -6222,7 +6273,7 @@ function forbiddenHits(changed, forbidden, named) {
   return [...new Set(changed)].filter((p) => forbidden.some((f) => pathCovers(f, p)) && !names.some((n) => pathCovers(n, p))).sort();
 }
 // SPEC R12 / D-24: the runner supervision flags (not lane settings), sorted; --describe lists them.
-const SUPERVISION_FLAGS = Object.freeze(['--baseline', '--forbid', '--idle-timeout', '--plan-id', '--sweep']);
+const SUPERVISION_FLAGS = Object.freeze(['--baseline', '--blocked-clear', '--blocked-status', '--forbid', '--idle-timeout', '--plan-id', '--pool', '--sweep']);
 // SPEC R5: the result of each blocking finding code; every other code of FINDING_CODES is informational.
 const FINDING_RESULTS = Object.freeze({ no_commit: 'partial', task_uncovered: 'partial', admits_skipped: 'partial', forbidden_path: 'contract_violation' });
 
@@ -6572,7 +6623,7 @@ function parseArgs(argv) {
     codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
     role: null, effort: null, context: null, escalateRuntime: false, escalateModel: false,
-    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, sweep: false, baseline: null, idleTimeout: null, forbid: [], planId: null, pool: null,
+    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, sweep: false, baseline: null, idleTimeout: null, forbid: [], planId: null, pool: null, blockedStatus: null, blockedClear: null,
   };
   let modeFlag = null;
   for (let i = 0; i < argv.length; i++) {
@@ -6606,6 +6657,7 @@ function parseArgs(argv) {
       o.routes[cli] = route;
     } else if (a === '--classify-only') o.classifyOnly = v();
     else if (a === '--pool') { o.pool = v(); if (!BLOCKED_POOL_RE.test(o.pool)) throw new Error('--pool must look like <provider>:free'); }
+    else if (a === '--blocked-status' || a === '--blocked-clear') { const pool = v(); if (!BLOCKED_POOL_RE.test(pool)) throw new Error(`${a} must look like <provider>:free`); if (a === '--blocked-status') o.blockedStatus = pool; else o.blockedClear = pool; }
     else if (a === '--mode') { o.mode = v(); if (!['exec', 'review'].includes(o.mode)) throw new Error('--mode must be exec or review'); modeFlag = o.mode; }
     else if (a === '--timeout') { o.timeout = Number(v()); if (!(o.timeout > 0)) throw new Error('--timeout must be > 0'); }
     else if (a === '--outer-timeout') {
@@ -6665,6 +6717,7 @@ function parseArgs(argv) {
     else throw new Error(`unknown argument: ${a}`);
   }
   if (o.sweep && (o.printArgv || o.classifyOnly !== null)) throw new Error('--sweep cannot be combined with --print-argv or --classify-only');
+  if ((o.blockedStatus !== null || o.blockedClear !== null) && ((o.blockedStatus !== null && o.blockedClear !== null) || o.printArgv || o.classifyOnly !== null || o.sweep || o.describe || o.selfTest)) throw new Error('--blocked-status and --blocked-clear cannot be combined with each other or with --print-argv, --classify-only, --sweep, --describe or --self-test');
   if (o.effort !== null && o.codexEffort !== null && o.effort !== o.codexEffort) throw new Error('--effort and --codex-effort disagree');
   if (o.effort === null) o.effort = o.codexEffort;
   if (o.role !== null) {
@@ -6882,6 +6935,8 @@ async function main(argv) {
     await sweepRuns({ explicit: true, hostingOff: false });
     return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
   }
+  if (o.blockedStatus !== null) { process.stdout.write(`${blockedStatusLine(o.blockedStatus)}\n`); return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 }); }
+  if (o.blockedClear !== null) { const done = blockedClear(o.blockedClear); if (done !== 'cleared' && done !== 'absent') { log(`cross-ai: blocked-until clear failed (${done})`); return reportAndFinish('crash', { ...liveFields, tree: 'clean', exit: 1, out: 0 }); } return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 }); }
   TABLE = mergeCatalog(PATTERNS, loadOverlay(process.env));
   if (o.classifyOnly !== null) return runClassifyOnly(o.classifyOnly);
   childPgidFile = o.childPgidFile;
@@ -7308,6 +7363,8 @@ export {
   argvPromptProblem,
   blockedAfterStop,
   blockedClearAfterOk,
+  blockedClear,
+  blockedStatusLine,
   blockedFilePath,
   blockedNext,
   blockedPoolKey,

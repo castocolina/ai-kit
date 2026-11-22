@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -16,6 +17,9 @@ TEMPLATE = REPO / "skills" / "ai-kit-spec-review" / "references" / "cross-ai.mjs
 GOLDEN = REPO / "tests" / "fixtures" / "runner_describe_golden.json"
 sys.path.insert(0, str(REPO))
 from tests.cross_ai_selftest import _real_node_executable
+
+sys.path.insert(0, str(REPO / "skills" / "ai-kit-spec-review"))
+from ai_kit_spec import lane_settings
 
 NODE = _real_node_executable()
 HELP_DIR = REPO / "tests" / "fixtures" / "cli_help"
@@ -220,12 +224,46 @@ class TestRunnerDescribe(unittest.TestCase):
                                     "template_version"})
         self.assertEqual(obj["schema"], 1)
         self.assertEqual(obj["supervision_flags"],
-                         ["--baseline", "--forbid", "--idle-timeout", "--plan-id", "--sweep"])
+                         ["--baseline", "--blocked-clear", "--blocked-status", "--forbid",
+                          "--idle-timeout", "--plan-id", "--pool", "--sweep"])
         self.assertIn("--sweep", obj["supervision_flags"])
         self.assertEqual(obj["statuses"]["locked"], 75)
         self.assertEqual(obj["statuses"]["partial"], 1)
         self.assertEqual([item["code"] for item in obj["findings"]][:3],
                          ["no_commit", "task_uncovered", "admits_skipped"])
+
+    def test_blocked_pool_regex_mirrors_phase36_pool_rx(self):
+        template = TEMPLATE.read_text(encoding="utf-8")
+        settings = (REPO / "skills" / "ai-kit-spec-review" / "ai_kit_spec" /
+                    "lane_settings.py").read_text(encoding="utf-8")
+        runner_match = re.search(r"const BLOCKED_POOL_RE = /\^(.+)\$/;", template)
+        settings_match = re.search(r'POOL_RX = re\.compile\(r"(.+)"\)', settings)
+        self.assertIsNotNone(runner_match)
+        self.assertIsNotNone(settings_match)
+        assert runner_match is not None
+        assert settings_match is not None
+        self.assertEqual(runner_match.group(1), settings_match.group(1))
+
+    def test_phase36_pool_string_round_trips_through_the_runner(self):
+        if NODE is None:
+            self.skipTest("node not on PATH")
+        for pool in ("fake:free", "fake-go.x_1:free"):
+            with self.subTest(pool=pool), tempfile.TemporaryDirectory() as state:
+                self.assertIsNotNone(lane_settings.POOL_RX.fullmatch(pool))
+                folder = Path(state) / "ai-kit" / "spec" / "blocked"
+                folder.mkdir(parents=True)
+                record = {"pool": pool, "blocked_until": "2023-11-15T04:59:20Z",
+                          "failures": 2, "basis": "floor_24h", "rule": "vendor-free-usage",
+                          "written_at": "2023-11-14T22:13:20Z"}
+                (folder / (urllib.parse.quote(pool, safe="") + ".json")).write_text(
+                    json.dumps(record), encoding="utf-8")
+                env = {"PATH": os.environ.get("PATH", ""), "HOME": state,
+                       "XDG_STATE_HOME": state, "LANG": "C", "AI_KIT_REFUSE_REAL_HOME": "1"}
+                proc = subprocess.run([NODE, str(TEMPLATE), "--blocked-status", pool], cwd=state,
+                                      env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                                      text=True, timeout=30, check=False)
+                self.assertEqual(proc.returncode, 0)
+                self.assertEqual(proc.stdout, "blocked_until=2023-11-15T04:59:20Z failures=2\n")
 
     def test_statuses_equal_the_status_table(self):
         self.assertEqual(json.loads(describe()[1])["statuses"], status_table())
@@ -242,7 +280,9 @@ class TestRunnerDescribe(unittest.TestCase):
         self.assertEqual(flags, source_list("SUPERVISION_FLAGS"))
         self.assertEqual(flags, sorted(flags))
         values = {"--baseline": ["0000000"], "--forbid": ["docs/"],
-                  "--idle-timeout": ["0"], "--plan-id": ["12-03"], "--sweep": []}
+                  "--idle-timeout": ["0"], "--plan-id": ["12-03"], "--sweep": [],
+                  "--pool": ["fake:free"], "--blocked-status": ["fake:free"],
+                  "--blocked-clear": ["fake:free"]}
         assert NODE is not None
         with tempfile.TemporaryDirectory(prefix="xai-flags-") as home:
             env = {"PATH": os.environ.get("PATH", ""), "HOME": home, "LANG": "C",
@@ -258,6 +298,8 @@ class TestRunnerDescribe(unittest.TestCase):
                         self.assertIn(message, proc.stderr)
                     else:
                         self.assertNotIn(message, proc.stderr)
+                        if flag in ("--blocked-status", "--blocked-clear"):
+                            self.assertIn("cannot be combined", proc.stderr)
 
     def test_source_lock_catches_a_drift(self):
         obj = json.loads(describe()[1])

@@ -57,6 +57,8 @@ import {
   baselineVerdict,
   blockedAfterStop,
   blockedClearAfterOk,
+  blockedClear,
+  blockedStatusLine,
   blockedFilePath,
   blockedNext,
   blockedPoolKey,
@@ -624,6 +626,21 @@ const CLASSIFY_CASES = [
     expect: { status: 'billing', pattern: 'verified' },
   },
   {
+    name: 'opencode-free-tier-error', cli: 'opencode',
+    stderr: '403: {"type":"FreeTierError"}',
+    expect: { status: 'bad_request', pattern: 'unverified', rule: 'opencode-free-tier-error' },
+  },
+  {
+    name: 'opencode-missing-session-id', cli: 'opencode',
+    stderr: '400: {"type":"MissingSessionID"}',
+    expect: { status: 'bad_request', pattern: 'unverified', rule: 'opencode-missing-session-id' },
+  },
+  {
+    name: 'opencode-free-tier-version-gate', cli: 'opencode',
+    stderr: 'Error: version 9.9.9 or newer is required to use the free tier',
+    expect: { status: 'bad_request', pattern: 'unverified', rule: 'opencode-free-tier-version-gate' },
+  },
+  {
     name: 'pi-event-400', cli: 'pi',
     stderr: '[400]: event: error',
     expect: { status: 'transient', pattern: 'verified' },
@@ -850,6 +867,9 @@ const LOCKREC = (pid) => JSON.stringify({ version: 1, run_id: 'placeholder-run-1
 const blockedResult = (ms) => ({ status: 'quota', route: 'unknown', rule: 'vendor-free-usage',
   upstream: { fields: { retryAfterMs: ms } } });
 const blockedEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const REC = (c) => path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'blocked', 'fake%3Afree.json');
+const PLANTED = JSON.stringify({ pool: 'fake:free', blocked_until: '2023-11-15T04:59:20Z', failures: 1, basis: 'retry_after_ms', rule: 'vendor-free-usage', written_at: '2023-11-14T22:13:20Z' });
+const PLANT = (c) => { fs.mkdirSync(path.dirname(REC(c)), { recursive: true }); fs.writeFileSync(REC(c), PLANTED); return null; };
 function blockedHome(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-blocked-'));
   try { return fn(home); } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -1078,6 +1098,21 @@ function classifyCases() {
         const b = blockedFilePath('x-go:free', '/h');
         return a !== b && a.endsWith('x%3Afree.json') && b.endsWith('x-go%3Afree.json') ? null : 'file key';
       },
+    },
+    {
+      name: 'blocked-read-options', kind: 'logic', pure: () => blockedHome((home) => {
+        blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(24240000), 1700000000000, home);
+        const file = blockedFilePath('fake:free', home);
+        const bytes = fs.readFileSync(file, 'utf8');
+        if (blockedStatusLine('fake:free', home) !== 'blocked_until=2023-11-15T04:59:20Z failures=1' || fs.readFileSync(file, 'utf8') !== bytes) return 'status changed record';
+        for (const text of ['{}', '', 'not json']) {
+          fs.writeFileSync(file, text);
+          if (blockedStatusLine('fake:free', home) !== 'blocked_until=- failures=0') return 'malformed status';
+        }
+        blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(24240000), 1700000000000, home);
+        if (blockedClear('fake:free', home) !== 'cleared' || fs.existsSync(file) || blockedClear('fake:free', home) !== 'absent') return 'clear';
+        return null;
+      }),
     },
     {
       name: 'blocked-file', kind: 'logic', pure: () => blockedHome((home) => {
@@ -2330,6 +2365,9 @@ process.stdin.on('data', (d) => { input += d; }).on('end', () => {
     console.log(JSON.stringify({ type: 'error', sessionID: 'ses_fake', error: { type: 'provider.free-limit', message: 'Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.', status: 429, retryAfterMs: 24240000 } }));
     process.exit(process.env.FAKE_OPENCODE_MODE === 'free-limit' ? 1 : 0);
   }
+  const clientRule = { freetier: '403: {"type":"FreeTierError"}', 'missing-session': '400: {"type":"MissingSessionID"}', 'version-gate': 'Error: version 9.9.9 or newer is required to use the free tier' }[process.env.FAKE_OPENCODE_MODE];
+  if (model === 'fake/ok' && clientRule) { process.stderr.write(clientRule + '\n'); process.exit(1); }
+  if (model === 'fake/ok' && process.env.FAKE_OPENCODE_MODE === 'removed-model') { console.log(JSON.stringify({ type: 'error', sessionID: 'ses_fake', error: { type: 'provider.no-route', message: 'Model unavailable: fake/ok' } })); process.exit(1); }
   if (model === 'fake/ok' && ['upstream-event', 'two-events'].includes(process.env.FAKE_OPENCODE_MODE)) {
     const acct = 'acct-' + process.pid;
     const token = process.env.AIKIT_XAI_SENTINEL || 'sentinel';
@@ -3261,6 +3299,30 @@ async function blackBoxSelfTest(listOnly = false) {
     const defaults = (overrides) => ({ tasks: [], commits: [], changed: [], uncommitted: [], answer: 'done', answered: true, phrases: ADMISSION_PHRASES_SEED, forbidden: FORBIDDEN_PATHS_SEED, named: new Set(), planId: null, ...overrides });
     const refusal = "--forbid must be a repo-relative path with no empty, '.' or '..' segment and no control character";
     const cases = [
+      {
+        name: 'blocked-status-none', kind: 'logic', args: ['--blocked-status', 'fake:free'], exit: 0, status: /^AIKIT-XAI status=ok /,
+        check: (r, ctx) => r.stdout === 'blocked_until=- failures=0\n' && ctx.calls.length === 0 ? null : 'status or spawn',
+      },
+      {
+        name: 'blocked-status-cli', kind: 'logic', setup: PLANT, args: ['--blocked-status', 'fake:free'], exit: 0, status: /^AIKIT-XAI status=ok /,
+        check: (r, ctx) => r.stdout === 'blocked_until=2023-11-15T04:59:20Z failures=1\n' && ctx.calls.length === 0 && fs.readFileSync(REC(ctx), 'utf8') === PLANTED ? null : 'status, spawn or changed record',
+      },
+      {
+        name: 'blocked-clear-cli', kind: 'logic', setup: PLANT, args: ['--blocked-clear', 'fake:free'], exit: 0, status: /^AIKIT-XAI status=ok /,
+        check: (r, ctx) => !fs.existsSync(REC(ctx)) && r.stderr.includes('cross-ai: blocked-until cleared pool=fake:free') && r.stdout === '' && ctx.calls.length === 0 ? null : 'clear or spawn',
+      },
+      {
+        name: 'blocked-clear-none', kind: 'logic', args: ['--blocked-clear', 'fake:free'], exit: 0, status: /^AIKIT-XAI status=ok /,
+        check: (r, ctx) => r.stdout === '' && !r.stderr.includes('cross-ai: blocked-until') && ctx.calls.length === 0 ? null : 'absent clear or spawn',
+      },
+      {
+        name: 'blocked-clear-conflict', kind: 'logic', setup: PLANT, args: ['--blocked-clear', 'fake:free', '--print-argv', '--runtime', 'pi'], exit: 2, status: /^AIKIT-XAI status=usage /,
+        check: (r, ctx) => r.stderr.includes('cross-ai: --blocked-status and --blocked-clear cannot be combined') && fs.existsSync(REC(ctx)) ? null : 'conflict or deleted record',
+      },
+      {
+        name: 'blocked-status-bad-pool', kind: 'logic', args: ['--blocked-status', 'fake/free'], exit: 2, status: /^AIKIT-XAI status=usage /,
+        check: (r) => r.stderr.includes('cross-ai: --blocked-status must look like <provider>:free') ? null : 'missing pool error',
+      },
       {
         name: 'ok',
         kind: 'logic',
@@ -4254,6 +4316,21 @@ async function blackBoxSelfTest(listOnly = false) {
           return null;
         },
       },
+      ...[
+        ['blocked-client-rule-no-record', 'freetier', 'bad_request'],
+        ['blocked-client-missing-session', 'missing-session', 'bad_request'],
+        ['blocked-client-version-gate', 'version-gate', 'bad_request'],
+        ['blocked-removed-model-no-record', 'removed-model', 'bad_model'],
+      ].map(([name, fakeOpencodeMode, classification]) => ({
+        name, kind: 'logic', fakeOpencodeMode,
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok', '--pool', 'fake:free'], exit: 69,
+        status: new RegExp(`^AIKIT-XAI status=${classification} cli=opencode model=fake/ok exit=69 .* action=stop$`),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((line) => line === 'opencode fake/ok').length !== 1) return 'unexpected inference call count';
+          if ((r.stderr || '').split('\n').some((line) => line.includes('cross-ai: blocked-until'))) return 'unexpected blocked notice';
+          return fs.existsSync(path.join(ctx.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'blocked')) ? 'unexpected blocked record' : null;
+        },
+      })),
       {
         name: 'billing-free-tier',
         kind: 'logic',
