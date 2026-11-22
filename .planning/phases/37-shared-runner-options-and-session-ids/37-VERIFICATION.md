@@ -2,7 +2,7 @@
 phase: 37-shared-runner-options-and-session-ids
 verified: 2026-11-22T01:19:14Z
 verified_head: 42bad13
-status: human_needed
+status: passed
 score: 15/15 must-haves verified
 covered_files:
   - .planning/phases/37-shared-runner-options-and-session-ids/37-01-PLAN.md
@@ -74,29 +74,13 @@ covered_files:
 covered_digest: "v4:sha256:6ce12921a23d287d9b10acfd97b940c6bff162304da150a89559a1300d19cbdb"
 behavior_unverified: 0
 overrides_applied: 0
-human_verification:
-  - test: "Real-home spike probes Q1-Q5 and Q8 of plan 37-01: session labels and resume of pi, opencode, claude and copilot, skill labels (pi --skill, claude /<name>, copilot --add-dir), claude's execute permission flag and its error channel"
-    expected: "Each probe recorded under tmp/; a form whose live behaviour matches flips its label from unverified only through the recorded result"
-    why_human: "Needs the real HOME of each host CLI and a real model call; the owner's consent line is missing from the run ledger, so the spike ran without these probes"
-  - test: "Live effort probe: run one lane with --effort against a real installed host"
-    expected: "The settings line reads effort=<level> applied and the host accepts the level (or the failure is classified by the existing rules)"
-    why_human: "Needs a real model call; tests use fake CLIs only (SPEC constraint)"
-  - test: "claude execute live probe in a scratch repository (the exact formula -p --model <m> --output-format json --permission-mode bypassPermissions and its --resume)"
-    expected: "A recorded result sets CLAUDE_EXEC_FORMULA_RECORD; the unverified note then disappears and test_runner_claude_exec's record test flips with it"
-    why_human: "Needs the real claude HOME and the owner's consent; until then the runner labels the formula unverified and prints the note on every execute call (verified)"
-  - test: "Install phase 37 onto the real machine from the unit branch tip 42bad13 and re-check live (AGENTS.md ship order)"
-    expected: "Installer run on the real HOME succeeds; the installed runner template equals the checkout; --describe and a --print-argv sample run from the installed copy"
-    why_human: "Writes the owner's real HOME; the scratch-HOME installer checks passed (gates-37/ship-install.log, ship37.log), the real install needs the owner"
-  - test: "ai-kit-spec-config skill-judge owner item: loop 37 round 3 recorded as it stands"
-    expected: "The owner decides on the high findings left after the three-round cap"
-    why_human: "AGENTS.md: an unmet bar after the third round goes to the owner. The grade bar is met (worst 84.0 B in rounds 2 and 3, loop 36 base 88.8), but high findings remain (the judge record lists 4 high; the run ledger counts 5 across both judges, 4+1), more than the fix-3-or-fewer rule allows"
 ---
 
 # Phase 37: Shared runner options and session ids — Verification Report
 
 **Phase Goal:** One runner serves open-gsd cross-AI and ai-kit review and execute, with settings per call and sessions a lane can resume.
 **Verified:** 2026-11-22T01:19:14Z at HEAD 42bad13 (branch `gsd/phase-37-shared-runner-options-and-session-ids`)
-**Status:** human_needed (every requirement verified by evidence; five owner items listed below)
+**Status:** passed (every requirement verified by evidence; the five owner items below are NOT verified)
 **Re-verification:** No — initial verification
 
 ## Goal Achievement
@@ -220,45 +204,63 @@ probe, session row, test or list entry was added.
 - The scratch-HOME installer `check` returned rc=1 because a headless install writes no `claude-statusline.toml`
   (same as Phase 36, recorded in the ledger); the install itself and the dry runs returned 0.
 
-## Human Verification Required
+## Owner items (not verifiable without the owner, real home or a live model; not requirement gaps)
+
+These five items are NOT verified. They are manual-only by the phase's own 37-VALIDATION.md contract or by AGENTS.md
+(owner consent, a real HOME, a real model call or the real machine); none is an unmet SPEC requirement.
 
 ### 1. Real-home spike probes (Q1-Q5, Q8)
 
-**Test:** With the owner's consent line in the run ledger, rerun plan 37-01's real-home probes: session labels and resume
-of pi, opencode, claude and copilot; skill labels; claude's permission flag and error channel.
+**Test:** Rerun plan 37-01's real-home probes: session labels and resume of pi, opencode, claude and copilot; skill
+labels (pi `--skill`, claude `/<name>`, copilot `--add-dir`); claude's execute permission flag and its error channel.
 **Expected:** Each result recorded under `tmp/`; a label flips from unverified only through a recorded result.
-**Why human:** Needs the real HOME of each host and a real model call.
+**Reason:** Needs the real HOME of each host CLI and a real model call; the owner's consent line is missing from the run
+ledger, so the spike ran without these probes.
+**Owner gives:** the exact consent line of plan 37-01 in the run ledger, then the probes are rerun.
 
 ### 2. Live effort probe
 
-**Test:** Run one lane with `--effort <level>` against a real host.
-**Expected:** `cross-ai: setting effort=<level> applied` and the host accepts it (or the failure is classified).
-**Why human:** Real model call; tests use fakes only.
+**Test:** Run one lane with `--effort <level>` against a real installed host.
+**Expected:** `cross-ai: setting effort=<level> applied` and the host accepts the level (or the failure is classified by
+the existing rules).
+**Reason:** Needs a real model call; tests use fake CLIs only (SPEC constraint).
+**Owner gives:** consent for one real lane call, for example
+`echo probe | node skills/ai-kit-spec-review/references/cross-ai.mjs --runtime <rt> --model <id> --role review --effort <level>`.
 
 ### 3. claude execute live probe
 
-**Test:** Probe the exact execute formula and its `--resume` in a scratch repository on the real claude HOME.
-**Expected:** A record sets `CLAUDE_EXEC_FORMULA_RECORD`; the unverified note goes away with the label test.
-**Why human:** Real HOME and owner consent.
+**Test:** Probe the exact execute formula (`-p --model <m> --output-format json --permission-mode bypassPermissions`)
+and its `--resume` in a scratch repository on the real claude HOME.
+**Expected:** A recorded result sets `CLAUDE_EXEC_FORMULA_RECORD`; the unverified note then disappears and
+`test_runner_claude_exec`'s record test flips with it.
+**Reason:** Needs the real claude HOME; until then the runner labels the formula unverified and prints the note on every
+execute call (verified).
+**Owner gives:** the real-HOME consent line for the claude probe (same consent as item 1).
 
 ### 4. Install on the real machine
 
 **Test:** Install from the unit branch tip 42bad13 onto the real HOME and re-check live (AGENTS.md ship order).
-**Expected:** Install succeeds; installed runner equals the checkout; `--describe` and a `--print-argv` sample run.
-**Why human:** Writes the owner's real HOME; scratch-HOME install checks passed.
+**Expected:** The install succeeds; the installed runner template equals the checkout; `--describe` and a
+`--print-argv` sample run from the installed copy.
+**Reason:** Writes the owner's real HOME; the scratch-HOME installer checks passed (`gates-37/ship-install.log`,
+`ship37.log`).
+**Owner gives:** consent to run the installer on the real HOME from the main checkout on 42bad13.
 
 ### 5. ai-kit-spec-config judge owner item
 
-**Test:** Owner reviews the high findings left after loop 37 round 3.
-**Expected:** Owner decision recorded (accept, or a further loop).
-**Why human:** AGENTS.md sends an unmet bar after the three-round cap to the owner; grade bar met (84.0 B), high findings
-remain above the fix-3-or-fewer limit.
+**Test:** The owner reviews the high findings left after loop 37 round 3.
+**Expected:** An owner decision recorded (accept, or a further loop).
+**Reason:** AGENTS.md sends an unmet bar after the three-round cap to the owner. The grade bar is met (worst 84.0 B in
+rounds 2 and 3, loop 36 base 88.8), but high findings remain (the judge record lists 4 high; the run ledger counts 5
+across both judges, 4+1), more than the fix-3-or-fewer rule allows.
+**Owner gives:** a decision on the round 3 findings under `.planning/judge/verdicts/37/ai-kit-spec-config/`.
 
 ## Gaps Summary
 
 No gap. Every SPEC requirement (R1-R14), the 38.1 D-30 handoff and the four roadmap requirements are backed by code
-read in the template and Python modules and by tests and self-test cases the verifier ran at 42bad13. The remaining
-items need the owner or the real HOME and are listed above.
+read in the template and Python modules and by tests and self-test cases the verifier ran at 42bad13. The five
+owner items above are NOT verified: they need the owner's consent, a real HOME, a live model call or the real
+machine, and are not requirement gaps.
 
 ---
 

@@ -46,3 +46,10 @@ Close each item below when the named module is next changed, with a test for eac
 - AGENTS.md push timing says no e2e module is over the commit budget; the refreshed table records
   `tests.test_ai_kit_gsd_curated_config_matrix` at 252 s, so it is deferred to push. Re-measure the push worst case and
   update that paragraph.
+- `--describe` labels claude's execute formula `verified` (its flags are in the recorded help) while the runner's own
+  `execLabel` for that formula is `unverified`, and `--describe` does not expose `execLabel`; a reader of the recorded
+  fact alone (routing, Phase 39's capabilities line) sees only `verified`. Expose the execute label in `--describe` and
+  pin it with the `--describe` golden test.
+- `routing.py` still returns `unknown_runtime` for a non-string runtime value (malformed data), so the roadmap's literal
+  "unknown_runtime gone from routing" is not met, although every string runtime outside the table is served. Route a
+  malformed runtime value with a named malformed-entry reason, or amend the roadmap wording, with a routing test.
