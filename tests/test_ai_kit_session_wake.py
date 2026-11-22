@@ -1262,6 +1262,18 @@ class TestPermissionMode(_Scratch):
             stderr=subprocess.DEVNULL,
         )
         self.addCleanup(self._kill, proc)
+        # Popen can return while the kernel is still setting up the new image, and the command
+        # line then reads empty for a moment (under load the arm saw it and recorded mode
+        # "unknown"): wait for it, bounded.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and proc.poll() is None:
+            try:
+                with open(f"/proc/{proc.pid}/cmdline", "rb") as handle:
+                    if handle.read():
+                        break
+            except OSError:
+                break  # no readable /proc: the arm itself then reports an unknown mode
+            time.sleep(0.02)
         return proc
 
     def _arm(self, sid, host_pid, args=()):

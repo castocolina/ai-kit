@@ -59,6 +59,8 @@ from tests.test_curated_config_skills import add_plugin, add_skill
 # when checked once on 2026-10-17; tests.test_ai_kit_gsd_curated_config_matrix re-checks only the
 # installed tables' key parity. 1.20.0 was checked on 2026-11-06 (quick task 261106-n8k): both
 # tables value-equal to the 1.16.0 fixture (35 agents), this module plus the matrix 0 skipped.
+# 1.22.0 (2026-11-22) resolves a Claude agent under `omit` to its tier alias, not an empty model;
+# the matrix's control 1 and `TestP2ApplyRemovesOmit` follow it.
 # Rule (owner, 2026-11-06): any release at or above the oldest verified line runs, so a gsd-core
 # upgrade runs the guard and a real incompatibility fails it instead of skipping it. An older or
 # unparsable version still skips with a named reason.

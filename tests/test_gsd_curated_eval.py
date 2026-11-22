@@ -78,6 +78,38 @@ def _ctx(**kwargs) -> ev._MatrixCtx:
     return ev._MatrixCtx(**fields)
 
 
+def _fake_claude_ctx(plan: dict, omit_blanks: bool) -> ev._MatrixCtx:
+    """A Claude matrix context over a P2-poisoned flat config: apply replays the plan file's
+    set/unset entries, resolve-model answers an override, else a blank under `omit` when
+    `omit_blanks` (gsd-core before 1.22.0), else the agent's tier alias."""
+    configs: dict[str, dict] = {}
+
+    def bundle_fn(scratch, **_kw):
+        path = os.path.join(scratch, "plan.json")
+        pathlib.Path(path).write_text(json.dumps(plan), encoding="utf-8")
+        return {"project": os.path.join(scratch, "project"), "plan_path": path,
+                "inv_path": os.path.join(scratch, "inv.json"), "resolve_env": {}}
+
+    def apply_fn(plan_path, _inv, project, *_rest):
+        config = dict(ev.POISON_DEFAULTS)
+        for entry in json.loads(pathlib.Path(plan_path).read_text(encoding="utf-8"))["entries"]:
+            if entry["op"] == "unset":
+                config.pop(entry["key"], None)
+            else:
+                config[entry["key"]] = entry["value"]
+        configs[project] = config
+        return 0, {"applied": True}, "", ""
+
+    def run_fn(cmd, **_kw):
+        agent, config = cmd[3], configs[cmd[5]]
+        tier = _tables()["profiles"][agent][plan["profile"]]
+        blank = omit_blanks and config.get("resolve_model_ids") == "omit"
+        model = config.get(f"model_overrides.{agent}") or ("" if blank else tier)
+        return _completed({"model": model, "tier": tier})
+
+    return _ctx(bundle_fn=bundle_fn, apply_fn=apply_fn, run_fn=run_fn)
+
+
 def _run_returning(payload):
     """A `run_fn` seam whose stdout is exactly `payload`."""
 
@@ -1125,65 +1157,55 @@ class TestMatrixShape(unittest.TestCase):
         self.assertEqual(caught.exception.exit_code, 3)
         self.assertIn("--installer-dir", caught.exception.reason)
 
-    def test_unoverridden_lists_only_agents_without_an_override(self) -> None:
-        plan = _plan([_set("model_overrides.gsd-planner", "moon"), _unset("resolve_model_ids")])
-        self.assertEqual(ev._unoverridden(["gsd-planner", "gsd-executor"], plan), ["gsd-executor"])
-
-    def test_write_control_plan_drops_only_the_unset_entry(self) -> None:
-        scratch = tempfile.mkdtemp(prefix="xai-control-")
-        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
-        plan_path = os.path.join(scratch, "plan.json")
-        bundle = {"plan_path": plan_path}
-        ev._write_control_plan(
-            bundle,
-            _plan(
-                [
-                    _unset("resolve_model_ids"),
-                    _set("models.planning", "mars"),
-                ]
-            ),
-        )
-        self.assertTrue(bundle["plan_path"].endswith("plan-control1.json"))
-        written = json.loads(pathlib.Path(bundle["plan_path"]).read_text(encoding="utf-8"))
-        self.assertEqual([e["key"] for e in written["entries"]], ["models.planning"])
-        self.assertEqual(written["profile"], "adaptive")
-
-    def test_write_control_plan_removes_only_non_claude_model_overrides(self) -> None:
+    def test_write_control_plan_removes_only_model_overrides(self) -> None:
         scratch = tempfile.mkdtemp(prefix="xai-control-")
         self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
         bundle = {"plan_path": os.path.join(scratch, "plan.json")}
         plan = _plan(
             [
                 _set("model_overrides.gsd-planner", "x"),
+                _unset("resolve_model_ids"),
                 _set("model_profile_overrides.codex.opus", "native", "keep"),
                 _set("models.planning", "sonnet"),
             ]
         )
-        ev._write_control_plan(bundle, plan, "codex")
+        ev._write_control_plan(bundle, plan)
+        self.assertTrue(bundle["plan_path"].endswith("plan-control1.json"))
         written = json.loads(pathlib.Path(bundle["plan_path"]).read_text(encoding="utf-8"))
         self.assertEqual(
             [e["key"] for e in written["entries"]],
-            ["model_profile_overrides.codex.opus", "models.planning"],
+            ["resolve_model_ids", "model_profile_overrides.codex.opus", "models.planning"],
         )
+        self.assertEqual(written["profile"], "adaptive")
 
-    def test_write_control_plan_requires_non_claude_override(self) -> None:
+    def test_write_control_plan_requires_an_override(self) -> None:
+        """Non-vacuity: a plan without a `model_overrides` entry cannot drive Control 1."""
         scratch = tempfile.mkdtemp(prefix="xai-control-")
         self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
         with self.assertRaisesRegex(ev._refusal, "no model_overrides entry to remove"):
             ev._write_control_plan(
-                {"plan_path": os.path.join(scratch, "plan.json")}, _plan(), "opencode"
+                {"plan_path": os.path.join(scratch, "plan.json")},
+                _plan([_unset("resolve_model_ids"), _set("models.planning", "mars")]),
             )
 
-    def test_write_control_plan_requires_the_entry(self) -> None:
-        """Non-vacuity: a plan without the unset cannot drive Control 1."""
-        scratch = tempfile.mkdtemp(prefix="xai-control-")
-        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
-        with self.assertRaises(ev._refusal) as caught:
-            ev._write_control_plan(
-                {"plan_path": os.path.join(scratch, "plan.json")},
-                _plan([_set("models.planning", "mars")]),
-            )
-        self.assertIn("no resolve_model_ids entry", str(caught.exception))
+    def test_control_one_discriminates_whatever_omit_does_on_claude(self) -> None:
+        """Regression (gsd-core 1.22.0, #3703): a Claude agent under `omit` resolved to an empty
+        model before 1.22.0 and to its tier alias since. Control 1 must fail exactly the
+        overridden agents under both resolvers; the old copy, which dropped the unset, failed
+        none under the alias resolver."""
+        plan = _plan([_unset("resolve_model_ids"), _set("model_overrides.gsd-planner", "moon")])
+        for omit_blanks in (True, False):
+            with (
+                self.subTest(omit_blanks=omit_blanks),
+                mock.patch.object(ev, "_load_plan", return_value=plan),  # skips schema-2 checks
+            ):
+                control = ev._control_one(
+                    _fake_claude_ctx(plan, omit_blanks), ["gsd-executor", "gsd-planner"], _tables()
+                )
+                self.assertEqual(
+                    control,
+                    {"expected_failures": 1, "observed": 1, "ok": True, "checks": 2},
+                )
 
     def test_resolve_model_parses_stdout_only(self) -> None:
         calls: list[list[str]] = []
@@ -4467,6 +4489,7 @@ class TestMatrixModuleCollection(unittest.TestCase):
             classes,
             [
                 "TestCoreTreeHash",
+                "TestP2ApplyRemovesOmit",
                 "TestPiHookProbe",
                 "TestResolveModelMatrix",
                 "TestResolveModelMatrixCodex",
@@ -4475,7 +4498,7 @@ class TestMatrixModuleCollection(unittest.TestCase):
                 "TestResolveModelMatrixPi",
             ],
         )
-        self.assertEqual(suite.countTestCases(), 43)
+        self.assertEqual(suite.countTestCases(), 44)
 
 
 class TestReviewFixes(unittest.TestCase):
