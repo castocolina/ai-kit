@@ -3877,14 +3877,26 @@ function drainStream(stream, ms) {
   });
 }
 
+function captureMaxBytes(text) {
+  const max = 32 * 1024 * 1024;
+  const s = String(text ?? '');
+  if (!/^\d{1,9}$/.test(s)) return max;
+  const n = Number(s);
+  return n >= 65536 && n <= max ? n : max;
+}
 // A noisy child must not exhaust memory before the status line: keep only the newest bytes per stream.
 const CAPTURE_MAX_BYTES = 32 * 1024 * 1024;
+// Test-only knob (38-19): lowers only the lane captures of runOnce, never a git or listing read.
+const LANE_CAPTURE_MAX_BYTES = captureMaxBytes(process.env.AIKIT_XAI_CAPTURE_MAX_BYTES);
 
 function pushCapped(buf, d, max = CAPTURE_MAX_BYTES) {
   buf.chunks.push(d);
   buf.bytes += d.length;
-  while (buf.bytes > max && buf.chunks.length > 1) {
-    buf.bytes -= buf.chunks.shift().length;
+  while (buf.bytes > max) {
+    const over = buf.bytes - max;
+    const first = buf.chunks[0];
+    if (first.length <= over) { buf.chunks.shift(); buf.bytes -= first.length; }
+    else { buf.chunks[0] = first.subarray(over); buf.bytes -= over; }
     buf.dropped = true;
   }
 }
@@ -3937,7 +3949,7 @@ function runChild(bin, argv, opts = {}) {
       }
       if (current === child) current = null;
       for (const [label, buf] of [['stdout', out], ['stderr', err]]) {
-        if (buf.dropped) log(`cross-ai: child ${label} passed ${CAPTURE_MAX_BYTES} bytes; kept the newest ${buf.bytes}`);
+        if (buf.dropped) log(`cross-ai: child ${label} passed ${opts.captureMax ?? CAPTURE_MAX_BYTES} bytes; kept the newest ${buf.bytes}`);
       }
       resolve({
         code, signal, timedOut, limited, idle, spawnErr,
@@ -4007,12 +4019,12 @@ function runChild(bin, argv, opts = {}) {
     }
     child.stdout.on('data', (d) => {
       if (opts.idleMs > 0) lastByteMs = performance.now();
-      pushCapped(out, d);
+      pushCapped(out, d, opts.captureMax);
       opts.onStdout?.(d);
     });
     child.stderr.on('data', (d) => {
       if (opts.idleMs > 0) lastByteMs = performance.now();
-      pushCapped(err, d);
+      pushCapped(err, d, opts.captureMax);
       opts.onStderr?.(d);
     });
     child.on('error', (e) => { spawnErr = e; finalize('error'); });
@@ -4027,8 +4039,8 @@ function hostAvailable(env, whichFn = which) {
   return env.HERDR_ENV === '1' && Boolean(env.PATH) && Boolean(whichFn(HERDR_BIN, env.PATH));
 }
 
-// D-22 / 0b-6: the only herdr commands the runner runs; Phase 38 adds tab list.
-const HERDR_VERBS = Object.freeze(['tab create', 'pane run', 'tab close']);
+// D-22 / 0b-6 / 38 D-27: the only herdr commands the runner runs; tab list is read by the sweep only.
+const HERDR_VERBS = Object.freeze(['tab create', 'pane run', 'tab close', 'tab list']);
 const HERDR_TIMEOUT_MS = 5000;
 
 // The one herdr spawn site (arch rule): a verb outside HERDR_VERBS throws.
@@ -4039,7 +4051,11 @@ function herdrCall(verb, args, timeoutMs = HERDR_TIMEOUT_MS) {
   if (r.error) detail = r.error.code === 'ETIMEDOUT' ? 'timeout' : `spawn ${r.error.code || r.error.message}`;
   else if (r.signal) detail = `signal ${r.signal}`;
   else if (r.status !== 0) detail = `exit ${r.status}`;
-  return { ok: detail === null, stdout: r.stdout || '', stderr: r.stderr || '', detail };
+  // herdr prints a server error as one JSON line on stderr: {"error":{"code":...}} (live 2026-11-16).
+  // JSON.parse inline: the protocol test extracts herdrCall without other helpers.
+  let code = null;
+  if (detail !== null) { try { const parsed = JSON.parse(String(r.stderr || '').trim()); if (typeof parsed?.error?.code === 'string') code = parsed.error.code; } catch { /* not a herdr JSON error */ } }
+  return { ok: detail === null, stdout: r.stdout || '', stderr: r.stderr || '', detail, code };
 }
 
 // SPEC R12 precision: one integer 0-255 or a signal name; anything else is a crash, never coerced.
@@ -4221,7 +4237,8 @@ const HOST_PID_GRACE_MS = 5000;
 
 function closeTab(tabId, timeoutMs = HERDR_TIMEOUT_MS) {
   const r = herdrCall('tab close', [tabId], timeoutMs);
-  if (r.ok) { openTabs.delete(tabId); return true; }
+  // 38 D-27: tab_not_found means the tab is already gone (closed by hand or by herdr), not a failure.
+  if (r.ok || r.code === 'tab_not_found') { openTabs.delete(tabId); return true; }
   log(`cross-ai: host: tab close ${tabId} failed (${r.detail})`);
   return false;
 }
@@ -4312,9 +4329,12 @@ async function hostedChild(bin, argv, opts) {
   } catch (e) { return startupEnd({ hostFailed: `startup failed (${e.code || e.message})`, rerun: !typedSent }); }
   return new Promise((resolve) => {
     let settled = false, timer = null, poller = null, timedOut = false, limited = false;
+    let idle = false, idleTimer = null, lastByteMs = 0;
     const out = { chunks: [], bytes: 0, dropped: false }, err = { chunks: [], bytes: 0, dropped: false };
     const pos = { out: 0, err: 0 };
-    const fds = { out: fs.openSync(made.files.out, 'r'), err: fs.openSync(made.files.err, 'r') };
+    const cutFailed = { out: false, err: false };
+    const cap = opts.captureMax ?? CAPTURE_MAX_BYTES;
+    const fds = { out: fs.openSync(made.files.out, 'r+'), err: fs.openSync(made.files.err, 'r+') };
     let launcherPid = null, launcherStart = null, launcherSid = null, verified = false, pseudo = null;
     const pidDeadline = Date.now() + HOST_PID_GRACE_MS;
     const readNew = (key) => {
@@ -4322,9 +4342,17 @@ async function hostedChild(bin, argv, opts) {
       let n;
       while ((n = fs.readSync(fds[key], buf, 0, buf.length, pos[key])) > 0) {
         pos[key] += n;
+        if (opts.idleMs > 0) lastByteMs = performance.now();
         const d = Buffer.from(buf.subarray(0, n));
-        pushCapped(key === 'out' ? out : err, d);
+        pushCapped(key === 'out' ? out : err, d, cap);
         if (key === 'out') opts.onStdout?.(d); else opts.onStderr?.(d);
+        // Cut the same inode after twice the cap and resume at offset zero next poll.
+        if (pos[key] > 2 * cap) {
+          try { fs.ftruncateSync(fds[key], 0); } catch (e) {
+            if (!cutFailed[key]) { cutFailed[key] = true; log(`cross-ai: host: could not cut ${key} (${e.code || e.message})`); }
+          }
+          pos[key] = 0; break;
+        }
       }
     };
     // One path for the poll and for a finalize that runs before the first poll saw the pid: the
@@ -4351,7 +4379,7 @@ async function hostedChild(bin, argv, opts) {
     const finalize = async (reason, rc = null) => {
       if (settled) return;
       settled = true;
-      clearInterval(poller); clearTimeout(timer);
+      clearInterval(poller); clearTimeout(timer); clearTimeout(idleTimer);
       if (currentFinalize === finalize) currentFinalize = null;
       if (reason === 'limit') limited = true;
       // A signal can arrive after the launcher starts but before the first poll.
@@ -4369,7 +4397,7 @@ async function hostedChild(bin, argv, opts) {
       if (launcherPid !== null) noteChildPgid('exit', launcherPid);
       if (current === pseudo) current = null;
       for (const [label, buf] of [['stdout', out], ['stderr', err]]) {
-        if (buf.dropped) log(`cross-ai: child ${label} passed ${CAPTURE_MAX_BYTES} bytes; kept the newest ${buf.bytes}`);
+        if (buf.dropped) log(`cross-ai: child ${label} passed ${cap} bytes; kept the newest ${buf.bytes}`);
       }
       let code = null, signal = null;
       if (rc?.bad) log(redactSecrets(`cross-ai: host: rc file is not an exit code: ${rc.bad}`));
@@ -4378,7 +4406,7 @@ async function hostedChild(bin, argv, opts) {
       else if (reason === 'dead') signal = 'SIGKILL';
       else if (reason === 'nopid') log(`cross-ai: host: the launcher wrote no pid within ${HOST_PID_GRACE_MS} ms; not rerun`);
       else if (launcherPid !== null) signal = 'SIGTERM';
-      resolve({ code, signal, timedOut, limited, spawnErr: null, stdout: Buffer.concat(out.chunks).toString('utf8'), stderr: Buffer.concat(err.chunks).toString('utf8') });
+      resolve({ code, signal, timedOut, limited, idle, spawnErr: null, stdout: Buffer.concat(out.chunks).toString('utf8'), stderr: Buffer.concat(err.chunks).toString('utf8') });
     };
     const tick = () => {
       if (settled) return;
@@ -4394,6 +4422,26 @@ async function hostedChild(bin, argv, opts) {
     currentFinalize = finalize;
     timer = setTimeout(() => { timedOut = true; finalize('timeout'); }, budgetMs(capMs, limit));
     poller = setInterval(tick, HOST_POLL_MS);
+    // 38 D-28: the hosted idle clock counts bytes read from the output files.
+    if (opts.idleMs > 0) {
+      lastByteMs = performance.now();
+      const idleQuiet = () => performance.now() - lastByteMs;
+      const idleCheck = () => {
+        idleTimer = null;
+        if (settled || aborting) return;
+        if (idleQuiet() < opts.idleMs) { idleTimer = setTimeout(idleCheck, opts.idleMs - idleQuiet()); return; }
+        setImmediate(() => {
+          if (settled || aborting || idleTimer) return;
+          tick();
+          if (settled) return;
+          if (idleQuiet() < opts.idleMs) { idleTimer = setTimeout(idleCheck, opts.idleMs - idleQuiet()); return; }
+          if (opts.onIdle && opts.onIdle() === false) { idleTimer = setTimeout(idleCheck, opts.idleMs); return; }
+          idle = true; timedOut = true; finalize('idle');
+        });
+      };
+      idleTimer = setTimeout(idleCheck, opts.idleMs);
+      opts.idleResetter?.({ reset: () => { if (!settled) lastByteMs = performance.now(); }, recheck: () => { if (settled) return; if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } idleCheck(); } });
+    }
   });
 }
 function hostFailedNote(host, reason, rerun) {
@@ -4736,6 +4784,7 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
   const childOpts = {
     cwd, env, input, capMs: budgetMs(opts.capMs ?? Number.POSITIVE_INFINITY, childLimit),
     limit: childLimit,
+    captureMax: LANE_CAPTURE_MAX_BYTES,
     onStdout: (d) => {
       activeSinceTick = true;
       poll.allowIdle = false;
@@ -6519,6 +6568,7 @@ export {
   baselinePath,
   baselineVerdict,
   capCodePoints,
+  captureMaxBytes,
   checkGroup,
   checkoutRoot,
   clampAttemptTimeout,

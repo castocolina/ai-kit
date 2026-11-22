@@ -54,6 +54,7 @@ import {
   baselinePath,
   baselineVerdict,
   capCodePoints,
+  captureMaxBytes,
   checkGroup,
   checkoutRoot,
   clampAttemptTimeout,
@@ -1277,13 +1278,49 @@ const model = argOf('--model');
 const fakeMode = model.startsWith('fake/') ? model.slice(5).replace(/:[a-z]+$/, '') : '';
 const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('gc', pid); };
 const STICKY_FAKE = new Set([
-  'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'lockhold', 'big', 'sentinelsplit',
+  'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'lockhold', 'big', 'sentinelsplit', 'hdrip', 'hcommit', 'hflood',
   'limit-mid', 'limit-partial', 'limit-flood', 'limit-partial-flood', 'auth-then-noise',
   'transient-hang', 'bare-429-hang', 'retry-notice', 'retry-notice-429', 'slowquota',
   'capclamp', 'reason-code-hang', 'slow-lines', 'router-stop-hang', 'ticker', 'quiet-commit', 'quiet-edit', 'quiet-idle', 'chatty-nochange', 'quiet-gitfail', 'quiet-githang', 'review-slow', 'quiet-headonly', 'change-then-stall', 'githang-silent',
 ]);
 let stdinBuf = '';
 const FAKE_MODES = {
+  hflood: () => {
+    const steps = [65536, 65536, 1, 65536], sizes = [];
+    let i = 0;
+    const size = () => { const st = fs.fstatSync(1); return st.isFile() ? String(st.size) : 'pipe'; };
+    const next = () => {
+      if (i === steps.length) {
+        fs.appendFileSync((process.env.HOME || '.') + '/hflood.sizes', (sizes[0] === 'pipe' ? 'pipe' : 'file ' + sizes.join(',')) + '\n');
+        fs.appendFileSync('a.txt', 'hf\n'); process.stdout.write('\n# Summary\nok', () => process.exit(0)); return;
+      }
+      const data = Buffer.alloc(steps[i++], 'f'); let offset = 0;
+      const write = () => {
+        try { offset += fs.writeSync(1, data, offset, data.length - offset); } catch (e) { if (e.code !== 'EAGAIN') throw e; }
+        if (offset < data.length) { setTimeout(write, 10); return; }
+        let waited = 0;
+        const sample = () => {
+          const s = size();
+          if (i === 3 && s !== 'pipe' && s !== '0' && waited < 5000) { waited += 50; setTimeout(sample, 50); return; }
+          sizes.push(s); next();
+        };
+        setTimeout(sample, i === 3 && size() !== 'pipe' ? 50 : 700);
+      };
+      write();
+    };
+    next();
+  },
+  hdrip: () => {
+    let n = 0; const t = setInterval(() => { process.stdout.write('.\n'); if (++n === 9) { clearInterval(t); fs.appendFileSync('a.txt', 'hd\n'); process.stdout.write('# Summary\nok', () => process.exit(0)); } }, 300);
+  },
+  hcommit: () => {
+    let n = 0; const t = setInterval(() => {
+      fs.appendFileSync('c.txt', 'c' + n + '\n');
+      if (spawnSync('git', ['add', 'c.txt']).status !== 0) process.exit(5);
+      if (spawnSync('git', ['-c', 'user.name=fake', '-c', 'user.email=fake@example.invalid', 'commit', '-q', '-m', 'step']).status !== 0) process.exit(6);
+      if (++n === 6) { clearInterval(t); process.stdout.write('# Summary\nok', () => process.exit(0)); }
+    }, 500);
+  },
   // Hosted only: kills the launcher shell so it never writes rc; under a node parent it exits 3.
   killparent: () => {
     let comm = '';
@@ -1990,6 +2027,7 @@ const home = process.env.HOME || '.';
 const hlog = (line) => fs.appendFileSync(path.join(home, 'herdr.log'), line + '\n');
 const args = process.argv.slice(2);
 hlog('argv ' + JSON.stringify(args));
+if (process.env.FAKE_HERDR_DOWN === '1') { console.error(JSON.stringify({ error: { code: 'server_not_running', message: 'herdr server is not running' }, id: 'cli:' + args.slice(0, 2).join(':') })); process.exit(1); }
 const lock = path.join(home, 'herdr-state.lock');
 let held = false;
 for (let i = 0; i < 400; i++) {
@@ -1999,7 +2037,7 @@ const unlock = () => { if (held) { try { fs.rmdirSync(lock); } catch { /* not he
 process.on('exit', unlock);
 const fail = process.env.FAKE_HERDR_FAIL || '';
 const stateFile = path.join(home, 'herdr-state.json');
-let state = { next: 1, tabs: { t0: { label: 'aikit:review:pi:000000000000', pane: 'p0', cwd: home, pgid: null, dir: null, closed: false } } };
+let state = { next: 1, tabs: { t0: { label: 'aikit:review:pi:000000000000', pane: 'p0', cwd: home, pgid: null, dir: null, closed: false }, tx: { label: 'aikit:execute:pi:ffffffffffff', pane: 'px', cwd: home, pgid: null, dir: null, closed: false } } };
 try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { /* new state */ }
 const save = () => fs.writeFileSync(stateFile, JSON.stringify(state));
 const mode = (p) => { try { return (fs.statSync(p).mode & 0o777).toString(8); } catch { return '-'; } };
@@ -2031,9 +2069,14 @@ if (verb === 'tab create') {
   const tab = state.tabs[args[2]];
   hlog('close ' + args[2] + ' dir=' + (tab && tab.dir ? (fs.existsSync(tab.dir) ? 'present' : 'gone') : '-') + (tab && tab.closed ? ' already-closed' : ''));
   if (fail === 'close') { console.error('{"error":"fake close failure"}'); process.exit(1); }
+  if (!tab || tab.closed) { console.error(JSON.stringify({ error: { code: 'tab_not_found', message: 'tab ' + args[2] + ' not found' }, id: 'cli:tab:close' })); process.exit(1); }
   if (tab && !tab.closed && tab.pgid) { try { process.kill(-tab.pgid, 'SIGHUP'); } catch { /* gone */ } }
   if (tab) tab.closed = true;
   save(); console.log('{"result":{"type":"ok"}}');
+} else if (verb === 'tab list') {
+  if (fail === 'list-hang') { unlock(); setTimeout(() => process.exit(0), 30000); }
+  else if (fail === 'list-fail') { console.error('{"error":"fake list failure"}'); process.exit(1); }
+  else console.log(JSON.stringify({ result: { tabs: Object.entries(state.tabs).filter(([, t]) => !t.closed).map(([id, t]) => ({ tab_id: id, workspace_id: 'w1', label: t.label })) } }));
 } else { hlog('unknown-verb ' + verb); process.exit(2); }
 `);
 }
@@ -2544,7 +2587,7 @@ async function blackBoxSelfTest(listOnly = false) {
       const calls = lines.filter((s) => s.startsWith('argv ')).map((s) => JSON.parse(s.slice(5)));
       const verbs = calls.map((a) => a.slice(0, 2).join(' '));
       if (verbs.some((v) => !HERDR_VERBS.includes(v))) return `herdr verbs ${verbs}`;
-      if (calls.some((a) => a.includes('t0') || a.includes('p0'))) return 'the foreign tab t0 was touched';
+      if (calls.some((a) => ['t0', 'p0', 'tx', 'px'].some((id) => a.includes(id)))) return 'a foreign tab (t0 or tx) was touched';
       if (verbs.filter((v) => v === 'tab create').length !== tabs) return `tab create count ${verbs.filter((v) => v === 'tab create').length}`;
       if (text.includes(c.env.AIKIT_XAI_SENTINEL)) return 'a key reached herdr';
       for (let i = 1; i <= tabs; i++) for (const line of [`record tab=t${i} pane=p${i}`, 'modes dir=700 env=600 prompt=600 run=600 launch=600', `close t${i} dir=present${closeTail}`]) if (!lines.includes(line)) return `herdr log lacks: ${line}`;
@@ -2563,14 +2606,16 @@ async function blackBoxSelfTest(listOnly = false) {
       if (statusFields(both.first) !== statusFields(both.again)) return `status fields differ: ${statusFields(both.first)} | ${statusFields(both.again)}`;
       if (both.first.stderr.includes(c.env.AIKIT_XAI_SENTINEL) || both.again.stderr.includes(c.env.AIKIT_XAI_SENTINEL)) return 'a key reached stderr';
       for (const name of extra.dead || []) for (const pid of recordedPids(c.pidFile)[name] || []) if (pidLingers(pid)) return `${name} ${pid} still alive`;
+      for (const s of extra.present || []) for (const r of [both.first, both.again]) if (!r.stderr.includes(s)) return `missing in stderr: ${s}`;
+      for (const s of extra.absent || []) for (const r of [both.first, both.again]) if (r.stderr.includes(s)) return `unexpected in stderr: ${s}`;
       if (!hostedUsable(c)) return hostFailedOnly(both.first, c);
       if (!both.first.stderr.includes('cross-ai: setting host=herdr applied')) return 'hosted run lacks host=herdr';
       if (!lines(both.first, 'cross-ai: host herdr tab=t1 label=aikit:execute:pi:').length) return 'no host line';
-      return hostLogProblem(c, 1, extra.closeTail || '');
+      return hostLogProblem(c, 1, extra.closeTail || '') || (extra.after ? extra.after(c) : null);
     };
     const hostPair = (name, model, exit, status, extra = {}) => {
       const base = ['--runtime', 'pi', '--model', model, '--session-id', 'placeholder-sid-' + name, ...(extra.args || [])];
-      return { name, kind: 'runtime', args: [...base, '--host', 'auto'], env: { HERDR_ENV: '1', PATH: hostedPath, ...(extra.env || {}) }, exit, status, second: { args: [...base, '--host', 'none'], exit, status }, check: (both, c) => hostPairCheck(both, c, extra) };
+      return { name, kind: 'runtime', args: [...base, '--host', 'auto'], env: { HERDR_ENV: '1', PATH: hostedPath, ...(extra.env || {}) }, exit, status, second: { args: [...base, '--host', 'none'], exit, status }, check: (both, c) => statusLineOk(both.first.stderr || '', status) || hostPairCheck(both, c, extra) };
     };
     const keptRecords = (c) => {
       const root = path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host');
@@ -2589,7 +2634,7 @@ async function blackBoxSelfTest(listOnly = false) {
     const hostSafety = (calls) => {
       const verbs = calls.map((a) => a.slice(0, 2).join(' '));
       if (verbs.some((v) => !HERDR_VERBS.includes(v))) return `herdr verbs ${verbs}`;
-      if (calls.some((a) => a.includes('t0') || a.includes('p0'))) return 'the foreign tab t0 was touched';
+      if (calls.some((a) => ['t0', 'p0', 'tx', 'px'].some((id) => a.includes(id)))) return 'a foreign tab (t0 or tx) was touched';
       return null;
     };
     // One task digest for every baseline case: the caller part holds one objective block.
@@ -9508,6 +9553,11 @@ async function blackBoxSelfTest(listOnly = false) {
       hostPair('host-auth', 'fake/auth', 69, /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/),
       hostPair('host-empty', 'fake/empty', 1, /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/),
       hostPair('host-timeout', 'fake/hang', 124, /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 cli_rc=.* elapsed=\d+s out=\d+ tree=.* action=stop$/, { args: ['--timeout', '2'], dead: ['gc'] }),
+      { name: 'pure-capture-max-bytes', kind: 'logic', pure: () => { for (const [input, expected] of [[undefined, 33554432], ['', 33554432], ['65535', 33554432], ['33554433', 33554432], ['1e5', 33554432], [' 70000', 33554432], ['-70000', 33554432], ['65536', 65536], ['70000', 70000], ['33554432', 33554432]]) { const got = captureMaxBytes(input); if (got !== expected) return `captureMaxBytes(${input}) = ${got}`; } return null; } },
+      hostPair('host-cap', 'fake/hflood', 0, /^AIKIT-XAI status=ok cli=pi model=fake\/hflood exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/, { env: { AIKIT_XAI_CAPTURE_MAX_BYTES: '65536' }, present: ['cross-ai: child stdout passed 65536 bytes; kept the newest 65536'], after: (c) => { const text = readOr(path.join(c.home, 'hflood.sizes'), ''); return text === 'file 65536,131072,0,65536\npipe\n' ? null : `hflood sizes ${JSON.stringify(text)}`; } }),
+      hostPair('host-idle-silent', 'fake/hang', 124, /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 cli_rc=.* elapsed=\d+s out=\d+ tree=.* action=stop$/, { args: ['--timeout', '20', '--idle-timeout', '2'], dead: ['gc'], present: ['rule=idle-watchdog'] }),
+      hostPair('host-idle-busy', 'fake/hdrip', 0, /^AIKIT-XAI status=ok cli=pi model=fake\/hdrip exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/, { args: ['--idle-timeout', '2'], absent: ['rule=idle-watchdog'] }),
+      hostPair('host-idle-commits', 'fake/hcommit', 0, /^AIKIT-XAI status=ok cli=pi model=fake\/hcommit exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/, { args: ['--idle-timeout', '2'], absent: ['rule=idle-watchdog'], after: (c) => { const n = Number(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: c.repo, encoding: 'utf8' }).stdout.trim()); return n >= 13 ? null : `commits ${n}`; } }),
       hostPair('host-group-left', 'fake/gcleft', 0, /^AIKIT-XAI status=ok cli=pi model=fake\/gcleft exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/, { dead: ['gc'] }),
       {
         name: 'host-env-none', kind: 'logic',
@@ -10421,6 +10471,25 @@ async function blackBoxSelfTest(listOnly = false) {
       planCase('plan-merge-clean', { merge: { files: ['one.txt'], subject: 'feat(38-18): t1' }, commits: [all3[1], all3[2]], status: 'ok', coverage: '3/3', codes: '-' }),
       planCase('plan-no-git-admission', { setup: (c) => { fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true }); c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo); return null; }, commits: [], answer: '# Summary\nThe last task is not implemented.\n', status: 'partial', coverage: 'n/a', codes: 'admits_skipped', lines: ['cross-ai: finding reason=admits_skipped detail=phrase "not implemented"'] }),
       { name: 'plan-out-of-table', kind: 'logic', setup: (c) => { fs.writeFileSync(path.join(c.repo, '.gitignore'), 'ign/\n'); fs.mkdirSync(path.join(c.repo, 'ign')); fs.writeFileSync(path.join(c.repo, 'ign', 'argv.json'), JSON.stringify(['placeholder-cli-1', '--model', '{model}', '--session={session}'])); for (const args of [['add', '.gitignore'], ['commit', '-q', '-m', 'ignore']]) { const g = spawnSync('git', args, { cwd: c.repo, env: c.env, encoding: 'utf8' }); if (g.status !== 0) return `setup git ${args.join(' ')}: ${g.stderr}`; } return null; }, stdin: planPrompt([['t1', 'one.txt'], ['t2', 'two.txt'], ['t3', 'three.txt']]), args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'ign/argv.json', '--model', 'fake-edit-then-ok', '--session-id', 'placeholder-sid-9'], exit: 1, status: /^AIKIT-XAI status=partial cli=placeholder-cli-1 model=fake-edit-then-ok exit=1 .* action=stop$/, check: (r) => (r.stderr || '').split('\n').includes('cross-ai: finding reason=no_commit detail=no commit since the baseline for 3 planned tasks') && !r.stdout ? null : 'missing finding or stdout not empty' },
+      { name: 'host-fake-shapes', kind: 'logic', pure: () => {
+        const home = path.join(tmp, 'fake-shapes-home');
+        fs.mkdirSync(home, { recursive: true });
+        const call = (args, extra = {}) => spawnSync(process.execPath, [path.join(herdrDir, HERDR_BIN), ...args], { encoding: 'utf8', env: { PATH: process.env.PATH || '', HOME: home, ...extra } });
+        const parsed = (r) => { try { return JSON.parse(r.stderr).error; } catch { return {}; } };
+        const missing = (r, id) => r.status === 1 && r.stdout === '' && parsed(r).code === 'tab_not_found' && parsed(r).message?.includes(id);
+        const first = call(['tab', 'list']);
+        const expected = { result: { tabs: [{ tab_id: 't0', workspace_id: 'w1', label: 'aikit:review:pi:000000000000' }, { tab_id: 'tx', workspace_id: 'w1', label: 'aikit:execute:pi:ffffffffffff' }] } };
+        let list; try { list = JSON.parse(first.stdout); } catch { return 'tab list shape'; }
+        if (first.status !== 0 || JSON.stringify(list) !== JSON.stringify(expected)) return 'tab list shape';
+        if (!missing(call(['tab', 'close', 't9']), 't9')) return 'tab_not_found shape';
+        const down = call(['tab', 'list'], { FAKE_HERDR_DOWN: '1' });
+        if (down.status !== 1 || down.stdout !== '' || parsed(down).code !== 'server_not_running') return 'server_not_running shape';
+        if (call(['tab', 'close', 't0']).status !== 0) return 't0 close failed';
+        const after = call(['tab', 'list']);
+        try { if (after.status !== 0 || JSON.parse(after.stdout).result.tabs.some((t) => t.tab_id === 't0')) return 't0 still listed after close'; } catch { return 't0 still listed after close'; }
+        if (!missing(call(['tab', 'close', 't0']), 't0')) return 'second close not tab_not_found';
+        return null;
+      } },
     ];
 
     const unkinded = cases.filter((c) => c.kind !== 'logic' && c.kind !== 'runtime').map((c) => c.name);

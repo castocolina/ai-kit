@@ -1858,9 +1858,10 @@ def runner_shape_problems(shapes, runner_text):
 
 
 # 37 D-22 / 0b-6: the runner template names no jev client and spawns herdr only through herdrCall,
-# limited to HERDR_VERBS; Phase 38 adds tab list. Full-line and block comments are not code.
+# limited to HERDR_VERBS (38 D-27 added tab list, read by the sweep).
+# Full-line and block comments are not code.
 _JEV_CLIENT_RX = re.compile(r"\bjev|decide\.py|typesafe", re.IGNORECASE)
-HERDR_VERBS_ALLOWED = ("tab create", "pane run", "tab close")
+HERDR_VERBS_ALLOWED = ("tab create", "pane run", "tab close", "tab list")
 _JS_HERDR_VERBS = re.compile(r"^const HERDR_VERBS = Object\.freeze\(\[(.*)\]\);$", re.MULTILINE)
 _HERDR_CALL = re.compile(r"\bherdrCall\(\s*'([^']*)'")
 _HERDR_CALL_ANY = re.compile(r"\bherdrCall\(\s*(?!')")
@@ -2531,7 +2532,7 @@ class TestArchitecture(unittest.TestCase):
         self.assertGreater(len(js_code_lines(text)), 1000)
         self.assertEqual([], runner_jev_hits(text))
 
-    def test_runner_spawns_herdr_only_through_three_verbs(self):
+    def test_runner_spawns_herdr_only_through_listed_verbs(self):
         with open(os.path.join(_REPO_ROOT, SHAPES_RUNNER), encoding="utf-8") as handle:
             self.assertEqual([], runner_herdr_problems(handle.read()))
 
@@ -3581,14 +3582,17 @@ class TestArchNonVacuity(unittest.TestCase):
 
     def test_herdr_rule_flags_each_widening(self):
         good = ("const HERDR_BIN = 'herdr';\n"
-                "const HERDR_VERBS = Object.freeze(['tab create', 'pane run', 'tab close']);\n"
+                "const HERDR_VERBS = Object.freeze(['tab create', 'pane run', "
+                "'tab close', 'tab list']);\n"
                 "function herdrCall(verb, args) { return spawnSync(HERDR_BIN, "
                 "[...verb.split(' '), ...args]); }\n"
                 "herdrCall('tab create', []);\n")
         cases = (
             ("good", good, []),
-            ("verbs", good.replace("'tab close']", "'tab close', 'pane read']"),
-             ["HERDR_VERBS is ['tab create', 'pane run', 'tab close', 'pane read']"]),
+            ("verbs", good.replace("'tab list']", "'tab list', 'pane read']"),
+             ["HERDR_VERBS is ['tab create', 'pane run', 'tab close', 'tab list', 'pane read']"]),
+            ("dropped", good.replace(", 'tab list']", "]"),
+             ["HERDR_VERBS is ['tab create', 'pane run', 'tab close']"]),
             ("call", good + "herdrCall('agent prompt', []);\n", ["5: herdrCall verb agent prompt"]),
             ("literal", good + "spawnSync('herdr', ['pane', 'read']);\n",
              ["5: spawns the herdr literal"]),
