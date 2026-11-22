@@ -219,7 +219,8 @@ class SettingsReportDocs(unittest.TestCase):
         self.assertEqual(self.describe["states"], ["applied", "ignored", "unknown"])
 
     def test_lock_catches_a_swapped_or_extra_row(self):
-        rows = [line for line in self.text.splitlines() if re.match(r"^\| `[a-z_]+` \|", line)]
+        rows = [line for line in _section(self.text, REASONS_HEADING).splitlines()
+                if re.match(r"^\| `[a-z_]+` \|", line)]
         swapped = self.text.replace(rows[0] + "\n" + rows[1], rows[1] + "\n" + rows[0])
         extra = self.text.replace(rows[-1], rows[-1] + "\n| `made_up` | x |")
         for text in (swapped, extra):
