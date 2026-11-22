@@ -172,7 +172,7 @@ Exit codes, and what the caller does with each:
 | 0 | `ok` | read the answer on stdout |
 | 1 | `no_change`, `empty_answer`, `crash`, `contract_violation`, `git_error`, `git_timeout`, `partial` | report the lines; stop (`partial`: section 5) |
 | 2 | `usage`, `no_model`, `empty_stdin` | the call was refused; fix the invocation, do not retry |
-| 69 | `permission_blocked`, `bad_model`, `auth`, `billing`, and every hard-tier stop | owner stop: notice, then stop |
+| 69 | `permission_blocked`, `bad_model`, `bad_request`, `auth`, `billing`, and every hard-tier stop | owner stop: notice, then stop |
 | 75 | `quota`, `transient`, `locked` | with `retry_after_s=`, the hard tier (section 6); a bare 75, every `locked` included, is an owner stop: report it, or start the run after the other run's own exit |
 | 124 | `timeout` | the deadline or the idle watchdog won; report it |
 | 127 | `not_installed` | the runtime's binary is missing |

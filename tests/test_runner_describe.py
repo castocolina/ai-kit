@@ -201,14 +201,23 @@ class TestRunnerDescribe(unittest.TestCase):
         assert match is not None
         self.assertEqual(obj["template_version"], int(match.group(1)))
 
-    def test_no_classes_key(self):
-        # 0b-10: 38.1 adds classes; an empty list here would claim there are none
-        self.assertNotIn("classes", json.loads(describe()[1]))
+    def test_classes_key(self):
+        obj = json.loads(describe()[1])
+        self.assertEqual(set(obj["classes"]), {
+            "quota", "billing", "auth", "permission_blocked", "bad_model", "bad_request",
+            "transient", "crash",
+        })
+        self.assertEqual(obj["classes"]["bad_request"], {"exit": 69, "router_quota": False})
+        self.assertIs(obj["classes"]["billing"]["router_quota"], True)
+        self.assertEqual(obj["classes"]["crash"], {"exit": 1, "router_quota": False})
+        for name, entry in obj["classes"].items():
+            self.assertEqual(entry["exit"], obj["statuses"][name])
 
     def test_new_keys_beside_the_existing_ones(self):
         obj = json.loads(describe()[1])
-        self.assertEqual(set(obj), {"findings", "host", "reasons", "runtimes", "schema", "settings",
-                                    "states", "statuses", "supervision_flags", "template_version"})
+        self.assertEqual(set(obj), {"classes", "findings", "host", "reasons", "runtimes", "schema",
+                                    "settings", "states", "statuses", "supervision_flags",
+                                    "template_version"})
         self.assertEqual(obj["schema"], 1)
         self.assertEqual(obj["supervision_flags"],
                          ["--baseline", "--forbid", "--idle-timeout", "--plan-id", "--sweep"])

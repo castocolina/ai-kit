@@ -19,7 +19,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-k
 from ai_kit_spec import commands, detection, execute_dispatch, model_heuristics
 from ai_kit_spec.cli import main
 from ai_kit_spec.detection import normalize_runtime_keys, runtime_id
-from ai_kit_spec.error_classifier import REASONS, STATUS_TO_REASON, reason_for_status
+from ai_kit_spec.error_classifier import (
+    REASONS,
+    STATUS_TO_REASON,
+    classify_error,
+    reason_for_status,
+)
 from ai_kit_spec.model_catalog import CATALOG_SCHEMA_VERSION, split_catalog_meta
 
 from tests import host_fakes
@@ -728,7 +733,42 @@ def status_map_drift(text):
     return [key for key in template_status_keys(text) if key not in STATUS_TO_REASON]
 
 
+def _missing_statuses(statuses, mapping):
+    return sorted(set(statuses) - set(mapping))
+
+
+DESCRIBE_GOLDEN = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "fixtures", "runner_describe_golden.json"
+)
+
+
 class TestStatusMapDrift(unittest.TestCase):
+    def test_status_map_covers_every_runner_status(self):
+        with open(DESCRIBE_GOLDEN, encoding="utf-8") as fixture:
+            statuses = json.load(fixture)["statuses"]
+        self.assertEqual(_missing_statuses(statuses, STATUS_TO_REASON), [])
+        self.assertEqual(
+            set(STATUS_TO_REASON) - set(statuses),
+            {"capacity", "idle_stall", "quota_wait", "billing_or_access", "bad_prompt"},
+        )
+
+    def test_planted_status_is_reported(self):
+        with open(DESCRIBE_GOLDEN, encoding="utf-8") as fixture:
+            statuses = json.load(fixture)["statuses"]
+        self.assertEqual(
+            _missing_statuses({**statuses, "planted_status": 1}, STATUS_TO_REASON),
+            ["planted_status"],
+        )
+
+    def test_bad_request_maps_to_real_error(self):
+        self.assertEqual(STATUS_TO_REASON["bad_request"], "real_error")
+
+    def test_classify_error_docstring_states_its_scope(self):
+        doc = classify_error.__doc__
+        assert doc is not None
+        self.assertIn("never reads stdout", doc)
+        self.assertIn("the runner's error catalogue", doc)
+
     def test_every_template_status_is_mapped(self):
         self.assertEqual(status_map_drift(_runner_template_text()), [])
 

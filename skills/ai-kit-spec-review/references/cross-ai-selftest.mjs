@@ -34,6 +34,7 @@ import {
   PLAN_ID_RE,
   RESUME_MSG,
   RETRY_DEFAULTS,
+  ROW_CLASSES,
   RUNNER_FILE,
   RUNTIMES,
   RUNTIME_ID_RE,
@@ -43,6 +44,7 @@ import {
   SETTING_STATES,
   SKILL_NAME_RE,
   SKILL_PROSE,
+  STATUS_TABLE,
   TABLE,
   addFinding,
   admissionHits,
@@ -698,6 +700,23 @@ function classifyCases() {
         const first = classifyOne(twice);
         const second = classifyOne(twice);
         if (JSON.stringify(first) !== JSON.stringify(second)) return 'classifyStop is not stable';
+        return null;
+      },
+    },
+    {
+      name: 'pure-class-disjoint',
+      kind: 'logic',
+      pure: () => {
+        const seen = new Set();
+        for (const name of ROW_CLASSES) {
+          if (seen.has(name)) return `duplicate ${name}`;
+          seen.add(name);
+        }
+        if (!seen.has('bad_request')) return 'missing bad_request';
+        for (const name of [...ROW_CLASSES, 'crash']) {
+          if (SETTING_REASONS.includes(name) || FINDING_CODES.includes(name) || ['partial', 'locked'].includes(name)) return `overlap ${name}`;
+          if (!STATUS_TABLE[name]) return `no exit ${name}`;
+        }
         return null;
       },
     },
@@ -1451,6 +1470,7 @@ const FAKE_MODES = {
     process.exit(1);
   },
   billing: () => { process.stderr.write('402 payment required\n'); process.exit(1); },
+  'bad-request': () => { process.stderr.write('acme request refused\n'); process.exit(1); },
   'router-env-billing': () => { process.stderr.write('402 payment required\n'); process.exit(1); },
   spend403: () => { process.stderr.write('Error 403: spending limit reached for this team\n'); process.exit(1); },
   freetier: () => { process.stderr.write('403: {"type":"FreeTierError"}\n'); process.exit(1); },
@@ -5007,6 +5027,28 @@ async function blackBoxSelfTest(listOnly = false) {
             if (!line || !line.includes(ctx.overlayFile)) return `missing refusal ${id}`;
           }
           return err.includes('cross-ai: overlay 1 rows') ? null : 'good row dropped';
+        },
+      },
+      {
+        name: 'pure-class-bad-request-exit',
+        kind: 'logic',
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai-errors.json'), JSON.stringify([{
+            id: 'user-bad-request', tier: 2, cli: '*', route: '*', provider: '*', input: 'any',
+            match: 'acme request refused', class: 'bad_request', terminal: true, label: 'unverified', evidence: 'probe',
+          }]));
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/bad-request'],
+        exit: 69,
+        status: /^AIKIT-XAI status=bad_request cli=pi model=fake\/bad-request exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          if (tail?.rule !== 'user-bad-request') return `rule=${tail?.rule}`;
+          if (tail?.attempts !== '1') return `attempts=${tail?.attempts}`;
+          return null;
         },
       },
       {

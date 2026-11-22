@@ -1,4 +1,38 @@
 {
+  "classes": {
+    "auth": {
+      "exit": 69,
+      "router_quota": true
+    },
+    "bad_model": {
+      "exit": 69,
+      "router_quota": false
+    },
+    "bad_request": {
+      "exit": 69,
+      "router_quota": false
+    },
+    "billing": {
+      "exit": 69,
+      "router_quota": true
+    },
+    "crash": {
+      "exit": 1,
+      "router_quota": false
+    },
+    "permission_blocked": {
+      "exit": 69,
+      "router_quota": false
+    },
+    "quota": {
+      "exit": 75,
+      "router_quota": false
+    },
+    "transient": {
+      "exit": 75,
+      "router_quota": false
+    }
+  },
   "findings": [
     {
       "code": "no_commit",
@@ -617,6 +651,7 @@
   "statuses": {
     "auth": 69,
     "bad_model": 69,
+    "bad_request": 69,
     "billing": 69,
     "contract_violation": 1,
     "crash": 1,

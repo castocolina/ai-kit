@@ -1140,7 +1140,7 @@ function setTable(value) { TABLE = value; }
 
 const OVERLAY_MATCH_MS = 50;
 const OVERLAY_CALL_BUDGET_MS = 200;
-const ROW_CLASSES = ['quota', 'billing', 'auth', 'permission_blocked', 'bad_model', 'transient'];
+const ROW_CLASSES = ['quota', 'billing', 'auth', 'permission_blocked', 'bad_model', 'bad_request', 'transient'];
 const ROW_ID_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const PROVIDER_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 let OVERLAY_IDS = new Set();
@@ -1197,6 +1197,7 @@ const STATUS_TABLE = {
   empty_stdin: { exit: 2 },
   permission_blocked: { exit: 69 },
   bad_model: { exit: 69 },
+  bad_request: { exit: 69 }, // 38.1 D-01: the provider refused the request itself; retrying the same input never helps.
   auth: { exit: 69 },
   billing: { exit: 69 },
   quota: { exit: 75 },
@@ -6283,7 +6284,7 @@ function describeValue(value) {
   return value;
 }
 
-// SPEC R9 / D-10: what Python reads instead of mirroring the rows. No classes key (0b-10): 38.1 adds it.
+// SPEC R9 / D-10: what Python reads instead of mirroring the rows.
 function describeJson(env) {
   const runtimes = {};
   // 0b-12: forms are copied keyed by setting, so a later row field shows up with no change here.
@@ -6313,6 +6314,7 @@ function describeJson(env) {
     statuses: Object.fromEntries(Object.entries(STATUS_TABLE).map(([name, row]) => [name, row.exit])),
     findings: FINDING_CODES.map((code) => ({ code, result: FINDING_RESULTS[code] ?? 'info' })),
     supervision_flags: [...SUPERVISION_FLAGS],
+    classes: Object.fromEntries([...ROW_CLASSES, 'crash'].map((name) => [name, { exit: STATUS_TABLE[name].exit, router_quota: PATTERNS.some((row) => row.class === name && row.routerClass === 'quota') }])),
   };
 }
 
@@ -6771,6 +6773,7 @@ export {
   PLAN_ID_RE,
   RESUME_MSG,
   RETRY_DEFAULTS,
+  ROW_CLASSES,
   RUNNER_FILE,
   RUNTIMES,
   RUNTIME_ID_RE,
@@ -6780,6 +6783,7 @@ export {
   SETTING_STATES,
   SKILL_NAME_RE,
   SKILL_PROSE,
+  STATUS_TABLE,
   TABLE,
   addFinding,
   admissionHits,
