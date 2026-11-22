@@ -337,6 +337,22 @@ class PolicyText(unittest.TestCase):
                       "the series then resumes from its own count", section)
         self.assertNotIn("retry_after_s=0", section)
 
+    def test_policy_doc_states_the_same_numbers(self):
+        waits, every, cap, margin = retry_policy_numbers(TEMPLATE.read_text(encoding="utf-8"))
+        text = POLICY.read_text(encoding="utf-8")
+        section = _section(text, "## Hard tier")
+        self.assertIn(f"The defaults are {waits[0]} and {waits[1]} s, then {every} s", section)
+        self.assertIn(f"(`capS`, {cap})", section)
+        self.assertIn(f"time plus {margin} s", section)
+        self.assertIn("under 60 s (0 included) runs inside the call", section)
+        self.assertIn("the reset check replaces the wait of the check it comes before; "
+                      "the series then resumes from its own count", section)
+        self.assertNotIn("retry_after_s=0", section)
+        self.assertIn("stopped=cap", section)
+        self.assertIn("check=", section)
+        upstream = _section(text, "## Upstream pass-through")
+        self.assertIn("floor 60 s, ceiling the cap", upstream)
+
     def test_upstream_sentence_bounds_the_stated_time(self):
         section = _section(SKILL.read_text(encoding="utf-8"), "## 4. Read the result")
         for words in ("only to add one extra hard-tier check",
@@ -495,9 +511,10 @@ class PolicyContent(unittest.TestCase):
     def test_defaults_bounds_and_the_config_files(self):
         text = POLICY.read_text(encoding="utf-8")
         self.assertIn("1, 1.5, 2.25, 3.4, 5.1 s", text)
-        self.assertIn("600, 900, 1800", text)
+        self.assertIn("The defaults are 60 and 300 s, then 600 s", text)
         for bound in ("`base_s` 0..60", "`factor` 1.0..3.0", "`max_retries` 0..10",
-                      "`session_resets` 0..3", "`hard_waits_s` 1..6 entries each 0..`capS`"):
+                      "`session_resets` 0..3", "`hard_waits_s` 1..6 entries each 0..`capS`",
+                      "`hard_every_s` 0 or 60..`capS`"):
             self.assertIn(bound, text)
         self.assertIn("`capS` (14400) cannot be raised", text)
         self.assertIn("${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml", text)

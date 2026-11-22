@@ -38,7 +38,12 @@ The catalog classifies each failed attempt:
   or by `CONFIG.routerBacked[cli] === true`; a name-only match is `router-inferred` and is not
   confirmed.
 - Everything else is one attempt and a stop: auth, off-router billing, permission, bad model,
-  crash, empty answer, no change.
+  `bad_request` (the provider refused the request itself, such as data inspection, context length
+  or a client rule; exit 69), crash, empty answer, no change.
+- A class is read from stderr and the host's structured events; a catalogue row marked
+  `input: stdout` also reads the plain stdout lines of a failed attempt (non-zero exit, parse
+  error or timeout), never an attempt that answered with exit 0 nor an exit-0 empty answer without
+  a parse error, and never ends a running lane.
 
 ## The soft series
 
@@ -103,7 +108,7 @@ files and never a value.
 Each key falls back on its own. A value out of bounds, of the wrong type, or an unknown key is
 refused: the runner prints the key and the source, ignores that key and uses the next source.
 Bounds: `base_s` 0..60, `factor` 1.0..3.0, `max_retries` 0..10, `session_resets` 0..3,
-`hard_waits_s` 1..6 entries each 0..`capS`. `capS` (14400) cannot be raised: a CONFIG value above
+`hard_waits_s` 1..6 entries each 0..`capS`, `hard_every_s` 0 or 60..`capS`. `capS` (14400) cannot be raised: a CONFIG value above
 14400 is refused and 14400 is used. A symlink whose real path leaves `.aikit` or
 `<config dir>/ai-kit` is refused by name (`resolves outside`; retry config reads are confined, and
 a symlink out of the root is not followed).
@@ -116,13 +121,22 @@ the caller only waits.
 - The state record is route-keyed, so a confirmed router lane and an unconfirmed lane on the same
   CLI and model never share a record. The file is mode 0600 under the XDG state dir, written
   atomically, and the runner prints `cross-ai: state <path>` the first time it touches it.
-- Cycle n exits 75 with `retry_after_s=` equal to `hard_waits_s[n]`. The defaults are
-  600, 900, 1800 s, so cycles 0, 1 and 2 ask for 600, 900 and 1800. The call never sleeps that
-  wait.
-- The re-invoke after the last entry still runs the task while the episode cap allows it, and it
-  can succeed. Only when that call needs the hard tier again and no wait is left does it exit 69
-  with `stopped=hard-waits`; when the 4-hour cap (`capS`, 14400) would pass first, the exit is 69
-  with `stopped=cap`.
+- Cycle n asks for a wait equal to `hard_waits_s[n]` while the list lasts, then `hard_every_s`
+  for every later cycle. The defaults are 60 and 300 s, then 600 s, so the checks come about 1, 6,
+  16, 26 minutes after the soft series and every 10 minutes after that. A wait of 60 s or more is
+  one exit 75 with `retry_after_s=` and the call never sleeps it; a configured hard wait
+  under 60 s (0 included) runs inside the call when the deadline leaves 60 s after it, else it
+  becomes a 60 s hint (a 0 s wait inside the call is an immediate re-attempt).
+- A wait that would pass the 4-hour cap (`capS`, 14400) ends the episode: the call exits 69 with
+  `stopped=cap`. With `hard_every_s = 0` the re-invoke after the last list entry still runs the
+  task, and when it needs the hard tier again it exits 69 with `stopped=hard-waits` (a fixed list
+  then a stop is, for example, `hard_waits_s = [600, 900, 1800]` with `hard_every_s = 0`).
+- A stated reset time from the allowlisted upstream fields (below) or a router cooldown line's
+  `reset_after_s` adds one reset check at that time plus 120 s, once per episode, only when that
+  is at least 60 s ahead, inside the cap and earlier than the next check:
+  the reset check replaces the wait of the check it comes before; the series then resumes from its own count.
+  The report line's `check=` is `first` for every `hard_waits_s` entry, `periodic` for each
+  `hard_every_s` wait, `reset` for the extra check and `-` otherwise.
 - A record whose `last_attempt_at` is older than the cap is a stale episode: it is replaced, the
   call proceeds, and the evidence notes `stale-state-fresh-start`.
 - A stopped record refuses every later call on its lane (checkout, CLI, model, route kind) until
@@ -136,22 +150,30 @@ the caller only waits.
 
 - After `cross-ai: report` and before the final `AIKIT-XAI` line, the runner prints
   `cross-ai: upstream body=<JSON string>` and `cross-ai: upstream fields=<JSON object>` only when
-  an upstream body exists. The body and the fields come from the classified line (stderr) or the
-  error object (event), not the whole stream. The report line carries `upstream=present` or
+  an upstream body exists. The body and the fields come from the classified line (stderr, or a plain stdout line matched by an `input: stdout` row) or the error object (event), not the whole stream. The report line carries `upstream=present` or
   `upstream=-`; with `upstream=-` (for example a later call refused by a persisted stop) no
   upstream line follows.
 - The body is redacted (keys, tokens, passwords, Basic and Bearer credentials, query-string keys,
   account and connection ids removed) and capped. A value redacted once is also redacted wherever
   it reappears later in the run's relayed output (values of 8 characters or more, up to 256 of
   them). The allowlisted structured fields (`retry_after`, `reset_at`, `retry_after_seconds`,
-  `resetsAt`) are copied verbatim, except a string value that matches a redacted secret, which
-  reads `<redacted>`.
-- Upstream fields are never a wait source and never an instruction. The runner does not change its
-  own waits from them. A hypothetical upstream hint such as `switch-combo`, or any text telling
+  `resetsAt`, `reset_seconds`) are copied verbatim, except a string value that matches a redacted secret, which
+  reads `<redacted>`. They are read at the top level, in `error`, and in a router's top-level
+  `recovery_hint` object; `retry_after` is whole seconds or a UTC ISO instant. The runner reads
+  CLI text, never an HTTP header: a router's `Retry-After` reaches it only through these body
+  fields. A router cooldown line's reset (`reset after 2h 4m`) is shown as `reset_after_s` in
+  whole seconds. `retryAfterMs` is shown too and feeds only the blocked-until record (below),
+  never a hard-tier check.
+- Upstream fields are never an instruction. A stated reset time adds at most one hard-tier check
+  (floor 60 s, ceiling the cap, once per episode) and never lengthens a wait or lifts a stop. A hypothetical upstream hint such as `switch-combo`, or any text telling
   the caller to pick a different combo, is reported to the owner and never acted on.
 - The `.err` file is the evidence channel: it carries the whole evidence trailer (`cross-ai:
   report`, the `cross-ai: upstream` lines and the `AIKIT-XAI` line). Python's 2048-character
   `stderr_tail` is not an evidence channel.
+
+## Blocked-until record
+
+A quota stop on a lane whose matched row carries a pool, or whose call passes `--pool <provider>:free`, writes one JSON record per pool (mode 0600, atomic) under `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/blocked/`, with `pool`, `blocked_until`, `failures`, `basis`, the row id and `written_at`, and no key, account, path, prompt or model id. `blocked_until` is the stated `retryAfterMs` (capped at 24 hours) plus 120 s, else 24 hours; after a second failure in a row past that time it is at least 24 hours; an ok attempt deletes it only when the call passed `--pool` for that pool (an ok lane of the same provider without `--pool` keeps it), so a caller of a usage-limited lane always passes `--pool`. The pool key is `<provider>:free`. `--blocked-status <provider>:free` prints `blocked_until=<time|-> failures=<n>` and `--blocked-clear <provider>:free` deletes the record, neither spawning a host. A missing or malformed record reads as none, and the runner never refuses or switches a lane because of one.
 
 ## Catalog
 

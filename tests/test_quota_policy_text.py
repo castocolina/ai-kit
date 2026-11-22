@@ -87,6 +87,12 @@ class PolicyReference(unittest.TestCase):
     def test_reference_has_no_wake_line(self):
         self.assertEqual(wake_lines(REFERENCE.read_text(encoding="utf-8")), [])
 
+    def test_policy_reference_states_the_periodic_tier(self):
+        text = REFERENCE.read_text(encoding="utf-8")
+        for token in ("hard_every_s", "stopped=cap", "check=", "bad_request", "input: stdout",
+                      "--blocked-status", "always passes `--pool`"):
+            self.assertIn(token, text)
+
 
 class ReviewSkill(unittest.TestCase):
     def test_skill_points_to_cross_ai_and_pins_hard_tier(self):
