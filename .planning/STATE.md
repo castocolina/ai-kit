@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 37
-current_phase_name: Shared runner options and session ids
+current_phase: 35
+current_phase_name: Model discovery and catalog
 status: verifying
-stopped_at: Completed 37-24-PLAN.md
-last_updated: "2026-11-21T23:52:40.258Z"
-last_activity: 2026-11-20
-last_activity_desc: Phase 35 execution started
-state_head: f17cb4a1daf6808bc4843b4d823014112ca04cba
+stopped_at: Phase 37 complete, ready to verify Phase 35
+last_updated: "2026-11-22T01:23:15.707Z"
+last_activity: 2026-11-21
+last_activity_desc: Phase 37 complete, transitioned to Phase 35
+state_head: 393c68935b1bb455a7c3dd5a419c15501c16bfec
 progress:
   total_phases: 40
-  completed_phases: 15
+  completed_phases: 16
   total_plans: 207
   completed_plans: 207
-  percent: 38
+  percent: 40
 ---
 
 # Project State
@@ -29,18 +29,18 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 37 (Shared runner options and session ids) — READY TO EXECUTE
-Plan: 28 of 28
+Phase: 35 — Model discovery and catalog
+Plan: 28
 Status: Phase complete — ready for verification
-Last activity: 2026-11-20 — Phase 35 execution started
+Last activity: 2026-11-21 — Phase 37 complete, transitioned to Phase 35
 
-Progress: [████░░░░░░] 38%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 278
+- Total plans completed: 304
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -97,6 +97,7 @@ Progress: [████░░░░░░] 38%
 | 32.5 | 10 | - | - |
 | 33 | 12 | - | - |
 | 34 | 10 | - | - |
+| 37 | 26 | - | - |
 
 **Recent Trend:**
 
@@ -783,7 +784,7 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 ## Session Continuity
 
 Last session: 2026-11-21T23:52:39.095Z
-Stopped at: Completed 37-24-PLAN.md
+Stopped at: Phase 37 complete, ready to verify Phase 35
 Resume file: None
 
 ## Operator Next Steps

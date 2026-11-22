@@ -123,7 +123,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 34: jev backends by host and Laya calibration** - jev picks its backend per host from ai-kit's config; Laya measured against its floor (completed 2026-11-16)
 - [ ] **Phase 35: Model discovery and catalog** - spec-config lists every model on every host with honest source, usability and tier labels
 - [ ] **Phase 36: spec-config as the hub** - Every spec skill chains spec-config; reviewers and executors kept apart with opt-in escalation
-- [ ] **Phase 37: Shared runner options and session ids** - One runner for GSD cross-AI and ai-kit lanes, with per-call settings and resumable sessions
+- [x] **Phase 37: Shared runner options and session ids** - One runner for GSD cross-AI and ai-kit lanes, with per-call settings and resumable sessions (completed 2026-11-21)
 - [ ] **Phase 38: Runner hardening and run safety** - Idle watchdog, the Phase 25 cleanup, a run lock with a tree baseline, and a plan-versus-commits check before done
 - [ ] **Phase 38.1: Runner error classification and retry policy (INSERTED)** - Wider error catalogue, stdout limit matching, router cooldowns and the owner's retry policy
 - [ ] **Phase 39: Lane capability blocks and lens skills** - Each lane is told only the tools it really has; lens skills reach reviewers
@@ -815,7 +815,7 @@ Plans:
   8. Where herdr is available a lane runs in a tab the runner opens and closes, with the same argv, settings report, session id, status line and exit code as the headless run; without herdr, with `--host none` or with `AIKIT_HOST=none` the headless path is unchanged and tested; the runner touches only the tab it opened and reads its lane's own files, never herdr's screen text or agent status, as the result. *(added 2026-11-16, re-run 2, 37 D-22 to D-29, owner directive "herdr hosting": a second transport next to the direct spawn, `--host auto|none` default none with the builders emitting `auto`, a 0700 run directory with a 0600 env file, `tab create`, `pane run` and `tab close` only; interactive agent TUIs, TUI apps, e2e runs and pane reuse stay with Phase 42 and the calling skills)*
   9. A skill a call names reaches a review or execute lane by name, by path or as inlined prose, in the first form its host has verified, and an MCP server a call names reaches the lane only through the host's per-invocation form; each host's forms carry a source label from its own help, every skill and server is printed as applied or ignored with the reason, no server value is printed and no host config is edited. *(added 2026-11-21, plan time, 37 D-31 to D-34, owner requests of 2026-11-19: `--skill-path`, `--skill-name` and `--mcp-config <run-scoped file>`; verified 2026-11-21: pi `--skill`, claude `--mcp-config` with `--strict-mcp-config`, copilot `--additional-mcp-config`; every other form unverified or unknown and not fed; which skills and servers a lane gets stays Phase 39's; grok is not a target, owner directive 2026-11-20)*
 
-**Plans**: 26/26 plans executed in 19 waves *(planned 2026-11-21; 37-01, the live spike, and 37-24, the judge loop with the final `make test`, are orchestrator actions; plans of one wave run one after another in the one checkout)*
+**Plans**: 26/26 plans complete in 19 waves *(planned 2026-11-21; 37-01, the live spike, and 37-24, the judge loop with the final `make test`, are orchestrator actions; plans of one wave run one after another in the one checkout)*
 **Wave 1**
 - [x] 37-01-PLAN.md (wave 1): live spike (D-17), help capture refresh and `37-SPIKE.md` (orchestrator action)
 
@@ -1263,7 +1263,7 @@ Plans:
 | 34. jev backends by host and Laya calibration | 10/10 | Complete    | 2026-11-16 |
 | 35. Model discovery and catalog | 28/28 | In Progress | - |
 | 36. spec-config as the hub | 29/29 | In Progress | - |
-| 37. Shared runner options and session ids | 26/26 | In Progress | - |
+| 37. Shared runner options and session ids | 26/26 | Complete    | 2026-11-21 |
 | 38. Runner hardening and run safety | 0/TBD | Not started | - |
 | 38.1. Runner error classification and retry policy | 0/TBD | Not started | - |
 | 39. Lane capability blocks and lens skills | 0/TBD | Not started | - |
