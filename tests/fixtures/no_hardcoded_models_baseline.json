@@ -725,26 +725,6 @@
    ]
   },
   {
-   "path": "skills/ai-kit-spec-review/references/cross-ai.mjs",
-   "cleaned_by": "37",
-   "hits": [
-    "flag glm",
-    "flag may",
-    "flag must",
-    "flag or/meta/llama:free",
-    "flag provider/id[:thinking];",
-    "flag wins",
-    "flag wins;",
-    "flag wins;",
-    "flag works",
-    "keyval event400",
-    "keyval event400",
-    "referee router-env/my-coding",
-    "referee router-env/my-coding:high",
-    "slash zai-coding-cn/glm-5.3"
-   ]
-  },
-  {
    "path": "skills/ai-kit-usage-metrics/ai_kit_usage_metrics/dashboard.py",
    "cleaned_by": "backlog",
    "hits": [

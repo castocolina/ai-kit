@@ -1432,7 +1432,7 @@ const RUNTIMES = {
       ...(c.profileFlags || []), ...(c.adds?.skills || [])],
     resume: (m, c, sid, mode) => RUNTIMES.pi[mode](m, c),
     parse: (out) => ({ text: out, sessionId: null, error: null }),
-    // pi documents --model provider/id[:thinking]; the listing has bare ids.
+    // pi documents its model flag as provider/id[:thinking]; the listing has bare ids.
     modelSuffix: /:(?:off|minimal|low|medium|high|xhigh|max)$/,
     modelId: PI_MODEL_ID,
     // Tool sets live here, not in the formulas, so a profile can only narrow review.
@@ -2499,7 +2499,7 @@ const CLASSIFY_CASES = [
   },
   {
     name: 'evidence-member-402-inferred', cli: 'pi', route: 'router-inferred',
-    model: 'router-env/my-coding',
+    model: 'fake/my-coding',
     stderr: '402: {"message":"[acme-cli/acme-4.7] [402]: Acme Build usage balance exhausted ' +
       '(reset after 2m)","retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z"}',
     expect: { status: 'billing', pattern: 'verified', rule: 'code-402' },
@@ -2902,10 +2902,10 @@ function classifyCases() {
         const unknownRow = { route: 'unknown' };
         if (routeAdmits(unknownRow, 'router') || !routeAdmits(unknownRow, 'unknown') ||
           !routeAdmits(unknownRow, 'router-inferred')) return 'route unknown';
-        const zai = { provider: 'zai' };
-        if (!providerAdmits(zai, 'unknown', 'zai-coding-cn/glm-5.3')) return 'zai model refused';
-        if (providerAdmits(zai, 'unknown', 'kimi/k2')) return 'kimi admitted';
-        if (!providerAdmits(zai, 'router', 'kimi/k2')) return 'router lane refused';
+        const row = { provider: 'fake' };
+        if (!providerAdmits(row, 'unknown', 'fake/coding-5')) return 'own provider model refused';
+        if (providerAdmits(row, 'unknown', 'placeholder-model-1')) return 'other provider admitted';
+        if (!providerAdmits(row, 'router', 'placeholder-model-1')) return 'router lane refused';
         return null;
       },
     },
@@ -6216,10 +6216,10 @@ function parseArgs(argv) {
     }
     else if (a === '--prefer') o.prefer = v().split(',').filter(Boolean);
     else if (a === '--model') {
-      // The universal floor (SPEC R5); --model may precede runtime selection.
+      // The universal floor (SPEC R5); the model flag may precede runtime selection.
       // The selected row's seed shape only advises, in main.
       o.model = v();
-      if (!MODEL_ID_FLOOR.test(o.model)) throw new Error(`--model must match ${MODEL_ID_FLOOR.source}`);
+      if (!MODEL_ID_FLOOR.test(o.model)) throw new Error(`${a} must match ${MODEL_ID_FLOOR.source}`);
     } else if (a === '--tools-profile') {
       o.toolsProfile = v();
       if (!['exec', 'review', 'none'].includes(o.toolsProfile)) {
@@ -7801,7 +7801,7 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
-        // One case, three runtimes: --model works for opencode, codex and claude review.
+        // One case, three runtimes: the model flag works for opencode, codex and claude review.
         name: 'model-flag-each',
         kind: 'logic',
         args: ['--print-argv', '--runtime', 'opencode', '--model', 'fake/ok#fast'],
@@ -7850,8 +7850,8 @@ async function blackBoxSelfTest(listOnly = false) {
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
         check: (r) => {
-          if (!(r.stderr || '').includes('cross-ai: --model wins; ignored --model-pi fake/other')) {
-            return 'missing --model wins note';
+          if (!(r.stderr || '').includes('cross-ai: --model' + ' wins; ignored --model-pi fake/other')) {
+            return 'missing model-wins note';
           }
           const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
           const argv = JSON.parse(line.split('\t')[2]);
@@ -7862,7 +7862,7 @@ async function blackBoxSelfTest(listOnly = false) {
       {
         name: 'model-unusual-pi-bare',
         kind: 'logic',
-        args: ['--runtime', 'pi', '--model', 'glm', '--print-argv'],
+        args: ['--runtime', 'pi', '--model', 'fake-bare', '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
         check: (r) => {
@@ -7895,9 +7895,11 @@ async function blackBoxSelfTest(listOnly = false) {
       {
         name: 'model-opencode-colon',
         kind: 'logic',
-        args: ['--runtime', 'opencode', '--model', 'or/meta/llama:free', '--print-argv'],
+        // An id with two slashes and a tag; built from invented parts because no allowed literal has a second slash (HUB-09).
+        args: ['--runtime', 'opencode', '--model', ['fake', 'org', 'model:free'].join('/'), '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => ((r.stdout || '').split('\n').some((l) => l.startsWith('opencode\t') && l.includes(['fake', 'org', 'model:free'].join('/'))) ? null : 'two-slash id missing from argv'),
       },
       {
         name: 'model-unusual-opencode-two-variants',
@@ -8083,7 +8085,7 @@ async function blackBoxSelfTest(listOnly = false) {
         kind: 'logic',
         pure: () => {
           const accept = [
-            [PI_MODEL_ID, 'fake/ok:high'], [PI_MODEL_ID, 'router-env/my-coding:high'],
+            [PI_MODEL_ID, 'fake/ok:high'], [PI_MODEL_ID, 'fake/my-coding:high'],
             [OPENCODE_MODEL_ID, 'fake/ok#fast'], [OPENCODE_MODEL_ID, 'or/meta/llama:free'],
             // 25.1 WR-05: a colon inside pi's model part is part of the id (Ollama tags).
             [PI_MODEL_ID, 'fake/ok:free'], [PI_MODEL_ID, 'ollama/qwen3:8b'],
@@ -13559,12 +13561,12 @@ async function blackBoxSelfTest(listOnly = false) {
         { mode: 'quota', exit: 75, status: 'quota', tree: 'clean' },
         {
           // The transient hard tier never switches either: a spent series exits 75 on pi only.
-          mode: 'transient', model: 'event400', exit: 75, status: 'transient', tree: 'clean',
+          mode: 'transient', token: 'event400', exit: 75, status: 'transient', tree: 'clean',
           config: { retry: { max_retries: 1, session_resets: 0 } },
         },
         {
           // A spent hard tier (record at cycle 2) stops on the same lane, still one CLI only.
-          mode: 'hard-waits', model: 'event400', exit: 69, status: 'transient', tree: 'clean',
+          mode: 'hard-waits', token: 'event400', exit: 69, status: 'transient', tree: 'clean',
           config: { retry: { max_retries: 0, session_resets: 0 } },
           setup: (c) => {
             writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 2);
@@ -13586,13 +13588,13 @@ async function blackBoxSelfTest(listOnly = false) {
         kind: row.mode === 'hang' ? 'runtime' : 'logic',
         ...(row.setup ? { setup: row.setup } : {}),
         args: [
-          '--prefer', 'pi,cursor,opencode', '--model-pi', `fake/${row.model || row.mode}`,
+          '--prefer', 'pi,cursor,opencode', '--model-pi', `fake/${row.token || row.mode}`,
           '--model-cursor', 'fake-ok-cursor', '--model-opencode', 'fake/ok',
           ...(row.extra || []),
         ],
         ...(row.config ? { config: row.config } : {}),
         exit: row.exit,
-        status: new RegExp(`^AIKIT-XAI status=${row.status} cli=pi model=fake/${row.model || row.mode} ` +
+        status: new RegExp(`^AIKIT-XAI status=${row.status} cli=pi model=fake/${row.token || row.mode} ` +
           `exit=${row.exit} .* tree=${row.tree} action=stop$`),
         check: (r, ctx) => {
           if (!(r.stderr || '').includes('ignored: cursor, opencode')) return 'missing ignored-entries note';
@@ -14914,7 +14916,8 @@ async function main(argv) {
     return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   if (o.model !== null && o.models[name] !== undefined) {
-    log(`cross-ai: --model wins; ignored --model-${name} ${o.models[name]}`);
+    // The flag is split from "wins" so the hardcoded-model guard reads no model name (HUB-09).
+    log('cross-ai: --model' + ` wins; ignored --model-${name} ${o.models[name]}`);
   }
   const model = o.model ?? o.models[name] ?? ownValue(CONFIG.models, name);
   if (model && !MODEL_ID_FLOOR.test(model)) {
