@@ -9891,7 +9891,7 @@ async function blackBoxSelfTest(listOnly = false) {
         name: 'lock-held-redacts', kind: 'logic',
         args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 75,
         status: /^AIKIT-XAI status=locked .* action=stop$/,
-        setup: (c) => plantLock(c, { model: 'fake/x\u0007' + c.env.AIKIT_XAI_SENTINEL }),
+        setup: (c) => plantLock(c, { model: 'fake/x' + '\u0007' + c.env.AIKIT_XAI_SENTINEL }),
         check: (r, c) => {
           const line = r.stderr.split('\n').find((s) => s.startsWith('cross-ai: run lock held by pid '));
           if (!line) return 'missing held line';
