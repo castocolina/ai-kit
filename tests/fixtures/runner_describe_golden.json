@@ -682,5 +682,5 @@
     "--pool",
     "--sweep"
   ],
-  "template_version": 10
+  "template_version": 11
 }

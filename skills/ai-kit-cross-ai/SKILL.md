@@ -82,7 +82,7 @@ Resolve one runner path, `$RUNNER`, before any check: the project copy
 of the sibling `ai-kit-spec-review` skill (`skills/ai-kit-spec-review/references/cross-ai.mjs` in
 an ai-kit checkout); stop when neither exists. Use that same `$RUNNER` for the header check and
 in every launch, preview and re-invocation. Before the first launch in a project, check its
-line-2 header (`sed -n 2p "$RUNNER"`): this contract needs `template=10` or later. A lower template, or a `cross-ai.mjs.new` waiting beside it, is not this
+line-2 header (`sed -n 2p "$RUNNER"`): this contract needs `template=11` or later. A lower template, or a `cross-ai.mjs.new` waiting beside it, is not this
 contract: stop and route the owner to `ai-kit-gsd-curated-config` `ensure-runner`.
 
 The prompt always goes on stdin; the runner has no prompt flag. For copilot the runner itself

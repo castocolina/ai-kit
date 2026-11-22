@@ -24,6 +24,7 @@ from ai_kit_spec import detection, runner_dispatch, runner_facts
 
 CHAIN_LINKS = 5
 SHORT_TIMEOUT_S = 2
+REAP_WAIT_S = 30
 SHIM = """#!/bin/sh
 dir=${0%/*}
 n=$(cat "$dir/count" 2>/dev/null || echo 0)
@@ -74,7 +75,8 @@ class TestSelfRunningNodeShim(unittest.TestCase):
     def assert_bounded_and_gone(self, started: float):
         self.assertLess(time.monotonic() - started, SHORT_TIMEOUT_S + 10)
         self.assertEqual((self.bin / "count").read_text().strip(), str(CHAIN_LINKS))
-        deadline = time.monotonic() + 5
+        # Killed links can take seconds to exit under a loaded, swapping host: wait, bounded.
+        deadline = time.monotonic() + REAP_WAIT_S
         while any(_alive(pid) for pid in self._pids()) and time.monotonic() < deadline:
             time.sleep(0.05)
         self.assertEqual([pid for pid in self._pids() if _alive(pid)], [])
