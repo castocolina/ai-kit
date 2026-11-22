@@ -379,7 +379,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [x] **RUN-02**: The runner accepts a session id and prints the one it used, so a lane can resume across rounds.
   *(amended 2026-11-16, 37 D-03: one `--session-id` flag, `session=` in the status line, chosen or minted per runtime row,
   a rejected id fails visibly)*
-- [ ] **RUN-03**: An opt-in idle watchdog ends a lane's process group after a set time without output, using the
+- [x] **RUN-03**: An opt-in idle watchdog ends a lane's process group after a set time without output, using the
   existing exit vocabulary; its default is one a slow, quiet model does not trip, and the runner self-test has a
   case for it. For an execute lane the idle clock also resets when the checkout's tree state or commits change, so
   a quiet lane that is committing is never ended and one that prints but changes nothing is reported. *(amended
@@ -1121,7 +1121,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | EXE-09 | Phase 41 | Pending |
 | RUN-01 | Phase 37 | Complete |
 | RUN-02 | Phase 37 | Complete |
-| RUN-03 | Phase 38 | Pending |
+| RUN-03 | Phase 38 | Complete |
 | RUN-04 | Phase 38 | Pending |
 | RUN-05 | Phase 38.1 | Pending |
 | RUN-06 | Phase 37 | Complete |

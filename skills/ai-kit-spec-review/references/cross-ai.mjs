@@ -3914,6 +3914,7 @@ function runChild(bin, argv, opts = {}) {
     const finalize = async (reason) => {
       if (settled) return;
       settled = true;
+      opts.bg?.stops.delete(finalize);
       if (timer) clearTimeout(timer);
       if (idleTimer) clearTimeout(idleTimer);
       if (currentFinalize === finalize) currentFinalize = null;
@@ -3960,7 +3961,8 @@ function runChild(bin, argv, opts = {}) {
     noteChildPgid('spawn', child.pid);
     // Only runOnce passes onSpawn: git snapshot and listing children never reach the lock record.
     opts.onSpawn?.(child.pid);
-    current = child;
+    // Background reads must not replace the lane for signal or limit handling.
+    if (!opts.bg) current = child;
     // SPEC R1 / D-01: opt-in (runOnce only); any child byte resets the clock, the runner's own lines never do; finalize settles once.
     if (opts.idleMs > 0) {
       lastByteMs = performance.now();
@@ -3992,7 +3994,7 @@ function runChild(bin, argv, opts = {}) {
       // Seam for plan 38-16: reset() counts as a child byte (a changed tree read); recheck() re-runs the idle decision once a deferred read is in; onIdle returning false defers an expiry.
       opts.idleResetter?.({ reset: () => { if (!settled) lastByteMs = performance.now(); }, recheck: () => { if (settled) return; if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } idleCheck(); } });
     }
-    currentFinalize = finalize;
+    if (opts.bg) opts.bg.stops.add(finalize); else currentFinalize = finalize;
     if (opts.input === null) {
       // stdin is `ignore`: there is no stream to write or end.
     } else if (opts.input !== undefined) {
@@ -4487,9 +4489,24 @@ async function listModels(rt, binPath, env, limit) {
 const MAX_NESTED_REPOS = 8;
 // Set by treeState before every null return: { kind: 'timeout'|'error', what }.
 let gitFailure = null;
+// The non-git polling note prints once per run.
+let treePollNoted = false;
 
 function gitFailed(result, what) {
   gitFailure = { kind: result.timedOut ? 'timeout' : 'error', what };
+}
+
+// One private-index tree read and its commit count form a single poll.
+async function pollTreeRead(cwd, limit, baseHead, bg) {
+  const st = await treeState(cwd, limit, 0, bg);
+  if (st === null || bg.cancelled) return null;
+  if (!st.head) return { ...st, commits: 0 };
+  const git = which('git', process.env.PATH || '');
+  const range = baseHead ? `${baseHead}..${st.head}` : st.head;
+  const r = await runChild(git, ['rev-list', '--count', range], { cwd, capMs: GIT_CAP_MS, limit, bg });
+  if (bg.cancelled) return null;
+  if (r.timedOut || r.spawnErr || r.code !== 0) { gitFailed(r, 'rev-list'); return null; }
+  return { ...st, commits: Number(r.stdout.trim()) || 0 };
 }
 
 function gitFailStatus() {
@@ -4515,11 +4532,13 @@ function inGitTree(cwd) {
   }
 }
 
-async function treeState(cwd, limit, depth = 0) {
+async function treeState(cwd, limit, depth = 0, bg = null) {
   const git = which('git', process.env.PATH || '');
   if (!git) { gitFailure = { kind: 'error', what: 'not found' }; return null; }
   // --verify -q: exit 1 with no message on an unborn HEAD, in any locale; 128 outside a repo.
-  const headR = await runChild(git, ['rev-parse', '--verify', '-q', 'HEAD'], { cwd, capMs: GIT_CAP_MS, limit });
+  // A cancelled background read starts no further git step.
+  const headR = await runChild(git, ['rev-parse', '--verify', '-q', 'HEAD'], { cwd, capMs: GIT_CAP_MS, limit, bg });
+  if (bg?.cancelled) return null;
   if (headR.timedOut || headR.spawnErr || (headR.code !== 0 && headR.code !== 1)) {
     gitFailed(headR, 'rev-parse'); return null;
   }
@@ -4527,11 +4546,13 @@ async function treeState(cwd, limit, depth = 0) {
   const idxDir = makeTemp('xai-idx-');
   const env = { ...process.env, GIT_INDEX_FILE: path.join(idxDir, 'index') };
   try {
-    const addR = await runChild(git, ['add', '-A'], { cwd, env, capMs: GIT_CAP_MS, limit });
+    const addR = await runChild(git, ['add', '-A'], { cwd, env, capMs: GIT_CAP_MS, limit, bg });
+    if (bg?.cancelled) return null;
     if (addR.timedOut || addR.spawnErr || addR.code !== 0) {
       gitFailed(addR, 'add -A'); return null;
     }
-    const wtR = await runChild(git, ['write-tree'], { cwd, env, capMs: GIT_CAP_MS, limit });
+    const wtR = await runChild(git, ['write-tree'], { cwd, env, capMs: GIT_CAP_MS, limit, bg });
+    if (bg?.cancelled) return null;
     if (wtR.timedOut || wtR.spawnErr || wtR.code !== 0) {
       gitFailed(wtR, 'write-tree'); return null;
     }
@@ -4539,7 +4560,8 @@ async function treeState(cwd, limit, depth = 0) {
     // contents would be too slow for node_modules-sized trees, and a write changes ctime.
     // Fully ignored dirs list as one 'dir/' entry and are skipped, so a background cache or
     // indexer (graphify-out/, node_modules/) cannot read as an agent edit.
-    const ignR = await runChild(git, ['ls-files', '-z', '-o', '-i', '--exclude-standard', '--directory'], { cwd, env, capMs: GIT_CAP_MS, limit });
+    const ignR = await runChild(git, ['ls-files', '-z', '-o', '-i', '--exclude-standard', '--directory'], { cwd, env, capMs: GIT_CAP_MS, limit, bg });
+    if (bg?.cancelled) return null;
     if (ignR.timedOut || ignR.spawnErr || ignR.code !== 0) {
       gitFailed(ignR, 'ls-files'); return null;
     }
@@ -4554,7 +4576,8 @@ async function treeState(cwd, limit, depth = 0) {
     }
     // git add records a submodule (or any nested repo) as its HEAD only, so snapshot each
     // checked-out one too: edits inside it must count.
-    const lsR = await runChild(git, ['ls-files', '-s', '-z'], { cwd, env, capMs: GIT_CAP_MS, limit });
+    const lsR = await runChild(git, ['ls-files', '-s', '-z'], { cwd, env, capMs: GIT_CAP_MS, limit, bg });
+    if (bg?.cancelled) return null;
     if (lsR.timedOut || lsR.spawnErr || lsR.code !== 0) { gitFailed(lsR, 'ls-files'); return null; }
     let nested = '';
     for (const entry of lsR.stdout.split('\0')) {
@@ -4564,7 +4587,7 @@ async function treeState(cwd, limit, depth = 0) {
       if (depth >= MAX_NESTED_REPOS) {
         gitFailure = { kind: 'error', what: 'nested repos' }; return null;
       }
-      const sub = await treeState(path.join(cwd, rel), limit, depth + 1);
+      const sub = await treeState(path.join(cwd, rel), limit, depth + 1, bg);
       if (sub === null) return null;
       nested += `\t${rel}=${stateSig(sub)}`;
     }
@@ -4668,6 +4691,9 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
   let outBytes = 0;
   let lastBytes = 0;
   const started = Date.now();
+  let idleCtl = null;
+  let activeSinceTick = false;
+  let pollGate = null;
   let errTail = '';
   const state = { liveHit: null, limitTimer: null };
   const cli = label;
@@ -4696,11 +4722,6 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
   const errRelay = makeLineRelay({
     onLine: noteLine('stderr'), onPartial: notePartial('stderr'), seen,
   });
-  const hb = setInterval(() => {
-    const secs = Math.round((Date.now() - started) / 1000);
-    log(`cross-ai: ${label} running ${secs}s, stdout +${outBytes - lastBytes} bytes`);
-    lastBytes = outBytes;
-  }, CONFIG.heartbeatS * 1000);
   const childLimit = opts.limit ?? runDeadline;
   // One decoder per stream: a multi-byte character split across two chunks decodes whole.
   const outDecoder = new StringDecoder('utf8');
@@ -4714,15 +4735,84 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
     cwd, env, input, capMs: budgetMs(opts.capMs ?? Number.POSITIVE_INFINITY, childLimit),
     limit: childLimit,
     onStdout: (d) => {
+      activeSinceTick = true;
+      poll.allowIdle = false;
       outBytes += d.length;
       watchChunk(outRelay, outDecoder.write(d));
     },
-    onStderr: (d) => onErrText(errDecoder.write(d)),
+    onStderr: (d) => { activeSinceTick = true; poll.allowIdle = false; onErrText(errDecoder.write(d)); },
     // D-08: a detached child leads its own group and session (pgid = sid = pid).
     onSpawn: (pid) => lockUpdate({ child_pgid: pid, child_start: procStartTime(pid) }),
     idleMs: (opts.idleS || 0) * 1000,
-    onIdle: () => { if (state.liveHit) return false; log(redactSecrets(`cross-ai: idle watchdog: ${cli} printed nothing for ${opts.idleS}s; ending its process group`)); return true; },
+    idleResetter: (ctl) => { idleCtl = ctl; },
+    onIdle: () => { if (state.liveHit) return false; if (pollGate && !pollGate()) return false; log(redactSecrets(`cross-ai: idle watchdog: ${cli} printed nothing for ${opts.idleS}s; ending its process group`)); return true; },
   };
+  const idlePlan = opts.idlePlan || null;
+  if (idlePlan?.pollTree && !inGitTree(cwd) && !treePollNoted) {
+    treePollNoted = true;
+    log('cross-ai: tree polling off: not inside a git work tree; the idle clock reads output only');
+  }
+  const polling = Boolean(idlePlan?.pollTree) && liveBaseline !== null && inGitTree(cwd);
+  const pollStart = performance.now();
+  // The first previous read is the baseline's own value.
+  const poll = { bg: { stops: new Set(), cancelled: false }, inFlight: null, stopped: false,
+    prev: { head: liveBaseline?.head ?? null, tree: liveBaseline?.tree ?? null }, commits: 0,
+    treeChanged: false, lastChangeMs: pollStart, lastReadMs: pollStart, lastDoneMs: 0,
+    lastNoticeMs: 0, noticed: false, failNoted: false, idleDue: false, allowIdle: false };
+  const pollFailed = (text) => { if (!poll.failNoted) { poll.failNoted = true; log(text); } };
+  // Changed trees reset the clock; unchanged or failed reads release deferred idle.
+  const onRead = (read, quiet) => {
+    poll.inFlight = null;
+    poll.lastDoneMs = performance.now();
+    if (poll.stopped) return;
+    if (read === null) {
+      const f = gitFailure || { kind: 'error', what: 'unknown' };
+      pollFailed(`cross-ai: tree poll: git ${f.what} ${f.kind === 'timeout' ? 'timed out' : 'failed'}; no signal from this read`);
+    } else {
+      const changed = read.head !== poll.prev.head || read.tree !== poll.prev.tree;
+      poll.prev = { head: read.head, tree: read.tree };
+      poll.commits = read.commits;
+      poll.treeChanged = read.tree !== liveBaseline.tree;
+      if (changed) { poll.lastChangeMs = performance.now(); poll.idleDue = false; poll.allowIdle = false; if (idleCtl) idleCtl.reset(); return; }
+      const still = performance.now() - poll.lastChangeMs;
+      if (!quiet && still >= idlePlan.idleS * 1000 && performance.now() - poll.lastNoticeMs >= idlePlan.idleS * 1000) {
+        poll.lastNoticeMs = performance.now();
+        const n = Math.round(still / 1000);
+        log(`cross-ai: ${label} printed output but changed nothing in the checkout for ${n}s`);
+        if (!poll.noticed) { poll.noticed = true; addFinding('no_tree_change', `${label} printed output but changed nothing for ${n}s`); }
+      }
+    }
+    if (poll.idleDue) { poll.idleDue = false; poll.allowIdle = true; if (idleCtl) idleCtl.recheck(); }
+  };
+  const startRead = (quiet) => {
+    poll.lastReadMs = performance.now();
+    poll.inFlight = pollTreeRead(cwd, childLimit, liveBaseline.head, poll.bg).then(
+      (read) => onRead(read, quiet),
+      (e) => { pollFailed(`cross-ai: tree poll: read failed (${e && (e.code || e.message)}); no signal from this read`); onRead(null, quiet); },
+    ).catch((e) => { poll.inFlight = null; pollFailed(`cross-ai: tree poll: read failed (${e && (e.code || e.message)}); no signal from this read`); });
+  };
+  // One read in flight; quiet ticks read, and output permits one read per idle period.
+  const pollTick = () => {
+    if (poll.stopped || poll.inFlight) return;
+    const quiet = !activeSinceTick;
+    activeSinceTick = false;
+    if (!quiet && performance.now() - poll.lastReadMs < idlePlan.idleS * 1000) return;
+    startRead(quiet);
+  };
+  // Idle expiry waits for an in-flight or fresh read before ending the lane.
+  if (polling) pollGate = () => {
+    if (poll.allowIdle) { poll.allowIdle = false; return true; }
+    if (!poll.inFlight && performance.now() - poll.lastDoneMs < idlePlan.checkS * 1000) return true;
+    poll.idleDue = true;
+    if (!poll.inFlight) startRead(true);
+    return false;
+  };
+  const pollTimer = polling ? setInterval(pollTick, idlePlan.checkS * 1000) : null;
+  const hb = setInterval(() => {
+    const secs = Math.round((Date.now() - started) / 1000);
+    log(`cross-ai: ${label} running ${secs}s, stdout +${outBytes - lastBytes} bytes${polling ? `, commits +${poll.commits} since the baseline, tree ${poll.treeChanged ? 'changed' : 'unchanged'}` : ''}`);
+    lastBytes = outBytes;
+  }, CONFIG.heartbeatS * 1000);
   let r = null;
   if (opts.host && !opts.host.failed) {
     const hosted = await hostedChild(bin, argv, { ...childOpts, host: opts.host, promptArg: opts.promptArg });
@@ -4732,6 +4822,12 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
     } else r = hosted;
   }
   if (!r) r = await runChild(bin, argv, childOpts);
+  // Stop and join the whole background read before the next tree read.
+  if (pollTimer) clearInterval(pollTimer);
+  poll.stopped = true;
+  poll.bg.cancelled = true;
+  for (const stop of [...poll.bg.stops]) stop('stop');
+  if (poll.inFlight) await poll.inFlight;
   clearInterval(hb);
   if (state.limitTimer) clearTimeout(state.limitTimer);
   const outRest = outDecoder.end();
@@ -5068,7 +5164,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const childLimit = episodeEnd() ? Math.min(runDeadline, episodeEnd()) : runDeadline;
       const route = opts.route || 'unknown';
       const r = await runOnce(binPath, argv, input, env, ctx.cwd, name,
-        { capMs: childCap, limit: childLimit, route, model, host: opts.host, promptArg: rt.argvPrompt ? ctx.promptArg : undefined, idleS: opts.idleS || 0 });
+        { capMs: childCap, limit: childLimit, route, model, host: opts.host, promptArg: rt.argvPrompt ? ctx.promptArg : undefined, idleS: opts.idleS || 0, idlePlan: opts.idlePlan || null });
       // Self-test fakes only (FAKE_CALLS): a fake child stalls the post-run git snapshot only
       // while it is alive. A real run never touches the caller's home.
       if (process.env.FAKE_CALLS) {
@@ -6119,6 +6215,7 @@ async function main(argv) {
     profileFlags,
     host: hostPlan,
     idleS: idlePlan.idleS,
+    idlePlan,
   });
   liveFields.out = r.outBytes || 0;
   liveFields.cli_rc = r.cli_rc ?? '-';
