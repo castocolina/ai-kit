@@ -31,6 +31,7 @@ sys.path.insert(0, str(REPO / "skills/ai-kit-gsd-curated-config"))
 
 from ai_kit_gsd_curated_config import cross_ai
 from ai_kit_gsd_curated_config.cross_ai_script import template_config
+from ai_kit_spec.error_classifier import STATUS_TO_REASON
 from ai_kit_spec.runner_dispatch import parse_status_line
 
 from tests.test_quota_policy_text import (
@@ -38,6 +39,7 @@ from tests.test_quota_policy_text import (
     pointer_lines,
     wake_lines,
 )
+from tests.test_runner_describe import source_list, status_table
 
 HEADINGS = [
     "## When to use",
@@ -75,6 +77,25 @@ SWITCH_RE = re.compile(
     r"\b(pick|choose|switch to|use) (another|a different) (CLI|model|harness)\b",
     re.IGNORECASE,
 )
+GOLDEN = REPO / "tests/fixtures/runner_describe_golden.json"
+CLASS_HEADING = "### Failure classes"
+JEV_HEADING = "### An unmatched failure body"
+JEV_WORDS = (
+    "Where the `jev-fast-decision` skill is installed at the calling runtime",
+    "the word advisory",
+    "It never changes a status, a retry or a wait from the suggestion",
+    "only after the owner confirms",
+    "Without jev the only path is to print the report",
+    "The runner itself never calls jev",
+)
+# STATUS_TABLE keys that are statuses, not failure classes.
+NON_CLASS_STATUSES = frozenset({
+    "ok", "no_change", "empty_answer", "contract_violation", "partial", "usage", "no_model",
+    "empty_stdin", "locked", "timeout", "not_installed", "signal", "git_error", "git_timeout",
+})
+# Python-only reason keys kept for older runners (SPEC R6 amendment).
+LEGACY_REASON_KEYS = frozenset({"capacity", "idle_stall", "quota_wait", "billing_or_access",
+                                "bad_prompt"})
 
 
 def _frontmatter(text):
@@ -132,6 +153,70 @@ def _link_root(source, target):
     return source.parent
 
 
+def skill_class_rows(text) -> list[tuple[str, int]]:
+    """The (class, exit) rows of the SKILL class table in section 4, in file order."""
+    section = _section(text, "## 4. Read the result")
+    start = section.find(CLASS_HEADING)
+    if start < 0:
+        return []
+    rows = []
+    for line in section[start + len(CLASS_HEADING):].splitlines():
+        if line.startswith("#"):
+            break
+        if line.startswith("| `"):
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            rows.append((cells[0].strip("`"), int(cells[1])))
+    return rows
+
+
+def class_lock_problems(row_classes, status, describe_classes, reasons, skill_rows):
+    """Every disagreement between the five places that list the failure classes."""
+    expected = [*row_classes, "crash"]
+    problems = [f"STATUS_TABLE lacks {name}" for name in expected if name not in status]
+    problems += [f"STATUS_TABLE has an unlisted key {key}" for key in sorted(status)
+                 if key not in expected and key not in NON_CLASS_STATUSES]
+    problems += [f"STATUS_TO_REASON has an unlisted key {key}" for key in sorted(reasons)
+                 if key not in expected and key not in NON_CLASS_STATUSES
+                 and key not in LEGACY_REASON_KEYS]
+    if set(describe_classes) != set(expected):
+        problems.append(
+            f"--describe classes differ: {sorted(set(describe_classes) ^ set(expected))}")
+    problems += [
+        f"--describe {name} exit {describe_classes[name]['exit']} != STATUS_TABLE {status[name]}"
+        for name in describe_classes
+        if name in status and describe_classes[name]["exit"] != status[name]
+    ]
+    problems += [f"STATUS_TO_REASON lacks {name}" for name in expected if name not in reasons]
+    names = [name for name, _ in skill_rows]
+    if len(names) != len(set(names)):
+        problems.append("SKILL class table repeats a row")
+    if set(names) != set(expected):
+        problems.append(f"SKILL class table differs: {sorted(set(names) ^ set(expected))}")
+    problems += [f"SKILL {name} exit {code} != STATUS_TABLE {status[name]}"
+                 for name, code in skill_rows if name in status and code != status[name]]
+    return problems
+
+
+def retry_policy_numbers(text) -> tuple[list[int], int, int, int]:
+    """The hard waits, the periodic wait, the cap ceiling and the reset margin of the template."""
+    block = re.search(r"^const RETRY_DEFAULTS = Object\.freeze\(\{(.*?)^\}\);", text, re.M | re.S)
+    assert block is not None
+    waits = re.search(r"hard_waits_s:\s*(?:Object\.freeze\()?\[([0-9,\s]+)\]", block.group(1))
+    every = re.search(r"hard_every_s:\s*(\d+)", block.group(1))
+    cap = re.search(r"return Math\.min\((\d+), n\);", text)
+    margin = re.search(r"^const RESET_MARGIN_S = (\d+);", text, re.M)
+    assert waits is not None and every is not None and cap is not None and margin is not None
+    return ([int(n) for n in re.findall(r"\d+", waits.group(1))], int(every.group(1)),
+            int(cap.group(1)), int(margin.group(1)))
+
+
+def policy_clauses(waits, every, cap, margin) -> list[str]:
+    """Each clause binds one policy number to its meaning in SKILL.md section 6."""
+    return [f"entry 1 (default {waits[0]} s)", f"entry 2 (default {waits[1]} s)",
+            f"every `hard_every_s` (default {every} s)", f"at most {cap}",
+            f"time plus {margin} s"]
+
+
 class SkillShape(unittest.TestCase):
     def test_frontmatter_name_and_description_bound(self):
         meta = _frontmatter(SKILL.read_text(encoding="utf-8"))
@@ -185,6 +270,101 @@ class SkillShape(unittest.TestCase):
         self.assertIsNotNone(SWITCH_RE.search(bad))
         good = "Never switch harness, provider or model."
         self.assertIsNone(SWITCH_RE.search(good))
+
+
+class ClassLock(unittest.TestCase):
+    """SPEC R1: runner rows, STATUS_TABLE, --describe, Python and the SKILL list one class set."""
+
+    def setUp(self):
+        self.rows = skill_class_rows(SKILL.read_text(encoding="utf-8"))
+        self.golden = json.loads(GOLDEN.read_text(encoding="utf-8"))["classes"]
+        self.row_classes = source_list("ROW_CLASSES")
+        self.status = status_table()
+
+    def test_the_five_places_agree(self):
+        self.assertEqual([], class_lock_problems(self.row_classes, self.status, self.golden,
+                                                 STATUS_TO_REASON, self.rows))
+
+    def test_skill_rows_follow_the_runner_order(self):
+        self.assertEqual([name for name, _ in self.rows], [*self.row_classes, "crash"])
+
+    def test_bad_request_is_an_owner_stop_everywhere(self):
+        self.assertEqual(self.status["bad_request"], 69)
+        self.assertEqual(self.golden["bad_request"]["exit"], 69)
+        self.assertEqual(dict(self.rows)["bad_request"], 69)
+        self.assertEqual(STATUS_TO_REASON["bad_request"], "real_error")
+
+    def test_a_planted_class_in_each_place_is_caught(self):
+        status_less = {k: v for k, v in self.status.items() if k != "bad_request"}
+        golden_bad_exit = {**self.golden, "bad_request": {**self.golden["bad_request"], "exit": 75}}
+        reasons_less = {k: v for k, v in STATUS_TO_REASON.items() if k != "bad_request"}
+        base = (self.row_classes, self.status, self.golden, STATUS_TO_REASON, self.rows)
+        cases = (
+            (0, [*self.row_classes, "placeholder_class"], "STATUS_TABLE lacks placeholder_class"),
+            (1, {**self.status, "placeholder_class": 69},
+             "STATUS_TABLE has an unlisted key placeholder_class"),
+            (1, status_less, "STATUS_TABLE lacks bad_request"),
+            (2, {**self.golden, "placeholder_class": {"exit": 69, "router_quota": False}},
+             "--describe classes differ"),
+            (2, golden_bad_exit, "--describe bad_request exit 75"),
+            (3, {**STATUS_TO_REASON, "placeholder_class": "real_error"},
+             "STATUS_TO_REASON has an unlisted key placeholder_class"),
+            (3, reasons_less, "STATUS_TO_REASON lacks bad_request"),
+            (4, [*self.rows, ("placeholder_class", 69)], "SKILL class table differs"),
+        )
+        self.assertEqual(len(cases), 8)
+        for place, planted, want in cases:
+            with self.subTest(want=want):
+                args = list(base)
+                args[place] = planted
+                problems = class_lock_problems(*args)
+                self.assertTrue(any(want in problem for problem in problems), msg=problems)
+
+
+class PolicyText(unittest.TestCase):
+    """SPEC R10: the policy numbers and the bounded stated time read the same in the SKILL."""
+
+    def test_section_6_states_the_template_numbers(self):
+        waits, every, cap, margin = retry_policy_numbers(TEMPLATE.read_text(encoding="utf-8"))
+        self.assertEqual((waits, every, cap, margin), ([60, 300], 600, 14400, 120))
+        section = _section(SKILL.read_text(encoding="utf-8"), "## 6. Hard tier and notice")
+        for clause in policy_clauses(waits, every, cap, margin):
+            self.assertIn(clause, section)
+        self.assertIn("check=", section)
+        self.assertIn("stopped=cap", section)
+        self.assertIn("under 60 s (0 included) runs inside the call", section)
+        self.assertIn("the reset check replaces the wait of the check it comes before; "
+                      "the series then resumes from its own count", section)
+        self.assertNotIn("retry_after_s=0", section)
+
+    def test_upstream_sentence_bounds_the_stated_time(self):
+        section = _section(SKILL.read_text(encoding="utf-8"), "## 4. Read the result")
+        for words in ("only to add one extra hard-tier check",
+                      "never less than 60 s ahead, never past the cap", "reset_after_s",
+                      "recovery_hint", "never an HTTP header"):
+            self.assertIn(words, section)
+
+    def test_jev_subsection_is_conditional(self):
+        body = _section(SKILL.read_text(encoding="utf-8"), "## 5. Chain review or execution")
+        self.assertIn(JEV_HEADING, body)
+        for words in JEV_WORDS:
+            self.assertIn(words, body)
+
+    def test_planted_number_drift_is_caught(self):
+        section = _section(SKILL.read_text(encoding="utf-8"), "## 6. Hard tier and notice")
+        template = TEMPLATE.read_text(encoding="utf-8")
+        for old, new, clause in (
+            ("hard_waits_s: Object.freeze([60, 300])", "hard_waits_s: Object.freeze([90, 300])",
+             "entry 1 (default 90 s)"),
+            ("const RESET_MARGIN_S = 120;", "const RESET_MARGIN_S = 180;", "time plus 180 s"),
+        ):
+            with self.subTest(new=new):
+                planted = template.replace(old, new)
+                self.assertNotEqual(planted, template)
+                clauses = policy_clauses(*retry_policy_numbers(planted))
+                self.assertIn(clause, clauses)
+                self.assertNotIn(clause, section)
+                self.assertTrue(any(item not in section for item in clauses))
 
 
 class CuratedConfigPins(unittest.TestCase):

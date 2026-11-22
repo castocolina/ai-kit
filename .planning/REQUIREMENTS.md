@@ -396,7 +396,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   before and after in the plan entry; only the unused `watchChunk` parameters, a redundant term and one redundant
   assignment are dead, and `clampCapS` and `clampAttemptTimeout` are live and stay; the router rule counts an owner
   statement or an alias assumed by the naming rule; the quota class is `quota_cycle`)*
-- [ ] **RUN-05**: The error catalogue classifies the real-run bodies it misses today (provider not configured,
+- [x] **RUN-05**: The error catalogue classifies the real-run bodies it misses today (provider not configured,
   policy budget 429, data inspection 400, context length 400, a plan-not-open code, 502/503 capacity, copilot's
   "model not available") and promotes the rows that now have evidence; the model-cooldown row's class is set from
   its observed durations (2 minutes to over 2 hours) rather than assumed transient. *(amended 2026-11-16, 38.1 D-01 to D-06: the
@@ -459,7 +459,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   liveness or verdict signal, and an automatic sweep never calls herdr when hosting is switched off. What cannot be guaranteed (a
   kill before the launcher ran, a detached `setsid` grandchild, unlinked disk blocks) is stated in the skill. *(added 2026-11-16,
   re-run 2, 38 D-25 to D-33, owner directive "herdr hosting")*
-- [ ] **RUN-14**: A quota stop of a usage-limited lane writes a secret-free "blocked until" record in the runner's state
+- [x] **RUN-14**: A quota stop of a usage-limited lane writes a secret-free "blocked until" record in the runner's state
   directory (never in config), keyed by the lane's pool (provider plus tier, so lanes that share a pool block together), so a
   later run does not spend a call on a lane that is still limited. The time is now plus the stated reset (the typed
   `retryAfterMs` of an opencode free-pool error, taken from the HTTP `Retry-After` header) plus the 120 s margin of the stated
@@ -1123,7 +1123,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-02 | Phase 37 | Complete |
 | RUN-03 | Phase 38 | Complete |
 | RUN-04 | Phase 38 | Complete |
-| RUN-05 | Phase 38.1 | Pending |
+| RUN-05 | Phase 38.1 | Complete |
 | RUN-06 | Phase 37 | Complete |
 | RUN-07 | Phase 38 | Complete |
 | RUN-08 | Phase 38 | Complete |
@@ -1132,7 +1132,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-11 | Phase 38.1 | Pending |
 | RUN-12 | Phase 37 | Complete |
 | RUN-13 | Phase 38 | Complete |
-| RUN-14 | Phase 38.1 | Pending |
+| RUN-14 | Phase 38.1 | Complete |
 | RUN-15 | Phase 39.1 | Pending |
 | RULE-01 | Phase 45 | Pending |
 | RULE-02 | Phase 45 | Pending |
