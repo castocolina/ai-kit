@@ -37,6 +37,7 @@
  *   --escalate-model                         carried, never acted on
  *   --session-id <id>                        session id
  *   --host auto|none                         hosting choice
+ *   --idle-timeout <seconds|default>         idle watchdog: 0 to 86400 s (0 off) or default (900); beats CONFIG.idleTimeoutS
  *   --skill-path <dir>                       repeatable skill path
  *   --skill-name <name>                      repeatable skill name
  *   --mcp-config <file>                      MCP configuration path
@@ -100,6 +101,7 @@ const CONFIG = {
   "effort": {},
   "extraArgs": {},
   "heartbeatS": 30,
+  "idleTimeoutS": 0,
   "models": {},
   "outerTimeoutS": 1800,
   "retry": {
@@ -2766,6 +2768,27 @@ function clampCapS(value) {
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.min(14400, n);
 }
+// judged (D-03): healthy review lanes took 288 to 579 s in total, observed stalls printed nothing for 1800 s, and GSD asks the owner after 10 minutes without commits.
+const IDLE_DEFAULT_S = 900;
+const IDLE_MAX_S = 86400;
+// SPEC R1 cannot-fire note; compared in ms by the callers, shown in whole seconds (plan 38-11 prints it against the live attempt cap).
+function idleBudgetNote(idleS, budgetMs) { return `cross-ai: note: idle timeout ${idleS}s is not below the attempt budget of ${Math.floor(budgetMs / 1000)}s; it cannot fire before the deadline`; }
+// SPEC R1 / D-01: pure; the call wins over CONFIG, 0 is off; checkS is the execute tree-poll interval (R2), not the output clock.
+function planIdle(call, config, role) {
+  const notices = [];
+  let idleS = 0;
+  if (call.idleTimeout !== null && call.idleTimeout !== undefined) {
+    idleS = call.idleTimeout === 'default' ? IDLE_DEFAULT_S : call.idleTimeout;
+  } else {
+    const baked = config.idleTimeoutS ?? 0;
+    if (Number.isInteger(baked) && baked >= 0 && baked <= IDLE_MAX_S) idleS = baked;
+    else notices.push('cross-ai: note: CONFIG.idleTimeoutS is not an integer from 0 to 86400; the idle watchdog is off');
+  }
+  if (idleS === 0) return { idleS: 0, checkS: 0, pollTree: false, notices };
+  if (idleS < 60) notices.push(`cross-ai: note: idle timeout ${idleS}s is under 60s; a slow, quiet model may be ended`);
+  if (Number.isFinite(call.budgetMs) && idleS * 1000 >= call.budgetMs) notices.push(idleBudgetNote(idleS, call.budgetMs));
+  return { idleS, checkS: Math.min(60, Math.max(1, Math.floor(idleS / 10))), pollTree: role === 'execute', notices };
+}
 // Last source of the retry cascade. Never validated and never refused: a cap below a default
 // hard wait stops the hard tier first (25.1-03 hardWaitFor), it does not drop a key.
 const RETRY_DEFAULTS = Object.freeze({
@@ -4374,8 +4397,8 @@ const sleep = (ms) => new Promise((resolve) => {
 // A deadline shorter than that still runs this attempt (the ladder then admits nothing).
 // A router-quota cycle also clamps the timer to the absolute cap minus the same reserve, so
 // an attempt admitted near the cap cannot run past it.
-function attemptCapMs(opts, nowMs, quotaEndMs = 0) {
-  const remaining = Math.max(0, runDeadline - nowMs);
+function attemptCapMs(opts, nowMs, quotaEndMs = 0, deadlineMs = runDeadline) {
+  const remaining = Math.max(0, deadlineMs - nowMs);
   // Reserve 60 s for the next rung only when the attempt keeps at least as much: no 1 s cliff.
   let budget = remaining >= 120000 ? remaining - 60000 : remaining;
   if (quotaEndMs > 0) {
@@ -5179,7 +5202,7 @@ function parseArgs(argv) {
     codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
     role: null, effort: null, context: null, escalateRuntime: false, escalateModel: false,
-    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false,
+    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, idleTimeout: null,
   };
   let modeFlag = null;
   for (let i = 0; i < argv.length; i++) {
@@ -5251,6 +5274,11 @@ function parseArgs(argv) {
       if (a === '--skill-path') { o.skillPaths.push(p); o.skillArgs.push({ flag: a, value: p }); }
       else if (a === '--mcp-config') o.mcpConfig = p;
       else o.argvFile = p;
+    } else if (a === '--idle-timeout') {
+      const s = v();
+      if (s === 'default') o.idleTimeout = 'default';
+      else if (/^[0-9]+$/.test(s) && Number(s) <= IDLE_MAX_S) o.idleTimeout = Number(s);
+      else throw new Error('--idle-timeout must be an integer from 0 to 86400 or default');
     } else if (a === '--describe') o.describe = true;
     else throw new Error(`unknown argument: ${a}`);
   }
@@ -5522,6 +5550,12 @@ async function main(argv) {
   }
   const hostNote = hostSettingValue(o.host, process.env.AIKIT_HOST).note;
   if (hostNote) log(hostNote);
+  // SPEC R1: the first attempt's budget by attemptCapMs's own rule; runDeadline is not set yet on this path.
+  const nowMs = Date.now();
+  const idleBudgetMs = attemptCapMs({}, nowMs, 0, nowMs + dl.inner * 1000);
+  const idlePlan = planIdle({ idleTimeout: o.idleTimeout, budgetMs: o.printArgv ? idleBudgetMs : null }, CONFIG, o.mode === 'exec' ? 'execute' : 'review');
+  for (const note of idlePlan.notices) log(note);
+  if (o.printArgv || idlePlan.idleS > 0) log(idlePlan.idleS > 0 ? `cross-ai: idle watchdog on timeout=${idlePlan.idleS}s` : 'cross-ai: idle watchdog off');
   if (o.printArgv) {
     const plan = c.model ? planSettings(rt, o.mode, callOf(o, name, c.model, '<sid>', skillPlan, mcp)) : null;
     if (plan?.error) {
@@ -5781,6 +5815,8 @@ export {
   HERDR_BIN,
   HERDR_VERBS,
   HOST_PATH_SAFE,
+  IDLE_DEFAULT_S,
+  IDLE_MAX_S,
   KEY_SHAPES,
   LEVEL_RE,
   MODEL_ID,
@@ -5817,6 +5853,7 @@ export {
   finish,
   groupMembers,
   hardWaitFor,
+  idleBudgetNote,
   killGroup,
   ladderNext,
   ladderStop,
@@ -5834,6 +5871,7 @@ export {
   parseTomlSubset,
   pidAlive,
   planArgvFile,
+  planIdle,
   planSettings,
   planSkills,
   procGroup,

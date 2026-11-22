@@ -19,6 +19,8 @@ import {
   HERDR_BIN,
   HERDR_VERBS,
   HOST_PATH_SAFE,
+  IDLE_DEFAULT_S,
+  IDLE_MAX_S,
   KEY_SHAPES,
   LEVEL_RE,
   MODEL_ID,
@@ -55,6 +57,7 @@ import {
   finish,
   groupMembers,
   hardWaitFor,
+  idleBudgetNote,
   killGroup,
   ladderNext,
   ladderStop,
@@ -72,6 +75,7 @@ import {
   parseTomlSubset,
   pidAlive,
   planArgvFile,
+  planIdle,
   planSettings,
   planSkills,
   procGroup,
@@ -9547,6 +9551,84 @@ async function blackBoxSelfTest(listOnly = false) {
             if (names.length) return `${label} run left ${names.join(',')}`;
           }
           return null;
+        },
+      },
+      {
+        name: 'pure-idle-plan', kind: 'logic', pure: () => {
+          const off = { idleS: 0, checkS: 0, pollTree: false, notices: [] };
+          const under = 'cross-ai: note: idle timeout 1s is under 60s; a slow, quiet model may be ended';
+          const budget = (s, b) => `cross-ai: note: idle timeout ${s}s is not below the attempt budget of ${b}s; it cannot fire before the deadline`;
+          const on = (s, tree, notices = []) => ({ idleS: s, checkS: Math.min(60, Math.max(1, Math.floor(s / 10))), pollTree: tree, notices });
+          const rows = [
+            [null, {}, 'execute', 1740000, off], [null, { idleTimeoutS: 0 }, 'execute', 1740000, off],
+            ['default', {}, 'execute', 1740000, on(900, true)], ['default', {}, 'review', 1740000, on(900, false)],
+            [0, { idleTimeoutS: 300 }, 'execute', 1740000, off], [null, { idleTimeoutS: 300 }, 'execute', 1740000, on(300, true)],
+            [120, { idleTimeoutS: 300 }, 'review', 1740000, on(120, false)], [1, {}, 'execute', 1740000, on(1, true, [under])],
+            [86400, {}, 'execute', 1740000, on(86400, true, [budget(86400, 1740)])],
+            [1740, {}, 'execute', 1740000, on(1740, true, [budget(1740, 1740)])], [1739, {}, 'execute', 1740000, on(1739, true)],
+            [30, {}, 'execute', 20000, on(30, true, ['cross-ai: note: idle timeout 30s is under 60s; a slow, quiet model may be ended', budget(30, 20)])],
+            [86400, {}, 'execute', null, on(86400, true)], [1740, {}, 'execute', 1740500, on(1740, true)],
+          ];
+          for (const bad of [-5, 1.5, 86401, '300', 'default', true]) {
+            rows.push([null, { idleTimeoutS: bad }, 'execute', 1740000, { ...off, notices: ['cross-ai: note: CONFIG.idleTimeoutS is not an integer from 0 to 86400; the idle watchdog is off'] }]);
+            rows.push([120, { idleTimeoutS: bad }, 'execute', 1740000, on(120, true)]);
+          }
+          for (const [i, [idleTimeout, config, role, budgetMs, expected]] of rows.entries()) {
+            if (JSON.stringify(planIdle({ idleTimeout, budgetMs }, config, role)) !== JSON.stringify(expected)) return `plan ${i + 1}`;
+          }
+          if (IDLE_DEFAULT_S !== 900 || IDLE_MAX_S !== 86400) return 'constants';
+          return idleBudgetNote(1740, 1740999) === budget(1740, 1740) ? null : 'budget note';
+        },
+      },
+      {
+        name: 'idle-print-off', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--outer-timeout', '1830'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        async check (r, ctx) {
+          const b = await runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok'] }, ctx);
+          for (const x of [r, b]) {
+            const lines = (x.stderr || '').split('\n');
+            if (x.status !== 0 || lines.filter(s => s === 'cross-ai: idle watchdog off').length !== 1 || lines.some(s => s.startsWith('cross-ai: idle watchdog on') || s.startsWith('cross-ai: note: idle timeout'))) return 'off line';
+          }
+          return null;
+        },
+      },
+      {
+        name: 'pure-idle-parse', kind: 'logic', pure: () => {
+          for (const [s, expected] of [['1', 1], ['86400', 86400], ['0', 0], ['007', 7], ['default', 'default']]) if (parseArgs(['--idle-timeout', s]).idleTimeout !== expected) return `valid ${s}`;
+          if (parseArgs([]).idleTimeout !== null) return 'default';
+          for (const s of ['86401', '-1', '', '1.5', 'abc', ' 5', '0x10', '1e3', '+5', '５', 'Default', '99999999999999999999']) {
+            try { parseArgs(['--idle-timeout', s]); return `accepted ${s}`; } catch (e) { if (e.message !== '--idle-timeout must be an integer from 0 to 86400 or default') return `error ${s}`; }
+          }
+          try { parseArgs(['--idle-timeout']); return 'missing accepted'; } catch (e) { return e.message === '--idle-timeout needs a value' ? null : 'missing error'; }
+        },
+      },
+      {
+        name: 'idle-print-default', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--outer-timeout', '1830', '--idle-timeout', 'default'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        async check (r, ctx) {
+          const lines = (r.stderr || '').split('\n');
+          if (lines.filter(s => s === 'cross-ai: idle watchdog on timeout=900s').length !== 1 || lines.includes('cross-ai: idle watchdog off') || lines.some(s => s.startsWith('cross-ai: note: idle timeout') || s.startsWith('cross-ai: setting idle'))) return 'on line';
+          const b = await runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--outer-timeout', '1830'] }, ctx);
+          const line = x => (x.stdout || '').split('\n').find(s => s.startsWith('pi\t'));
+          return b.status === 0 && line(r) && line(r) === line(b) ? null : 'argv changed';
+        },
+      },
+      {
+        name: 'idle-print-config', kind: 'logic', config: { idleTimeoutS: 300 }, args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--outer-timeout', '1830'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        second: { args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--outer-timeout', '1830', '--idle-timeout', '0'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/ },
+        check: both => (both.first.stderr || '').split('\n').includes('cross-ai: idle watchdog on timeout=300s') && (both.again.stderr || '').split('\n').includes('cross-ai: idle watchdog off') ? null : 'config precedence',
+      },
+      {
+        name: 'idle-print-notices', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--outer-timeout', '300', '--idle-timeout', '210'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        async check (r, ctx) {
+          const lines = (r.stderr || '').split('\n');
+          if (!lines.includes('cross-ai: deadline 270s (outer 300s)') || !lines.includes('cross-ai: note: idle timeout 210s is not below the attempt budget of 210s; it cannot fire before the deadline') || !lines.includes('cross-ai: idle watchdog on timeout=210s') || lines.some(s => s.includes('under 60s'))) return 'budget note';
+          const run = extra => runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', ...extra] }, ctx);
+          const b = await run(['--outer-timeout', '300', '--idle-timeout', '209']);
+          if (b.status !== 0 || (b.stderr || '').split('\n').some(s => s.startsWith('cross-ai: note: idle timeout'))) return 'below budget';
+          const c = await run(['--idle-timeout', '59', '--outer-timeout', '1830']);
+          const notes = (c.stderr || '').split('\n').filter(s => s.startsWith('cross-ai: note: idle timeout'));
+          if (c.status !== 0 || JSON.stringify(notes) !== JSON.stringify(['cross-ai: note: idle timeout 59s is under 60s; a slow, quiet model may be ended'])) return 'short note';
+          const d = await run(['--idle-timeout', '1.5']);
+          return d.status === 2 && (d.stderr || '').split('\n').includes('cross-ai: --idle-timeout must be an integer from 0 to 86400 or default') ? null : 'invalid';
         },
       },
     ];
