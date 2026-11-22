@@ -1,4 +1,4 @@
-"""E2E tier: runtime shard 4 of 4 of the runner self-test (tests/cross_ai_selftest.py)."""
+"""E2E tier: runtime shard 4 of 7 of the runner self-test (tests/cross_ai_selftest.py)."""
 
 import unittest
 

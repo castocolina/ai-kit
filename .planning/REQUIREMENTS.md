@@ -388,7 +388,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   `--idle-timeout <seconds|default>` or the baked `CONFIG.idleTimeoutS`, `default` is 900 s labeled judged, an idle kill is
   a timed-out attempt in the existing retry ladder, and review lanes reset on output only)* *(amended 2026-11-16, re-run 2, 38
   D-28, RUN-13: for a lane the runner hosts in a herdr tab, "output" is growth of the lane's `out` or `err` file)*
-- [ ] **RUN-04**: The Phase 25 review cleanup lands: one confirmed-router rule, a quota-cycle class, the long
+- [x] **RUN-04**: The Phase 25 review cleanup lands: one confirmed-router rule, a quota-cycle class, the long
   self-test moved out of rendered copies, the user's lower timeout restored on cleanup, curated-config's
   `plan_io.py` calling gsd-core's `buildAgentSkillsBlock` instead of re-implementing it, and the dead `runCli`
   state, the live-detection plumbing and the clamp helpers removed. *(amended 2026-11-16, 38 D-17 to D-22, live-verified:
@@ -1122,7 +1122,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-01 | Phase 37 | Complete |
 | RUN-02 | Phase 37 | Complete |
 | RUN-03 | Phase 38 | Complete |
-| RUN-04 | Phase 38 | Pending |
+| RUN-04 | Phase 38 | Complete |
 | RUN-05 | Phase 38.1 | Pending |
 | RUN-06 | Phase 37 | Complete |
 | RUN-07 | Phase 38 | Complete |

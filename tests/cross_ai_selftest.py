@@ -112,7 +112,8 @@ def runner_env(tmp: str) -> dict[str, str]:
 # runner's 900 s module deadline (DeadlineCouplingTest pins it).
 SHARD_GUARD_SECS = 120
 MAX_LOAD_FACTOR = 4
-SHARD_COUNTS = {"logic": 4, "runtime": 4}
+# 38-25: sized so each shard stays near 40 s, well inside the 60 s commit budget
+SHARD_COUNTS = {"logic": 5, "runtime": 7}
 LIST_TIMEOUT_SECS = 60
 TIMES_FIXTURE = os.path.join(REPO_ROOT, "tests", "fixtures", "cross_ai_selftest_secs.json")
 SHARD_MODULE = "tests.test_cross_ai_selftest_{kind}_{index}_e2e"
