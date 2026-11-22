@@ -9,6 +9,7 @@ import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  ADMISSION_PHRASES_SEED,
   ARGV_PROMPT_MAX,
   CLAUDE_EXEC_FORMULA_RECORD,
   CLI_NAME_RE,
@@ -17,6 +18,7 @@ import {
   CURSOR_MODEL_ID,
   EXEC_PREAMBLE,
   FINDING_CODES,
+  FORBIDDEN_PATHS_SEED,
   HERDR_BIN,
   HERDR_VERBS,
   HOST_PATH_SAFE,
@@ -29,6 +31,7 @@ import {
   OPENCODE_MODEL_ID,
   PATTERNS,
   PI_MODEL_ID,
+  PLAN_ID_RE,
   RESUME_MSG,
   RETRY_DEFAULTS,
   RUNNER_FILE,
@@ -42,6 +45,7 @@ import {
   SKILL_PROSE,
   TABLE,
   addFinding,
+  admissionHits,
   aiKitConfigDir,
   argvFileAllowed,
   argvFileRow,
@@ -57,6 +61,7 @@ import {
   clearStaleLock,
   composePrompt,
   confirmReport,
+  coverageOf,
   current,
   cycleFilePath,
   eventsWithRaw,
@@ -64,6 +69,7 @@ import {
   findingDetail,
   findingLines,
   finish,
+  forbiddenHits,
   groupMembers,
   hardWaitFor,
   idleBudgetNote,
@@ -87,9 +93,12 @@ import {
   overlaySpentMs,
   ownValue,
   parseArgs,
+  parseTasks,
   parseTomlSubset,
+  pathCovers,
   pidAlive,
   planArgvFile,
+  planFindings,
   planIdle,
   planSettings,
   planSkills,
@@ -2592,6 +2601,13 @@ async function blackBoxSelfTest(listOnly = false) {
       writeCycleState(c.baselineFile, c.baselineRec);
       return null;
     };
+    // 38-17: builds plan markup for the plan-check cases.
+    const tag = (name, attrs, body) => '<' + name + attrs + '>' + body + '</' + name + '>';
+    const PLAN3 = tag('objective', '', 'x') + '\n\n' + tag('tasks', '', '\n' + tag('task', ' type="auto"', tag('name', '', 'one') + tag('files', '', 'a.txt')) + tag('task', ' type="tdd"', tag('name', '', 'two') + tag('files', '', 'src/b.js, docs/')) + tag('task', '', tag('name', '', 'three') + tag('files', '', 'c.txt')) + tag('task', ' type="checkpoint:human-verify"', tag('name', '', 'look')) + '\n');
+    const equal = (got, want) => JSON.stringify(got) === JSON.stringify(want) ? null : `got ${JSON.stringify(got)}`;
+    const task = (name, file) => ({ name, files: [file], checkable: true });
+    const defaults = (overrides) => ({ tasks: [], commits: [], changed: [], uncommitted: [], answer: 'done', answered: true, phrases: ADMISSION_PHRASES_SEED, forbidden: FORBIDDEN_PATHS_SEED, named: new Set(), planId: null, ...overrides });
+    const refusal = "--forbid must be a repo-relative path with no empty, '.' or '..' segment and no control character";
     const cases = [
       {
         name: 'ok',
@@ -7882,6 +7898,13 @@ async function blackBoxSelfTest(listOnly = false) {
         ['vocab-skill-path-control', ['--skill-path', 'a\nb'], '--skill-path must be a non-empty path without control characters'],
         ['vocab-mcp-config-empty', ['--mcp-config', ''], '--mcp-config must be a non-empty path without control characters'],
         ['vocab-argv-file-empty', ['--argv-file', ''], '--argv-file must be a non-empty path without control characters'],
+        ['vocab-forbid-empty', ['--forbid', ''], '--forbid needs a repo-relative path'],
+        ['vocab-forbid-absolute', ['--forbid', '/etc/x'], refusal],
+        ['vocab-forbid-parent', ['--forbid', 'a/../../x'], refusal],
+        ['vocab-forbid-dot', ['--forbid', './x.txt'], refusal],
+        ['vocab-forbid-empty-segment', ['--forbid', 'src//private.txt'], refusal],
+        ['vocab-plan-id-empty', ['--plan-id', ''], `--plan-id must match ${PLAN_ID_RE.source}`],
+        ['vocab-plan-id-bad', ['--plan-id', '38_17'], `--plan-id must match ${PLAN_ID_RE.source}`],
       ].map(([name, extra, message]) => ({ name, kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', ...extra], exit: 2, status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/, check: (r) => ((r.stderr || '').split('\n').includes(`cross-ai: ${message}`) ? null : `stderr lacks the line: ${message}`) })),
       {
         name: 'vocab-role-alias', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--role', 'review', '--mode', 'review'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -10344,6 +10367,28 @@ async function blackBoxSelfTest(listOnly = false) {
       { name: 'poll-git-hang-stopped', kind: 'runtime', args: ['--runtime', 'pi', '--role', 'execute', '--model', 'fake/quiet-githang', '--idle-timeout', '2'], exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/quiet-githang exit=0 .* action=stop$/, check: (r, c) => { if (r.stderr.includes('idle watchdog:')) return 'idle'; const pids = readOr(path.join(c.home, 'git-switch.log'), '').split('\n').filter((s) => s.startsWith('hang ')).map((s) => s.slice(5)); if (!pids.length) return 'no hung read'; for (const pid of pids) if (pidLingers(Number(pid))) return `git ${pid} still alive`; return null; } },
       { name: 'poll-git-hang-capped', kind: 'runtime', args: ['--runtime', 'pi', '--role', 'execute', '--model', 'fake/githang-silent', '--timeout', '30', '--idle-timeout', '2'], exit: 124, status: /^AIKIT-XAI status=timeout cli=pi model=fake\/githang-silent exit=124 .* action=stop$/, check: (r, c) => { const lines = r.stderr.split('\n'); const cap = lines.indexOf('cross-ai: tree poll: git write-tree timed out; no signal from this read'); const idle = lines.indexOf('cross-ai: idle watchdog: pi printed nothing for 2s; ending its process group'); if (cap < 0) return 'cap line'; if (idle <= cap) return 'idle ordering'; return readOr(path.join(c.home, 'git-switch.log'), '').split('\n').some((s) => s.startsWith('hang ')) ? null : 'no hung read'; } },
       { name: 'poll-non-git-note', kind: 'logic', setup: (c) => { fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true }); c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo); return null; }, args: ['--runtime', 'pi', '--role', 'execute', '--model', 'fake/ok', '--idle-timeout', '3'], exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=unknown action=stop$/, check: (r) => r.stderr.split('\n').filter((s) => s === 'cross-ai: tree polling off: not inside a git work tree; the idle clock reads output only').length === 1 ? null : 'non-git note' },
+      { name: 'pure-tasks-basic', kind: 'logic', pure: () => equal(parseTasks(PLAN3), [task('one', 'a.txt'), { name: 'two', files: ['src/b.js', 'docs/'], checkable: true }, task('three', 'c.txt')]) },
+      { name: 'pure-cover-basic', kind: 'logic', pure: () => equal(coverageOf(parseTasks(PLAN3), [{ sha: 's1', subject: 'feat(38-17): one', paths: ['a.txt'] }, { sha: 's2', subject: 'feat(38-17): two', paths: ['docs/readme.md'] }]), { covered: 2, checkable: 3, uncovered: ['three'], unchecked: [], planned: 3, planIdCount: null, planIdShort: false }) },
+      { name: 'pure-admission-hit', kind: 'logic', pure: () => equal(admissionHits('# Summary\nTwo cases were not implemented and remain open.\n', ADMISSION_PHRASES_SEED), ['not implemented']) },
+      { name: 'pure-admission-deviations', kind: 'logic', pure: () => equal(admissionHits('# Summary\n## Deviations from Plan\nAuto-fixed one import.\n## Accomplishments\n- all tasks done\n', ADMISSION_PHRASES_SEED), []) },
+      { name: 'pure-admission-code', kind: 'logic', pure: () => equal(admissionHits('# Summary\n```\nlog: not implemented\n```\nThe flag `did not complete` is a log key.\n', ADMISSION_PHRASES_SEED), []) },
+      { name: 'pure-admission-fence-long', kind: 'logic', pure: () => equal(admissionHits('````\n```\nnot implemented\n```\n````\nall done', ADMISSION_PHRASES_SEED), []) },
+      { name: 'pure-admission-span-double', kind: 'logic', pure: () => equal(admissionHits('a `` x ` not completed `` b', ADMISSION_PHRASES_SEED), []) },
+      { name: 'pure-admission-case', kind: 'logic', pure: () => equal(admissionHits('Remaining Work: none of it', ADMISSION_PHRASES_SEED), ['remaining work']) },
+      { name: 'pure-forbidden-named', kind: 'logic', pure: () => { const p = ['.planning/STATE.md', 'a.txt', 'gen/x.js']; const f = [...FORBIDDEN_PATHS_SEED, 'gen/']; return equal([forbiddenHits(p, f, new Set(['.planning/STATE.md'])), forbiddenHits(p, f, new Set())], [['gen/x.js'], ['.planning/STATE.md', 'gen/x.js']]); } },
+      { name: 'pure-cover-two-tasks', kind: 'logic', pure: () => { const c = coverageOf([task('a', 'x.txt'), task('b', 'y.txt')], [{ paths: ['x.txt', 'y.txt'] }]); return equal([c.covered, c.checkable], [2, 2]); } },
+      { name: 'pure-cover-component', kind: 'logic', pure: () => equal([coverageOf([task('a', 'src/a')], [{ paths: ['src/ab'] }]).covered, coverageOf([task('b', 'src/')], [{ paths: ['src/ab'] }]).covered, pathCovers('src/a/', 'src/ab')], [0, 1, false]) },
+      { name: 'pure-tasks-empty-files', kind: 'logic', pure: () => equal(parseTasks(tag('task', '', tag('name', '', 'n') + tag('files', '', '')) + tag('task', '', tag('name', '', 'g') + tag('files', '', 'src/*.js')) + '<' + 'task>' + tag('name', '', 'u')), [{ name: 'n', files: [], checkable: false }, { name: 'g', files: ['src/*.js'], checkable: false }, { name: 'task 3 (unclosed)', files: [], checkable: false }]) },
+      { name: 'pure-tasks-types', kind: 'logic', pure: () => equal(parseTasks('<' + 'task type="checkpoint:decision">' + tag('name', '', 'c') + tag('task', ' type="tracer"', tag('name', '', 'tr') + tag('files', '', 'x.txt')) + tag('task', ' type="checkpoint:human-verify"', tag('name', '', 'h')) + tag('task', ' type="manual"', tag('name', '', 'm') + tag('files', '', 'y.txt'))), [task('tr', 'x.txt'), task('m', 'y.txt')]) },
+      { name: 'pure-findings-none', kind: 'logic', pure: () => equal(planFindings(defaults({})), { coverage: 'n/a', findings: [], blocking: null }) },
+      { name: 'pure-findings-order', kind: 'logic', pure: () => equal(planFindings(defaults({ tasks: [task('one', 'a.txt'), task('two', 'b.txt')], commits: [{ subject: 'feat(38-17): one', paths: ['a.txt', '.planning/STATE.md'] }], changed: ['.planning/STATE.md', 'a.txt', 'z.txt'], uncommitted: ['z.txt'], answer: 'one task was not completed', named: new Set(['a.txt', 'b.txt']) })), { coverage: '1/2', findings: [{ code: 'task_uncovered', detail: 'two' }, { code: 'admits_skipped', detail: 'phrase "not completed"' }, { code: 'forbidden_path', detail: '.planning/STATE.md' }, { code: 'outside_plan_files', detail: '2 paths: .planning/STATE.md, z.txt' }, { code: 'uncommitted_edits', detail: 'z.txt' }], blocking: 'contract_violation' }) },
+      { name: 'pure-findings-no-commit', kind: 'logic', pure: () => equal([planFindings(defaults({ tasks: [task('one', 'a.txt')] })), planFindings(defaults({ tasks: [task('one', 'a.txt')], answered: false }))], [{ coverage: '0/1', findings: [{ code: 'no_commit', detail: 'no commit since the baseline for 1 planned task' }], blocking: 'partial' }, { coverage: '0/1', findings: [{ code: 'task_uncovered', detail: 'one' }], blocking: 'partial' }]) },
+      { name: 'pure-findings-list-cap', kind: 'logic', pure: () => equal(planFindings(defaults({ tasks: [task('one', 'a.txt')], commits: [{ paths: ['a.txt'] }], changed: ['a.txt', ...Array.from({ length: 12 }, (_, i) => `p${String(i + 1).padStart(2, '0')}`)], named: new Set(['a.txt']) })), { coverage: '1/1', findings: [{ code: 'outside_plan_files', detail: '12 paths: p01, p02, p03, p04, p05, p06, p07, p08, p09, p10 (+2 more)' }], blocking: null }) },
+      { name: 'pure-findings-free-form', kind: 'logic', pure: () => equal(planFindings(defaults({ commits: [{ paths: ['one.txt'] }], changed: ['one.txt'] })), { coverage: 'n/a', findings: [], blocking: null }) },
+      { name: 'pure-findings-unchecked', kind: 'logic', pure: () => equal(planFindings(defaults({ tasks: [{ name: 'g', files: ['src/*.js'], checkable: false }], commits: [{ paths: ['q.txt'] }] })), { coverage: '0/0', findings: [{ code: 'coverage_unchecked', detail: 'g' }], blocking: null }) },
+      { name: 'vocab-forbid-control', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--forbid', 'a\x9bb'], exit: 2, status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/, check: (r) => r.stderr.split('\n').includes(`cross-ai: ${refusal}`) && !r.stderr.includes('\x9b') ? null : 'missing refusal or leaked control' },
+      { name: 'vocab-forbid-plan-id-ok', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--forbid', 'gen/', '--forbid', 'x.txt', '--plan-id', '02.1-03b'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/ },
+      { name: 'pure-plan-id-regex', kind: 'logic', pure: () => { for (const id of ['38-17', '2-1', '02.1-03', '38-17b', '38-17-fix.2']) if (!PLAN_ID_RE.test(id)) return `rejected ${id}`; for (const id of ['', '38', '-17', '38-', '38-x', 'a38-17', '38-17 ', '38.-17']) if (PLAN_ID_RE.test(id)) return `accepted ${id}`; const count = (id, subjects) => coverageOf([], subjects.map((subject) => ({ subject, paths: [] })), id).planIdCount; return equal([count('38-7', ['feat(38-07): a', 'fix(038-7)!: b', 'docs(38-17): c', 'feat(38-070): d', 'Feat(38-7): e']), count('02.1-03', ['feat(002.1-003): f', 'feat(2.01-03): g']), count('1-12345678901234567890', ['fix(1-12345678901234567891): h']), count('38-17-fix.2', ['feat(38-17-fix.2): i', 'feat(38-017-fix.2): j'])], [2, 1, 0, 1]); } },
     ];
 
     const unkinded = cases.filter((c) => c.kind !== 'logic' && c.kind !== 'runtime').map((c) => c.name);

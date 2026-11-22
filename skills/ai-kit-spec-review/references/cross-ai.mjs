@@ -5415,6 +5415,93 @@ function promptFiles(prompt) {
   return out;
 }
 
+// D-13 seed, label judged; recall unverified because the original report is unavailable.
+const ADMISSION_PHRASES_SEED = Object.freeze(['not implemented', 'not completed', 'did not implement', 'did not complete', "didn't implement", "didn't complete", 'left unimplemented', 'left for later', 'deferred to a later', 'deferred to a follow-up', 'could not finish', 'could not complete', 'could not implement', 'unable to complete', 'unable to implement', 'remaining work', 'skipped the task', 'skipped task']);
+// D-14 seed: GSD execute-phase orchestrator-owned files and the 999.15 list.
+const FORBIDDEN_PATHS_SEED = Object.freeze(['.planning/STATE.md', '.planning/ROADMAP.md', '.planning/REQUIREMENTS.md']);
+const PLAN_ID_RE = /^[0-9]+(\.[0-9]+)*-[0-9]+[A-Za-z0-9.-]*$/;
+
+// SPEC R5 / D-12: directory paths cover descendants on whole components.
+function pathCovers(listed, changed) { return changed === listed || (listed.endsWith('/') && changed.startsWith(listed)); }
+
+// Scan task blocks once; unclosed planned tasks cannot be checked.
+function parseTasks(text) {
+  const src = String(text || ''); const tasks = []; const re = /<task(\s[^>]*)?>|<\/task>/g;
+  let open = null; let m;
+  const planned = (attrs) => { const type = (/\btype\s*=\s*["']([^"']*)["']/.exec(attrs) || [])[1]; return type === undefined || !type.startsWith('checkpoint'); };
+  const unclosed = (o) => { if (planned(o.attrs)) tasks.push({ name: `task ${tasks.length + 1} (unclosed)`, files: [], checkable: false }); };
+  while ((m = re.exec(src))) {
+    if (m[0].startsWith('</')) {
+      if (open && planned(open.attrs)) {
+        const body = src.slice(open.end, m.index); const named = /<name>([\s\S]*?)<\/name>/.exec(body);
+        const name = (named ? named[1] : '').replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').trim() || `task ${tasks.length + 1}`;
+        const files = [...promptFiles(body)];
+        tasks.push({ name, files, checkable: files.some((f) => !/[*?[\]{}]/.test(f)) });
+      }
+      open = null;
+    } else { if (open) unclosed(open); open = { attrs: m[1] || '', end: m.index + m[0].length }; }
+  }
+  if (open) unclosed(open);
+  return tasks;
+}
+
+// Match gsd-core's leading-integer zero-padding rule, or literal invalid fragments.
+function planSubjectRe(id) {
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const padded = (v) => { const m = /^(\d+)(.*)$/.exec(v); return m ? `0*${esc(m[1].replace(/^0+(?=\d)/, ''))}${esc(m[2])}` : esc(v); };
+  const dash = id.indexOf('-'); const phase = dash > 0 ? id.slice(0, dash) : ''; const plan = dash > 0 ? id.slice(dash + 1) : '';
+  const fragment = /^[0-9A-Za-z.]+$/.test(phase) && /^[0-9A-Za-z.]+$/.test(plan) ? `${padded(phase)}-${padded(plan)}` : esc(id);
+  return new RegExp(`^[a-z]+\\(${fragment}\\)!?:`);
+}
+
+function coverageOf(tasks, commits, planId = null) {
+  const subjectRe = planId ? planSubjectRe(planId) : null; const touched = commits.flatMap((c) => c.paths);
+  const covered = []; const uncovered = []; const unchecked = [];
+  for (const t of tasks) {
+    if (!t.checkable) unchecked.push(t.name);
+    else if (t.files.filter((f) => !/[*?[\]{}]/.test(f)).some((f) => touched.some((p) => pathCovers(f, p)))) covered.push(t.name);
+    else uncovered.push(t.name);
+  }
+  const planIdCount = subjectRe ? commits.filter((c) => subjectRe.test(c.subject || '')).length : null;
+  return { covered: covered.length, checkable: covered.length + uncovered.length, uncovered, unchecked, planned: tasks.length, planIdCount, planIdShort: planIdCount !== null && planIdCount < tasks.length };
+}
+
+// Strip fenced and inline code before matching admissions.
+function stripCode(text) {
+  const out = []; let fence = null;
+  for (const line of String(text || '').split('\n')) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) { if (m && m[1][0] === fence[0] && m[1].length >= fence.length && /^ {0,3}(`+|~+)\s*$/.test(line)) fence = null; continue; }
+    if (m) { fence = m[1]; continue; }
+    out.push(line);
+  }
+  return out.join('\n').replace(/(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g, ' ');
+}
+function admissionHits(answer, phrases) {
+  const prose = stripCode(answer).toLowerCase();
+  return [...new Set(phrases.map((p) => String(p).toLowerCase()).filter((p) => p && prose.includes(p)))];
+}
+function forbiddenHits(changed, forbidden, named) {
+  const names = [...named];
+  return [...new Set(changed)].filter((p) => forbidden.some((f) => pathCovers(f, p)) && !names.some((n) => pathCovers(n, p))).sort();
+}
+function planFindings(input) {
+  const cov = coverageOf(input.tasks, input.commits, input.planId); const out = [];
+  if (input.answered && input.tasks.length > 0 && input.commits.length === 0) out.push({ code: 'no_commit', detail: `no commit since the baseline for ${input.tasks.length} planned task${input.tasks.length === 1 ? '' : 's'}` });
+  else if (cov.uncovered.length || cov.planIdShort) out.push({ code: 'task_uncovered', detail: [cov.uncovered.length ? findingDetail(cov.uncovered) : '', cov.planIdShort ? `plan-id ${input.planId}: ${cov.planIdCount} commits for ${cov.planned} tasks` : ''].filter(Boolean).join('; ') });
+  const hits = admissionHits(input.answer, input.phrases);
+  if (hits.length) out.push({ code: 'admits_skipped', detail: findingDetail(hits.map((p) => `phrase "${p}"`)) });
+  const bad = forbiddenHits(input.changed, input.forbidden, input.named);
+  if (bad.length) out.push({ code: 'forbidden_path', detail: findingDetail(bad) });
+  const names = [...input.named]; const outside = names.length === 0 ? [] : [...new Set(input.changed)].filter((p) => !names.some((n) => pathCovers(n, p))).sort();
+  if (outside.length) out.push({ code: 'outside_plan_files', detail: `${outside.length} path${outside.length === 1 ? '' : 's'}: ${findingDetail(outside)}` });
+  if (input.uncommitted.length) out.push({ code: 'uncommitted_edits', detail: findingDetail(input.uncommitted) });
+  if (cov.unchecked.length) out.push({ code: 'coverage_unchecked', detail: findingDetail(cov.unchecked) });
+  const codes = out.map((f) => f.code);
+  const blocking = codes.includes('forbidden_path') ? 'contract_violation' : (codes.some((c) => c === 'no_commit' || c === 'task_uncovered' || c === 'admits_skipped') ? 'partial' : null);
+  return { coverage: input.tasks.length === 0 ? 'n/a' : `${cov.covered}/${cov.checkable}`, findings: out, blocking };
+}
+
 // Null when the ignored or nested parts differ, or git fails: those changes have no path to
 // account for. Otherwise the sorted paths that differ between the two write-tree ids.
 async function changedPaths(before, mid, cwd) {
@@ -5660,7 +5747,7 @@ function parseArgs(argv) {
     codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
     role: null, effort: null, context: null, escalateRuntime: false, escalateModel: false,
-    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, baseline: null, idleTimeout: null,
+    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, baseline: null, idleTimeout: null, forbid: [], planId: null,
   };
   let modeFlag = null;
   for (let i = 0; i < argv.length; i++) {
@@ -5740,6 +5827,14 @@ function parseArgs(argv) {
     } else if (a === '--baseline') {
       o.baseline = v(); if (!/^[0-9a-fA-F]{7,64}$/.test(o.baseline)) throw new Error('--baseline must be 7 to 64 hex characters');
     } else if (a === '--describe') o.describe = true;
+    else if (a === '--forbid') {
+      const raw = v();
+      if (!raw.trim()) throw new Error('--forbid needs a repo-relative path');
+      const body = raw.endsWith('/') ? raw.slice(0, -1) : raw;
+      if (CONTROL_CHAR_RE.test(raw) || raw.startsWith('/') || body.split('/').some((s) => s === '' || s === '.' || s === '..')) throw new Error("--forbid must be a repo-relative path with no empty, '.' or '..' segment and no control character");
+      o.forbid.push(raw);
+    }
+    else if (a === '--plan-id') { o.planId = v(); if (!PLAN_ID_RE.test(o.planId)) throw new Error(`--plan-id must match ${PLAN_ID_RE.source}`); }
     else throw new Error(`unknown argument: ${a}`);
   }
   if (o.effort !== null && o.codexEffort !== null && o.effort !== o.codexEffort) throw new Error('--effort and --codex-effort disagree');
@@ -6299,6 +6394,7 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
 // 38-08: the names the self-test harness (cross-ai-selftest.mjs) imports. One list,
 // never per-declaration exports (the test extractors read `function name(` lines).
 export {
+  ADMISSION_PHRASES_SEED,
   ARGV_PROMPT_MAX,
   CLAUDE_EXEC_FORMULA_RECORD,
   CLI_NAME_RE,
@@ -6307,6 +6403,7 @@ export {
   CURSOR_MODEL_ID,
   EXEC_PREAMBLE,
   FINDING_CODES,
+  FORBIDDEN_PATHS_SEED,
   HERDR_BIN,
   HERDR_VERBS,
   HOST_PATH_SAFE,
@@ -6319,6 +6416,7 @@ export {
   OPENCODE_MODEL_ID,
   PATTERNS,
   PI_MODEL_ID,
+  PLAN_ID_RE,
   RESUME_MSG,
   RETRY_DEFAULTS,
   RUNNER_FILE,
@@ -6332,6 +6430,7 @@ export {
   SKILL_PROSE,
   TABLE,
   addFinding,
+  admissionHits,
   aiKitConfigDir,
   argvFileAllowed,
   argvFileRow,
@@ -6347,6 +6446,7 @@ export {
   clearStaleLock,
   composePrompt,
   confirmReport,
+  coverageOf,
   current,
   cycleFilePath,
   eventsWithRaw,
@@ -6354,6 +6454,7 @@ export {
   findingDetail,
   findingLines,
   finish,
+  forbiddenHits,
   groupMembers,
   hardWaitFor,
   idleBudgetNote,
@@ -6378,12 +6479,16 @@ export {
   overlaySpentMs,
   ownValue,
   parseArgs,
+  parseTasks,
   parseTomlSubset,
+  pathCovers,
   pidAlive,
   planArgvFile,
+  planFindings,
   planIdle,
   planSettings,
   planSkills,
+  planSubjectRe,
   procGroup,
   procSession,
   procStartTime,
@@ -6411,6 +6516,7 @@ export {
   splitTomlName,
   statusGroup,
   strictJson,
+  stripCode,
   taskDigest,
   upsertTomlKeys,
   upstreamFields,
