@@ -11826,7 +11826,7 @@ class TestCrossAiTemplateText(unittest.TestCase):
         for row in rows:
             self.assertTrue(fields <= set(row), msg=row.get("id"))
             self.assertIn(row["label"], ("verified", "unverified"))
-            self.assertIn(row["input"], ("stderr", "event", "any"))
+            self.assertIn(row["input"], ("stderr", "event", "stdout", "any"))
             self.assertIsInstance(row["terminal"], bool)
             ids.append(row["id"])
             re.compile(row["match"], re.I)

@@ -495,6 +495,32 @@
     "evidence": "25-RESEARCH 2.5 cited binary"
   },
   {
+    "id": "claude-hit-your-limit-stdout",
+    "tier": 3,
+    "cli": "claude",
+    "route": "*",
+    "provider": "*",
+    "input": "stdout",
+    "match": "hit your (?:weekly )?limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "38.1 R3 D-07: claude limit sentence as plain stdout (run live, crash before this row); weekly form as the harness case evidence-claude-weekly"
+  },
+  {
+    "id": "claude-selected-model-stdout",
+    "tier": 3,
+    "cli": "claude",
+    "route": "*",
+    "provider": "*",
+    "input": "stdout",
+    "match": "issue with the selected model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "38.1 R3 D-04: claude model-missing sentence as plain stdout; the 2026-11-16 capture printed it inside the JSON result, the plain form is not captured"
+  },
+  {
     "id": "text-usage-limit",
     "tier": 3,
     "cli": "*",

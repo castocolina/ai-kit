@@ -662,6 +662,32 @@ const PATTERNS = [
     "evidence": "25-RESEARCH 2.5 cited binary"
   },
   {
+    "id": "claude-hit-your-limit-stdout",
+    "tier": 3,
+    "cli": "claude",
+    "route": "*",
+    "provider": "*",
+    "input": "stdout",
+    "match": "hit your (?:weekly )?limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "38.1 R3 D-07: claude limit sentence as plain stdout (run live, crash before this row); weekly form as the harness case evidence-claude-weekly"
+  },
+  {
+    "id": "claude-selected-model-stdout",
+    "tier": 3,
+    "cli": "claude",
+    "route": "*",
+    "provider": "*",
+    "input": "stdout",
+    "match": "issue with the selected model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "38.1 R3 D-04: claude model-missing sentence as plain stdout; the 2026-11-16 capture printed it inside the JSON result, the plain form is not captured"
+  },
+  {
     "id": "text-usage-limit",
     "tier": 3,
     "cli": "*",
@@ -1331,7 +1357,7 @@ function validateRow(row, known) {
   if (row.provider !== '*' && (typeof row.provider !== 'string' || !PROVIDER_RE.test(row.provider))) {
     return 'provider is not * or a lowercase prefix';
   }
-  if (!['stderr', 'event', 'any'].includes(row.input)) return 'input is not stderr, event or any';
+  if (!['stderr', 'event', 'stdout', 'any'].includes(row.input)) return 'input is not stderr, event, stdout or any';
   if (typeof row.match !== 'string' || row.match.length > 200) {
     return 'match is not a string of at most 200 characters';
   }
@@ -2131,8 +2157,10 @@ function decodeUtf8(text) {
   return Buffer.from(text, 'utf8').toString('utf8');
 }
 
+function cleanInput(text) { return decodeUtf8(text).replace(ANSI_RE, '').replace(/\u2019/g, "'"); }
+
 function normalizeInput(text) {
-  const decoded = decodeUtf8(text).replace(ANSI_RE, '').replace(/\u2019/g, "'");
+  const decoded = cleanInput(text);
   return decoded.length > INPUT_CAP ? decoded.slice(-INPUT_CAP) : decoded;
 }
 
@@ -2221,8 +2249,9 @@ function rowRegex(row) {
   return re;
 }
 
+// SPEC R3 (D-07): plain stdout is read only by rows that opt in with input: stdout; any keeps stderr and events.
 function rowAdmits(row, source) {
-  if (row.input === 'any') return true;
+  if (row.input === 'any') return source !== 'stdout';
   return row.input === source;
 }
 
@@ -2280,7 +2309,17 @@ function overlayHits(text) {
   return new Set(Array.isArray(found) ? found : []);
 }
 
-function classifyStop({ cli, routerLane, route, model, stderr, events, eventRaw }, table = TABLE) {
+// SPEC R3: the plain lines of a failed attempt's stdout. JSON is decided per complete, uncapped line (any JSON value is dropped), then the INPUT_CAP tail is taken and the partial line the cap cut is dropped, so a clipped JSON answer never becomes plain text.
+function plainStdoutText(stdout) {
+  const kept = cleanInput(stdout || '').split('\n').filter((line) => line.trim() !== '' && parseJson(line.trim()) === null);
+  const text = kept.join('\n');
+  if (text.length <= INPUT_CAP) return text;
+  const tail = text.slice(-INPUT_CAP);
+  const cut = tail.indexOf('\n');
+  return cut < 0 ? '' : tail.slice(cut + 1);
+}
+
+function classifyStop({ cli, routerLane, route, model, stderr, events, eventRaw, stdout }, table = TABLE) {
   const callRoute = route ?? (routerLane ? 'router' : 'unknown');
   const lane = routerLane ?? (callRoute === 'router');
   const callModel = model || '';
@@ -2289,6 +2328,7 @@ function classifyStop({ cli, routerLane, route, model, stderr, events, eventRaw 
   for (let i = 0; i < (events || []).length; i += 1) {
     sources.push(['event', normalizeInput(events[i] || ''), eventRaw?.[i] ?? null]);
   }
+  const plain = plainStdoutText(stdout); if (plain) sources.push(['stdout', plain, null]);
   const overlayByText = new Map();
   for (const row of table) {
     if (row.cli !== '*' && row.cli !== cli) continue;
@@ -2313,7 +2353,7 @@ function classifyStop({ cli, routerLane, route, model, stderr, events, eventRaw 
       }
       const start = text.lastIndexOf('\n', match.index) + 1;
       const end = text.indexOf('\n', match.index);
-      const line = source === 'stderr' ? text.slice(start, end < 0 ? undefined : end) : text;
+      const line = source === 'stderr' || source === 'stdout' ? text.slice(start, end < 0 ? undefined : end) : text;
       const status = lane && row.routerClass === 'quota' ? 'quota' : row.class;
       return { status, rule: row.id, label: row.label, source, line, raw: raw || line };
     }
@@ -2371,10 +2411,17 @@ function codexEventStrings(ev) {
   return out;
 }
 
-function resultEventString(out) {
+// 38.1 D-08: claude's structured fields feed the bare status-code rows, as opencode's error status does; cursor has no such capture, so only claude asks for them.
+function resultEventString(out, withFields = false) {
   const ev = lastJson(out, (j) => j.type === 'result');
   if (!ev || !ev.is_error) return [];
-  return typeof ev.result === 'string' && ev.result ? [ev.result] : [];
+  const found = typeof ev.result === 'string' && ev.result ? [ev.result] : [];
+  if (withFields) {
+    const code = ev.api_error_status;
+    if (Number.isInteger(code) && code >= 100 && code <= 599) found.push(`status ${code}`);
+    if (typeof ev.api_error_type === 'string' && ev.api_error_type) found.push(ev.api_error_type);
+  }
+  return found;
 }
 
 function eventIsTerminal(cli, ev) {
@@ -2405,7 +2452,7 @@ function extractEvents(cli, stdout, terminalOnly = false) {
       const ev = lastJson(text, (j) => j.type === 'result');
       if (ev && eventIsTerminal(cli, ev)) out.push(...resultEventString(text));
     } else {
-      out.push(...resultEventString(text));
+      out.push(...resultEventString(text, cli === 'claude'));
     }
   }
   return out;
@@ -5618,19 +5665,19 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         // Post-hoc over everything it printed, terminal and non-terminal rows alike.
         const captured = [r.stderr || '', r.partialErr || '', r.partialOut || ''].join('\n');
         const { events, eventRaw } = eventsWithRaw(name, r.stdout);
-        const cls = classifyStop({ cli: name, route, model, stderr: captured, events, eventRaw });
+        const cls = classifyStop({ cli: name, route, model, stderr: captured, events, eventRaw, stdout: r.stdout });
         if (cls.status !== 'crash') {
           hit = cls.status;
           evidence = evidenceOf(cls);
         }
       } else {
+        const failed = (r.code !== 0 && !lateOk) || Boolean(p.error);
         const { events, eventRaw } = eventsWithRaw(name, r.stdout);
-        const cls = classifyStop({ cli: name, route, model, stderr: r.stderr, events, eventRaw });
+        const cls = classifyStop({ cli: name, route, model, stderr: r.stderr, events, eventRaw, stdout: failed ? r.stdout : '' });
         if (cls.status !== 'crash') {
           hit = cls.status;
           evidence = evidenceOf(cls);
         }
-        const failed = (r.code !== 0 && !lateOk) || Boolean(p.error);
         if (!failed && p.text.trim()) {
           if (p.lateError) log(`cross-ai: ${name} failed after the answer (${p.lateError})`);
           attempts += 1;
@@ -6415,6 +6462,7 @@ function runClassifyOnly(file) {
     const cls = classifyStop({
       cli, route, model: entry.model || '', stderr: entry.stderr || '',
       events: extractEvents(cli, entry.stdout || ''),
+      stdout: entry.stdout || '',
     });
     // Same rule as a live run (38.1 D-05, patternFor); a cli with no row reports unverified.
     const pattern = patternFor(Object.hasOwn(RUNTIMES, cli) ? RUNTIMES[cli] : undefined, cli, null, cls);

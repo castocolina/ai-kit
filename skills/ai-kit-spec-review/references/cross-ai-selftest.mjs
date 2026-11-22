@@ -610,6 +610,11 @@ const CLASSIFY_CASES = [
     expect: { status: 'quota', pattern: 'unverified' },
   },
   {
+    name: 'stdout-claude-plain-model', cli: 'claude',
+    stdout: "There's an issue with the selected model (fake-model-404). It may not exist or you may not have access to it.",
+    expect: { status: 'bad_model', pattern: 'unverified', rule: 'claude-selected-model-stdout' },
+  },
+  {
     name: 'edge-4021-tokens', cli: 'pi',
     stderr: 'used 4021 tokens',
     expect: { status: 'crash', pattern: 'none', rule: '-' },
@@ -739,6 +744,7 @@ function classifyOne(entry, table) {
     model: entry.model || '',
     stderr: entry.stderr || '',
     events: extractEvents(entry.cli, entry.stdout || ''),
+    stdout: entry.stdout || '',
   }, table);
 }
 
@@ -1326,6 +1332,59 @@ function classifyCases() {
         return null;
       },
     },
+    {
+      name: 'stdout-pure-claude-fields', kind: 'logic',
+      pure: () => {
+        const ev = (extra) => JSON.stringify({ type: 'result', is_error: true, result: 'Request failed', ...extra });
+        const cases = [
+          [{ api_error_status: 429, api_error_type: 'fake_error_type' }, ['Request failed', 'status 429', 'fake_error_type']],
+          [{}, ['Request failed']],
+          ...['429', 429.5, 99, 600].map((code) => [{ api_error_status: code }, ['Request failed']]),
+          ...[100, 599].map((code) => [{ api_error_status: code }, ['Request failed', `status ${code}`]]),
+          [{ api_error_status: 404, api_error_type: 'not_found_error' }, ['Request failed', 'status 404', 'not_found_error']],
+        ];
+        for (const [extra, expected] of cases) {
+          if (JSON.stringify(extractEvents('claude', ev(extra))) !== JSON.stringify(expected)) return JSON.stringify(extra);
+        }
+        if (JSON.stringify(extractEvents('cursor', ev({ api_error_status: 429 }))) !== JSON.stringify(['Request failed'])) return 'cursor';
+        const result = classifyStop({ cli: 'claude', route: 'unknown', stderr: '', events: extractEvents('claude', ev({ api_error_status: 429, api_error_type: 'fake_error_type' })) });
+        return result.status === 'quota' && result.rule === 'code-429' ? null : 'classification';
+      },
+    },
+    {
+      name: 'stdout-pure-sources', kind: 'logic',
+      pure: () => {
+        const S = "You've hit your limit, resets 9:30pm";
+        const classify = (cli, stderr, stdout) => classifyStop({ cli, route: 'unknown', stderr, stdout });
+        let result = classify('claude', S, S);
+        if (result.status !== 'quota' || result.rule !== 'claude-hit-your-limit' || result.source !== 'stderr') return 'stderr first';
+        result = classify('claude', '', 'working\n\u001b[31m' + S + '\u001b[0m\nbye');
+        if (result.rule !== 'claude-hit-your-limit-stdout' || result.source !== 'stdout' || result.line !== S) return 'plain line';
+        if (classify('claude', '', JSON.stringify({ type: 'result', is_error: false, result: S })).status !== 'crash') return 'JSON';
+        if (classify('pi', '', S + "\nYou've hit your usage limit").status !== 'crash') return 'pi';
+        if (classify('claude', '', '').status !== 'crash') return 'empty';
+        if (liveMatch('claude', 'stdout', S) !== null || liveMatch('claude', 'stderr', S) === null) return 'live';
+        if (validateRow({ ...TABLE.find((row) => row.id === 'claude-hit-your-limit-stdout'), input: 'stdin' }, RUNTIMES) !== 'input is not stderr, event, stdout or any') return 'validation';
+        result = classify('claude', 'HTTP 429', S);
+        if (result.rule !== 'claude-hit-your-limit-stdout' || result.source !== 'stdout') return 'row order';
+        if (classify('claude', '', '\u001b[32m' + JSON.stringify({ type: 'result', is_error: false, result: S }) + '\u001b[0m').status !== 'crash') return 'colored JSON';
+        return null;
+      },
+    },
+    {
+      name: 'stdout-pure-cap', kind: 'logic',
+      pure: () => {
+        const S = "You've hit your limit, resets 9:30pm";
+        const classify = (stdout) => classifyStop({ cli: 'claude', route: 'unknown', stderr: '', stdout });
+        if (classify(JSON.stringify({ type: 'result', is_error: false, result: 'x'.repeat(70000) + ' ' + S })).status !== 'crash') return 'large JSON';
+        if (classify(JSON.stringify(S)).status !== 'crash') return 'JSON string';
+        const result = classify('y'.repeat(70000) + '\n' + S);
+        if (result.rule !== 'claude-hit-your-limit-stdout' || result.source !== 'stdout' || result.line !== S) return 'plain tail';
+        if (classify('z'.repeat(70000) + ' ' + S).status !== 'crash') return 'cut line';
+        if (classify(JSON.stringify({ type: 'system', pad: 'p'.repeat(70000) }) + '\n' + S).rule !== 'claude-hit-your-limit-stdout') return 'JSON excluded from cap';
+        return null;
+      },
+    },
   ];
 }
 
@@ -1685,6 +1744,14 @@ const FAKE_MODES = {
   'answer-only-limit': () => {
     fs.appendFileSync('a.txt', 'a\n');
     process.stdout.write('# Summary\n' + "You've hit your usage limit, quoted from the task");
+  },
+  'stdout-limit-answer': () => {
+    fs.appendFileSync('a.txt', 'a\n');
+    process.stdout.write("# Summary\nYou've hit your limit, resets 9:30pm");
+  },
+  'stdout-limit-fail': () => {
+    process.stdout.write("You've hit your limit, resets 9:30pm\nYou've hit your usage limit, quoted from the task\n");
+    process.exit(7);
   },
   'retry-notice': () => {
     process.stderr.write('Retrying in 1s: 503 Service Unavailable\n');
@@ -2122,6 +2189,15 @@ process.stdin.on('data', (d) => { input += d; }).on('end', () => {
   if (process.env.FAKE_CLAUDE_SEEN) fs.writeFileSync(process.env.FAKE_CLAUDE_SEEN, JSON.stringify({ argv: process.argv.slice(2), stdin: input, mcpCount: argOf('--mcp-config') ? mcpCount(argOf('--mcp-config')) : null }));
   const given = argOf('--resume');
   recordSession('claude', given, input);
+  const LIMIT = "You've hit your limit, resets 9:30pm";
+  if (argOf('--model') === 'fake-limit-plain') { process.stdout.write(LIMIT + '\n'); process.exit(1); }
+  if (argOf('--model') === 'fake-model-404') {
+    console.log(JSON.stringify({ type: 'result', is_error: true, api_error_status: 404, api_error_type: 'not_found_error', terminal_reason: 'error', result: "There's an issue with the selected model (fake-model-404). It may not exist or you may not have access to it." }));
+    process.exit(1);
+  }
+  if (argOf('--model') === 'fake-limit-json') { console.log(JSON.stringify({ type: 'result', is_error: true, result: LIMIT })); process.exit(1); }
+  if (argOf('--model') === 'fake-limit-stderr') { process.stderr.write(LIMIT + '\n'); process.exit(1); }
+  if (argOf('--model') === 'fake-limit-pretty') { console.log(JSON.stringify({ type: 'result', is_error: false, result: '', note: LIMIT }, null, 1)); process.exit(0); }
   if (argOf('--model') === 'fake-auth') {
     process.stderr.write('401 unauthorized\n');
     console.log(JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized' }));
@@ -4983,6 +5059,25 @@ async function blackBoxSelfTest(listOnly = false) {
           const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
           return runs.length === 1 ? null : `pi calls ${ctx.calls.join('|')}`;
 
+        },
+      },
+      {
+        name: 'stdout-pi-answer-ok', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/stdout-limit-answer'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/stdout-limit-answer exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
+          return runs.length === 1 ? null : `pi calls ${ctx.calls.join('|')}`;
+        },
+      },
+      {
+        name: 'stdout-pi-failed-crash', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/stdout-limit-fail'], exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/stdout-limit-fail exit=1 cli_rc=7 .* action=stop$/,
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi stdout-limit-fail').length;
+          if (n !== 1) return `calls ${n}`;
+          return (r.stderr || '').includes('cross-ai: wait ') ? 'a crash waited' : null;
         },
       },
       {
@@ -9856,6 +9951,47 @@ async function blackBoxSelfTest(listOnly = false) {
         name: 'claude-exec-no-model', kind: 'logic',
         args: ['--runtime', 'claude', '--role', 'execute'], exit: 2,
         status: /^AIKIT-XAI status=no_model cli=claude .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'stdout-claude-plain-quota', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-limit-plain'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=claude model=fake-limit-plain exit=75 .* action=stop$/,
+        check: (r, ctx) => {
+          const rule = statusTail(r.stderr || '')?.rule;
+          if (rule !== 'claude-hit-your-limit-stdout') return `rule ${rule}`;
+          const calls = ctx.calls.filter((line) => line === 'claude fake-limit-plain').length;
+          return calls === 1 ? null : `calls ${calls}`;
+        },
+      },
+      {
+        name: 'stdout-claude-model-404', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-model-404'], exit: 69,
+        status: /^AIKIT-XAI status=bad_model cli=claude model=fake-model-404 exit=69 .* action=stop$/,
+        check: (r) => {
+          const rule = statusTail(r.stderr || '')?.rule;
+          return rule === 'claude-selected-model' ? null : `rule ${rule}`;
+        },
+      },
+      {
+        name: 'stdout-claude-json-quota', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-limit-json'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=claude model=fake-limit-json exit=75 .* action=stop$/,
+        check: (r) => statusTail(r.stderr || '')?.rule === 'claude-hit-your-limit' ? null : 'rule',
+      },
+      {
+        name: 'stdout-claude-stderr-quota', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-limit-stderr'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=claude model=fake-limit-stderr exit=75 .* action=stop$/,
+        check: (r) => statusTail(r.stderr || '')?.rule === 'claude-hit-your-limit' ? null : 'rule',
+      },
+      {
+        name: 'stdout-claude-empty-gated', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-limit-pretty'], exit: 1,
+        status: /^AIKIT-XAI status=empty_answer cli=claude model=fake-limit-pretty exit=1 .* action=stop$/,
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'claude fake-limit-pretty').length;
+          return n === 1 ? null : `calls ${n}`;
+        },
       },
       {
         name: 'argv-nul-refused', kind: 'logic',

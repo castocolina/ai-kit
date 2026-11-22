@@ -420,7 +420,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   2026-11-16, 38 D-11 to D-15: `partial` (new, exit 1) for an uncovered task, no commit or an admission phrase,
   `contract_violation` for a forbidden path, each with a finding from a closed list; the check reads the prompt's task
   blocks and says `coverage=n/a` when there are none)*
-- [ ] **RUN-09**: The runner's Claude matcher reads a usage-limit message from stdout as well as stderr, so a limit
+- [x] **RUN-09**: The runner's Claude matcher reads a usage-limit message from stdout as well as stderr, so a limit
   printed on stdout gets its quota class instead of an unclassified crash; a test covers both channels. *(amended 2026-11-16,
   38.1 D-07, D-08, live-verified: a limit in claude's JSON result on stdout (the runner's own `--output-format json`) is already
   classed quota; only the same sentence as plain text on stdout is a crash. The fix is a catalogue row that opts in with
@@ -1127,7 +1127,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-06 | Phase 37 | Complete |
 | RUN-07 | Phase 38 | Complete |
 | RUN-08 | Phase 38 | Complete |
-| RUN-09 | Phase 38.1 | Pending |
+| RUN-09 | Phase 38.1 | Complete |
 | RUN-10 | Phase 38.1 | Pending |
 | RUN-11 | Phase 38.1 | Pending |
 | RUN-12 | Phase 37 | Complete |
