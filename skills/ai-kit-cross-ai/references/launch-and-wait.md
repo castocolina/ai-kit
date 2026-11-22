@@ -40,7 +40,7 @@ AIKIT-XAI status=ok cli=opencode model=fake/ok exit=0 cli_rc=0 elapsed=0s out=29
 A stop carries the report line before it:
 
 ```
-cross-ai: report status=auth lane=opencode/fake/auth route=unknown attempts=1 cycles=0 first_failure=2026-11-21T20:40:12.988Z last_failure=2026-11-21T20:40:13.004Z due_at=- stopped=class upstream=present
+cross-ai: report status=auth lane=opencode/fake/auth route=unknown attempts=1 cycles=0 first_failure=<iso time> last_failure=<iso time> due_at=- stopped=class upstream=present check=-
 ```
 
 On an exit 75 with `retry_after_s=`, schedule one one-shot `CronCreate` at `retry_after_s` and

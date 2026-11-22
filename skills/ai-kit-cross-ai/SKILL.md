@@ -156,7 +156,7 @@ AIKIT-XAI status=auth cli=opencode model=fake/auth exit=69 cli_rc=1 elapsed=0s o
 Before it, on a stop, come the report and the upstream lines (same run):
 
 ```
-cross-ai: report status=auth lane=opencode/fake/auth route=unknown attempts=1 cycles=0 first_failure=<iso time> last_failure=<iso time> due_at=- stopped=class upstream=present
+cross-ai: report status=auth lane=opencode/fake/auth route=unknown attempts=1 cycles=0 first_failure=<iso time> last_failure=<iso time> due_at=- stopped=class upstream=present check=-
 cross-ai: upstream body="401 unauthorized"
 cross-ai: upstream fields=-
 ```
@@ -292,7 +292,7 @@ An exit 75 whose `AIKIT-XAI` line carries `retry_after_s=` is the hard tier. A r
 (the same fake, model `fake/capacity`, with the `[runner.retry]` settings `max_retries = 0` and `session_resets = 0`):
 
 ```
-AIKIT-XAI status=transient cli=opencode model=fake/capacity exit=75 cli_rc=1 elapsed=0s out=0 tree=clean action=stop route=unknown rule=text-service-unavailable pattern=verified attempts=1 cycles=0 session=- applied=model,provider,role ignored=- unknown=- escalate=- coverage=- findings=- retry_after_s=600 cycle=0
+AIKIT-XAI status=transient cli=opencode model=fake/capacity exit=75 cli_rc=1 elapsed=0s out=0 tree=clean action=stop route=unknown rule=text-service-unavailable pattern=verified attempts=1 cycles=0 session=- applied=model,provider,role ignored=- unknown=- escalate=- coverage=- findings=- retry_after_s=60 cycle=0
 ```
 
 Wait once, for exactly `retry_after_s` seconds, then re-invoke the same lane, the same CLI and
