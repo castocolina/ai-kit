@@ -6,7 +6,7 @@ description: >
   and model, pass the call's settings (role, effort, context, session id, skills, MCP servers),
   launch the runner, read its exit code, its per-setting report and its last AIKIT-XAI stderr
   line, resume a session in a second round, and answer a stop. Also use when a lane hits quota,
-  a rate limit or a 429, exits 75 or 69, prints retry_after_s=, reports a setting ignored, or
+  a rate limit or a 429, exits 75 or 69, ends locked or partial, prints retry_after_s= or a finding, reports a setting ignored, or
   needs an --argv-file for a CLI the runner has no formula for. Covers the hard-tier wait, the
   user notice, GSD's retry/skip/abort answer and the rule to never switch harness, provider or
   model. Not for reviewer setup or GSD config (those are ai-kit-spec-config and
@@ -56,7 +56,21 @@ Settings come from the owner's lane configuration or the calling skill's decisio
 | `--skill-path <dir>`, `--skill-name <name>` (repeatable) | a directory holding `SKILL.md`; a skill installed on that host | `skill` |
 | `--mcp-config <file>` | a run-scoped JSON file | `mcp` |
 
-Two more flags print facts and call no model: `--print-argv` prints the argv, the settings lines and `cross-ai: model-id <id>`; `--describe` prints one JSON object with the setting names, reasons and states and, per runtime, its formulas, listing command, session style and each form with its source label (`host.available` says whether herdr is usable). Read `--describe` before naming a setting a host may not take.
+Two more flags print facts and call no model: `--print-argv` prints the argv, the settings lines and `cross-ai: model-id <id>`; `--describe` prints one JSON object with the setting names, reasons and states, every status with its exit (`statuses`), every finding code with its result (`findings`), the supervision flags (`supervision_flags`) and, per runtime, its formulas, listing command, session style and each form with its source label (`host.available` says whether herdr is usable). Read `--describe` before naming a setting a host may not take.
+
+### Supervision flags
+
+These flags steer the runner's own supervision. They are not lane settings: they print no `cross-ai: setting` line and never change the runtime, the model or the argv.
+
+| Flag | Value | What it does |
+|---|---|---|
+| `--baseline <sha>` | a commit, 7 to 64 hex characters, checked against the repository | replaces the stored start-of-task baseline the execute checks compare against (section 4) |
+| `--forbid <path>` | repeatable, relative to the repository; a trailing `/` covers a directory | adds a path an execute result may not change (section 4) |
+| `--idle-timeout <seconds>` or `--idle-timeout default` | 0 to 86400, 0 is off; `default` is 900 s | turns the idle watchdog on for this call (section 3) |
+| `--plan-id <id>` | a GSD plan id such as `12-03` | requires at least as many commits with the subject `<type>(<id>):` as the plan has tasks (section 4) |
+| `--sweep` | no value | cleans up after runs that were killed hard, spawns nothing, takes no lock and exits 0 (section 2) |
+
+Their baked defaults sit in the runner's CONFIG beneath the call: `CONFIG.idleTimeoutS` (0 or absent is off), `CONFIG.forbiddenPaths` (default `.planning/STATE.md`, `.planning/ROADMAP.md` and `.planning/REQUIREMENTS.md`, the files GSD's orchestrator owns) and `CONFIG.admissionPhrases` (a short seed of lowercase phrases, labeled judged). A seed never decides which runtime or model runs; the owner replaces it in CONFIG, and every match is printed.
 
 ## 2. Launch
 
@@ -94,9 +108,17 @@ node "$RUNNER" --runtime "$RUNTIME" --model "$MODEL" --role "$ROLE" \
 
 Runtime ids match exactly (`Claude` is not `claude`). For an id the runner has no formula for, pass `--argv-file <path>`: a JSON array of argv strings inside the working tree, at most 65536 bytes, strict UTF-8, read once. `{model}`, `{effort}` and `{session}` are the only placeholders; a setting without its placeholder prints `ignored` with `reason=no_slot`, and the provider is `unknown`. The prompt still goes on stdin, never on argv, and the runner supervises the lane like any other (deadlines, heartbeats, redaction, the review tree check, the status line). Supervision is not containment: the tree check detects a change after the fact and prevents no write, and outside a git work tree it cannot run (`tree=unknown`). A review-role argv-file lane is only as confined as the command in the file, so launch one only with a command the owner approved as read-only, inside a git work tree. Without the file the call ends with exit 2 and `no formula for <id> in the runner; pass --argv-file, or use a runtime it has a formula for`.
 
+### Run lock
+
+An execute run takes a lock on its checkout after its arguments and prompt are checked and before its first snapshot or spawn: a record at `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/locks/<root hash>.json` (mode 0600 in a 0700 directory) with the runner's pid and start time, the host, the lane, the role, its baseline and, once spawned, the child group (for a hosted lane the launcher's group, its run token and tab id). A second execute run on the checkout prints `cross-ai: run lock held by pid <p> (lane <cli>/<model>, since <time>); not starting` and ends `locked`, a bare exit 75 with no `retry_after_s=`: report it, or start the run after the other run's own exit; never re-invoke in a loop. A record whose runner and child group are both gone on this host is stale: the runner prints `cross-ai: stale run lock from pid <p> (since <time>) cleared` and runs. It refuses and never clears a record whose runner is gone while its child group still runs (`cross-ai: run lock: pid <p> is gone but its child group <g> still runs; not starting`; for a hosted lane the message names the group and the tab id), a record of another host, and a record that stays unreadable (re-read for 2 s, then refused naming the file and its age). The lock is released on every exit the runner controls (any status and a signal it catches); a runner killed by SIGKILL leaves the record for the stale rule above. A review run takes no lock; one that starts while an execute run holds the checkout prints `cross-ai: note: an execute run holds this checkout; the tree check may void this review` and runs. `--print-argv`, `--describe`, `--classify-only`, `--sweep`, the self-test and usage errors take no lock. The lock stops other runners only, never a human's commit or another tool.
+
 ### Hosting in a herdr tab
 
 `--host auto` runs the lane in a herdr tab when herdr is available (`HERDR_ENV=1` and a `herdr` executable on PATH, checked without calling herdr). The argv, settings report, session, classification, exit code and status line are the same as headless. The runner's own default is `none`; ai-kit's Python layer and hook builder pass `--host auto`. Switch hosting off with `--host none` or `AIKIT_HOST=none` (a shell profile makes it persistent); `none` from either source wins, and no config key exists. The `host` line reads `applied` (`herdr` or `none`), or `ignored` with `no_herdr` or `host_failed`, and a hosted lane also prints `cross-ai: host herdr tab=<id> label=<label>`. The run directory is `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/host/<run token>/` (mode 0700): `run.json` first, then the env and prompt files (mode 0600, which the launcher reads and deletes as its first steps), and the launcher's `out`, `err`, `pid` and `rc`. `rc` is the only verdict; herdr's screen text is never read. On every exit path the runner tries to close only the tab it opened, by id, and removes the directory once herdr confirms the close. When the close is not confirmed it keeps only `run.json` and prints `cross-ai: host: kept <dir>/run.json for tab <id> (close not confirmed)`: the tab may still be open, so report that path and tab id and never claim the cleanup succeeded. Limits: a `setsid` grandchild survives the tab close (the same limit as a headless process-group kill); fish, nushell, a pane whose shell is not at a prompt, and macOS are unverified.
+
+### A hosted lane's run safety
+
+The run record `run.json` (mode 0600, never a secret) names the run token, the runner's pid and start time, the host, the checkout, the role, the runtime, the label `aikit:<role>:<runtime>:<token>`, the tab and pane ids, and the launcher's pid, group and start time. A hosted lane's idle clock reads the growth of `out` and `err`, polled every 250 ms; the launcher's header and herdr's screen never count. Past twice the capture cap in one file the runner truncates that file and reads on from its start, printing the headless "kept the newest" line, so the files stay near two caps per stream (bytes appended between the last read and the truncation are lost). A run killed hard leaves its directory: every real run starts with a sweep (after its checks, before the lock), and `--sweep` runs one on demand. The sweep examines only `<state home>/ai-kit/spec/host/<token>/` directories and treats a run as dead only when its record reads, its host is this host, and both its runner and its launcher group are gone or carry another start time (a record with no launcher group, because the launcher never wrote its pid, is judged by the runner alone). A record that does not read is re-read for 2 s; one still unreadable is reported with its age and kept. For a dead run it claims the directory by a rename, removes the secret files first, calls `herdr tab list` once, closes by id only a listed tab whose id and complete label both equal the record (a record with no tab id matches only a listed tab whose complete label equals the record's), then removes the directory, and prints `cross-ai: sweep: closed <n> tab(s), removed <m> run director(ies), kept <k> (<reasons>)` when a count is not zero (always for `--sweep`). It never touches a live run, a record of another host, an unreadable record, or a tab that matches by label prefix alone. When herdr cannot be reached, or an automatic sweep runs under `--host none` or `AIKIT_HOST=none`, the record is kept and counted; `--sweep` ignores the switch and still needs herdr. A dead runner whose launcher group lives is reported and left alone, and the result of a lane whose runner died is not recovered. Not guaranteed: a kill or power loss before the launcher ran leaves the 0600 env or prompt file until the next real run or `--sweep` (a `--print-argv`, `--describe`, `--classify-only` or self-test call never sweeps); an unlinked file's blocks are not overwritten; the lane's own process environment holds the same values as a headless lane's. herdr's screen text, its agent status and the existence of a tab are never a liveness signal or a verdict.
 
 ### Skills and MCP servers for a lane
 
@@ -106,11 +128,14 @@ Runtime ids match exactly (`Claude` is not `claude`). For an id the runner has n
 
 The outer deadline is `min(CONFIG outerTimeoutS, GSD's workflow.cross_ai_timeout or gsd-core's
 300 s default)`; `--outer-timeout` replaces that lookup and the CONFIG cap. `--timeout` sets the
-inner deadline and can only lower it, never raise it. There is no idle watchdog. A heartbeat of
-`cross-ai: pi running 30s, stdout +0 bytes` is normal for `pi -p`: no new stdout is not a stall.
+inner deadline and can only lower it, never raise it.
 
 Each parallel lane gets its own scratch directory (section 2). Never edit the tree while a
 review lane runs.
+
+### Idle watchdog
+
+The idle watchdog is off unless the call passes `--idle-timeout` or `CONFIG.idleTimeoutS` is above 0 (the call wins; 0 turns it off). The clock starts at each attempt's spawn and resets on any byte the lane prints on stdout or stderr; the runner's own heartbeat lines do not count. An execute lane's clock also resets when its commits or tree change, read at most once per check interval (a tenth of the idle time, 1 to 60 s) and only while it prints nothing; a review lane's signal is its output only. At the idle time the runner prints `cross-ai: idle watchdog: <cli> printed nothing for <N>s; ending its process group`, ends the group as a timeout does, and counts a timed-out attempt (its `cross-ai: attempt` line reads `status=timeout rule=idle-watchdog`): the retry ladder runs as for an attempt cap, the call ends `timeout` (124) or `transient` (75 with `retry_after_s=`), and no other lane starts. For an earlier stop, lower `max_retries` in `[runner.retry]`. A value below 60, and one at or above the remaining budget, each print a notice; `--print-argv` prints `cross-ai: idle watchdog off` or `cross-ai: idle watchdog on timeout=<N>s`. An execute lane that prints but changes nothing for the idle time gets `cross-ai: <cli> printed output but changed nothing in the checkout for <N>s` and the finding `no_tree_change`, and is never ended for it; a tree read that fails or times out resets nothing, is logged once and never ends a lane; while polling, its heartbeat adds `commits +<n> since the baseline, tree changed` (or `unchanged`). A heartbeat of `cross-ai: pi running 30s, stdout +0 bytes` is normal for `pi -p`: a host that prints nothing until the end has no activity signal on a review lane, so keep 900 s or more there. Output timing per host is unverified: claude, opencode, pi text mode and `pi -p --mode json` were not measured (see Evidence).
 
 ## 4. Read the result
 
@@ -122,7 +147,7 @@ channel, so read the file, not a truncated tail.
 The last line is `AIKIT-XAI`. A real run's line (a hermetic review run against the runner's test fake opencode, model `fake/auth`):
 
 ```
-AIKIT-XAI status=auth cli=opencode model=fake/auth exit=69 cli_rc=1 elapsed=0s out=0 tree=clean action=stop route=unknown rule=text-unauthorized pattern=verified attempts=1 cycles=0 session=- applied=model,provider,role ignored=- unknown=- escalate=-
+AIKIT-XAI status=auth cli=opencode model=fake/auth exit=69 cli_rc=1 elapsed=0s out=0 tree=clean action=stop route=unknown rule=text-unauthorized pattern=verified attempts=1 cycles=0 session=- applied=model,provider,role ignored=- unknown=- escalate=- coverage=- findings=-
 ```
 
 Before it, on a stop, come the report and the upstream lines (same run):
@@ -144,20 +169,20 @@ Exit codes, and what the caller does with each:
 
 | Exit | Statuses | What the caller does |
 |---|---|---|
-| 0 | ok | read the answer on stdout |
-| 1 | no_change, empty_answer, crash, contract_violation, git_error, git_timeout | report the lines; stop |
-| 2 | usage, no_model, empty_stdin | the call was refused; fix the invocation, do not retry |
-| 69 | permission_blocked, bad_model, auth, billing, and every hard-tier stop | owner stop: notice, then stop |
-| 75 | quota, transient | with `retry_after_s=`, the hard tier (section 6); a bare 75 is an owner stop |
-| 124 | timeout | the deadline won; report it |
-| 127 | not_installed | the runtime's binary is missing |
-| 128+n | signal | the child died on signal n |
+| 0 | `ok` | read the answer on stdout |
+| 1 | `no_change`, `empty_answer`, `crash`, `contract_violation`, `git_error`, `git_timeout`, `partial` | report the lines; stop (`partial`: section 5) |
+| 2 | `usage`, `no_model`, `empty_stdin` | the call was refused; fix the invocation, do not retry |
+| 69 | `permission_blocked`, `bad_model`, `auth`, `billing`, and every hard-tier stop | owner stop: notice, then stop |
+| 75 | `quota`, `transient`, `locked` | with `retry_after_s=`, the hard tier (section 6); a bare 75, every `locked` included, is an owner stop: report it, or start the run after the other run's own exit |
+| 124 | `timeout` | the deadline or the idle watchdog won; report it |
+| 127 | `not_installed` | the runtime's binary is missing |
+| 128+n | `signal` | the child died on signal n |
 
 The report's `stopped=` names why the lane ended: `class` (a one-attempt stop), `rungs` or
 `deadline` (the soft series ended; with `retry_after_s=` that is the hard tier), `dirty-tree` (a
 fresh session was refused because the tree changed), `hard-waits` or `cap` (the hard tier is
 spent). A bare exit 75 comes from that dirty-tree gate, from an unwritable state file
-(`cross-ai: cycle state unwritable`), or from a quota stop off a router lane, which ends after
+(`cross-ai: cycle state unwritable`), from a run lock (`status=locked`, section 2), or from a quota stop off a router lane, which ends after
 one call with `stopped=class` and writes no state file. Tell them apart by the report line,
 never by assuming a tree or state-file failure; every bare 75 is an owner stop.
 
@@ -203,6 +228,29 @@ The last line always carries one group after `attempts=` and `cycles=` and befor
 - `applied=`, `ignored=`, `unknown=`: comma lists of setting names by state, `-` when empty; a skill shows as `skill:<name>`, an MCP server as `mcp:<name>`.
 - `escalate=`: the escalation flags the call carried (`runtime`, `model`, or `runtime,model`), `-` when none. The runner records them and never starts a second lane.
 
+After `escalate=` and before `retry_after_s=` comes a second group:
+
+- `coverage=`: `<covered>/<checkable>` planned tasks of an execute run, `n/a` when the prompt has no `<task>` block, `-` when no check ran (a review lane, or no spawn).
+- `findings=`: the finding codes that fired, comma-separated in the order of the table in "Execute result checks", `-` when none.
+
+### Execute result checks
+
+After a spawned execute run the runner checks the result against the prompt's plan and the commits since the run's baseline. Planned tasks are the prompt's `<task>` blocks whose type is absent or not a checkpoint type, each with its `<name>` and `<files>`; a task is covered when a commit since the baseline touched one of its files (a trailing `/` covers a directory), and a task with no files, or only glob patterns, is unchecked. Each finding prints one `cross-ai: finding reason=<code> detail=<text>` line before the status line (values redacted, control characters removed, at most 10 paths or phrases, then `(+N more)`), in this order:
+
+| # | Finding | Result | Meaning |
+|---|---|---|---|
+| 1. | `no_commit` | partial | exit 0 with an answer and planned tasks, but no commit since the baseline |
+| 2. | `task_uncovered` | partial | a checkable task has no covering commit, or the `--plan-id` commit count is short; the missing task names are printed |
+| 3. | `admits_skipped` | partial | the answer holds an admission phrase outside fenced and inline code; the phrase is printed |
+| 4. | `forbidden_path` | contract_violation | a forbidden path changed (committed or not) and the prompt's `<files>` does not name it |
+| 5. | `no_tree_change` | info | the lane printed output but changed nothing in the checkout for the idle time |
+| 6. | `outside_plan_files` | info | paths changed outside the prompt's `<files>`, counted |
+| 7. | `uncommitted_edits` | info | the end tree differs from HEAD in paths that were clean at the baseline |
+| 8. | `baseline_replaced` | info | the stored baseline was replaced; the reason is printed |
+| 9. | `coverage_unchecked` | info | tasks the runner could not check |
+
+`contract_violation` wins over `partial`, and `no_change` (a clean tree) wins over both. `partial` (exit 1) writes no answer to stdout, so GSD cannot record it as a summary. An execute run that ends with another status still prints its findings: they are the missing list for the resume. Files the owner left dirty and never touched are never the lane's. A lane hosted in a herdr tab is checked by the same rules on the same inputs.
+
 ## 5. Chain review or execution
 
 A review lane's answer is the report to merge; an execution lane's answer is the change to
@@ -211,13 +259,17 @@ not chained: wait for its own launch to exit and read its own `lane.rc` and `lan
 
 To continue a session in the next round, pass the `session=` value as `--session-id` with the same runtime, model and role; the round's own prompt is the next message. A call without `--session-id` starts fresh. pi and copilot take the caller's id, or a generated one when none is given; cursor, opencode, codex and claude continue an id they printed. An id the host rejects fails the call with the host's first error line, and the runner never falls back to a fresh session. codex review, and codex execute with `--codex-sandbox`, have no resume form: the call starts fresh, prints the new id and reports the `session` setting `ignored` with `reason=mode_forbids`. An explicit id wins over the id the runner stored for the lane's quota cycle.
 
+A `partial` execute lane: report its finding lines. Under GSD the answer is abort (section 7), and the owner decides the fix round. A caller that manages its own fix round resumes the same session once (the `session=` value as `--session-id`, with the same runtime, model and role) with the original prompt unchanged, its objective and its task blocks included, plus one added paragraph that names the missing tasks or the matched phrase: the original objective keeps the same stored baseline, and the task blocks keep the coverage check. When `session=-`, or the runtime has no resume form for the role (it reports `session` ignored), there is no fix round: it is an owner stop. Never in a loop: a second `partial` is an owner stop. A `locked` run is never resumed: report it, or start it after the other run's own exit.
+
+Helpers, each only when present at the calling runtime: where the `jev-fast-decision` skill is installed, a calling skill may screen an admission-only `partial` (only `admits_skipped` fired) with it; a low-confidence or missing answer keeps `partial`, never done, and the deterministic result is the tested default. The runner itself may host a lane in a herdr tab (section 2); a calling skill that drives herdr by hand stays unchanged, and what it reads there is never a liveness or verdict signal.
+
 ## 6. Hard tier and notice
 
 An exit 75 whose `AIKIT-XAI` line carries `retry_after_s=` is the hard tier. A real run's line
 (the same fake, model `fake/capacity`, with the `[runner.retry]` settings `max_retries = 0` and `session_resets = 0`):
 
 ```
-AIKIT-XAI status=transient cli=opencode model=fake/capacity exit=75 cli_rc=1 elapsed=0s out=0 tree=clean action=stop route=unknown rule=text-service-unavailable pattern=verified attempts=1 cycles=0 session=- applied=model,provider,role ignored=- unknown=- escalate=- retry_after_s=600 cycle=0
+AIKIT-XAI status=transient cli=opencode model=fake/capacity exit=75 cli_rc=1 elapsed=0s out=0 tree=clean action=stop route=unknown rule=text-service-unavailable pattern=verified attempts=1 cycles=0 session=- applied=model,provider,role ignored=- unknown=- escalate=- coverage=- findings=- retry_after_s=600 cycle=0
 ```
 
 Wait once, for exactly `retry_after_s` seconds, then re-invoke the same lane, the same CLI and
@@ -267,7 +319,9 @@ another CLI, another model or another harness to finish the lane.
 
 - Copilot's prompt ends up on argv (the runner puts it there), so the process table shows it.
 - Two timeouts, not one, and gsd-core's default is 300 s when the config key is absent.
-- No idle watchdog. `stdout +0 bytes` heartbeats are normal for `pi -p`.
+- The idle watchdog is off unless a call or CONFIG turns it on. A review lane on a host that prints nothing until the end has no activity signal.
+- The run lock stops runners, not humans: a commit or an edit a human makes during a run reads as the lane's.
+- A grandchild that detached with `setsid` survives both the tab close and a headless group kill.
 - Stop a lane only through its own launch (its background task, or the foreground command you
   started), never by a process-name pattern.
 - Executor guards: never stash, and check a "pre-existing" claim against a clean run before
@@ -287,3 +341,8 @@ another CLI, another model or another harness to finish the lane.
 - Each host's effort, session, context, skill and MCP forms come from that host's own `--help`, kept as recorded help fixtures in this repository; `--describe` prints each form's state and source label.
 - The hosted-lane limits come from live herdr checks: closing the tab ended the launcher and its plain and `nohup` children, while a `setsid` grandchild survived.
 - The one-shot early-fire rule (on `:00` or `:30`, up to 90 s early; other minutes unshifted) comes from Claude Code's scheduled-tasks page, section "When a one-shot task runs early": https://code.claude.com/docs/en/scheduled-tasks#when-a-one-shot-task-runs-early (checked 2026-11-21).
+- The idle default of 900 s is judged: healthy review lanes took 288 to 579 s in total, observed stalls printed nothing for 1800 s, and GSD asks the owner after 10 minutes without commits.
+- The admission phrases are a judged seed from earlier execute reports that admitted skipped work; their recall is unverified.
+- The forbidden-path default is the set of planning files GSD's orchestrator owns and writes itself.
+- The hosted-lane poll measured 0.08 % of one core (a 100 ms poll measured 0.18 %) and a tab close took 0.29 s, each on one machine on 2026-11-16, not a guarantee.
+- Per-host output timing: not measured; every host is unverified.
