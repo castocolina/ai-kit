@@ -1328,8 +1328,9 @@ const FAKE_MODES = {
     };
     next();
   },
+  // 4.5 s of output: past the 3 s poll tick of a 2 s idle time by 1.5x, so both runs of a pair report no_tree_change.
   hdrip: () => {
-    let n = 0; const t = setInterval(() => { process.stdout.write('.\n'); if (++n === 9) { clearInterval(t); fs.appendFileSync('a.txt', 'hd\n'); process.stdout.write('# Summary\nok', () => process.exit(0)); } }, 300);
+    let n = 0; const t = setInterval(() => { process.stdout.write('.\n'); if (++n === 15) { clearInterval(t); fs.appendFileSync('a.txt', 'hd\n'); process.stdout.write('# Summary\nok', () => process.exit(0)); } }, 300);
   },
   hcommit: () => {
     let n = 0; const t = setInterval(() => {
@@ -2627,7 +2628,9 @@ async function blackBoxSelfTest(listOnly = false) {
       if (JSON.stringify(lines(both.first, 'cross-ai: argv=')) !== JSON.stringify(lines(both.again, 'cross-ai: argv='))) return 'argv lines differ';
       const settings = (r) => lines(r, 'cross-ai: setting ').filter((s) => !s.startsWith('cross-ai: setting host='));
       if (JSON.stringify(settings(both.first)) !== JSON.stringify(settings(both.again))) return 'settings lines differ';
-      if (JSON.stringify(lines(both.first, 'cross-ai: finding ')) !== JSON.stringify(lines(both.again, 'cross-ai: finding '))) return 'finding lines differ';
+      // A no_tree_change detail carries the measured quiet seconds, wall-clock like elapsed=; compare it without them.
+      const findings = (r) => lines(r, 'cross-ai: finding ').map((s) => s.replace(/^(cross-ai: finding reason=no_tree_change detail=.*) for \d+s$/, '$1 for Ns'));
+      if (JSON.stringify(findings(both.first)) !== JSON.stringify(findings(both.again))) return 'finding lines differ';
       if (statusFields(both.first) !== statusFields(both.again)) return `status fields differ: ${statusFields(both.first)} | ${statusFields(both.again)}`;
       if (both.first.stderr.includes(c.env.AIKIT_XAI_SENTINEL) || both.again.stderr.includes(c.env.AIKIT_XAI_SENTINEL)) return 'a key reached stderr';
       for (const name of extra.dead || []) for (const pid of recordedPids(c.pidFile)[name] || []) if (pidLingers(pid)) return `${name} ${pid} still alive`;
