@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 37
-current_phase_name: Shared runner options and session ids
-status: verifying
+current_phase: 38
+current_phase_name: Runner hardening and run safety
+status: executing
 stopped_at: Completed 37-24-PLAN.md
-last_updated: "2026-11-21T23:52:40.258Z"
+last_updated: "2026-11-22T02:46:43.837Z"
 last_activity: 2026-11-20
 last_activity_desc: Phase 35 execution started
-state_head: f17cb4a1daf6808bc4843b4d823014112ca04cba
+state_head: 9f7a3c57f07499379c5ee10ef0502fa3125d12ed
 progress:
   total_phases: 40
   completed_phases: 15
-  total_plans: 207
+  total_plans: 234
   completed_plans: 207
   percent: 38
 ---
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 37 (Shared runner options and session ids) — READY TO EXECUTE
+Phase: 38 (Runner hardening and run safety) — READY TO EXECUTE
 Plan: 28 of 28
-Status: Phase complete — ready for verification
+Status: Ready to execute
 Last activity: 2026-11-20 — Phase 35 execution started
 
 Progress: [████░░░░░░] 38%
