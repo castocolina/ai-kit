@@ -1,0 +1,12 @@
+{
+  "host": "router",
+  "version": "router-source-shape",
+  "date": "2026-11-16",
+  "cli": "pi",
+  "route": "unknown",
+  "stderr": "429: {\"error\":{\"message\":\"model in cooldown\",\"code\":\"model_cooldown\",\"reset_seconds\":30}}",
+  "stdout": "",
+  "expect_class": "transient",
+  "expect_rule": "omniroute-model-cooldown",
+  "source": "reconstructed"
+}

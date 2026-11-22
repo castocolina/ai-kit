@@ -1,0 +1,12 @@
+{
+  "host": "router",
+  "version": "router-source-shape",
+  "date": "2026-11-16",
+  "cli": "pi",
+  "route": "router",
+  "stderr": "429: {\"error\":{\"message\":\"all targets were skipped\",\"code\":\"ALL_TARGETS_SKIPPED\"}}",
+  "stdout": "",
+  "expect_class": "quota",
+  "expect_rule": "omniroute-all-targets-skipped",
+  "source": "reconstructed"
+}

@@ -1,0 +1,12 @@
+{
+  "host": "router",
+  "version": "router-source-shape",
+  "date": "2026-11-16",
+  "cli": "pi",
+  "route": "router",
+  "stderr": "429: {\"error\":{\"message\":\"All credentials for model router-env/fake-model are cooling down\",\"type\":\"rate_limit_error\",\"code\":\"model_cooldown\",\"model\":\"router-env/fake-model\",\"reset_seconds\":30,\"retry_after\":\"2000-01-01T00:00:30.000Z\"}}",
+  "stdout": "",
+  "expect_class": "quota",
+  "expect_rule": "router-model-cooldown",
+  "source": "reconstructed"
+}

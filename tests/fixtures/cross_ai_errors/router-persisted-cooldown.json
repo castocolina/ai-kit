@@ -1,0 +1,12 @@
+{
+  "host": "router",
+  "version": "router-log-shape",
+  "date": "2026-11-16",
+  "cli": "pi",
+  "route": "router",
+  "stderr": "connection has persisted cooldown until <time>",
+  "stdout": "",
+  "expect_class": "quota",
+  "expect_rule": "router-persisted-cooldown",
+  "source": "reconstructed"
+}

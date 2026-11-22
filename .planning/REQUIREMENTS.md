@@ -426,7 +426,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   classed quota; only the same sentence as plain text on stdout is a crash. The fix is a catalogue row that opts in with
   `input: stdout`, read only after a failed attempt and never as a live kill, plus claude's `api_error_status` and
   `api_error_type` fields read beside the text)*
-- [ ] **RUN-10** *(amended 2026-11-16: the logged wording is server-side only; the client sees JSON codes `model_cooldown`, `ALL_TARGETS_SKIPPED` and `all_targets_cooling_down` with `Retry-After`, so the catalogue matches those too: see 38.1 SPEC R4 and CONTEXT D-22)*: The error catalogue matches the router's logged cooldown wording ('all N active accounts cooling
+- [x] **RUN-10** *(amended 2026-11-16: the logged wording is server-side only; the client sees JSON codes `model_cooldown`, `ALL_TARGETS_SKIPPED` and `all_targets_cooling_down` with `Retry-After`, so the catalogue matches those too: see 38.1 SPEC R4 and CONTEXT D-22)*: The error catalogue matches the router's logged cooldown wording ('all N active accounts cooling
   down for model X (reset after ...)') as a quota-cycle class with its reset time, tested on a captured log line,
   unless an owner decision recorded in Phase 38.1 says why it does not. *(amended 2026-11-16, 38.1 D-09: the wording was captured
   from the router's own log (level warning), not from a client body, so the rows are scoped to confirmed router lanes with class
@@ -1128,7 +1128,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-07 | Phase 38 | Complete |
 | RUN-08 | Phase 38 | Complete |
 | RUN-09 | Phase 38.1 | Complete |
-| RUN-10 | Phase 38.1 | Pending |
+| RUN-10 | Phase 38.1 | Complete |
 | RUN-11 | Phase 38.1 | Pending |
 | RUN-12 | Phase 37 | Complete |
 | RUN-13 | Phase 38 | Complete |

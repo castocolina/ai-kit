@@ -27,10 +27,13 @@ CAPTURED = (
 
 
 def _classify_entry(fixture, stem):
-    return {
+    entry = {
         "name": stem, "cli": fixture["cli"], "stderr": fixture["stderr"],
         "stdout": fixture["stdout"],
     }
+    if "route" in fixture:
+        entry["route"] = fixture["route"]
+    return entry
 
 
 def _template_text():
@@ -141,7 +144,9 @@ class CrossAiErrorFixturesTest(unittest.TestCase):
                 with open(path, encoding="utf-8", newline="") as handle:
                     text = handle.read()
                 fixture = json.loads(text)
-                self.assertEqual(set(fixture), keys, path)
+                self.assertIn(set(fixture), (keys, keys | {"route"}), path)
+                if "route" in fixture:
+                    self.assertIn(fixture["route"], ("router", "unknown"), path)
                 for key in ("host", "version"):
                     self.assertIsInstance(fixture[key], str, path)
                     self.assertTrue(fixture[key], path)
