@@ -48,6 +48,7 @@ import {
   argvPromptProblem,
   capCodePoints,
   checkGroup,
+  checkoutRoot,
   clampAttemptTimeout,
   clampCapS,
   classifyStop,
@@ -69,6 +70,8 @@ import {
   launcherVerified,
   liveCheck,
   liveMatch,
+  lockPath,
+  lockUpdate,
   log,
   makeLineRelay,
   mergeCatalog,
@@ -1255,7 +1258,7 @@ const model = argOf('--model');
 const fakeMode = model.startsWith('fake/') ? model.slice(5).replace(/:[a-z]+$/, '') : '';
 const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('gc', pid); };
 const STICKY_FAKE = new Set([
-  'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big', 'sentinelsplit',
+  'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'lockhold', 'big', 'sentinelsplit',
   'limit-mid', 'limit-partial', 'limit-flood', 'limit-partial-flood', 'auth-then-noise',
   'transient-hang', 'bare-429-hang', 'retry-notice', 'retry-notice-429', 'slowquota',
   'capclamp', 'reason-code-hang', 'slow-lines', 'router-stop-hang', 'ticker',
@@ -1301,6 +1304,22 @@ const FAKE_MODES = {
   slowok: () => {
     fs.writeFileSync('started', '1');
     setTimeout(() => { fs.appendFileSync('a.txt', 'slow\n'); process.stdout.write('# Summary\nok'); process.exit(0); }, 2500);
+  },
+  lockpeek: () => {
+    const dir = (process.env.XDG_STATE_HOME || '') + '/ai-kit/spec/locks';
+    const names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
+    const mode = (p) => (fs.statSync(p).mode & 0o777).toString(8);
+    const one = names.length === 1 ? dir + '/' + names[0] : null;
+    let pgid = process.pid;
+    try { const st = fs.readFileSync('/proc/self/stat', 'utf8'); pgid = Number(st.slice(st.lastIndexOf(')') + 1).trim().split(/\s+/)[2]); } catch { pgid = process.pid; }
+    fs.writeFileSync((process.env.HOME || '.') + '/lock.seen', JSON.stringify({ names, dir: mode(dir), file: one ? mode(one) : '-', rec: one ? JSON.parse(fs.readFileSync(one, 'utf8')) : null, pgid }));
+    fs.appendFileSync('a.txt', 'lockpeek\n');
+    process.stdout.write('# Summary\nok');
+  },
+  lockhold: () => {
+    const t0 = Date.now();
+    const tick = () => { if (fs.existsSync((process.env.HOME || '.') + '/lock-release') || Date.now() - t0 > 20000) { fs.appendFileSync('a.txt', 'hold\n'); process.stdout.write('# Summary\nok'); process.exit(0); } else setTimeout(tick, 50); };
+    tick();
   },
   ticker: () => {
     // Each stream alone is silent for 2.4 s; together the gap is never over 1.2 s.
@@ -2309,6 +2328,21 @@ function patchRenameOnce(match, after) {
     }
   };
   return () => { fs.renameSync = savedRename; };
+}
+
+function plantLock(c, overrides = {}) {
+  const root = fs.realpathSync(c.repo);
+  c.lockFile = lockPath(root, c.env.XDG_STATE_HOME);
+  writeCycleState(c.lockFile, { version: 1, run_id: 'planted-run', pid: process.pid,
+    pid_start: procStartTime(process.pid), host_name: os.hostname(),
+    started_ms: Date.UTC(2026, 10, 21), cli: 'pi', model: 'fake/planted', role: 'execute', root,
+    child_pgid: null, child_start: null, baseline: null, launcher_pgid: null, token: null, tab_id: null, ...overrides });
+  c.planted = fs.readFileSync(c.lockFile);
+  return null;
+}
+function plantLiveLock(c) { return plantLock(c); }
+function plantedUnchanged(c) {
+  return fs.existsSync(c.lockFile) && fs.readFileSync(c.lockFile).equals(c.planted);
 }
 
 async function runSelfTestCase(tmp, spec) {
@@ -9269,7 +9303,14 @@ async function blackBoxSelfTest(listOnly = false) {
           const args = ['--runtime', 'pi', '--model', 'fake/ok', '--session-id'];
           const one = await runCaseProcess({ args: [...args, 'placeholder-sid-1'] }, ctx);
           const empty = await runCaseProcess({ args: [...args, ''] }, ctx);
-          const pair = await Promise.all([0, 1].map(() => runCaseProcess({ args: [...args, 'placeholder-sid-6'] }, ctx)));
+          // Concurrent executes use separate checkouts while retaining the same session id.
+          const repo = path.join(ctx.tmp, 'r-session-chosen-pi-b');
+          fs.mkdirSync(repo, { recursive: true });
+          spawnSync('git', ['init', '-q'], { cwd: repo, env: ctx.env });
+          fs.writeFileSync(path.join(repo, 'a.txt'), 'base\n');
+          spawnSync('git', ['add', 'a.txt'], { cwd: repo, env: ctx.env });
+          spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo, env: ctx.env });
+          const pair = await Promise.all([ctx, { ...ctx, repo }].map((c) => runCaseProcess({ args: [...args, 'placeholder-sid-6'] }, c)));
           return one.status === 0 && statusTail(one.stderr || '')?.session === 'placeholder-sid-1' && empty.status === 2 && pair.every((x) => x.status === 0) && JSON.stringify(rows().slice(1).map((x) => x[0])) === JSON.stringify(['placeholder-sid-1', 'placeholder-sid-6', 'placeholder-sid-6']) ? null : 'pi ids';
         },
       },
@@ -9423,9 +9464,16 @@ async function blackBoxSelfTest(listOnly = false) {
         env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/slowok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
         setup: (c) => {
+          // 38-13: one checkout admits one execute run; the overlap runs on a second checkout.
+          const repoB = path.join(c.tmp, 'r-host-overlap-b');
+          fs.mkdirSync(repoB, { recursive: true });
+          spawnSync('git', ['init', '-q'], { cwd: repoB, env: c.env });
+          fs.writeFileSync(path.join(repoB, 'a.txt'), 'base\n');
+          spawnSync('git', ['add', 'a.txt'], { cwd: repoB, env: c.env });
+          spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoB, env: c.env });
           const out = fs.openSync(path.join(c.home, 'overlap-out.txt'), 'w');
           const err = fs.openSync(path.join(c.home, 'overlap-err.txt'), 'w');
-          const child = spawn(process.execPath, [c.copy, '--runtime', 'pi', '--model', 'fake/slowok', '--host', 'auto'], { cwd: c.repo, env: c.env, stdio: ['pipe', out, err], detached: true });
+          const child = spawn(process.execPath, [c.copy, '--runtime', 'pi', '--model', 'fake/slowok', '--host', 'auto'], { cwd: repoB, env: c.env, stdio: ['pipe', out, err], detached: true });
           child.stdin.end('prompt\n');
           fs.closeSync(out); fs.closeSync(err);
           caseRunners.add(child);
@@ -9808,6 +9856,171 @@ async function blackBoxSelfTest(listOnly = false) {
           if (child.status !== 0 || lines.length !== 3) return 'lines';
           if (lines[0] !== 'cross-ai: finding reason=no_commit detail=x' || lines[1] !== 'cross-ai: finding reason=task_uncovered detail=a, b') return 'order';
           return lines[2].startsWith('AIKIT-XAI status=crash ') && lines[2].endsWith(' escalate=- coverage=- findings=no_commit,task_uncovered') ? null : 'trailer';
+        },
+      },
+      {
+        name: 'lock-held-refuses', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 75,
+        status: /^AIKIT-XAI status=locked cli=pi model=fake\/ok exit=75 cli_rc=- elapsed=\d+s out=0 tree=clean action=stop$/,
+        setup: (c) => plantLiveLock(c),
+        check: (r, c) => {
+          if (!r.stderr.split('\n').includes(`cross-ai: run lock held by pid ${process.pid} (lane pi/fake/planted, since 2026-11-21T00:00:00.000Z); not starting`)) return 'missing held line';
+          if (r.stderr.split('\n').find((line) => line.startsWith('AIKIT-XAI ')).includes('retry_after_s=')) return 'retry_after_s printed';
+          if (c.calls.length) return 'lane or listing called';
+          return plantedUnchanged(c) ? null : 'planted record changed';
+        },
+      },
+      {
+        name: 'lock-gone-after-failure', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/empty'], exit: 1,
+        status: /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 .* action=stop$/,
+        check: (r, c) => {
+          const dir = path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'locks');
+          if (!fs.existsSync(dir)) return 'no locks folder';
+          const names = fs.readdirSync(dir).filter((name) => name.endsWith('.json'));
+          return names.length ? `lock left: ${names.join(',')}` : null;
+        },
+      },
+      {
+        name: 'lock-held-redacts', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 75,
+        status: /^AIKIT-XAI status=locked .* action=stop$/,
+        setup: (c) => plantLock(c, { model: 'fake/x\u0007' + c.env.AIKIT_XAI_SENTINEL }),
+        check: (r, c) => {
+          const line = r.stderr.split('\n').find((s) => s.startsWith('cross-ai: run lock held by pid '));
+          if (!line) return 'missing held line';
+          if (line.includes(c.env.AIKIT_XAI_SENTINEL) || line.includes('\u0007')) return 'key reached the held line';
+          if (c.calls.length) return 'lane or listing called';
+          return plantedUnchanged(c) ? null : 'planted record changed';
+        },
+      },
+      {
+        name: 'lock-not-taken', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => { c.env.XDG_STATE_HOME = path.join(c.home, 'state-file'); fs.writeFileSync(c.env.XDG_STATE_HOME, ''); return null; },
+        check: (r) => r.stderr.split('\n').filter((line) => line === 'cross-ai: run lock not taken (ENOTDIR); running without a lock').length === 1 ? null : 'missing not-taken line',
+      },
+      {
+        name: 'lock-late-usage-no-lock', kind: 'logic',
+        args: ['--mode', 'review', '--runtime', 'pi', '--model', 'fake/review-ok'],
+        config: { extraArgs: { pi: ['--tools', 'bash'] } }, exit: 2,
+        status: /^AIKIT-XAI status=usage .* action=stop$/,
+        setup: (c) => plantLiveLock(c),
+        check: (r, c) => {
+          if (!r.stderr.includes('review argv for pi holds --tools')) return 'missing review argv refusal';
+          if (c.calls.length) return 'lane or listing called';
+          return plantedUnchanged(c) ? null : 'planted record changed';
+        },
+      },
+      {
+        name: 'lock-record-fields', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/lockpeek'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/lockpeek exit=0 .* tree=dirty action=stop$/,
+        check: (r, c) => {
+          const file = path.join(c.home, 'lock.seen');
+          if (!fs.existsSync(file)) return 'lock.seen missing';
+          const seen = JSON.parse(fs.readFileSync(file, 'utf8'));
+          const rec = seen.rec || {};
+          const checks = { names: JSON.stringify(seen.names) === JSON.stringify([path.basename(lockPath(fs.realpathSync(c.repo), c.env.XDG_STATE_HOME))]),
+            dir: seen.dir === '700', file: seen.file === '600', version: rec.version === 1,
+            run_id: typeof rec.run_id === 'string' && !!rec.run_id, pid: Number.isInteger(rec.pid),
+            pid_start: /^(\d+|-)$/.test(rec.pid_start), host_name: rec.host_name === os.hostname(),
+            started_ms: Number.isInteger(rec.started_ms), cli: rec.cli === 'pi', model: rec.model === 'fake/lockpeek',
+            role: rec.role === 'execute', root: rec.root === fs.realpathSync(c.repo), child_pgid: rec.child_pgid === seen.pgid,
+            child_start: /^(\d+|-)$/.test(rec.child_start), baseline: rec.baseline === null };
+          for (const [name, ok] of Object.entries(checks)) if (!ok) return `lock field ${name}: ${JSON.stringify(rec[name] ?? seen[name])}`;
+          const names = fs.readdirSync(path.dirname(lockPath(fs.realpathSync(c.repo), c.env.XDG_STATE_HOME))).filter((n) => n.endsWith('.json'));
+          return names.length ? `lock left: ${names.join(',')}` : null;
+        },
+      },
+      {
+        name: 'lock-gone-after-signal', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/hang', '--timeout', '60'],
+        signal: { when: (c) => fs.existsSync(path.join(c.repo, 'gc.pid')), sig: 'SIGTERM' },
+        exit: 143, status: /^AIKIT-XAI status=signal cli=pi model=fake\/hang exit=143 .* action=stop$/,
+        check: (r, c) => {
+          const dir = path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'locks');
+          if (!fs.existsSync(dir)) return 'no locks folder';
+          const names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
+          return names.length ? `lock left: ${names.join(',')}` : null;
+        },
+      },
+      {
+        name: 'lock-none-usage', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/ok', '--no-such-flag'], exit: 2,
+        status: /^AIKIT-XAI status=usage .* action=stop$/,
+        check: (r, c) => fs.existsSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'locks')) ? 'usage took a lock' : null,
+      },
+      {
+        name: 'pure-lock-update-note', kind: 'logic', pure: () => {
+          const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-lockup-'));
+          try {
+            fs.writeFileSync(path.join(dir, 'f'), '');
+            const lock = { file: path.join(dir, 'f', 'sub', 'l.json'), runId: 'r', record: {} };
+            const { lines } = collectLog(() => { lockUpdate({ child_pgid: 4242 }, lock); lockUpdate({ child_pgid: 4242 }, lock); });
+            return JSON.stringify(lines) === JSON.stringify(['cross-ai: note: run lock record not updated (ENOTDIR)']) ? null : `lines ${JSON.stringify(lines)}`;
+          } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+        },
+      },
+      {
+        name: 'lock-two-at-once', kind: 'runtime', args: ['--runtime', 'pi', '--model', 'fake/lockhold', '--print-argv'], exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: async (r, c) => {
+          const dir = path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'locks');
+          if (fs.existsSync(dir) && fs.readdirSync(dir).some((n) => n.endsWith('.json'))) return 'print-argv took a lock';
+          const spec = { args: ['--runtime', 'pi', '--model', 'fake/lockhold'] };
+          const runs = [runCaseProcess(spec, c), runCaseProcess(spec, c)];
+          const first = await Promise.race(runs);
+          fs.writeFileSync(path.join(c.home, 'lock-release'), '');
+          const both = await Promise.all(runs);
+          for (const run of both) if (run.reason) return `contender: ${run.reason}`;
+          if (first.status !== 75) return `first to end exited ${first.status}`;
+          const exits = both.map((run) => run.status).sort((a, b) => a - b);
+          if (JSON.stringify(exits) !== '[0,75]') return `exits ${exits.join(',')}`;
+          const winner = both.find((run) => run.status === 0);
+          const loser = both.find((run) => run.status === 75);
+          const win = statusLineOk(winner.stderr, /^AIKIT-XAI status=ok cli=pi model=fake\/lockhold exit=0 .* tree=dirty action=stop$/);
+          if (win) return `winner: ${win}`;
+          const lose = statusLineOk(loser.stderr, /^AIKIT-XAI status=locked cli=pi model=fake\/lockhold exit=75 .* action=stop$/);
+          if (lose) return `loser: ${lose}`;
+          if (!loser.stderr.split('\n').some((line) => /^cross-ai: run lock held by pid (\d+|-) \(lane .*, since .*\); not starting$/.test(line))) return 'missing held line';
+          if (loser.stderr.includes('retry_after_s=')) return 'retry_after_s printed';
+          const calls = readOr(path.join(c.tmp, 'calls-lock-two-at-once.log'), '').trim().split('\n').filter(Boolean);
+          const held = calls.filter((line) => line === 'pi lockhold').length;
+          const rpc = calls.filter((line) => line === 'pi rpc').length;
+          if (held !== 1) return `pi lockhold calls ${held}`;
+          if (rpc > 1) return `pi rpc calls ${rpc}`;
+          const names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
+          return names.length ? `lock left: ${names.join(',')}` : null;
+        },
+      },
+      {
+        name: 'lock-review-note', kind: 'logic', args: ['--mode', 'review', '--runtime', 'pi', '--model', 'fake/review-ok'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/review-ok exit=0 .* tree=clean action=stop$/,
+        setup: (c) => plantLiveLock(c),
+        check: (r, c) => !r.stderr.split('\n').includes('cross-ai: note: an execute run holds this checkout; the tree check may void this review') ? 'missing review note' : plantedUnchanged(c) ? null : 'planted record changed',
+      },
+      {
+        name: 'pure-lock-root', kind: 'logic', pure: () => {
+          const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-root-'));
+          try {
+            const genv = hermeticEnv(dir, { HOME: path.join(dir, 'h'), PATH: process.env.PATH });
+            const repo = path.join(dir, 'r');
+            const git = (cwd, args) => { const result = spawnSync('git', args, { cwd, env: genv }); if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`); };
+            git(dir, ['init', '-q', 'r']);
+            fs.writeFileSync(path.join(repo, 'a.txt'), 'base');
+            git(repo, ['add', 'a.txt']); git(repo, ['commit', '-q', '-m', 'init']);
+            const wt = path.join(dir, 'wt');
+            git(repo, ['worktree', 'add', '-q', wt]);
+            fs.mkdirSync(path.join(repo, 'sub', 'deeper'), { recursive: true });
+            fs.mkdirSync(path.join(wt, 'x'));
+            fs.symlinkSync(path.join(repo, 'sub'), path.join(dir, 'link'));
+            for (const [input, root] of [[path.join(repo, 'sub', 'deeper'), repo], [path.join(dir, 'link'), repo], [repo, repo], [path.join(wt, 'x'), wt]]) {
+              const got = checkoutRoot(input);
+              if (got !== fs.realpathSync(root)) return `root of ${input}: ${got}`;
+            }
+            return null;
+          } finally { fs.rmSync(dir, { recursive: true, force: true }); }
         },
       },
     ];

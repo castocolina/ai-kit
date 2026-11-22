@@ -1198,6 +1198,7 @@ const STATUS_TABLE = {
   billing: { exit: 69 },
   quota: { exit: 75 },
   transient: { exit: 75 },
+  locked: { exit: 75 }, // D-07: a bare 75; never retry_after_s (report or serialize).
   timeout: { exit: 124 },
   not_installed: { exit: 127 },
   signal: { exit: 128 },
@@ -1243,6 +1244,9 @@ let currentFinalize = null;
 let aborting = 0;
 let signalBy = 0;
 let backstop = null;
+// The run lock this process created ({ file, runId, record }); only it is ever released (D-08).
+let liveLock = null;
+let lockUpdateFailed = false;
 const tempDirs = new Set();
 // Tabs a hosted lane opened and has not confirmed closed; exitFlushed retries them (D-26).
 const openTabs = new Map();
@@ -1327,6 +1331,7 @@ function checkGroup(check) {
 
 function finish(status, fields) {
   if (finished) return finishedExit;
+  releaseLock(); // D-08: every status passes here.
   const row = STATUS_TABLE[status] || { exit: 1 };
   const tree = fields.tree ?? 'unknown';
   const exit = fields.exit ?? row.exit;
@@ -1377,6 +1382,7 @@ const OPENCODE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._@+-]*\/[A-Za-z0-9][A-Za-z0-9.
 // flushed (a stalled reader gets a bounded wait, shorter on the signal path).
 function exitFlushed(code) {
   if (backstop) clearTimeout(backstop);
+  releaseLock();
   // Every exit drops the temp folders still registered (an early return skips its finally).
   // The catch keeps a failing rm from looping through the crash handler back to here.
   for (const [tab, dir] of [...openTabs]) {
@@ -1412,6 +1418,9 @@ process.on('uncaughtException', (e) => {
         'crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' },
       ));
 });
+
+// D-08 backstop: a path that skips finish still drops this run's lock (synchronous).
+process.on('exit', () => { releaseLock(); });
 
 // SPEC R6: the live record of claude's permission flag (37-SPIKE.md Q3b); it labels only the flag.
 const CLAUDE_EXEC_PROBE_RECORD = null;
@@ -3551,6 +3560,78 @@ function deleteCycleState(file) {
   try { fs.rmSync(file, { force: true }); } catch { /* already gone */ }
 }
 
+// D-06 to D-09: the per-checkout run lock of an execute run (SPEC R3).
+const LOCK_RECORD_VERSION = 1;
+function lockPath(root, home = path.resolve(stateHome())) {
+  return path.join(home, 'ai-kit', 'spec', 'locks', sha16(root) + '.json');
+}
+function checkoutRoot(cwd) {
+  let real = cwd;
+  try { real = fs.realpathSync(cwd); } catch { /* the cwd itself is the key */ }
+  // shortcut: under GIT_DIR the work tree is not found by a walk; the cwd's real path is the key.
+  if ((process.env.GIT_DIR || '').trim()) return real;
+  const ceiling = (process.env.GIT_CEILING_DIRECTORIES || '').split(path.delimiter).filter(Boolean).map((d) => path.resolve(d));
+  let dir = real;
+  for (;;) {
+    if (ceiling.includes(dir)) return real;
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return real;
+    dir = parent;
+  }
+}
+function lockText(value) {
+  return redactSecrets(redactSecrets(String(value ?? '-')).replace(/[\x00-\x1f\x7f-\x9f]/g, ''));
+}
+function lockHeldLine(rec) {
+  const r = rec && typeof rec === 'object' ? rec : {};
+  const since = Number.isFinite(r.started_ms) ? new Date(r.started_ms).toISOString() : '-';
+  return `cross-ai: run lock held by pid ${lockText(r.pid)} (lane ${lockText(r.cli)}/${lockText(r.model)}, since ${since}); not starting`;
+}
+async function acquireLock(root, lane) {
+  const file = lockPath(root);
+  // baseline is plan 38-15's; launcher_pgid, token and tab_id are a hosted lane's (38-21).
+  const record = { version: LOCK_RECORD_VERSION, run_id: crypto.randomUUID(), pid: process.pid,
+    pid_start: procStartTime(process.pid), host_name: os.hostname(), started_ms: Date.now(),
+    cli: lane.cli, model: lane.model, role: 'execute', root, child_pgid: null, child_start: null,
+    baseline: null, launcher_pgid: null, token: null, tab_id: null };
+  let created = false;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(path.dirname(file), 0o700); } catch { /* best effort */ }
+    const fd = fs.openSync(file, 'wx', 0o600);
+    created = true;
+    try { fs.writeFileSync(fd, JSON.stringify(record)); } finally { fs.closeSync(fd); }
+  } catch (e) {
+    if (e.code === 'EEXIST') return { ok: false, line: lockHeldLine(parseJson(readOr(file, ''))) };
+    if (created) { try { fs.rmSync(file, { force: true }); } catch { /* best effort */ } }
+    log(`cross-ai: run lock not taken (${e.code || e.message}); running without a lock`);
+    return { ok: true };
+  }
+  liveLock = { file, runId: record.run_id, record };
+  return { ok: true };
+}
+function lockUpdate(fields, lock = liveLock) {
+  if (!lock) return;
+  lock.record = { ...lock.record, ...fields };
+  try { writeCycleState(lock.file, lock.record); } catch (e) {
+    if (!lockUpdateFailed) {
+      lockUpdateFailed = true;
+      log(`cross-ai: note: run lock record not updated (${e.code || e.message})`);
+    }
+  }
+}
+function releaseLock() {
+  if (!liveLock) return;
+  const { file, runId } = liveLock;
+  liveLock = null;
+  try {
+    const rec = parseJson(readOr(file, ''));
+    if (rec && rec.run_id === runId) fs.rmSync(file, { force: true });
+  } catch { /* best effort */ }
+}
+function lockSeen(root) { return fs.existsSync(lockPath(root)); }
+
 function stateSig(st) {
   if (!st) return null;
   return `${st.head ?? ''}\t${st.tree ?? ''}`;
@@ -3678,6 +3759,8 @@ function runChild(bin, argv, opts = {}) {
       return;
     }
     noteChildPgid('spawn', child.pid);
+    // Only runOnce passes onSpawn: git snapshot and listing children never reach the lock record.
+    opts.onSpawn?.(child.pid);
     current = child;
     // SPEC R1 / D-01: opt-in (runOnce only); any child byte resets the clock, the runner's own lines never do; finalize settles once.
     if (opts.idleMs > 0) {
@@ -4436,6 +4519,8 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
       watchChunk(outRelay, outDecoder.write(d));
     },
     onStderr: (d) => onErrText(errDecoder.write(d)),
+    // D-08: a detached child leads its own group and session (pgid = sid = pid).
+    onSpawn: (pid) => lockUpdate({ child_pgid: pid, child_start: procStartTime(pid) }),
     idleMs: (opts.idleS || 0) * 1000,
     onIdle: () => { if (state.liveHit) return false; log(redactSecrets(`cross-ai: idle watchdog: ${cli} printed nothing for ${opts.idleS}s; ending its process group`)); return true; },
   };
@@ -5529,6 +5614,8 @@ async function main(argv) {
   };
   liveSettings = { report: [], sessionId: null, escalation: { runtime: false, model: false } };
   liveCheck = { coverage: '-', findings: [] };
+  liveLock = null;
+  lockUpdateFailed = false;
   let o;
   try { o = parseArgs(argv); } catch (e) {
     log(`cross-ai: ${e.message}`);
@@ -5723,18 +5810,6 @@ async function main(argv) {
       ...liveFields, cli: c.name, model: '-', tree: 'clean', exit: 2,
     });
   }
-  if (aborting) {
-    return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
-  }
-  const before = noTree ? null : await treeState(process.cwd(), runDeadline);
-  if (aborting) {
-    return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
-  }
-  if (!noTree && before === null) {
-    return reportAndFinish(gitFailStatus(), {
-      ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1,
-    });
-  }
   // The review argv is known before any spawn: a widening extra is a usage error, not a run.
   if (o.mode === 'review' && c.model) {
     const probe = {
@@ -5756,6 +5831,27 @@ async function main(argv) {
   if (plan.error) {
     log(`cross-ai: ${plan.error}`);
     return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  if (aborting) {
+    return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
+  }
+  // SPEC R3: after validation and the prompt read, before the first snapshot or spawn.
+  const lockRoot = checkoutRoot(process.cwd());
+  if (o.mode === 'exec') {
+    const got = await acquireLock(lockRoot, { cli: c.name, model: c.model });
+    if (!got.ok) {
+      log(got.line);
+      return reportAndFinish('locked', { ...liveFields, cli: c.name, model: c.model, tree: 'clean', exit: 75, cli_rc: '-', out: 0 });
+    }
+  } else if (lockSeen(lockRoot)) log('cross-ai: note: an execute run holds this checkout; the tree check may void this review');
+  const before = noTree ? null : await treeState(process.cwd(), runDeadline);
+  if (aborting) {
+    return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
+  }
+  if (!noTree && before === null) {
+    return reportAndFinish(gitFailStatus(), {
+      ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1,
+    });
   }
   const runCtx = { cwd: process.cwd(), sid: plan.sessionId ?? '<sid>', outFile: '<tmp>/last-message.md', codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null, profileFlags, promptArg: '<prompt>', adds: plan.adds };
   const resumed = plan.resume && plan.sessionId ? sameSessionArgv(c.name, c.rt, plan.model, runCtx, plan.sessionId, o.mode) : null;
@@ -5924,6 +6020,7 @@ export {
   argvPromptProblem,
   capCodePoints,
   checkGroup,
+  checkoutRoot,
   clampAttemptTimeout,
   clampCapS,
   classifyStop,
@@ -5945,6 +6042,8 @@ export {
   launcherVerified,
   liveCheck,
   liveMatch,
+  lockPath,
+  lockUpdate,
   log,
   makeLineRelay,
   mergeCatalog,
