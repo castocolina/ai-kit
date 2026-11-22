@@ -148,6 +148,29 @@ class TestGsdSkillVerdicts(_RealGsdTestCase):
                 assert result is not None
                 self.assertTrue(result[0].startswith('Global skill "linked" failed path check'))
 
+    def test_custom_claude_config_dir_skill_resolves(self):
+        # A skill only under CLAUDE_CONFIG_DIR, recorded there by inventory, resolves.
+        config_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, config_dir, ignore_errors=True)
+        skill = config_dir / "skills" / "custom"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("skill", encoding="utf-8")
+        check = self.check._replace(env={**self.check.env, "CLAUDE_CONFIG_DIR": str(config_dir)})
+        base = {"runtime": "claude"}
+        self.assertEqual(plan_io.gsd_skill_verdicts(["global:custom"], base, check,
+                                                    str(config_dir / "skills")), ([None], None))
+
+    def test_other_global_skills_dir_is_a_note_not_a_verdict(self):
+        # The inventory scanned another home: gsd-core's answer would be about the wrong dir.
+        elsewhere = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, elsewhere, ignore_errors=True)
+        result, note = plan_io.gsd_skill_verdicts(
+            ["global:missing"], {"runtime": "claude"}, self.check, str(elsewhere / "skills"))
+        self.assertIsNone(result)
+        assert note is not None
+        self.assertIn(f"not the inventory's {elsewhere / 'skills'}", note)
+        self.assertIn("the skipped-skill check did not run", note)
+
     def test_malformed_name_and_absolute_path_are_skipped(self):
         result, note = self.verdicts(["global:bad..name", "/abs/skill"], [])
         self.assertIsNone(note)

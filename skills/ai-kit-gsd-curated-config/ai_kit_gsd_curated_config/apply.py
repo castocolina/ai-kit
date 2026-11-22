@@ -223,7 +223,10 @@ def _skill_check(target: Target, inputs: Inputs, deps: ApplyDeps) -> plan_io.Ski
     else:
         detection = gsd_catalog.load_ai_kit_spec_module("detection")
         if detection is not None:
-            return plan_io.SkillCheck(target.tools.node_bin, target.core.tools_path, target.env,
+            # gsd-core finds global skills under os.homedir(): give it the inventory's HOME
+            home = inputs.inv.get("home")
+            env = {**target.env, "HOME": home} if isinstance(home, str) and home else target.env
+            return plan_io.SkillCheck(target.tools.node_bin, target.core.tools_path, env,
                                       inputs.project_dir, detection.bounded_run(deps.run_fn))
         detail = f"gsd-core's skill check failed ({gsd_catalog.SIBLING_MISSING})"
     print(f"ai-kit-gsd-curated-config: note: {detail}; the skipped-skill check did not run",

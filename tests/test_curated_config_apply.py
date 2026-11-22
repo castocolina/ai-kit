@@ -747,6 +747,41 @@ class TestApplyRefusals(unittest.TestCase):
                           "the skipped-skill check did not run", output.getvalue())
             self.assertFalse(any(len(a) > 1 and a[1] == "-e" for a in fake.argv_log))
 
+    def test_skill_child_gets_the_inventory_home(self) -> None:
+        # gsd-core finds global skills under HOME: the child gets the inventory's, the rest of
+        # apply's env unchanged; an inventory without one keeps apply's env.
+        env = {"HOME": "/apply/home", "CLAUDE_CONFIG_DIR": "/cfg", "GSD_HOME": "/gsd"}
+        tools = mock.Mock(node_bin="node")
+        target = apply_mod.Target(tools, mock.Mock(scope="local", tools_path="t"), "c", env)
+        deps = apply_mod.ApplyDeps(lambda _: None, mock.Mock(), lambda: env)
+        for inv, home in (({"home": "/inv/home"}, "/inv/home"), ({}, "/apply/home")):
+            with self.subTest(home=home):
+                inputs = apply_mod.Inputs({"host": "claude"}, "p", inv, "i", "project")
+                check = apply_mod._skill_check(target, inputs, deps)
+                assert check is not None
+                self.assertEqual(check.env, {**env, "HOME": home})
+        self.assertEqual(env["HOME"], "/apply/home")
+
+    def test_expect_is_the_recorded_dir_of_the_checked_runtime(self) -> None:
+        inv = {"gsd_core": {"skills_roots": {"claude": "/h/.claude/skills",
+                                             "codex": "/h/.agents/skills"}}}
+        cases = (([], ["global:a"], "/h/.claude/skills"),
+                 ([{"key": "runtime", "op": "set", "value": "codex"}], ["global:a"],
+                  "/h/.agents/skills"),
+                 ([], ["skills/a"], None))
+        for entries, existing, expected in cases:
+            with self.subTest(expected=expected):
+                payloads = []
+                def run(argv, captured=payloads, **_kwargs):
+                    captured.append(json.loads(argv[4]))
+                    return subprocess.CompletedProcess(argv, 0, "[null]", "")
+                check = plan_io.SkillCheck("node", "tools", {}, "project", run)
+                plan = {"entries": [*entries, {"key": "agent_skills.gsd-planner", "op": "keep",
+                                               "existing": existing}]}
+                plan_io.gsd_skipped_skill_problem(
+                    plan, {**inv, "existing_config": {"values": {}}}, check)
+                self.assertEqual(payloads[0].get("expect"), expected)
+
     def test_runtime_only_when_the_plan_writes_one(self) -> None:
         cases = (([], None), ([{"key": "runtime", "op": "set", "value": "codex"}], "codex"))
         for entries, expected in cases:
@@ -1573,6 +1608,15 @@ class TestGsdSkillVerdictNotes(unittest.TestCase):
                 check = self.make_check(response)
                 self.assertEqual(plan_io.gsd_skill_verdicts(["x"], {}, check),
                                  (None, plan_io._NOTE_FAILED.format(detail=detail)))
+
+    def test_other_skills_dir_is_a_note(self):
+        check = self.make_check((0, json.dumps({"base": "/apply/.claude/skills"}), ""))
+        result = plan_io.gsd_skill_verdicts(["global:x"], {}, check, "/inv/.claude/skills")
+        detail = ("it reads global skills from /apply/.claude/skills, not the inventory's "
+                  "/inv/.claude/skills; rerun inventory in this environment")
+        self.assertEqual(result, (None, plan_io._NOTE_FAILED.format(detail=detail)))
+        self.assertEqual(json.loads(check.run_fn.calls[0][0][4])["expect"],
+                         "/inv/.claude/skills")
 
     def test_cause_is_sanitized(self):
         answer = ['[agent-skills] WARNING: Skill not found at "x\x1b[31m" — skipping']

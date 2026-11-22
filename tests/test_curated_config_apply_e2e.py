@@ -371,6 +371,30 @@ class TestRealApply(_RealGsdTestCase):
         self.assertEqual(_sha256(parent_config), before_cfg)
         self.assertEqual(_sha256(parent_runner), before_runner)
 
+    def test_skill_check_runs_under_the_inventory_home(self) -> None:
+        # Apply under another HOME (as the matrix does): gsd-core still judges the skills in
+        # the home the inventory scanned, so the check runs and react-dev is kept.
+        node_bin = _gsd16_or_skip(self)
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        bundle = _golden_bundle(scratch)
+        other_home = os.path.join(scratch, "other_home")
+        os.makedirs(other_home)
+        env = {**bundle["resolve_env"], "HOME": other_home}
+        code, _report, _stdout, err = _real_apply(
+            bundle["plan_path"], bundle["inv_path"], bundle["project"], env, env, node_bin
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("the skipped-skill check did not run", err)
+        tools = REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs"
+        got = gsd_tools.config_get(
+            gsd_tools.GsdTools(node_bin, str(tools)), bundle["project"],
+            "agent_skills.gsd-executor",
+            run_fn=lambda cmd, **kw: subprocess.run(cmd, env=env, **kw),
+        )
+        assert isinstance(got.value, list)
+        self.assertIn("global:react-dev", got.value)
+
     def test_nth_key_failure_restores_bytes(self) -> None:
         node_bin = _gsd16_or_skip(self)
         scratch = tempfile.mkdtemp()

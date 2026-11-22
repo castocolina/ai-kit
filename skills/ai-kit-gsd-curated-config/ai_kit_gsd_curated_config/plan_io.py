@@ -658,8 +658,8 @@ def _kept_global_skip(item: str, inv: dict, roots: list[str]) -> tuple[str, str]
 
 class SkillCheck(NamedTuple):
     """What apply binds before gsd-core's skill check runs (38 D-20): node, the
-    project-local gsd-tools.cjs, apply's GSD environment, the project dir and
-    the bounded runner.
+    project-local gsd-tools.cjs, apply's GSD environment with the inventory's HOME,
+    the project dir and the bounded runner.
     """
 
     node: str
@@ -671,13 +671,22 @@ class SkillCheck(NamedTuple):
 
 _GSD_SKILL_TIMEOUT_S = 30
 # 38 D-20: gsd-core's own resolution, one call per reference: an empty block means
-# gsd-core skips it.
+# gsd-core skips it. With `expect` (the inventory's global skills dir), a different
+# dir from gsd-core answers {base} instead, so no verdict comes from another home.
 _GSD_SKILL_SCRIPT = (
     "try { const m = require(process.argv[1]); const p = JSON.parse(process.argv[2]); "
+    "const fs = require('fs'); const path = require('path'); "
+    "const rp = (x) => { try { return fs.realpathSync(x); } "
+    "catch (e) { return path.resolve(x); } }; "
+    "let got = null; if (p.expect) { "
+    "const rh = require(path.join(path.dirname(process.argv[1]), 'runtime-homes.cjs')); "
+    "got = rh.getGlobalSkillsBase((p.base && p.base.runtime) || 'claude'); } "
+    "if (p.expect && (got === null || rp(got) !== rp(p.expect))) { "
+    "process.stdout.write(JSON.stringify({ base: got })); } else { "
     "const out = p.refs.map((ref) => { const d = { warnings: [] }; "
     "const cfg = Object.assign({}, p.base, { agent_skills: { 'ai-kit-probe': [ref] } }); "
     "return m.buildAgentSkillsBlock(cfg, 'ai-kit-probe', p.project, d) === '' "
-    "? (d.warnings[0] || 'skipped') : null; }); process.stdout.write(JSON.stringify(out)); "
+    "? (d.warnings[0] || 'skipped') : null; }); process.stdout.write(JSON.stringify(out)); } "
     "} catch (e) { process.stdout.write('null'); }"
 )
 _NOTE_FAILED = (
@@ -720,22 +729,38 @@ def _parse_verdicts(stdout: str, count: int) -> list | None:
     return [_cause_text(item) if isinstance(item, str) else None for item in data]
 
 
+def _base_mismatch(stdout: str, expect: str | None) -> str | None:
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if expect is None or not isinstance(data, dict) or "base" not in data:
+        return None
+    return (
+        f"it reads global skills from {_cause_text(str(data['base']))}, not the inventory's "
+        f"{expect}; rerun inventory in this environment"
+    )
+
+
 def gsd_skill_verdicts(
-    refs: list[str], base: dict, check: SkillCheck
+    refs: list[str], base: dict, check: SkillCheck, expect: str | None = None
 ) -> tuple[list | None, str | None]:
     """gsd-core's verdict per reference (None = resolves, a cause = skipped), or
-    (None, note) when gsd-core cannot answer (38 D-20).
+    (None, note) when gsd-core cannot answer (38 D-20). ``expect`` is the global skills
+    dir inventory recorded; gsd-core resolving another one is a note, never a verdict.
     """
     if not refs:
         return [], None
-    stdout, note = _run_skill_child(
-        check, json.dumps({"refs": refs, "base": base, "project": check.project})
-    )
+    payload: dict = {"refs": refs, "base": base, "project": check.project}
+    if expect is not None:
+        payload["expect"] = expect
+    stdout, note = _run_skill_child(check, json.dumps(payload))
     if note:
         return None, note
     parsed = _parse_verdicts(stdout or "", len(refs))
     if parsed is None:
-        return None, _NOTE_FAILED.format(detail="unreadable answer")
+        detail = _base_mismatch(stdout or "", expect) or "unreadable answer"
+        return None, _NOTE_FAILED.format(detail=detail)
     return parsed, None
 
 
@@ -934,6 +959,16 @@ def skipped_skill_problem(plan: dict, inv: dict, keys: set[str] | None = None) -
     return "; ".join(messages) or None
 
 
+def _recorded_skills_base(inv: dict, base: dict, refs: list[str]) -> str | None:
+    """The global skills dir inventory recorded for the runtime gsd-core checks with
+    (gsd-core's default is claude); None when no ``global:`` ref is checked."""
+    if not any(ref.startswith("global:") for ref in refs):
+        return None
+    roots = (inv.get("gsd_core") or {}).get("skills_roots")
+    recorded = roots.get(base.get("runtime") or "claude") if isinstance(roots, dict) else None
+    return recorded if isinstance(recorded, str) and recorded else None
+
+
 def gsd_skipped_skill_problem(plan: dict, inv: dict, check: SkillCheck) -> str | None:
     """Apply's skipped-skill check through gsd-core (38 D-20), after binding.
 
@@ -945,7 +980,8 @@ def gsd_skipped_skill_problem(plan: dict, inv: dict, check: SkillCheck) -> str |
     pairs = {id(e): _candidate_refs(e, inv) for e in entries}
     refs = sorted({ref for p in pairs.values() for _n, ref in p})
     roots = effective_trusted_roots(plan, inv)
-    found, note = gsd_skill_verdicts(refs, _skill_base(plan, roots), check)
+    base = _skill_base(plan, roots)
+    found, note = gsd_skill_verdicts(refs, base, check, _recorded_skills_base(inv, base, refs))
     if note:
         print(note, file=sys.stderr)
         return None
