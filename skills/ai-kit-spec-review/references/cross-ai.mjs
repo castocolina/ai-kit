@@ -1247,6 +1247,10 @@ let backstop = null;
 // The run lock this process created ({ file, runId, record }); only it is ever released (D-08).
 let liveLock = null;
 let lockUpdateFailed = false;
+// SPEC R4: the effective baseline { head, tree, at, role, cli, model, source }, source flag|record|fresh; plans 38-16 and 38-18 read it.
+let liveBaseline = null;
+let baselineFile = null;
+let baselineNoted = false;
 const tempDirs = new Set();
 // Tabs a hosted lane opened and has not confirmed closed; exitFlushed retries them (D-26).
 const openTabs = new Map();
@@ -1331,6 +1335,8 @@ function checkGroup(check) {
 
 function finish(status, fields) {
   if (finished) return finishedExit;
+  // D-10: a finished task drops its baseline record; partial and every failure keep it.
+  if (status === 'ok' && baselineFile) deleteCycleState(baselineFile);
   releaseLock(); // D-08: every status passes here.
   const row = STATUS_TABLE[status] || { exit: 1 };
   const tree = fields.tree ?? 'unknown';
@@ -3747,6 +3753,84 @@ function lockSeen(root) {
   return v === 'held' || v === 'orphan' || v === 'foreign';
 }
 
+// D-10: the start-of-run baseline of an execute run (SPEC R4).
+const BASELINE_RECORD_VERSION = 1;
+const BASELINE_SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+function baselineVerdict(rec, nowMs, capS, descends) {
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec) || rec.version !== BASELINE_RECORD_VERSION || typeof rec.tree !== 'string' || !BASELINE_SHA_RE.test(rec.tree.split('\t')[0]) || !(rec.head === null || (typeof rec.head === 'string' && BASELINE_SHA_RE.test(rec.head))) || !Number.isInteger(rec.at)) return { reason: 'invalid: the record does not parse' };
+  if (rec.at > nowMs) return { reason: 'future: the record time is ahead of the clock' };
+  const age = nowMs - rec.at;
+  if (age >= capS * 1000) return { reason: `expired: age ${Math.floor(age / 1000)}s is not under the cap ${capS}s` };
+  if (descends === false) return { reason: `rebased: HEAD does not descend from ${String(rec.head).slice(0, 12)}` };
+  return { reuse: true };
+}
+async function baselineGit(cwd, argv) {
+  const git = which('git', process.env.PATH || '');
+  if (!git) return 'unknown';
+  const r = await runChild(git, argv, { cwd, capMs: GIT_CAP_MS, limit: runDeadline });
+  if (r.timedOut || r.spawnErr) return 'unknown';
+  return r.code === 0 ? 'yes' : r.code === 1 || r.code === 128 ? 'no' : 'unknown';
+}
+async function headDescends(cwd, base, head) {
+  if (base === null) return 'yes'; // An unborn baseline: every commit counts.
+  if (base === head) return 'yes';
+  if (head === null) return 'no';
+  return baselineGit(cwd, ['merge-base', '--is-ancestor', base, head]);
+}
+async function baselineObjectsExist(cwd, rec) {
+  for (const obj of [rec.head, rec.tree.split('\t')[0]].filter((x) => x !== null)) {
+    const got = await baselineGit(cwd, ['cat-file', '-e', obj]);
+    if (got !== 'yes') return got;
+  }
+  return 'yes';
+}
+function baselinePath(root, digest, home = path.resolve(stateHome())) {
+  return path.join(home, 'ai-kit', 'spec', 'baselines', sha16(root), digest + '.json');
+}
+function baselineNote(text) {
+  if (!baselineNoted) {
+    baselineNoted = true;
+    log(`cross-ai: note: ${text}; this call keeps its baseline in memory`);
+  }
+}
+async function resolveBaseline(root, before, prompt, lane, flag, capS) {
+  baselineFile = baselinePath(root, taskDigest(prompt));
+  const fresh = { head: before.head, tree: before.tree, at: Date.now(), role: 'execute', cli: lane.cli, model: lane.model };
+  let base = flag ? { ...fresh, head: flag.head, tree: [flag.treeId, ...before.tree.split('\t').slice(1)].join('\t'), source: 'flag' } : null;
+  let keep = false;
+  if (!flag) {
+    let text = null;
+    try { text = fs.readFileSync(baselineFile, 'utf8'); } catch (e) {
+      if (e.code !== 'ENOENT') baselineNote(`baseline record not read (${e.code || e.message})`);
+    }
+    if (text !== null) {
+      const rec = parseJson(text); const now = Date.now();
+      let verdict = baselineVerdict(rec, now, capS, true);
+      if (verdict.reuse) {
+        const objects = await baselineObjectsExist(process.cwd(), rec);
+        if (objects === 'no') verdict = { reason: `missing: ${String(rec.head ?? rec.tree.split('\t')[0]).slice(0, 12)} is not in this repository` };
+        else if (objects === 'unknown') { keep = true; baselineNote('baseline record not checked (git unavailable)'); }
+        else {
+          const d = await headDescends(process.cwd(), rec.head, before.head);
+          if (d === 'unknown') { keep = true; baselineNote('baseline ancestry not readable (git unavailable)'); }
+          else verdict = baselineVerdict(rec, now, capS, d === 'yes');
+        }
+      }
+      if (!keep && verdict.reuse) base = { head: rec.head, tree: rec.tree, at: rec.at, role: 'execute', cli: typeof rec.cli === 'string' ? rec.cli : lane.cli, model: typeof rec.model === 'string' ? rec.model : lane.model, source: 'record' };
+      if (!keep && !verdict.reuse) addFinding('baseline_replaced', verdict.reason);
+    }
+  }
+  if (!base) base = { ...fresh, source: 'fresh' };
+  if (base.source !== 'record' && !keep && !baselineNoted) {
+    try {
+      writeCycleState(baselineFile, { version: BASELINE_RECORD_VERSION, head: base.head, tree: base.tree, at: base.at, role: base.role, cli: base.cli, model: base.model });
+    } catch (e) { baselineNote(`baseline record not written (${e.code || e.message})`); }
+  }
+  if (keep) baselineFile = null; // An unchecked record must survive even a successful call.
+  liveBaseline = base;
+  lockUpdate({ baseline: { head: base.head, tree: base.tree, at: base.at, role: base.role, cli: base.cli, model: base.model } });
+}
+
 function stateSig(st) {
   if (!st) return null;
   return `${st.head ?? ''}\t${st.tree ?? ''}`;
@@ -5480,7 +5564,7 @@ function parseArgs(argv) {
     codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
     role: null, effort: null, context: null, escalateRuntime: false, escalateModel: false,
-    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, idleTimeout: null,
+    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, baseline: null, idleTimeout: null,
   };
   let modeFlag = null;
   for (let i = 0; i < argv.length; i++) {
@@ -5557,6 +5641,8 @@ function parseArgs(argv) {
       if (s === 'default') o.idleTimeout = 'default';
       else if (/^[0-9]+$/.test(s) && Number(s) <= IDLE_MAX_S) o.idleTimeout = Number(s);
       else throw new Error('--idle-timeout must be an integer from 0 to 86400 or default');
+    } else if (a === '--baseline') {
+      o.baseline = v(); if (!/^[0-9a-fA-F]{7,64}$/.test(o.baseline)) throw new Error('--baseline must be 7 to 64 hex characters');
     } else if (a === '--describe') o.describe = true;
     else throw new Error(`unknown argument: ${a}`);
   }
@@ -5731,6 +5817,9 @@ async function main(argv) {
   liveCheck = { coverage: '-', findings: [] };
   liveLock = null;
   lockUpdateFailed = false;
+  liveBaseline = null;
+  baselineFile = null;
+  baselineNoted = false;
   let o;
   try { o = parseArgs(argv); } catch (e) {
     log(`cross-ai: ${e.message}`);
@@ -5951,6 +6040,21 @@ async function main(argv) {
     return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
   }
   // SPEC R3: after validation and the prompt read, before the first snapshot or spawn.
+  let baselineHead = null;
+  // SPEC R4: --baseline is checked against the repository before the lock (a usage error takes no lock).
+  if (o.baseline !== null && o.mode !== 'exec') log('cross-ai: --baseline applies to execute runs only; ignored');
+  else if (o.baseline !== null) {
+    const git = noTree ? null : which('git', process.env.PATH || '');
+    const r = git ? await runChild(git, ['rev-parse', '--verify', '-q', o.baseline + '^{commit}'], { cwd: process.cwd(), capMs: GIT_CAP_MS, limit: runDeadline }) : null;
+    const head = r && !r.timedOut && !r.spawnErr && r.code === 0 ? r.stdout.trim() : '';
+    const t = BASELINE_SHA_RE.test(head) ? await runChild(git, ['rev-parse', '--verify', '-q', head + '^{tree}'], { cwd: process.cwd(), capMs: GIT_CAP_MS, limit: runDeadline }) : null;
+    const treeId = t && !t.timedOut && !t.spawnErr && t.code === 0 ? t.stdout.trim() : '';
+    if (!BASELINE_SHA_RE.test(treeId)) {
+      log(`cross-ai: --baseline ${o.baseline} is not a commit in this repository`);
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
+    baselineHead = { head, treeId };
+  }
   const lockRoot = checkoutRoot(process.cwd());
   if (o.mode === 'exec') {
     const got = await acquireLock(lockRoot, { cli: c.name, model: c.model });
@@ -5968,6 +6072,8 @@ async function main(argv) {
       ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1,
     });
   }
+  // SPEC R4: after the lock, from the start snapshot itself, keyed by the caller's own text; a non-git cwd has no baseline.
+  if (o.mode === 'exec' && !noTree) await resolveBaseline(lockRoot, before, raw, { cli: c.name, model: c.model }, baselineHead, resolved.capS);
   const runCtx = { cwd: process.cwd(), sid: plan.sessionId ?? '<sid>', outFile: '<tmp>/last-message.md', codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null, profileFlags, promptArg: '<prompt>', adds: plan.adds };
   const resumed = plan.resume && plan.sessionId ? sameSessionArgv(c.name, c.rt, plan.model, runCtx, plan.sessionId, o.mode) : null;
   const firstArgv = resumed ? resumed.argv : withExtra(c.name, c.rt[o.mode](plan.model, runCtx));
@@ -6133,6 +6239,8 @@ export {
   argvFileAllowed,
   argvFileRow,
   argvPromptProblem,
+  baselinePath,
+  baselineVerdict,
   capCodePoints,
   checkGroup,
   checkoutRoot,

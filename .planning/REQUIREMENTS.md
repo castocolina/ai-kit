@@ -407,7 +407,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   rows with recorded real evidence are promoted)*
 - [x] **RUN-06**: A test keeps the runner template and the rendered project copy in sync. *(amended 2026-11-16, 37 D-18:
   the test renders into a scratch project and reads no `.planning/` path; `tools/check_dogfood.py` stays the live check)*
-- [ ] **RUN-07**: An execute run through the runner records a start-of-run tree baseline and takes a run lock,
+- [x] **RUN-07**: An execute run through the runner records a start-of-run tree baseline and takes a run lock,
   because the lock exists to stop two runs from sharing one checkout: two runs started at once on the same checkout
   leave one running and the other refused, a stale lock left by a dead process is reported and cleared, and later
   checks compare against the baseline. A test starts two runs at once. *(amended 2026-11-16, 38 D-06 to D-10: the
@@ -1125,7 +1125,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-04 | Phase 38 | Pending |
 | RUN-05 | Phase 38.1 | Pending |
 | RUN-06 | Phase 37 | Complete |
-| RUN-07 | Phase 38 | Pending |
+| RUN-07 | Phase 38 | Complete |
 | RUN-08 | Phase 38 | Pending |
 | RUN-09 | Phase 38.1 | Pending |
 | RUN-10 | Phase 38.1 | Pending |

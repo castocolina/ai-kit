@@ -46,6 +46,8 @@ import {
   argvFileAllowed,
   argvFileRow,
   argvPromptProblem,
+  baselinePath,
+  baselineVerdict,
   capCodePoints,
   checkGroup,
   checkoutRoot,
@@ -1317,7 +1319,10 @@ const FAKE_MODES = {
     const one = names.length === 1 ? dir + '/' + names[0] : null;
     let pgid = process.pid;
     try { const st = fs.readFileSync('/proc/self/stat', 'utf8'); pgid = Number(st.slice(st.lastIndexOf(')') + 1).trim().split(/\s+/)[2]); } catch { pgid = process.pid; }
-    fs.writeFileSync((process.env.HOME || '.') + '/lock.seen', JSON.stringify({ names, dir: mode(dir), file: one ? mode(one) : '-', rec: one ? JSON.parse(fs.readFileSync(one, 'utf8')) : null, pgid }));
+    const bdir = (process.env.XDG_STATE_HOME || '') + '/ai-kit/spec/baselines';
+    let base = null;
+    try { const sub = fs.readdirSync(bdir); if (sub.length === 1) { const d = bdir + '/' + sub[0]; const files = fs.readdirSync(d).filter((n) => n.endsWith('.json')); if (files.length === 1) base = { dir: sub[0], name: files[0], mode: mode(d + '/' + files[0]), dirMode: mode(d), rec: JSON.parse(fs.readFileSync(d + '/' + files[0], 'utf8')) }; } } catch { base = null; }
+    fs.writeFileSync((process.env.HOME || '.') + '/lock.seen', JSON.stringify({ names, dir: mode(dir), file: one ? mode(one) : '-', rec: one ? JSON.parse(fs.readFileSync(one, 'utf8')) : null, pgid, base }));
     fs.appendFileSync('a.txt', 'lockpeek\n');
     process.stdout.write('# Summary\nok');
   },
@@ -1334,6 +1339,12 @@ const FAKE_MODES = {
   },
   empty: () => {},
   crash: () => { process.exit(7); },
+  commitcrash: () => {
+    fs.appendFileSync('a.txt', 'partial\n');
+    spawnSync('git', ['add', 'a.txt']);
+    spawnSync('git', ['commit', '-q', '-m', 'fake partial']);
+    process.exit(7);
+  },
   quote: () => {
     fs.appendFileSync('a.txt', 'q\n');
     process.stdout.write('429 rate limit and billing noted.\n# Summary\nok');
@@ -2549,6 +2560,19 @@ async function blackBoxSelfTest(listOnly = false) {
       const verbs = calls.map((a) => a.slice(0, 2).join(' '));
       if (verbs.some((v) => !HERDR_VERBS.includes(v))) return `herdr verbs ${verbs}`;
       if (calls.some((a) => a.includes('t0') || a.includes('p0'))) return 'the foreign tab t0 was touched';
+      return null;
+    };
+    // One task digest for every baseline case: the caller part holds one objective block.
+    const BASELINE_TASK = '<objective>\nlock baseline task\n</objective>\n';
+    const gitValue = (c, args, env = c.env) => {
+      const r = spawnSync('git', args, { cwd: c.repo, env, encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+      return r.stdout.trim();
+    };
+    const plantBaseline = (c, overrides = {}) => {
+      c.baselineFile = baselinePath(fs.realpathSync(c.repo), taskDigest(BASELINE_TASK), c.env.XDG_STATE_HOME);
+      c.baselineRec = { version: 1, head: gitValue(c, ['rev-parse', 'HEAD']), tree: gitValue(c, ['rev-parse', 'HEAD^{tree}']) + '\tignored=planted', at: Date.now(), role: 'execute', cli: 'pi', model: 'fake/planted', ...overrides };
+      writeCycleState(c.baselineFile, c.baselineRec);
       return null;
     };
     const cases = [
@@ -9934,7 +9958,7 @@ async function blackBoxSelfTest(listOnly = false) {
             pid_start: /^(\d+|-)$/.test(rec.pid_start), host_name: rec.host_name === os.hostname(),
             started_ms: Number.isInteger(rec.started_ms), cli: rec.cli === 'pi', model: rec.model === 'fake/lockpeek',
             role: rec.role === 'execute', root: rec.root === fs.realpathSync(c.repo), child_pgid: rec.child_pgid === seen.pgid,
-            child_start: /^(\d+|-)$/.test(rec.child_start), baseline: rec.baseline === null };
+            child_start: /^(\d+|-)$/.test(rec.child_start), baseline: rec.baseline && JSON.stringify(Object.keys(rec.baseline).sort()) === JSON.stringify(['at', 'cli', 'head', 'model', 'role', 'tree']) };
           for (const [name, ok] of Object.entries(checks)) if (!ok) return `lock field ${name}: ${JSON.stringify(rec[name] ?? seen[name])}`;
           const names = fs.readdirSync(path.dirname(lockPath(fs.realpathSync(c.repo), c.env.XDG_STATE_HOME))).filter((n) => n.endsWith('.json'));
           return names.length ? `lock left: ${names.join(',')}` : null;
@@ -10195,6 +10219,103 @@ async function blackBoxSelfTest(listOnly = false) {
         return names.length ? `lock left: ${names.join(',')}` : null;
       },
     },
+      {
+        name: 'baseline-fresh-recorded', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/lockpeek'], stdin: BASELINE_TASK, exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/lockpeek exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => { c.head0 = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: c.repo, env: c.env, encoding: 'utf8' }).stdout.trim(); return null; },
+        check: (r, c) => {
+          const file = path.join(c.home, 'lock.seen');
+          if (!fs.existsSync(file)) return 'lock.seen missing';
+          const seen = JSON.parse(fs.readFileSync(file, 'utf8'));
+          const rec = seen.rec?.baseline || {};
+          const checks = { head: rec.head === c.head0, tree: typeof rec.tree === 'string' && rec.tree.includes('\tignored='),
+            at: Number.isInteger(rec.at), role: rec.role === 'execute', cli: rec.cli === 'pi', model: rec.model === 'fake/lockpeek',
+            keys: JSON.stringify(Object.keys(rec).sort()) === JSON.stringify(['at', 'cli', 'head', 'model', 'role', 'tree']) };
+          for (const [name, ok] of Object.entries(checks)) if (!ok) return `baseline field ${name}: ${JSON.stringify(rec[name])}`;
+          const want = baselinePath(fs.realpathSync(c.repo), taskDigest(BASELINE_TASK), c.env.XDG_STATE_HOME);
+          const base = seen.base || {};
+          const record = base.rec || {};
+          const taskChecks = { dir: base.dir === path.basename(path.dirname(want)), name: base.name === path.basename(want),
+            mode: base.mode === '600', dirMode: base.dirMode === '700', head: record.head === rec.head,
+            tree: record.tree === rec.tree, version: record.version === 1 };
+          for (const [name, ok] of Object.entries(taskChecks)) if (!ok) return `task record ${name}: ${JSON.stringify(base[name] ?? record[name])}`;
+          return fs.existsSync(want) ? 'task record kept after ok' : null;
+        },
+      },
+      {
+        name: 'pure-baseline-verdict', kind: 'logic', pure: () => {
+          const now = 1000000000, head = 'abcdef0123456789' + '0'.repeat(24);
+          const good = { version: 1, head, tree: '1'.repeat(40) + '\tignored=x', at: now - 59999, role: 'execute', cli: 'pi', model: 'fake/x' };
+          const rows = [[good, true, null], [{ ...good, at: now - 60000 }, true, 'expired: age 60s is not under the cap 60s'], [{ ...good, at: now + 1 }, true, 'future: the record time is ahead of the clock'], [good, false, 'rebased: HEAD does not descend from abcdef012345'], ...[null, [], { ...good, version: 2 }, { ...good, head: 'abc' }, { ...good, tree: 'planted-tree\tignored=x' }, { ...good, tree: 5 }, { ...good, at: 1.5 }].map((r) => [r, true, 'invalid: the record does not parse']), [{ ...good, head: null }, true, null], [{ ...good, head: 'a'.repeat(64) }, true, null]];
+          for (const [rec, descends, expected] of rows) { const got = baselineVerdict(rec, now, 60, descends); if ((got.reason ?? null) !== expected || (!expected && !got.reuse)) return `verdict ${JSON.stringify(rec)}: ${JSON.stringify(got)}`; }
+          return null;
+        },
+      },
+      {
+        name: 'baseline-reused', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/commitcrash'], stdin: BASELINE_TASK, exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/commitcrash exit=1 .* action=stop$/,
+        second: { args: ['--runtime', 'pi', '--model', 'fake/lockpeek'], stdin: BASELINE_TASK, exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/lockpeek exit=0 .* tree=dirty action=stop$/ },
+        setup: (c) => { c.head0 = gitValue(c, ['rev-parse', 'HEAD']); return null; },
+        check: (both, c) => {
+          const err = statusLineOk(both.first.stderr, /^AIKIT-XAI status=crash cli=pi model=fake\/commitcrash exit=1 .* action=stop$/);
+          if (err) return err;
+          const seen = JSON.parse(fs.readFileSync(path.join(c.home, 'lock.seen'), 'utf8'));
+          if (seen.rec.baseline.head !== c.head0) return `baseline head ${seen.rec.baseline.head}`;
+          if (gitValue(c, ['rev-parse', 'HEAD']) === c.head0) return 'HEAD did not move';
+          return both.again.stderr.includes('reason=baseline_replaced') ? 'unexpected replacement' : null;
+        },
+      },
+      {
+        name: 'baseline-reused-equal', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/lockpeek'], stdin: BASELINE_TASK, exit: 0,
+        status: /^AIKIT-XAI status=ok .* action=stop$/, setup: (c) => plantBaseline(c),
+        check: (r, c) => { const b = JSON.parse(fs.readFileSync(path.join(c.home, 'lock.seen'), 'utf8')).rec.baseline; return b.tree !== c.baselineRec.tree || b.model !== 'fake/planted' ? 'baseline not reused' : r.stderr.includes('reason=baseline_replaced') ? 'unexpected replacement' : null; },
+      },
+      {
+        name: 'baseline-rebased', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/lockpeek'], stdin: BASELINE_TASK, exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        setup: (c) => { c.orphan = gitValue(c, ['commit-tree', 'HEAD^{tree}', '-m', 'orphan']); return plantBaseline(c, { head: c.orphan }); },
+        check: (r, c) => {
+          if (!r.stderr.split('\n').includes(`cross-ai: finding reason=baseline_replaced detail=rebased: HEAD does not descend from ${c.orphan.slice(0, 12)}`)) return 'missing rebased line';
+          if (!r.stderr.split('\n').some((s) => s.startsWith('AIKIT-XAI ') && s.includes(' findings=baseline_replaced'))) return 'findings group lacks baseline_replaced';
+          return JSON.parse(fs.readFileSync(path.join(c.home, 'lock.seen'), 'utf8')).rec.baseline.head === gitValue(c, ['rev-parse', 'HEAD']) ? null : 'baseline head';
+        },
+      },
+      {
+        name: 'baseline-expired', kind: 'logic', config: { capS: 60 }, args: ['--runtime', 'pi', '--model', 'fake/lockpeek'], stdin: BASELINE_TASK, exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        setup: (c) => plantBaseline(c, { at: Date.now() - 61000 }),
+        check: (r, c) => !r.stderr.split('\n').some((s) => /^cross-ai: finding reason=baseline_replaced detail=expired: age \d+s is not under the cap 60s$/.test(s)) ? 'missing expired line' : JSON.parse(fs.readFileSync(path.join(c.home, 'lock.seen'), 'utf8')).rec.baseline.at > c.baselineRec.at ? null : 'baseline time',
+      },
+      {
+        name: 'pure-baseline-flag-parse', kind: 'logic', pure: () => {
+          for (const s of ['a'.repeat(7), 'a'.repeat(64)]) if (parseArgs(['--baseline', s]).baseline !== s) return `parse ${s}`;
+          for (const s of ['a'.repeat(6), 'a'.repeat(65), '', 'g'.repeat(7)]) { try { parseArgs(['--baseline', s]); return `parse ${s}`; } catch (e) { if (e.message !== '--baseline must be 7 to 64 hex characters') return `parse ${s}: ${e.message}`; } }
+          try { parseArgs(['--baseline']); return 'parse missing'; } catch (e) { return e.message === '--baseline needs a value' ? null : e.message; }
+        },
+      },
+      {
+        name: 'baseline-flag-wins', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/lockpeek'], stdin: BASELINE_TASK, exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        setup: (c) => { c.head0 = gitValue(c, ['rev-parse', 'HEAD']); c.tree0 = gitValue(c, ['rev-parse', 'HEAD^{tree}']); fs.writeFileSync(path.join(c.repo, 'b.txt'), 'two\n'); gitValue(c, ['add', 'b.txt']); gitValue(c, ['commit', '-q', '-m', 'two']); plantBaseline(c); c.args = ['--runtime', 'pi', '--model', 'fake/lockpeek', '--baseline', c.head0.slice(0, 7)]; return null; },
+        check: (r, c) => { const seen = JSON.parse(fs.readFileSync(path.join(c.home, 'lock.seen'), 'utf8')); const b = seen.rec.baseline; if (b.head !== c.head0 || b.tree.split('\t')[0] !== c.tree0 || seen.base.rec.head !== c.head0) return `flag head ${b.head}`; return r.stderr.includes('reason=baseline_replaced') || fs.existsSync(c.baselineFile) ? 'flag record' : null; },
+      },
+      {
+        name: 'baseline-flag-bad', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/ok', '--baseline', '0000000'], stdin: BASELINE_TASK, exit: 2, status: /^AIKIT-XAI status=usage .* action=stop$/,
+        check: (r, c) => !r.stderr.split('\n').includes('cross-ai: --baseline 0000000 is not a commit in this repository') ? 'missing bad-commit line' : fs.existsSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'locks')) ? 'usage took a lock' : null,
+      },
+      {
+        name: 'baseline-unborn', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/lockpeek'], stdin: BASELINE_TASK, exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        setup: (c) => { fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true }); gitValue(c, ['init', '-q']); return null; },
+        check: (r, c) => { const s = JSON.parse(fs.readFileSync(path.join(c.home, 'lock.seen'), 'utf8')); return s.rec.baseline.head === null && typeof s.rec.baseline.tree === 'string' && s.base.rec.head === null ? null : `unborn head ${s.rec.baseline.head}`; },
+      },
+      {
+        name: 'baseline-unwritable', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/ok'], stdin: BASELINE_TASK, exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => { c.env.XDG_STATE_HOME = path.join(c.home, 'state-file'); fs.writeFileSync(c.env.XDG_STATE_HOME, ''); return null; },
+        check: (r) => { const lines = r.stderr.split('\n'); if (!lines.includes('cross-ai: run lock not taken (ENOTDIR); running without a lock')) return 'missing lock note'; return lines.filter((s) => s.startsWith('cross-ai: note: baseline')).length === 1 && lines.includes('cross-ai: note: baseline record not read (ENOTDIR); this call keeps its baseline in memory') ? null : 'missing baseline note'; },
+      },
+      {
+        name: 'baseline-owner-dirty', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/lockpeek'], stdin: BASELINE_TASK, exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        setup: (c) => { fs.writeFileSync(path.join(c.repo, 'owner.txt'), 'owner\n'); c.index0 = fs.readFileSync(path.join(c.repo, '.git', 'index')); return null; },
+        check: (r, c) => { const b = JSON.parse(fs.readFileSync(path.join(c.home, 'lock.seen'), 'utf8')).rec.baseline; const env = { ...c.env, GIT_INDEX_FILE: path.join(c.tmp, 'idx-owner-dirty') }; gitValue(c, ['add', '-A'], env); const end = gitValue(c, ['write-tree'], env); const names = gitValue(c, ['diff-tree', '-r', '--name-only', '-z', b.tree.split('\t')[0], end]).split('\0'); if (names.includes('owner.txt')) return 'owner file counted'; if (!names.includes('a.txt')) return 'lane edit missing'; return fs.readFileSync(path.join(c.repo, '.git', 'index')).equals(c.index0) ? null : 'user index changed'; },
+      },
     ];
 
     const unkinded = cases.filter((c) => c.kind !== 'logic' && c.kind !== 'runtime').map((c) => c.name);
