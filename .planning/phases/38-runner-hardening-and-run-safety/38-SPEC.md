@@ -313,7 +313,7 @@ code-review fold 42bad13; every line below was read in the code, `cross-ai.mjs` 
      commits since the baseline, the changed paths and the lane's report, and prints them as `cross-ai: finding reason=<code>
      detail=<text>` (values redacted, control characters removed, at most 10 paths or phrases shown) before the status line.
      Planned tasks are the `<task>` blocks of the caller's prompt whose `type` is absent, `auto` or `tdd` (checkpoint types
-     excluded), each with its `<name>` and `<files>` (comma list, as `promptFiles` reads it). A task is covered when a commit
+     excluded; *amended 2026-11-21:* `tracer`, the type every plan of this project opens with, counts like `auto`), each with its `<name>` and `<files>` (comma list, as `promptFiles` reads it). A task is covered when a commit
      since the baseline touched one of its listed paths (a listed path ending `/` covers its whole directory); a task with no
      paths, or only glob characters, is unchecked, not covered and not uncovered. `--plan-id <id>` (optional, `^[0-9]+(\.[0-9]+)*-[0-9]+[A-Za-z0-9.-]*$`) adds the
      GSD subject rule: the commits whose subject is `<type>(<id>):` (zero padding tolerated) must number at least the planned
