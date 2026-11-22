@@ -167,6 +167,32 @@ const ROUTER_HINTS = ["router", "-env", "local-llm"];
 // <patterns>
 const PATTERNS = [
   {
+    "id": "router-model-cooldown",
+    "tier": 0,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "model_cooldown",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-22 (074cbcc): router client body 429 code model_cooldown with Retry-After and reset_seconds, read from the router source 2026-11-16; no body captured"
+  },
+  {
+    "id": "router-all-targets-cooling-down",
+    "tier": 0,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "all_targets_cooling_down",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-22 (074cbcc): router client body 503 all_targets_cooling_down with Retry-After, read from the router source 2026-11-16; no body captured"
+  },
+  {
     "id": "omniroute-all-targets-skipped",
     "tier": 0,
     "cli": "*",
@@ -1132,6 +1158,45 @@ const PATTERNS = [
     "evidence": "25-RESEARCH 2.2 recorded"
   },
   {
+    "id": "router-accounts-cooling-down",
+    "tier": 5,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "active accounts cooling down for model",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router log line (warning, tag AUTH), 34 episodes in the router's own log; never seen by the runner"
+  },
+  {
+    "id": "router-all-models-failed",
+    "tier": 5,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "All models failed \\|.*\\(reset after ",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router log wording with its reset text (the heading alone also prints for non-cooldown failures); never seen by the runner"
+  },
+  {
+    "id": "router-persisted-cooldown",
+    "tier": 5,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "has persisted cooldown until",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router log wording; never seen by the runner"
+  },
+  {
     "id": "text-cooling-down",
     "tier": 5,
     "cli": "*",
@@ -1274,6 +1339,19 @@ const PATTERNS = [
     "terminal": false,
     "label": "verified",
     "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
+  },
+  {
+    "id": "router-usage-balance-exhausted",
+    "tier": 6,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "usage balance exhausted",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router wording; a 402 body carrying it classifies by code-402 and a 401/403 by code-401-403 first, this row covers the form without a status code"
   },
   {
     "id": "code-429",
@@ -2471,29 +2549,46 @@ function eventsWithRaw(cli, stdout, terminalOnly = false) {
   return { events, eventRaw };
 }
 
+// SPEC R4 (D-09): whole seconds from the router's "(reset after <n>h <n>m <n>s)"; parts add up in any order, a repeated unit or any other form is absent (null). Display only: no wait reads it.
+function resetAfterSeconds(text) {
+  const m = /\(reset after ([^)]*)\)/i.exec(String(text || ''));
+  if (!m) return null;
+  const seen = new Set();
+  let total = 0;
+  for (const part of m[1].trim().split(/\s+/)) {
+    const p = /^(\d{1,6})([hms])$/.exec(part);
+    if (!p || seen.has(p[2])) return null;
+    seen.add(p[2]);
+    total += Number(p[1]) * { h: 3600, m: 60, s: 1 }[p[2]];
+  }
+  return total;
+}
+
 function upstreamFields(raw) {
   const text = String(raw || '');
   const start = text.indexOf('{');
-  if (start < 0) return null;
   // shortcut: one parse from the first object opener; captures with a prose brace prefix
   // require a dedicated fixture before broadening this bounded parser.
-  const outer = parseJson(text.slice(start));
-  if (!outer || typeof outer !== 'object' || Array.isArray(outer)) return null;
-  const body = outer.error?.response?.body;
-  const nested = typeof body === 'string' ? parseJson(body) : null;
-  const objects = [outer, outer.error, nested, nested?.error];
-  const keys = ['retry_after', 'reset_at', 'retry_after_seconds', 'resetsAt'];
+  const outer = start < 0 ? null : parseJson(text.slice(start));
   const result = {};
-  for (const key of keys) {
-    for (const object of objects) {
-      if (!object || typeof object !== 'object' || !Object.hasOwn(object, key)) continue;
-      const value = object[key];
-      if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) {
-        result[key] = value;
-        break;
+  if (outer && typeof outer === 'object' && !Array.isArray(outer)) {
+    const body = outer.error?.response?.body;
+    const nested = typeof body === 'string' ? parseJson(body) : null;
+    const objects = [outer, outer.error, nested, nested?.error, outer.recovery_hint];
+    const keys = ['retry_after', 'reset_at', 'retry_after_seconds', 'resetsAt', 'reset_seconds'];
+    for (const key of keys) {
+      for (const object of objects) {
+        if (!object || typeof object !== 'object' || !Object.hasOwn(object, key)) continue;
+        const value = object[key];
+        if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) {
+          result[key] = value;
+          break;
+        }
       }
     }
   }
+  const reset = resetAfterSeconds(text);
+  if (reset !== null) result.reset_after_s = reset;
   return Object.keys(result).length ? result : null;
 }
 
@@ -7081,6 +7176,7 @@ export {
   removeRetryBlock,
   replaceCopies,
   reportLines,
+  resetAfterSeconds,
   resolveRetry,
   reviewArgvProblem,
   routeAdmits,

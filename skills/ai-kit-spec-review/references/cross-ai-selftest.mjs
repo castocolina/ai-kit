@@ -123,6 +123,7 @@ import {
   removeRetryBlock,
   replaceCopies,
   reportLines,
+  resetAfterSeconds,
   resolveRetry,
   reviewArgvProblem,
   routeAdmits,
@@ -481,7 +482,7 @@ const CLASSIFY_CASES = [
   {
     name: 'evidence-all-targets-cooling-down', cli: 'pi', route: 'router',
     stderr: 'all_targets_cooling_down: provider/model: circuit_open (45s)',
-    expect: { status: 'transient', pattern: 'unverified', rule: 'omniroute-all-targets-cooling-down' },
+    expect: { status: 'quota', pattern: 'unverified', rule: 'router-all-targets-cooling-down' },
   },
   {
     name: 'evidence-circuit-open', cli: 'pi', route: 'router',
@@ -491,7 +492,55 @@ const CLASSIFY_CASES = [
   {
     name: 'evidence-model-cooldown', cli: 'pi', route: 'router',
     stderr: '{"code":"model_cooldown","retry_after":"2026-10-25T08:42:03.640Z"}',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'router-model-cooldown' },
+  },
+  ...['router', 'unknown', 'router-inferred'].map((route) => ({
+    name: `router-accounts-cooling-down${route === 'router' ? '' : route === 'unknown' ? '-unknown' : '-inferred'}`,
+    cli: 'pi', route,
+    stderr: '[WARN] [AUTH] all 3 active accounts cooling down for model fake/model (reset after 2h 4m)',
+    expect: route === 'router'
+      ? { status: 'quota', pattern: 'unverified', rule: 'router-accounts-cooling-down' }
+      : { status: 'transient', pattern: 'verified', rule: 'text-cooling-down' },
+  })),
+  {
+    name: 'router-model-cooldown-unknown', cli: 'pi', route: 'unknown',
+    stderr: '429: {"error":{"message":"model in cooldown","code":"model_cooldown","reset_seconds":30}}',
     expect: { status: 'transient', pattern: 'verified', rule: 'omniroute-model-cooldown' },
+  },
+  {
+    name: 'router-all-models-failed', cli: 'pi', route: 'router',
+    stderr: 'All models failed | fake/model: upstream error (HTTP 402) (reset after 2m)',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'router-all-models-failed' },
+  },
+  {
+    name: 'router-all-models-failed-no-cooldown', cli: 'pi', route: 'router',
+    stderr: 'All models failed | fake/model: upstream error (HTTP 401)',
+    expect: { status: 'auth', pattern: 'verified', rule: 'code-401-403' },
+  },
+  {
+    name: 'router-accounts-cooling-down-no-reset', cli: 'pi', route: 'router',
+    stderr: '[WARN] [AUTH] all 3 active accounts cooling down for model fake/model',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'router-accounts-cooling-down' },
+  },
+  {
+    name: 'router-persisted-cooldown', cli: 'pi', route: 'router',
+    stderr: 'connection has persisted cooldown until <time>',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'router-persisted-cooldown' },
+  },
+  {
+    name: 'router-usage-balance-exhausted', cli: 'pi', route: 'router',
+    stderr: 'fake/model: usage balance exhausted (reset after 52s)',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'router-usage-balance-exhausted' },
+  },
+  {
+    name: 'router-usage-balance-exhausted-unknown', cli: 'pi', route: 'unknown',
+    stderr: 'fake/model: usage balance exhausted (reset after 52s)',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'router-usage-balance-exhausted-auth', cli: 'pi', route: 'router',
+    stderr: '401: fake/model: usage balance exhausted',
+    expect: { status: 'auth', pattern: 'verified', rule: 'code-401-403' },
   },
   {
     name: 'evidence-endpoint-unavailable', cli: 'pi', route: 'router',
@@ -1333,6 +1382,42 @@ function classifyCases() {
       },
     },
     {
+      name: 'router-pure-reset-after', kind: 'logic',
+      pure: () => {
+        const cases = [
+          ['x (reset after 52s)', 52], ['(reset after 1m 5s)', 65],
+          ['(reset after 2h 20m)', 8400], ['(reset after 3h 43m 58s)', 13438],
+          ['(reset after 2h 4m)', 7440], ['(reset after 5s 1m)', 65],
+          ['(Reset After 0s)', 0], ['(reset after 1m 2m)', null],
+          ['(reset after 1.5h)', null], ['(reset after 2h4m)', null],
+          ['(reset after 5d)', null], ['(reset after )', null],
+          ['reset after 94h 42m 34s', null], ['', null],
+        ];
+        for (const [input, expected] of cases) if (resetAfterSeconds(input) !== expected) return input;
+        return null;
+      },
+    },
+    {
+      name: 'router-pure-upstream-fields', kind: 'logic',
+      pure: () => {
+        const line = '[WARN] [AUTH] all 3 active accounts cooling down for model fake/model (reset after 2h 4m)';
+        const cases = [
+          [line, '{"reset_after_s":7440}'],
+          ['429: {"error":{"code":"model_cooldown","reset_seconds":30}}', '{"reset_seconds":30}'],
+          ['[WARN] [AUTH] all 3 active accounts cooling down for model fake/model', 'null'],
+          ['503: {"error":{"message":"all targets cooling down","code":"all_targets_cooling_down"},"recovery_hint":{"action":"wait","retry_after_seconds":45}}', '{"retry_after_seconds":45}'],
+          ['429: {"error":{"message":"All credentials for model fake/model are cooling down","type":"rate_limit_error","code":"model_cooldown","model":"fake/model","reset_seconds":30,"retry_after":"2000-01-01T00:00:30.000Z"}}', '{"retry_after":"2000-01-01T00:00:30.000Z","reset_seconds":30}'],
+          ['Retry-After: 45', 'null'],
+        ];
+        for (const [input, expected] of cases) if (JSON.stringify(upstreamFields(input)) !== expected) return input;
+        if (JSON.stringify(upstreamFields(line)) !== JSON.stringify(upstreamFields(line))) return 'idempotency';
+        if (upstreamOf({ raw: line }, { stderr: line }, 'pi').fields.reset_after_s !== 7440) return 'display';
+        const a = classifyStop({ cli: 'pi', route: 'router', stderr: line });
+        const b = classifyStop({ cli: 'pi', route: 'router', stderr: line });
+        return a.status === b.status && a.rule === b.rule ? null : 'classification idempotency';
+      },
+    },
+    {
       name: 'stdout-pure-claude-fields', kind: 'logic',
       pure: () => {
         const ev = (extra) => JSON.stringify({ type: 'result', is_error: true, result: 'Request failed', ...extra });
@@ -1654,7 +1739,7 @@ const FAKE_MODES = {
   },
   'router402-nofields': () => {
     const key = process.env.AIKIT_XAI_SENTINEL || 'sentinel';
-    process.stderr.write('402: {"message":"[acme-cli/acme-4.7] [402]: Acme Build usage balance exhausted (reset after 2m)","api_key":"' + key + '","connection":"conn:ab12cd34"}\n');
+    process.stderr.write('402: {"message":"[acme-cli/acme-4.7] [402]: Acme Build usage balance exhausted","api_key":"' + key + '","connection":"conn:ab12cd34"}\n');
     process.exit(1);
   },
   'auth-then-noise': () => {
@@ -9225,7 +9310,7 @@ async function blackBoxSelfTest(listOnly = false) {
           const bodyLine = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: upstream body='));
           const fieldsLine = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: upstream fields='));
           if (!JSON.parse(bodyLine.slice(bodyLine.indexOf('=') + 1)).includes('Acme Build')) return 'body missing upstream text';
-          if (fieldsLine !== 'cross-ai: upstream fields={"retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z"}') return 'fields mismatch';
+          if (fieldsLine !== 'cross-ai: upstream fields={"retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z","reset_after_s":120}') return 'fields mismatch';
           const state = fs.existsSync(ctx.env.XDG_STATE_HOME)
             ? fs.readdirSync(ctx.env.XDG_STATE_HOME, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => fs.readFileSync(path.join(ctx.env.XDG_STATE_HOME, entry.name), 'utf8')).join('\n')
             : '';

@@ -1,5 +1,31 @@
 [
   {
+    "id": "router-model-cooldown",
+    "tier": 0,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "model_cooldown",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-22 (074cbcc): router client body 429 code model_cooldown with Retry-After and reset_seconds, read from the router source 2026-11-16; no body captured"
+  },
+  {
+    "id": "router-all-targets-cooling-down",
+    "tier": 0,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "all_targets_cooling_down",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-22 (074cbcc): router client body 503 all_targets_cooling_down with Retry-After, read from the router source 2026-11-16; no body captured"
+  },
+  {
     "id": "omniroute-all-targets-skipped",
     "tier": 0,
     "cli": "*",
@@ -965,6 +991,45 @@
     "evidence": "25-RESEARCH 2.2 recorded"
   },
   {
+    "id": "router-accounts-cooling-down",
+    "tier": 5,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "active accounts cooling down for model",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router log line (warning, tag AUTH), 34 episodes in the router's own log; never seen by the runner"
+  },
+  {
+    "id": "router-all-models-failed",
+    "tier": 5,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "All models failed \\|.*\\(reset after ",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router log wording with its reset text (the heading alone also prints for non-cooldown failures); never seen by the runner"
+  },
+  {
+    "id": "router-persisted-cooldown",
+    "tier": 5,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "has persisted cooldown until",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router log wording; never seen by the runner"
+  },
+  {
     "id": "text-cooling-down",
     "tier": 5,
     "cli": "*",
@@ -1107,6 +1172,19 @@
     "terminal": false,
     "label": "verified",
     "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
+  },
+  {
+    "id": "router-usage-balance-exhausted",
+    "tier": 6,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "usage balance exhausted",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router wording; a 402 body carrying it classifies by code-402 and a 401/403 by code-401-403 first, this row covers the form without a status code"
   },
   {
     "id": "code-429",
