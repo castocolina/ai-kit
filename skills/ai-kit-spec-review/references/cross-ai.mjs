@@ -364,6 +364,71 @@ const PATTERNS = [
     "evidence": "vendor plan-not-open code recorded in real runs (38.1 SPEC Live facts 2026-11-16); body not captured"
   },
   {
+    "id": "copilot-model-not-available",
+    "tier": 1,
+    "cli": "copilot",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "Model \"[^\"]+\" is not available",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, copilot 1.0.112; fixture tests/fixtures/cross_ai_errors/copilot-bad-model.json"
+  },
+  {
+    "id": "pi-model-not-found",
+    "tier": 1,
+    "cli": "pi",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "Model \"[^\"]+\" not found",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, pi 1.5.2; fixture tests/fixtures/cross_ai_errors/pi-bad-model.json"
+  },
+  {
+    "id": "opencode-model-unavailable",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "event",
+    "match": "^opencode-type:provider\\.no-route$",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, opencode 2.3.0 provider.no-route event (message Model unavailable); fixture tests/fixtures/cross_ai_errors/opencode-bad-model.json"
+  },
+  {
+    "id": "claude-selected-model",
+    "tier": 1,
+    "cli": "claude",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "issue with the selected model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, claude 2.1.325; fixture tests/fixtures/cross_ai_errors/claude-bad-model.json"
+  },
+  {
+    "id": "codex-model-not-supported",
+    "tier": 1,
+    "cli": "codex",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "model is not supported when using",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, codex 0.169.0; fixture tests/fixtures/cross_ai_errors/codex-bad-model.json"
+  },
+  {
     "id": "text-billing",
     "tier": 2,
     "cli": "*",
@@ -5500,9 +5565,8 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const lane = confirmedRoute(route);
       const evidenceOf = (cls) => {
         const rule = cls && cls.rule ? cls.rule : '-';
-        // A runtime whose error wording is uncaptured, or whose execute formula is unverified on an execute call, reports every pattern unverified.
-        const unverified = rt.errorsUnverified || (mode === 'exec' && rt.execLabel?.state === 'unverified');
-        const pattern = unverified ? 'unverified' : (cls && cls.label ? cls.label : 'none');
+        // 38.1 D-05: see patternFor.
+        const pattern = patternFor(rt, name, mode, cls);
         return { route, rule, pattern, upstream: upstreamOf(cls, r, name) };
       };
       if (r.spawnErr) {
@@ -6306,6 +6370,17 @@ function resolveRuntime(o) {
   return { error: 'cross-ai: no runtime: pass --runtime <id>' };
 }
 
+const FIXTURE_EVIDENCE_RE = /tests\/fixtures\/cross_ai_errors\/[a-z0-9-]+\.json/;
+// 38.1 D-05: a runtime-level flag demotes every pattern except a row scoped to this host whose evidence names its fixture.
+function patternFor(rt, cli, mode, cls) {
+  const label = cls && cls.label ? cls.label : 'none';
+  if (!rt) return 'unverified';
+  const flagged = rt.errorsUnverified || (mode === 'exec' && rt.execLabel?.state === 'unverified');
+  if (!flagged) return label;
+  const row = cls && cls.rule ? PATTERNS.find((item) => item.id === cls.rule) : undefined;
+  return row && row.cli === cli && row.label === 'verified' && FIXTURE_EVIDENCE_RE.test(row.evidence) ? label : 'unverified';
+}
+
 // Pure: one JSON line per case, then the status line. No spawn, no write, stdin unread.
 function runClassifyOnly(file) {
   let raw;
@@ -6341,8 +6416,8 @@ function runClassifyOnly(file) {
       cli, route, model: entry.model || '', stderr: entry.stderr || '',
       events: extractEvents(cli, entry.stdout || ''),
     });
-    // Same rule as a live run: an uncaptured runtime, or a cli with no row, reports every pattern unverified.
-    const pattern = !Object.hasOwn(RUNTIMES, cli) || RUNTIMES[cli].errorsUnverified ? 'unverified' : cls.label;
+    // Same rule as a live run (38.1 D-05, patternFor); a cli with no row reports unverified.
+    const pattern = patternFor(Object.hasOwn(RUNTIMES, cli) ? RUNTIMES[cli] : undefined, cli, null, cls);
     lines.push(JSON.stringify({ name: entry.name, status: cls.status, rule: cls.rule, pattern, route }));
   }
   if (lines.length) process.stdout.write(`${lines.join('\n')}\n`);
@@ -6935,6 +7010,7 @@ export {
   parseTasks,
   parseTomlSubset,
   pathCovers,
+  patternFor,
   pidAlive,
   planArgvFile,
   planFindings,

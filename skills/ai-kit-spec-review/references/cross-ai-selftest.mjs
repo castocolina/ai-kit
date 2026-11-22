@@ -100,6 +100,7 @@ import {
   parseTasks,
   parseTomlSubset,
   pathCovers,
+  patternFor,
   pidAlive,
   planArgvFile,
   planFindings,
@@ -710,6 +711,25 @@ const CLASSIFY_CASES = [
     name: 'catalog-insufficient-funds', cli: 'pi', stderr: 'insufficient funds on this account',
     expect: { status: 'billing', pattern: 'verified', rule: 'text-insufficient-funds' },
   },
+  {
+    name: 'host-opencode-outage', cli: 'opencode',
+    stdout: ocError({ type: 'provider.unavailable', status: 503, message: 'Model unavailable: placeholder-model-1' }),
+    expect: { status: 'transient', pattern: 'verified' },
+  },
+  {
+    name: 'host-opencode-suffix-type', cli: 'opencode',
+    stdout: ocError({ type: 'provider.no-route-x', message: 'fake-neutral-text' }),
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'host-opencode-stderr-mention', cli: 'opencode', stderr: 'opencode-type:provider.no-route',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'host-copilot-one-word-off', cli: 'copilot',
+    stderr: 'Execution failed: Model "placeholder-model-1" is not  available.',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
 ];
 
 function classifyOne(entry, table) {
@@ -839,6 +859,29 @@ function classifyCases() {
         const got = classifyOne({ cli: 'pi', stderr: '429 Policy budget exceeded' },
           TABLE.filter((row) => !row.id.endsWith('budget-exceeded')));
         return got.rule === 'code-429' ? null : `rule ${got.rule} expected code-429`;
+      },
+    },
+    {
+      name: 'pure-catalog-demotion-sides', kind: 'logic',
+      pure: () => {
+        const flagged = { errorsUnverified: true };
+        const exec = { execLabel: { state: 'unverified' } };
+        const cases = [
+          [flagged, 'copilot', 'exec', 'copilot-model-not-available', 'verified', 'verified'],
+          [flagged, 'copilot', 'exec', 'text-payment-required', 'verified', 'unverified'],
+          [flagged, 'claude', 'exec', 'copilot-model-not-available', 'verified', 'unverified'],
+          [exec, 'claude', 'exec', 'claude-selected-model', 'verified', 'verified'],
+          [exec, 'claude', 'exec', 'code-429', 'verified', 'unverified'],
+          [exec, 'claude', 'review', 'code-429', 'verified', 'verified'],
+          [flagged, 'opencode', 'exec', 'opencode-type-quota', 'verified', 'unverified'],
+          [undefined, 'placeholder-cli-1', null, 'code-429', 'verified', 'unverified'],
+          [{}, 'pi', 'exec', '-', 'none', 'none'],
+        ];
+        for (const [rt, cli, mode, rule, label, expected] of cases) {
+          const got = patternFor(rt, cli, mode, { rule, label });
+          if (got !== expected) return `${cli}/${rule}: ${got} expected ${expected}`;
+        }
+        return null;
       },
     },
     {
@@ -2060,6 +2103,10 @@ if (mode === 'event400') {
   process.stderr.write('[400]: event: error\n');
   process.exit(1);
 }
+if (mode === 'missing') {
+  process.stderr.write('Execution failed: Model "fake-missing" is not available.\n');
+  process.exit(1);
+}
 if (mode !== 'readonly') fs.appendFileSync('a.txt', 'ok-line\n');
 process.stderr.write('copilot: using token ' + process.env[tokens[0]] + '\n');
 process.stdout.write('# Summary\nok');
@@ -2078,6 +2125,10 @@ process.stdin.on('data', (d) => { input += d; }).on('end', () => {
   if (argOf('--model') === 'fake-auth') {
     process.stderr.write('401 unauthorized\n');
     console.log(JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized' }));
+    process.exit(1);
+  }
+  if (argOf('--model') === 'fake-model-missing') {
+    console.log(JSON.stringify({ type: 'result', is_error: true, result: "There's an issue with the selected model (fake-model-missing). It may not exist or you may not have access to it." }));
     process.exit(1);
   }
   const execute = argOf('--permission-mode') !== 'plan';
@@ -8976,8 +9027,9 @@ async function blackBoxSelfTest(listOnly = false) {
             if (got.status !== want.expect.status) {
               return `${want.name} status ${got.status} expected ${want.expect.status}`;
             }
-            if (got.pattern !== want.expect.pattern) {
-              return `${want.name} pattern ${got.pattern} expected ${want.expect.pattern}`;
+            const expectedPattern = patternFor(RUNTIMES[want.cli], want.cli, null, classifyOne(want));
+            if (got.pattern !== expectedPattern) {
+              return `${want.name} pattern ${got.pattern} expected ${expectedPattern}`;
             }
             if (want.expect.rule !== undefined && got.rule !== want.expect.rule) {
               return `${want.name} rule ${got.rule} expected ${want.expect.rule}`;
@@ -9200,6 +9252,33 @@ async function blackBoxSelfTest(listOnly = false) {
           if (!report) return 'missing report line';
           if ((r.stderr || '').includes('pattern=verified')) return 'a copilot pattern read verified';
           return ctx.calls.length === 1 ? null : `calls=${ctx.calls.length}`;
+        },
+      },
+      {
+        name: 'pure-catalog-demotion-classify-only', kind: 'logic',
+        setup: (c) => {
+          fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify([
+            { name: 'h', cli: 'copilot', stderr: 'Execution failed: Model "placeholder-model-1" is not available.' },
+            { name: 'w', cli: 'copilot', stderr: '402 payment required' },
+          ]));
+          return null;
+        },
+        args: ['--classify-only', 'fixtures.json'], exit: 0,
+        status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: (r) => {
+          const lines = (r.stdout || '').trim().split('\n').map((line) => JSON.parse(line));
+          if (lines.length !== 2 || lines[0].status !== 'bad_model' || lines[0].rule !== 'copilot-model-not-available' || lines[0].pattern !== 'verified') return 'host row';
+          return lines[1].status === 'billing' && lines[1].pattern === 'unverified' ? null : 'wildcard row';
+        },
+      },
+      {
+        name: 'pure-catalog-demotion-live-host-row', kind: 'logic',
+        env: { COPILOT_GITHUB_TOKEN: 'fake-token' }, config: { retry: { max_retries: 1 } },
+        args: ['--runtime', 'copilot', '--model', 'fake-missing'], exit: 69,
+        status: /^AIKIT-XAI status=bad_model cli=copilot model=fake-missing exit=69 .* action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail?.rule === 'copilot-model-not-available' && tail.pattern === 'verified' ? null : 'host row evidence';
         },
       },
       {
@@ -9762,6 +9841,15 @@ async function blackBoxSelfTest(listOnly = false) {
           if (statusTail(r.stderr || '')?.pattern !== (CLAUDE_EXEC_FORMULA_RECORD === null ? 'unverified' : 'verified')) return 'execute pattern';
           const review = await runCaseProcess({ args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-auth'] }, ctx);
           return review.status === 69 && statusTail(review.stderr || '')?.pattern === 'verified' ? null : 'review pattern';
+        },
+      },
+      {
+        name: 'pure-catalog-demotion-live-claude-exec', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-model-missing'], exit: 69,
+        status: /^AIKIT-XAI status=bad_model cli=claude model=fake-model-missing exit=69 .* action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail?.rule === 'claude-selected-model' && tail.pattern === 'verified' ? null : 'host row evidence';
         },
       },
       {

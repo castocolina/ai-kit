@@ -1,0 +1,11 @@
+{
+  "host": "cursor",
+  "version": "2026.11.13",
+  "date": "2026-11-16",
+  "cli": "cursor",
+  "stderr": "Cannot use this model: placeholder-model-1. Available models: placeholder-model-2\n",
+  "stdout": "",
+  "expect_class": "bad_model",
+  "expect_rule": "text-cannot-use-model",
+  "source": "reconstructed"
+}

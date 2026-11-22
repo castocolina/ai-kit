@@ -1,0 +1,11 @@
+{
+  "host": "opencode",
+  "version": "2.3.0",
+  "date": "2026-11-16",
+  "cli": "opencode",
+  "stderr": "",
+  "stdout": "{\"type\":\"error\",\"sessionID\":\"ses_1\",\"error\":{\"type\":\"provider.no-route\",\"message\":\"Model unavailable: placeholder-model-1\"}}\n",
+  "expect_class": "bad_model",
+  "expect_rule": "opencode-model-unavailable",
+  "source": "reconstructed"
+}
