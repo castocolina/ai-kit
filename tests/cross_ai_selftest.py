@@ -55,6 +55,10 @@ def _real_node_executable() -> str | None:
 _RESOLVED_TEMPLATE = resolve_cross_ai_template_path()
 assert _RESOLVED_TEMPLATE is not None, "the shipped runner template is missing"
 TEMPLATE = _RESOLVED_TEMPLATE
+# 38-08: a shipping check: the self-test harness must sit beside the template (the shard
+# modules load it through TEMPLATE).
+SIBLING = os.path.join(os.path.dirname(TEMPLATE), "cross-ai-selftest.mjs")
+assert os.path.isfile(SIBLING), "the self-test harness beside the runner template is missing"
 
 
 def runner_env(tmp: str) -> dict[str, str]:
