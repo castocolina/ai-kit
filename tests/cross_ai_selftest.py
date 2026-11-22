@@ -108,8 +108,8 @@ def runner_env(tmp: str) -> dict[str, str]:
 # ONE load reading (`load_reading`, passed to Node as AIKIT_XAI_SELFTEST_LOAD): a second,
 # independently sampled reading (or Python's CPU count against Node's availableParallelism under
 # an affinity mask) could differ, so the guard could fire before the ceilings it guards. One shard
-# takes about 25 s at idle; 4 x 120 s plus 300 s for the rest of a module stays under the
-# runner's 900 s module deadline (DeadlineCouplingTest pins it).
+# takes about 35 to 45 s at idle (38-25); 4 x 120 s plus 300 s for the rest of a module stays under
+# the runner's 900 s module deadline (DeadlineCouplingTest pins it).
 SHARD_GUARD_SECS = 120
 MAX_LOAD_FACTOR = 4
 # 38-25: sized so each shard stays near 40 s, well inside the 60 s commit budget

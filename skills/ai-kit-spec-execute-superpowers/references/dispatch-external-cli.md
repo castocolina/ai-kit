@@ -174,9 +174,9 @@ printf 'FOLD_REASON=%s\n' "$FOLD_REASON"
 
   **Schedule-or-stop.** Only a classified `"quota_cycle"` (exit 75 with whole-number `retry_after_s` and
   `cycle` in `$CLASSIFICATION`) gets the one-shot wait and re-dispatch of the same task, lane and
-  model (a hint such as `600s` classifies `real_error` and never reaches this branch). A tokenless
-  runner `RETURNCODE` 69 or 75 whose status is `transient` or `quota` is classified `quota` but is
-  an owner stop: relay, write pinned state, schedule nothing. A `RETURNCODE` 69
+  model (a hint such as `600s` classifies `real_error` and never reaches this branch). A runner
+  `RETURNCODE` 69 or 75 whose status is `transient` or `quota` with no token or only one of the two
+  (neither malformed) is classified `quota` but is an owner stop: relay, write pinned state, schedule nothing. A `RETURNCODE` 69
   (`stopped=hard-waits`, `stopped=cap`, or a `cross-ai: lane stopped=` refusal) is an owner stop
   after relaying the evidence, including that line's state path, whose deletion is the owner's
   reset; schedule nothing and re-arm nothing. A bare `RETURNCODE` 75 is also an owner stop.

@@ -9,7 +9,6 @@ import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  parseCommitLog,
   ADMISSION_PHRASES_SEED,
   ARGV_PROMPT_MAX,
   CLAUDE_EXEC_FORMULA_RECORD,
@@ -95,6 +94,7 @@ import {
   overlaySpentMs,
   ownValue,
   parseArgs,
+  parseCommitLog,
   parseTasks,
   parseTomlSubset,
   pathCovers,
@@ -1250,11 +1250,21 @@ function writeExe(binDir, name, imports, body) {
   fs.chmodSync(p, 0o755);
 }
 
+// A harness reset (checkout, clean) runs only in a case repository under the self-test root with its own .git.
+function assertScratchRepo(root, repo) {
+  const rel = path.relative(fs.realpathSync(root), fs.realpathSync(repo));
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || !fs.existsSync(path.join(repo, '.git'))) throw new Error(`refusing to reset ${repo}: not a case repository under ${root}`);
+}
+
 function writeGitWrapper(binDir, realGit) {
   writeExe(binDir, 'git', "import { spawnSync } from 'node:child_process';\nimport path from 'node:path';\n", `
 const realGit = ${JSON.stringify(realGit)};
 const home = process.env.HOME || '';
 const sub = process.argv.slice(2);
+// Per-verb failure for execute-check and baseline cases; skip a leading -c pair.
+const verb = sub[0] === '-c' ? sub[2] : sub[0];
+const verbFail = home && verb ? path.join(home, '.fake-git-fail-' + verb) : '';
+if (verbFail && fs.existsSync(verbFail)) { fs.appendFileSync(path.join(home, 'git-switch.log'), 'fail ' + verb + ' ' + process.pid + '\\n'); process.exit(Number(fs.readFileSync(verbFail, 'utf8').trim()) || 128); }
 if (sub[0] === 'write-tree') {
   // Positive evidence for poll cases; logs live outside the repository in the case HOME.
   if (home) fs.appendFileSync(path.join(home, 'git-calls.log'), 'write-tree\\n');
@@ -1282,7 +1292,7 @@ const STICKY_FAKE = new Set([
   'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'lockhold', 'big', 'sentinelsplit', 'hdrip', 'hcommit', 'hflood', 'hstateloop',
   'limit-mid', 'limit-partial', 'limit-flood', 'limit-partial-flood', 'auth-then-noise',
   'transient-hang', 'bare-429-hang', 'retry-notice', 'retry-notice-429', 'slowquota',
-  'capclamp', 'reason-code-hang', 'slow-lines', 'router-stop-hang', 'ticker', 'quiet-commit', 'quiet-edit', 'quiet-idle', 'chatty-nochange', 'quiet-gitfail', 'quiet-githang', 'review-slow', 'quiet-headonly', 'change-then-stall', 'githang-silent',
+  'capclamp', 'reason-code-hang', 'slow-lines', 'router-stop-hang', 'ticker', 'quiet-commit', 'quiet-edit', 'quiet-idle', 'chatty-nochange', 'chatty-event400', 'quiet-gitfail', 'quiet-githang', 'review-slow', 'quiet-headonly', 'change-then-stall', 'githang-silent',
 ]);
 let stdinBuf = '';
 const FAKE_MODES = {
@@ -1664,6 +1674,7 @@ const FAKE_MODES = {
   'quiet-idle': () => { setInterval(() => {}, 1 << 30); },
   // Chatty without changing the checkout.
   'chatty-nochange': () => { let n = 0; const t = setInterval(() => { process.stdout.write('working ' + n + '\n'); n += 1; if (n === 15) { clearInterval(t); process.stdout.write('# Summary\nno edits'); process.exit(0); } }, 300); },
+  'chatty-event400': () => { let n = 0; const t = setInterval(() => { process.stdout.write('working ' + n + '\n'); n += 1; if (n === 15) { clearInterval(t); process.stderr.write('[400]: event: error\n'); process.exit(1); } }, 300); },
   // Silent edits leave the real index alone.
   'quiet-edit': () => { let n = 0; const t = setInterval(() => { fs.appendFileSync('a.txt', 'edit ' + n + '\n'); n += 1; if (n === 6) { clearInterval(t); process.stdout.write('# Summary\nok'); process.exit(0); } }, 700); },
   'review-slow': () => { setTimeout(() => { process.stdout.write('# Review\nok'); process.exit(0); }, 2200); },
@@ -2643,7 +2654,8 @@ async function blackBoxSelfTest(listOnly = false) {
     };
     // The headless run must see the hosted run's starting tree, or its uncommitted-edit findings differ; commits stay.
     const hostPairReset = (c) => {
-      const env = hermeticEnv(c.tmp, { HOME: path.join(c.tmp, 'home-git') });
+      assertScratchRepo(tmp, c.repo);
+      const env =hermeticEnv(c.tmp, { HOME: path.join(c.tmp, 'home-git') });
       spawnSync('git', ['checkout', '-q', '--', '.'], { cwd: c.repo, env });
       spawnSync('git', ['clean', '-fq'], { cwd: c.repo, env });
     };
@@ -9630,6 +9642,14 @@ async function blackBoxSelfTest(listOnly = false) {
       hostPair('host-auth', 'fake/auth', 69, /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/),
       hostPair('host-empty', 'fake/empty', 1, /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/),
       hostPair('host-timeout', 'fake/hang', 124, /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 cli_rc=.* elapsed=\d+s out=\d+ tree=.* action=stop$/, { args: ['--timeout', '2'], dead: ['gc'] }),
+      { name: 'pure-scratch-repo-guard', kind: 'logic', pure: () => {
+        const refused = (repo) => { try { assertScratchRepo(tmp, repo); return false; } catch { return true; } };
+        const inside = fs.mkdtempSync(path.join(tmp, 'guard-'));
+        if (!refused(inside)) return 'a folder without .git accepted';
+        fs.mkdirSync(path.join(inside, '.git'));
+        if (refused(inside)) return 'a case repository refused';
+        return refused(tmp) && refused(path.dirname(tmp)) ? null : 'the root or a folder outside it accepted';
+      } },
       { name: 'pure-capture-max-bytes', kind: 'logic', pure: () => { for (const [input, expected] of [[undefined, 33554432], ['', 33554432], ['65535', 33554432], ['33554433', 33554432], ['1e5', 33554432], [' 70000', 33554432], ['-70000', 33554432], ['65536', 65536], ['70000', 70000], ['33554432', 33554432]]) { const got = captureMaxBytes(input); if (got !== expected) return `captureMaxBytes(${input}) = ${got}`; } return null; } },
       hostPair('host-cap', 'fake/hflood', 0, /^AIKIT-XAI status=ok cli=pi model=fake\/hflood exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/, { env: { AIKIT_XAI_CAPTURE_MAX_BYTES: '65536' }, present: ['cross-ai: child stdout passed 65536 bytes; kept the newest 65536'], after: (c) => { const text = readOr(path.join(c.home, 'hflood.sizes'), ''); return text === 'file 65536,131072,0,65536\npipe\n' ? null : `hflood sizes ${JSON.stringify(text)}`; } }),
       hostPair('host-idle-silent', 'fake/hang', 124, /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 cli_rc=.* elapsed=\d+s out=\d+ tree=.* action=stop$/, { args: ['--timeout', '20', '--idle-timeout', '2'], dead: ['gc'], present: ['rule=idle-watchdog'] }),
@@ -9766,6 +9786,18 @@ async function blackBoxSelfTest(listOnly = false) {
           return null;
         },
       })),
+      {
+        name: 'host-rerun-lock-fields', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/lockpeek', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath, FAKE_HERDR_FAIL: 'run' }, exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/lockpeek exit=0 .* action=stop$/,
+        check: (r, c) => {
+          if (!hostedUsable(c)) return hostFailedOnly(r, c);
+          if (!r.stderr.includes('cross-ai: host: pane run failed (exit 1); the lane runs headless')) return 'missing host message';
+          const rec = JSON.parse(fs.readFileSync(path.join(c.home, 'lock.seen'), 'utf8')).rec || {};
+          return rec.token === null && rec.tab_id === null && rec.host_ms === null ? null : `hosted fields kept: ${JSON.stringify([rec.token, rec.tab_id, rec.host_ms])}`;
+        },
+      },
       {
         name: 'host-dead-launcher', kind: 'runtime',
         args: ['--runtime', 'pi', '--model', 'fake/killparent', '--host', 'auto'],
@@ -10496,9 +10528,20 @@ async function blackBoxSelfTest(listOnly = false) {
         setup: (c) => { fs.writeFileSync(path.join(c.repo, 'owner.txt'), 'owner\n'); c.index0 = fs.readFileSync(path.join(c.repo, '.git', 'index')); return null; },
         check: (r, c) => { const b = JSON.parse(fs.readFileSync(path.join(c.home, 'lock.seen'), 'utf8')).rec.baseline; const env = { ...c.env, GIT_INDEX_FILE: path.join(c.tmp, 'idx-owner-dirty') }; gitValue(c, ['add', '-A'], env); const end = gitValue(c, ['write-tree'], env); const names = gitValue(c, ['diff-tree', '-r', '--name-only', '-z', b.tree.split('\t')[0], end]).split('\0'); if (names.includes('owner.txt')) return 'owner file counted'; if (!names.includes('a.txt')) return 'lane edit missing'; return fs.readFileSync(path.join(c.repo, '.git', 'index')).equals(c.index0) ? null : 'user index changed'; },
       },
+      {
+        name: 'baseline-kept-unchecked', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/lockpeek'], stdin: BASELINE_TASK, exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        setup: (c) => { plantBaseline(c); fs.writeFileSync(path.join(c.home, '.fake-git-fail-cat-file'), '2'); return null; },
+        check: (r, c) => { const lines = r.stderr.split('\n'); if (lines.filter((s) => s === 'cross-ai: note: baseline record not checked (git unavailable); this call keeps its baseline in memory').length !== 1) return 'note'; if (lines.some((s) => s.includes('reason=baseline_replaced'))) return 'replaced'; if (!fs.existsSync(c.baselineFile)) return 'missing record'; return JSON.stringify(JSON.parse(fs.readFileSync(c.baselineFile, 'utf8'))) === JSON.stringify(c.baselineRec) ? null : 'record changed'; },
+      },
+      {
+        name: 'baseline-kept-ancestry', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/lockpeek'], stdin: BASELINE_TASK, exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        setup: (c) => { plantBaseline(c); gitValue(c, ['commit', '--allow-empty', '-q', '-m', 'moved']); fs.writeFileSync(path.join(c.home, '.fake-git-fail-merge-base'), '2'); return null; },
+        check: (r, c) => { const lines = r.stderr.split('\n'); if (lines.filter((s) => s === 'cross-ai: note: baseline ancestry not readable (git unavailable); this call keeps its baseline in memory').length !== 1) return 'note'; if (lines.some((s) => s.includes('reason=baseline_replaced'))) return 'replaced'; if (!fs.existsSync(c.baselineFile)) return 'missing record'; return JSON.stringify(JSON.parse(fs.readFileSync(c.baselineFile, 'utf8'))) === JSON.stringify(c.baselineRec) ? null : 'record changed'; },
+      },
       { name: 'poll-quiet-commit', kind: 'runtime', config: { heartbeatS: 1 }, args: ['--runtime', 'pi', '--role', 'execute', '--model', 'fake/quiet-commit', '--idle-timeout', '3'], exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/quiet-commit exit=0 .* action=stop$/, check: (r) => { const err = (r.stderr || '').split('\n'); if (err.some((l) => l.includes('idle watchdog:'))) return 'idle watchdog fired'; return err.some((l) => /^cross-ai: pi running \d+s, stdout \+0 bytes, commits \+[1-9]\d* since the baseline, tree changed$/.test(l)) ? null : 'no heartbeat with commits'; } },
       { name: 'poll-quiet-idle', kind: 'runtime', config: { heartbeatS: 1 }, args: ['--runtime', 'pi', '--role', 'execute', '--model', 'fake/quiet-idle', '--timeout', '20', '--idle-timeout', '2'], exit: 124, status: /^AIKIT-XAI status=timeout cli=pi model=fake\/quiet-idle exit=124 .* action=stop$/, check: (r) => { const lines = r.stderr.split('\n'); if (!lines.includes('cross-ai: idle watchdog: pi printed nothing for 2s; ending its process group')) return 'idle line'; return lines.some((s) => s.endsWith(', commits +0 since the baseline, tree unchanged')) ? null : 'heartbeat'; } },
       { name: 'poll-chatty-nochange', kind: 'runtime', args: ['--runtime', 'pi', '--role', 'execute', '--model', 'fake/chatty-nochange', '--idle-timeout', '2'], exit: 1, status: /^AIKIT-XAI status=no_change cli=pi model=fake\/chatty-nochange exit=1 .* action=stop$/, check: (r) => { const lines = r.stderr.split('\n'); if (!lines.some((s) => /^cross-ai: pi printed output but changed nothing in the checkout for \d+s$/.test(s))) return 'notice'; if (lines.some((s) => s.includes('idle watchdog:'))) return 'idle'; return lines.some((s) => / findings=no_tree_change( |$)/.test(s)) ? null : 'finding'; } },
+      { name: 'poll-notes-once-per-run', kind: 'runtime', config: { retry: { max_retries: 1, session_resets: 0, base_s: 0, hard_waits_s: [600] } }, args: ['--runtime', 'pi', '--role', 'execute', '--model', 'fake/chatty-event400', '--idle-timeout', '2'], exit: 75, status: /^AIKIT-XAI status=transient cli=pi model=fake\/chatty-event400 exit=75 .* action=stop$/, check: (r) => { const lines = r.stderr.split('\n'); if (lines.filter((s) => s.startsWith('cross-ai: attempt ')).length < 2) return 'expected two attempts'; if (lines.filter((s) => /^cross-ai: pi printed output but changed nothing in the checkout for \d+s$/.test(s)).length < 2) return 'expected a notice per attempt'; return lines.filter((s) => s.startsWith('cross-ai: finding reason=no_tree_change ')).length === 1 ? null : 'no_tree_change not exactly once'; } },
       { name: 'poll-quiet-edit', kind: 'runtime', setup: (c) => { fs.writeFileSync(path.join(c.home, 'index.sha'), crypto.createHash('sha256').update(fs.readFileSync(path.join(c.repo, '.git', 'index'))).digest('hex')); return null; }, args: ['--runtime', 'pi', '--role', 'execute', '--model', 'fake/quiet-edit', '--idle-timeout', '3'], exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/quiet-edit exit=0 .* tree=dirty action=stop$/, check: (r, c) => { if (r.stderr.includes('idle watchdog:')) return 'idle'; return crypto.createHash('sha256').update(fs.readFileSync(path.join(c.repo, '.git', 'index'))).digest('hex') === readOr(path.join(c.home, 'index.sha'), '') ? null : 'index changed'; } },
       { name: 'poll-review-none', kind: 'runtime', config: { heartbeatS: 1 }, args: ['--runtime', 'pi', '--role', 'review', '--model', 'fake/review-slow', '--idle-timeout', '4'], exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/review-slow exit=0 .* action=stop$/, check: (r, c) => { if (r.stderr.split('\n').some((s) => s.includes('commits +') || s.startsWith('cross-ai: tree poll'))) return 'poll output'; return readOr(path.join(c.home, 'git-calls.log'), '').split('\n').filter((s) => s === 'write-tree').length === 2 ? null : 'write-tree count'; } },
       { name: 'poll-head-only', kind: 'runtime', config: { heartbeatS: 1 }, args: ['--runtime', 'pi', '--role', 'execute', '--model', 'fake/quiet-headonly', '--idle-timeout', '3'], exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/quiet-headonly exit=0 .* tree=dirty action=stop$/, check: (r) => { const lines = r.stderr.split('\n'); if (lines.some((s) => s.includes('idle watchdog:'))) return 'idle'; return lines.some((s) => /, commits \+[1-9]\d* since the baseline, tree unchanged$/.test(s)) ? null : 'heartbeat'; } },
@@ -10546,6 +10589,8 @@ async function blackBoxSelfTest(listOnly = false) {
       planCase('plan-list-cap', { tasks: [['t1', 'one.txt']], commits: [{ files: ['one.txt', ...Array.from({ length: 12 }, (_, i) => `x${String(i + 1).padStart(2, '0')}.txt`)], subject: 'feat(38-18): t1' }], status: 'ok', coverage: '1/1', codes: 'outside_plan_files', lines: ['cross-ai: finding reason=outside_plan_files detail=12 paths: x01.txt, x02.txt, x03.txt, x04.txt, x05.txt, x06.txt, x07.txt, x08.txt, x09.txt, x10.txt (+2 more)'] }),
       planCase('plan-failed-lists-missing', { commits: [all3[0]], exitCode: 7, status: 'crash', coverage: '1/3', codes: 'task_uncovered', lines: ['cross-ai: finding reason=task_uncovered detail=t2, t3'] }),
       planCase('plan-merge-clean', { merge: { files: ['one.txt'], subject: 'feat(38-18): t1' }, commits: [all3[1], all3[2]], status: 'ok', coverage: '3/3', codes: '-' }),
+      ...['log', 'show', 'diff-tree'].map((verb) => planCase(`plan-git-${verb}-fails`, { commits: all3, status: 'git_error', coverage: '-', codes: '-', lines: [`cross-ai: git ${verb} failed reading the work tree (fail closed)`], setup: (c) => { fs.writeFileSync(path.join(c.home, `.fake-git-fail-${verb}`), '128'); return null; } })),
+      { name: 'plan-config-seed-bad', kind: 'logic', config: { forbiddenPaths: '.planning', admissionPhrases: 5 }, stdin: planPrompt([['t1', 'one.txt']]), env: { FAKE_PLAN: JSON.stringify({ commits: [{ files: ['one.txt', '.planning/STATE.md'], subject: 'feat(38-18): t1' }] }) }, args: ['--runtime', 'pi', '--role', 'execute', '--model', 'fake/plan-commit'], exit: 1, status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/plan-commit exit=1 .* action=stop$/, check: (r) => { const lines = (r.stderr || '').split('\n'); for (const key of ['forbiddenPaths', 'admissionPhrases']) if (lines.filter((l) => l === `cross-ai: note: CONFIG.${key} is not a list of strings; the seed list is used`).length !== 1) return `${key} note`; return lines.includes('cross-ai: finding reason=forbidden_path detail=.planning/STATE.md') ? null : 'seed forbidden path not applied'; } },
       planCase('plan-no-git-admission', { setup: (c) => { fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true }); c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo); return null; }, commits: [], answer: '# Summary\nThe last task is not implemented.\n', status: 'partial', coverage: 'n/a', codes: 'admits_skipped', lines: ['cross-ai: finding reason=admits_skipped detail=phrase "not implemented"'] }),
       { name: 'plan-out-of-table', kind: 'logic', setup: (c) => { fs.writeFileSync(path.join(c.repo, '.gitignore'), 'ign/\n'); fs.mkdirSync(path.join(c.repo, 'ign')); fs.writeFileSync(path.join(c.repo, 'ign', 'argv.json'), JSON.stringify(['placeholder-cli-1', '--model', '{model}', '--session={session}'])); for (const args of [['add', '.gitignore'], ['commit', '-q', '-m', 'ignore']]) { const g = spawnSync('git', args, { cwd: c.repo, env: c.env, encoding: 'utf8' }); if (g.status !== 0) return `setup git ${args.join(' ')}: ${g.stderr}`; } return null; }, stdin: planPrompt([['t1', 'one.txt'], ['t2', 'two.txt'], ['t3', 'three.txt']]), args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'ign/argv.json', '--model', 'fake-edit-then-ok', '--session-id', 'placeholder-sid-9'], exit: 1, status: /^AIKIT-XAI status=partial cli=placeholder-cli-1 model=fake-edit-then-ok exit=1 .* action=stop$/, check: (r) => (r.stderr || '').split('\n').includes('cross-ai: finding reason=no_commit detail=no commit since the baseline for 3 planned tasks') && !r.stdout ? null : 'missing finding or stdout not empty' },
       ...[
@@ -10556,6 +10601,7 @@ async function blackBoxSelfTest(listOnly = false) {
         { name: 'sweep-host-none', plants: [['ddddddddddd1', 't5']], args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'none'], expect: { line: [0, 0, 1, 'hosting off 1'], dirs: ['ddddddddddd1'], again: {} } },
         { name: 'sweep-env-none', plants: [['ddddddddddd1', 't5']], args: ['--runtime', 'pi', '--model', 'fake/ok'], env: { AIKIT_HOST: 'none' }, expect: { line: [0, 0, 1, 'hosting off 1'], dirs: ['ddddddddddd1'], again: {} } },
         { name: 'sweep-live-untouched', live: true, plants: [['eeeeeeeeeee1', 't5'], ['eeeeeeeeeee2', 't6']], expect: { line: [0, 0, 1, 'live launcher 1'], dirs: ['eeeeeeeeeee1', 'eeeeeeeeeee2'], open: ['t5', 't6'], untouched: true } },
+        { name: 'sweep-pid-file-live', pidLive: true, plants: [['eeeeeeeeeee3', 't5']], expect: { line: [0, 0, 1, 'live launcher 1'], dirs: ['eeeeeeeeeee3'], open: ['t5'], untouched: true, files: ['env', 'out', 'pid', 'prompt', 'run.json'] } },
         { name: 'sweep-unreadable', plants: [{ token: 'fffffffffff1', raw: '', ageMs: 5000 }, { token: 'fffffffffff2', record: false, ageMs: 5000 }], expect: { line: [0, 0, 2, 'unreadable 2'], dirs: ['fffffffffff1', 'fffffffffff2'], untouched: true, ages: true } },
         { name: 'sweep-other-host', plants: [{ token: 'abcabcabcab1', rec: { host_name: 'placeholder-host-1', tab_id: 't5' } }], expect: { line: [0, 0, 1, 'other host 1'], dirs: ['abcabcabcab1'], untouched: true } },
         { name: 'sweep-notfound', plants: [['abcabcabcab2', 't5']], env: { FAKE_HERDR_FAIL: 'close-notfound' }, expect: { line: [0, 1, 0], calls: [['tab', 'list'], ['tab', 'close', 't5']], again: { empty: true } } },
@@ -10566,7 +10612,7 @@ async function blackBoxSelfTest(listOnly = false) {
         status: t.args ? /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/ : /^AIKIT-XAI status=ok cli=- model=- exit=0 cli_rc=- elapsed=\d+s out=0 tree=clean action=stop$/,
         setup: (c) => {
           let sleeper;
-          if (t.live) { sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { cwd: c.repo, detached: true, stdio: 'ignore' }); sleeper.unref(); }
+          if (t.live || t.pidLive) { sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { cwd: c.repo, detached: true, stdio: 'ignore' }); sleeper.unref(); }
           const tabs = { ...t.tabs };
           for (const [i, p] of t.plants.entries()) {
             const spec = Array.isArray(p) ? { token: p[0], rec: { tab_id: p[1] } } : { ...p, rec: { ...p.rec } };
@@ -10574,6 +10620,8 @@ async function blackBoxSelfTest(listOnly = false) {
             if (t.live && i === 1) Object.assign(spec.rec, { launcher_pid: sleeper.pid, launcher_pgid: sleeper.pid, launcher_start: procStartTime(sleeper.pid) });
             if (t.claim) spec.name = spec.token + '.sweep-' + deadPid() + '-1';
             plantRun(c, spec);
+            // A runner killed before it adopted its launcher: only the pid file names the live group.
+            if (t.pidLive) fs.writeFileSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host', spec.token, 'pid'), sleeper.pid + '\n');
             if (t.claim) for (const file of ['env', 'prompt', 'out']) fs.unlinkSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host', spec.name, file));
             if (!t.tabs && spec.rec.tab_id) tabs[spec.rec.tab_id] = 'aikit:execute:pi:' + spec.token;
           }
@@ -10588,7 +10636,7 @@ async function blackBoxSelfTest(listOnly = false) {
           for (const id of t.expect.open || []) if (fakeTabs(c)[id]?.closed !== false) return `${t.name}: open ${id}`;
           for (const id of t.expect.closedTabs || []) if (fakeTabs(c)[id]?.closed !== true) return `${t.name}: closed ${id}`;
           const safety = hostSafety(hostCalls(c)); if (safety) return `${t.name}: ${safety}`;
-          for (const dir of t.expect.dirs || []) { const files = fs.readdirSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host', dir)).sort(); if (JSON.stringify(files) !== JSON.stringify(t.expect.untouched ? (dir === 'fffffffffff2' ? ['env', 'out', 'prompt'] : ['env', 'out', 'prompt', 'run.json']) : ['run.json'])) return `${t.name}: files ${files}`; }
+          for (const dir of t.expect.dirs || []) { const files = fs.readdirSync(path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host', dir)).sort(); if (JSON.stringify(files) !== JSON.stringify(t.expect.files || (t.expect.untouched ? (dir === 'fffffffffff2' ? ['env', 'out', 'prompt'] : ['env', 'out', 'prompt', 'run.json']) : ['run.json']))) return `${t.name}: files ${files}`; }
           if (!t.expect.untouched) { const left = stateKeyLeft(c); if (left) return `${t.name}: ${left}`; }
           if (t.expect.ages) for (const token of ['fffffffffff1', 'fffffffffff2']) if (!new RegExp(`^cross-ai: sweep: unreadable record ${token} age [56]s; left alone$`, 'm').test(r.stderr)) return `${t.name}: age ${token}`;
           if (t.expect.again) { const next = await runCaseProcess({ args: ['--sweep'] }, { ...c, env: { ...c.env, ...t.expect.again.env } }); const expected = t.expect.again.empty ? [0, 0, 0] : [1, 1, 0]; if (next.status !== 0 || !next.stderr.split('\n').includes(line(expected)) || hostDirNames(c).length || (!t.expect.again.empty && !fakeTabs(c).t5?.closed)) return `${t.name}: again ${next.stderr}`; }

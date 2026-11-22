@@ -29,9 +29,11 @@ The runner adds `--json`, an output file and `-` (the prompt on stdin).
 **Exec has two branches, and only one of them confines writes.**
 
 - ai-kit's own exec dispatch passes `--codex-sandbox workspace-write`. The
-  runner then uses `--sandbox workspace-write` instead of the bypass, so writes
-  stay inside the target dir plus `/tmp` and `$TMPDIR`, which workspace-write
-  always allows. Whether that sandbox also allows writes inside `.git` is
+  runner then uses `--sandbox workspace-write` instead of the bypass. That is
+  Codex's workspace-write sandbox mode, not a fixed path list: by default it
+  allows writes in the target dir plus `/tmp` and `$TMPDIR`, and the owner's
+  Codex config can add writable roots or exclude the temp locations (not
+  verified here). Whether that sandbox also allows writes inside `.git` is
   unverified.
 - A runner call that does not pass the flag (GSD's own hook, and any other
   caller that leaves the default) uses `--dangerously-bypass-approvals-and-sandbox`.

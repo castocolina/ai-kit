@@ -141,8 +141,8 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
      project's pi session; with no candidate, decline it with `plan-unset`.
    - **Trusted roots** (`agent_skills_security.trusted_global_roots`): the one candidate's
      `value` is the whole list — already-configured roots first, then the new `~/` roots.
-     Approve it with that list, or decline with `plan-unset` (refused while agents still hold
-     the skills it covers — the full rule is in Skills). The new root is the machine-specific
+     Approve it with that list, or decline with `plan-unset` (`apply` refuses the plan while
+     agents still hold the skills it covers — the full rule is in Skills). The new root is the machine-specific
      skills dir of the ai-kit install. A list that drops an
      already-configured root is refused; the refusal prints the merged list — re-run
      `plan-set` with it (entrypoint and `--plan` included).
@@ -302,8 +302,9 @@ than `ok` comes up.
   (gsd-core drops it where it does not exist).
 - **Refusal → action** (each refusal prints its fix; re-run it with the entrypoint and
   `--plan`):
-  - a **declined** root (`plan-unset`) while `agent_skills` entries still hold the skills it
-    covers → the refusal offers two fixes joined by "or"; declining means the second one,
+  - a **declined** root (`plan-unset` only prints a note; `apply` and `apply --dry-run`
+    refuse) while `agent_skills` entries still hold the skills it covers → the refusal offers
+    two fixes joined by "or"; declining means the second one,
     `plan-set agent_skills.<agent> ...`, which drops those skills;
   - a reference gsd-core would skip → the printed fix keeps every healthy reference whose
     bare name re-resolves to it: a bare name (the form a fresh plan holds), a

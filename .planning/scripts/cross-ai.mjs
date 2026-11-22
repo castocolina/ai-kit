@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=10 sha256=bef4f77a5799abcb5e198b8d71c96df9199fda1640dd125637a720fb01e35210
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=10 sha256=7292bf8c76a7bf64d6d741386326abe6a1be4e9872bf0b06b3225377d533f3e7
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v10).
  *
@@ -56,9 +56,10 @@
  *   --no-preamble                            send the prompt unchanged
  *   --prepend-file <path>                    put this file before the prompt
  *                                            (path relative to the cwd)
- *   --codex-sandbox workspace-write          codex exec writes inside the cwd,
- *                                            plus /tmp and $TMPDIR, which
- *                                            workspace-write always allows
+ *   --codex-sandbox workspace-write          codex exec runs in Codex's workspace-write
+ *                                            sandbox mode (by default the cwd plus /tmp
+ *                                            and $TMPDIR; the owner's Codex config can
+ *                                            add or exclude writable roots)
  *   --child-pgid-file <path>                 append spawn <pid> / exit <pid>
  *                                            per detached child, for a
  *                                            supervising caller's cleanup
@@ -1869,8 +1870,9 @@ function withCodexKnobs(argv, ctx) {
   return out;
 }
 
-// --codex-sandbox workspace-write confines exec to the cwd (codex still allows /tmp and
-// $TMPDIR). Without the flag the bypass formula is unchanged.
+// --codex-sandbox workspace-write selects Codex's workspace-write sandbox mode, not a fixed path
+// list (by default the cwd plus /tmp and $TMPDIR; the owner's Codex config can change the writable
+// roots). Without the flag the bypass formula is unchanged.
 function codexExecArgv(model, ctx) {
   const gate = ctx.codexSandbox
     ? ['--sandbox', 'workspace-write']
@@ -3663,11 +3665,15 @@ function lockHostedLine(rec) {
   if (!rec || (!Number.isInteger(rec.launcher_pgid) && typeof rec.token !== 'string')) return null;
   return redactSecrets(redactSecrets(`cross-ai: lock: held by a hosted lane, launcher group ${lockText(rec.launcher_pgid ?? '-')}, herdr tab ${lockText(rec.tab_id ?? '-')}`).replace(/[\x00-\x1f\x7f-\x9f]/g, ''));
 }
+// A launcher that wrote its pid file before its runner adopted it (no launcher_pgid recorded yet).
+function pidFileLauncherAlive(pidText) {
+  return /^\d+\n?$/.test(pidText) && lockPidAlive(Number(pidText)) && procGroup(Number(pidText)) === Number(pidText);
+}
 function hostedLaunchAlive(rec) {
   if (Number.isInteger(rec.launcher_pgid)) return lockGroupAlive(rec.launcher_pgid, rec.launcher_start);
   if (typeof rec.token !== 'string' || !/^[0-9a-f]{12}$/.test(rec.token)) return false;
   const pidText = readOr(path.join(hostRunDir(path.resolve(stateHome()), rec.token), HOST_FILES.pid), '');
-  if (/^\d+\n?$/.test(pidText)) return lockPidAlive(Number(pidText)) && procGroup(Number(pidText)) === Number(pidText);
+  if (/^\d+\n?$/.test(pidText)) return pidFileLauncherAlive(pidText);
   return !pidText && Number.isFinite(rec.host_ms) && Date.now() - rec.host_ms < HOST_PID_GRACE_MS;
 }
 function lockForeignLine(rec) {
@@ -4387,11 +4393,11 @@ async function hostedChild(bin, argv, opts) {
         pushCapped(key === 'out' ? out : err, d, cap);
         if (key === 'out') opts.onStdout?.(d); else opts.onStderr?.(d);
         // Cut the same inode after twice the cap and resume at offset zero next poll.
-        if (pos[key] > 2 * cap) {
-          try { fs.ftruncateSync(fds[key], 0); } catch (e) {
-            if (!cutFailed[key]) { cutFailed[key] = true; log(`cross-ai: host: could not cut ${key} (${e.code || e.message})`); }
+        // A failed cut keeps the offset (the file then grows): rereading it would relay old bytes and feed the idle clock.
+        if (pos[key] > 2 * cap && !cutFailed[key]) {
+          try { fs.ftruncateSync(fds[key], 0); pos[key] = 0; break; } catch (e) {
+            cutFailed[key] = true; log(`cross-ai: host: could not cut ${key} (${e.code || e.message})`);
           }
-          pos[key] = 0; break;
         }
       }
     };
@@ -4570,7 +4576,8 @@ async function sweepRuns({ explicit, hostingOff, onlyToken = null }) {
     }
     if (rec.host_name !== os.hostname()) { counts['other host']++; continue; }
     if (runnerAlive(rec)) continue;
-    if (launcherGroupAlive(rec)) { counts['live launcher']++; continue; }
+    // A runner killed before it adopted the launcher left only the pid file: never claim (and delete) a live one.
+    if (launcherGroupAlive(rec) || (rec.launcher_pgid === null && pidFileLauncherAlive(readOr(path.join(dir, HOST_FILES.pid), '')))) { counts['live launcher']++; continue; }
     const claimed = path.join(root, `${token}.sweep-${me}`);
     if (claimed !== dir) { try { fs.renameSync(dir, claimed); } catch { continue; } }
     dropSecrets(claimed);
@@ -4704,6 +4711,9 @@ const MAX_NESTED_REPOS = 8;
 let gitFailure = null;
 // The non-git polling note prints once per run.
 let treePollNoted = false;
+// The no_tree_change finding and the failed-read note are once per run, not once per ladder attempt.
+let noTreeChangeNoted = false;
+let pollFailNoted = false;
 
 function gitFailed(result, what) {
   gitFailure = { kind: result.timedOut ? 'timeout' : 'error', what };
@@ -4992,8 +5002,8 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
   const poll = { bg: { stops: new Set(), cancelled: false }, inFlight: null, stopped: false,
     prev: { head: liveBaseline?.head ?? null, tree: liveBaseline?.tree ?? null }, commits: 0,
     treeChanged: false, lastChangeMs: pollStart, lastReadMs: pollStart, lastDoneMs: 0,
-    lastNoticeMs: 0, noticed: false, failNoted: false, idleDue: false, allowIdle: false };
-  const pollFailed = (text) => { if (!poll.failNoted) { poll.failNoted = true; log(text); } };
+    lastNoticeMs: 0, idleDue: false, allowIdle: false };
+  const pollFailed = (text) => { if (!pollFailNoted) { pollFailNoted = true; log(text); } };
   // Changed trees reset the clock; unchanged or failed reads release deferred idle.
   const onRead = (read, quiet) => {
     poll.inFlight = null;
@@ -5013,7 +5023,7 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
         poll.lastNoticeMs = performance.now();
         const n = Math.round(still / 1000);
         log(`cross-ai: ${label} printed output but changed nothing in the checkout for ${n}s`);
-        if (!poll.noticed) { poll.noticed = true; addFinding('no_tree_change', `${label} printed output but changed nothing for ${n}s`); }
+        if (!noTreeChangeNoted) { noTreeChangeNoted = true; addFinding('no_tree_change', `${label} printed output but changed nothing for ${n}s`); }
       }
     }
     if (poll.idleDue) { poll.idleDue = false; poll.allowIdle = true; if (idleCtl) idleCtl.recheck(); }
@@ -5052,7 +5062,9 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
     const hosted = await hostedChild(bin, argv, { ...childOpts, host: opts.host, promptArg: opts.promptArg });
     if (hosted.hostFailed) {
       hostFailedNote(opts.host, hosted.hostFailed, hosted.rerun);
-      if (!hosted.rerun) r = { code: null, signal: null, timedOut: false, limited: false, spawnErr: null, stdout: '', stderr: '' };
+      // The headless rerun is the lane now: the lock must not name the abandoned tab.
+      if (hosted.rerun) lockUpdate({ token: null, tab_id: null, host_ms: null });
+      if (!hosted.rerun) r ={ code: null, signal: null, timedOut: false, limited: false, spawnErr: null, stdout: '', stderr: '' };
     } else r = hosted;
   }
   if (!r) r = await runChild(bin, argv, childOpts);
@@ -5649,9 +5661,13 @@ function promptFiles(prompt) {
   return out;
 }
 
-// D-13 seed, label judged; recall unverified because the original report is unavailable.
+// D-13 seed, label judged: lowercase substrings after 999.15-LESSONS 1.3 (a 26-03 report admitted
+// unimplemented plan cases); recall unverified (the original report text is not in the repository).
+// CONFIG.admissionPhrases replaces it; the matched phrase is printed.
 const ADMISSION_PHRASES_SEED = Object.freeze(['not implemented', 'not completed', 'did not implement', 'did not complete', "didn't implement", "didn't complete", 'left unimplemented', 'left for later', 'deferred to a later', 'deferred to a follow-up', 'could not finish', 'could not complete', 'could not implement', 'unable to complete', 'unable to implement', 'remaining work', 'skipped the task', 'skipped task']);
-// D-14 seed: GSD execute-phase orchestrator-owned files and the 999.15 list.
+// D-14 seed, source: GSD execute-phase/detail/elaboration.md step 4 (the orchestrator writes STATE
+// and ROADMAP after an external lane) plus REQUIREMENTS from the 999.15 list, verified 2026-11-16.
+// CONFIG.forbiddenPaths replaces it; a path the prompt's <files> names is exempt.
 const FORBIDDEN_PATHS_SEED = Object.freeze(['.planning/STATE.md', '.planning/ROADMAP.md', '.planning/REQUIREMENTS.md']);
 const PLAN_ID_RE = /^[0-9]+(\.[0-9]+)*-[0-9]+[A-Za-z0-9.-]*$/;
 
@@ -5679,7 +5695,8 @@ function parseTasks(text) {
   return tasks;
 }
 
-// Match gsd-core's leading-integer zero-padding rule, or literal invalid fragments.
+// Orchestrator decision 4: port of gsd-core gate-evaluation-scope.cjs:113-119, :126-134 and :145-148
+// (zero padding only in the leading integer of each half; the rest literal).
 function planSubjectRe(id) {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const padded = (v) => { const m = /^(\d+)(.*)$/.exec(v); return m ? `0*${esc(m[1].replace(/^0+(?=\d)/, ''))}${esc(m[2])}` : esc(v); };
@@ -5751,7 +5768,8 @@ async function diffNames(a, b, cwd, limit = runDeadline) {
   return diff.stdout.split('\0').filter((p) => p.length > 0).sort();
 }
 
-// D-11: parse git log records separated by record and field separators.
+// D-11: port of gsd-core gate-evaluation-scope.cjs:787-803 (parseLog): records end in \x1e, fields
+// are split on \x1f, a record without a hex sha is skipped.
 function parseCommitLog(text) {
   const commits = [];
   for (const record of String(text || '').split('\x1e')) {
@@ -5764,7 +5782,9 @@ function parseCommitLog(text) {
   return commits;
 }
 
-// D-11: ordinary commits contribute their paths; two-parent merges use remerge-diff.
+// D-11: port of gsd-core gate-evaluation-scope.cjs:760-768 (commitFiles): a non-merge contributes
+// what it changed, a two-parent merge only what the merge itself changed (--remerge-diff), an
+// octopus merge or a git without --remerge-diff nothing; null when the read fails.
 async function commitPaths(git, sha, parents, cwd, limit) {
   const merge = parents.length > 1;
   if (merge && parents.length !== 2) return [];
@@ -5792,9 +5812,18 @@ async function commitsSince(baseHead, endHead, cwd, limit) {
   return commits;
 }
 
+// An owner's CONFIG list replaces a seed only as a list of strings; anything else keeps the seed with a note.
+function configList(name, seed) {
+  const value = CONFIG[name];
+  if (value === undefined || value === null) return seed;
+  if (Array.isArray(value) && value.every((s) => typeof s === 'string')) return value;
+  log(`cross-ai: note: CONFIG.${name} is not a list of strings; the seed list is used`);
+  return seed;
+}
+
 // SPEC R5: check spawned execute runs against the baseline; fail closed on missing git evidence.
 async function executeFindings(prompt, r, end, cwd, o, noTree) {
-  const common = { answer: r.ok ? (r.text || '') : '', answered: Boolean(r.ok), phrases: CONFIG.admissionPhrases ?? ADMISSION_PHRASES_SEED, forbidden: [...(CONFIG.forbiddenPaths ?? FORBIDDEN_PATHS_SEED), ...(o.forbid || [])], named: promptFiles(prompt), planId: o.planId ?? null };
+  const common = { answer: r.ok ? (r.text || '') : '', answered: Boolean(r.ok), phrases: configList('admissionPhrases', ADMISSION_PHRASES_SEED), forbidden: [...configList('forbiddenPaths', FORBIDDEN_PATHS_SEED), ...(o.forbid || [])], named: promptFiles(prompt), planId: o.planId ?? null };
   let result;
   if (noTree) result = planFindings({ ...common, tasks: [], commits: [], changed: [], uncommitted: [] });
   else {
@@ -6731,7 +6760,6 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
 // 38-08: the names the self-test harness (cross-ai-selftest.mjs) imports. One list,
 // never per-declaration exports (the test extractors read `function name(` lines).
 export {
-  parseCommitLog,
   ADMISSION_PHRASES_SEED,
   ARGV_PROMPT_MAX,
   CLAUDE_EXEC_FORMULA_RECORD,
@@ -6820,6 +6848,7 @@ export {
   overlaySpentMs,
   ownValue,
   parseArgs,
+  parseCommitLog,
   parseTasks,
   parseTomlSubset,
   pathCovers,

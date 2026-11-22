@@ -661,7 +661,8 @@ def _parse_verdicts(stdout: str, count: int) -> list | None:
         return None
     if not all(item is None or isinstance(item, str) for item in data):
         return None
-    return [_cause_text(item) if isinstance(item, str) else None for item in data]
+    # A warning that sanitizes to nothing is still a skip, never a resolve.
+    return [(_cause_text(item) or "skipped") if isinstance(item, str) else None for item in data]
 
 
 def _base_mismatch(stdout: str, expect: str | None) -> str | None:

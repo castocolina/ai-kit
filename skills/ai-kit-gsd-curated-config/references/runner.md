@@ -55,7 +55,7 @@ ai-kit's `config.toml` table `[runner.retry]` (the project `.aikit/config.toml` 
 migrates an old `workflow.cross_ai_retry` block and the old user `cross-ai.json` into it once (see the
 policy reference). CONFIG also keeps a `retry`
 object, the last fallback below those two: do not tune it there, because CONFIG edits only
-receive `.new` upgrades. The caller owns the hard waits and notice. CONFIG retains `capS` (at most 14400), `attemptTimeoutS`, `routerBacked`, `runtime`, `idleTimeoutS`, `forbiddenPaths` and `admissionPhrases`; a copy whose CONFIG predates the last three reads the watchdog as off and the seed lists as the template's. For caller actions on any non-ok
+receive `.new` upgrades. The caller owns the hard waits and notice. CONFIG retains `capS` (at most 14400), `attemptTimeoutS`, `routerBacked`, `runtime` and `idleTimeoutS`; a copy whose CONFIG predates `idleTimeoutS` reads the watchdog as off. `forbiddenPaths` and `admissionPhrases` are optional CONFIG keys, absent from the shipped block: without them the template's seed lists apply, and a value that is not a list of strings keeps the seed with a note. For caller actions on any non-ok
 status, see [`../../ai-kit-cross-ai/SKILL.md`](../../ai-kit-cross-ai/SKILL.md).
 
 ## Runner upgrade

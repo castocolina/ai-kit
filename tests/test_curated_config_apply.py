@@ -1624,6 +1624,12 @@ class TestGsdSkillVerdictNotes(unittest.TestCase):
         self.assertEqual(plan_io.gsd_skill_verdicts(["x"], {}, check),
                          (['Skill not found at "x[31m"'], None))
 
+    def test_cause_empty_after_sanitizing_is_still_skipped(self):
+        for warning in ("", "\x1b\x07", "[agent-skills] WARNING:  — skipping"):
+            with self.subTest(warning=warning):
+                check = self.make_check((0, json.dumps([warning]), ""))
+                self.assertEqual(plan_io.gsd_skill_verdicts(["x"], {}, check), (["skipped"], None))
+
 
 class _RecordingRun:
     def __init__(

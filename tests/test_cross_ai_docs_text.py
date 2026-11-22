@@ -139,10 +139,11 @@ class ReadmeAndProfileDocs(unittest.TestCase):
 
 class SupervisionDocsText(unittest.TestCase):
     def test_dispatch_table_covers_every_runner_status(self):
-        self.assertTrue(runner_status_names() <= dispatch_status_names(DISPATCH.read_text()))
+        text = DISPATCH.read_text(encoding="utf-8")
+        self.assertTrue(runner_status_names() <= dispatch_status_names(text))
 
     def test_new_statuses_map_to_real_error(self):
-        row = next(line for line in DISPATCH.read_text().splitlines()
+        row = next(line for line in DISPATCH.read_text(encoding="utf-8").splitlines()
                    if "`partial`" in line and line.startswith("|"))
         self.assertIn("`locked`", row)
         self.assertTrue(row.endswith("| `real_error` |"))
@@ -156,14 +157,14 @@ class SupervisionDocsText(unittest.TestCase):
             sys.path.remove(str(ERROR_CLASSIFIER_DIR))
 
     def test_dispatch_names_the_check_group_and_sweep(self):
-        text = DISPATCH.read_text()
+        text = DISPATCH.read_text(encoding="utf-8")
         for value in ("`coverage`", "`findings`", "cross-ai: finding reason=", "--sweep",
                       "complete label", "cross-ai: note: an execute run holds this checkout"):
             self.assertIn(value, text)
 
     def test_runner_md_names_the_supervision_flags(self):
-        text = RUNNER_MD.read_text()
-        template = TEMPLATE.read_text()
+        text = RUNNER_MD.read_text(encoding="utf-8")
+        template = TEMPLATE.read_text(encoding="utf-8")
         for flag in SUPERVISION_FLAGS:
             self.assertIn(flag, text)
             self.assertIn(f"'{flag}'", template)
@@ -172,12 +173,13 @@ class SupervisionDocsText(unittest.TestCase):
             self.assertIn(value, text)
 
     def test_status_scan_catches_a_missing_status(self):
-        text = DISPATCH.read_text().replace(", `locked` | `real_error` |", " | `real_error` |")
+        text = DISPATCH.read_text(encoding="utf-8")
+        text = text.replace(", `locked` | `real_error` |", " | `real_error` |")
         self.assertFalse(runner_status_names() <= dispatch_status_names(text))
 
     def test_curated_skill_names_the_new_rules(self):
-        text = CURATED_SKILL.read_text()
-        step = text.split("3. **Review the plan with the user**", 1)[1].split("```", 1)[0]
+        text = CURATED_SKILL.read_text(encoding="utf-8")
+        step =text.split("3. **Review the plan with the user**", 1)[1].split("```", 1)[0]
         for value in ("cross_ai_timeout", "1800", "current value",
                       "owner's router naming convention"):
             self.assertIn(value, step)
@@ -185,7 +187,7 @@ class SupervisionDocsText(unittest.TestCase):
         self.assertIn("buildAgentSkillsBlock", refusal)
 
     def test_curated_exit_sentence_names_the_new_statuses(self):
-        text = CURATED_SKILL.read_text().split("These are this CLI's exits.", 1)[1]
+        text = CURATED_SKILL.read_text(encoding="utf-8").split("These are this CLI's exits.", 1)[1]
         paragraph = text.split("\n\n", 1)[0]
         for value in ("`partial`", "`locked`", "idle watchdog"):
             self.assertIn(value, paragraph)

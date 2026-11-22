@@ -141,6 +141,12 @@ class CoveringTest(MapperCase):
         self.assertIn("tests.test_skill_text_history",
                       self.mapper.covering_modules(index, "skills/ai-kit-cross-ai/SKILL.md"))
 
+    def test_the_hardcoded_model_guard_is_selected_for_a_self_test_harness_change(self) -> None:
+        index = self.mapper.build_index(REPO_ROOT)
+        harness = "skills/ai-kit-spec-review/references/cross-ai-selftest.mjs"
+        self.assertIn("tests.test_arch_hardcoded_models",
+                      self.mapper.covering_modules(index, harness))
+
     def test_a_staged_test_module_covers_itself(self) -> None:
         index = self.mapper.build_index(self.root)
         self.assertIn("tests.test_beta", self.mapper.covering_modules(index, "tests/test_beta.py"))
