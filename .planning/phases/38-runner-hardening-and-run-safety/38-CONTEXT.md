@@ -1,6 +1,6 @@
 # Phase 38: Runner hardening and run safety - Context
 
-**Gathered:** 2026-11-16 (interactive path, no owner question needed, jev screening, after 38-SPEC.md); updated 2026-11-16 (re-run 2, herdr hosting, interactive path, jev screening, after the 38-SPEC.md R12 addition)
+**Gathered:** 2026-11-16 (interactive path, no owner question needed, jev screening, after 38-SPEC.md); updated 2026-11-16 (re-run 2, herdr hosting, interactive path, jev screening, after the 38-SPEC.md R12 addition); amended 2026-11-21 (cross-phase amendment for what Phase 37 shipped, read against the code)
 **Status:** Ready for planning (after Phase 37 lands: this phase edits the runner file that phase rewrites, moves the self-test
 cases it adds, and extends the status line group it adds)
 
@@ -276,6 +276,40 @@ a launcher can delete its env and prompt files as its first steps; an append-mod
   `aikit:<role>:<runtime>:<12-character token>`; the token is unique per spawn, so two runs, two attempts or two parallel review lanes
   never share a tab, and no lock is involved for panes (the checkout lock of D-06 is for execute runs only). The sweep matches the
   complete label, so the grammar is part of the protocol fixture. Pane reuse across calls is Phase 42's and would need its own record.
+
+### Added 2026-11-21 (cross-phase amendment: what Phase 37 shipped)
+
+Read at HEAD 5cf21ac against the code; the evidence (path:line) is in 38-SPEC.md "Live facts added 2026-11-21". The decisions above
+stay as written; these notes say how they read against the shipped code.
+
+- **D-19 (harness move):** the range is `FAKE_PRELUDE` (`cross-ai.mjs:6433`) to the end of `blackBoxSelfTest` (:14783) of 15,179
+  lines, 626 cases. The runtime liveness helpers that 37-19 moved out of the self-test (`pidAlive`, `procStartTime`, `procGroup`,
+  `procSession`, `groupMembers`) stay in the runner and join the export list. The 14 runner hits of the hardcoding baseline
+  (`cleaned_by: "37"`, not cleaned) are rewritten to allowed forms, because the shrink-only guard cannot move them to the sibling.
+  The template goes from version 9 to 10; the live copy is re-rendered through `ensure-runner`, the shard times are re-recorded and
+  `make check-dogfood` ends `check-dogfood: ok`, in the last wave (the 37-23 shape).
+- **D-01, D-28 (idle hook):** the headless hook goes into `runChild`'s finalize path; the hosted hook goes into `hostedChild`'s own
+  `finalize`, which since the 37 review (MEDIUM-1) ends the launcher's group on every exit. No second kill routine.
+- **D-06, D-08, D-26 (lock):** the start-time read is `procStartTime` (Linux; the `ps -o lstart=` fallback is new code). A hosted
+  lane's group in the lock record is `run.json`'s `launcher_pgid`, alive by the shipped rule (verified leader through
+  `launcherVerified`, else a live member found by `groupMembers(pgid, sid)`). This answers the open question on a dead leader with a
+  live member: `groupMembers` already scans `/proc` for it. The runner has no `process.on('exit')` handler; the lock's backstop is new
+  and sits beside `exitFlushed`, the one exit path.
+- **D-25 (run record):** shipped by 37-19 with the 15 fixture fields (`launcher_pgid` added to D-25's list); Phase 38 reads them and
+  renames nothing. D-31's launcher deletion of `env` and `prompt` and D-30's append mode shipped too; the truncation at twice the cap
+  did not and is Phase 38 work.
+- **D-27 (sweep):** `tab list` joins `HERDR_VERBS` (comment "Phase 38 adds tab list"), the arch rule's `HERDR_VERBS_ALLOWED` and the
+  fixture's `herdr_verbs` in one plan; the fake herdr gains `tab list` (it exits 2 on an unknown verb today) and already holds the
+  foreign tab `t0`. A record with a null `launcher_pgid` (no `pid` was written) is judged by the runner's liveness alone.
+- **D-15 and R1 output:** the status-line group goes between Phase 37's `escalate=` and `retry_after_s=`; the idle watchdog, lock,
+  `--baseline`, `--plan-id`, `--forbid` and `--sweep` are supervision flags, not entries of `SETTING_NAMES`, so the 37 settings
+  report and its closed lists do not change. `--describe` gains new keys for statuses, finding codes and flags beside its existing
+  keys. For a call without the new flags the `--print-argv` stdout line and every existing stderr line stay byte-identical (the one
+  idle line and the `coverage=- findings=-` group are the only additions).
+- **D-20 (gsd-core call):** the node child runs through `run_in_own_group` (Volta shim hazard); tests use `_real_node_executable()`.
+- **D-24 (judge):** Phase 37 brought `ai-kit-cross-ai` to the bar (loop 37 round 3, worst 83.2 B); the loop still runs because the
+  SKILL.md changes materially (AGENTS.md), judged against no regression from 83.2 B.
+- **Grok:** no plan of this phase adds or extends a line naming grok (owner, 2026-11-19; Phase 39.1 removes it).
 
 ### Handoffs to later phases
 

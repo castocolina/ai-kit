@@ -99,13 +99,92 @@ probe itself; the scripts and outputs are under `tmp/spec-discuss-35-39/`, not c
 - A writer appending through a `>>` redirect kept writing correctly while another process truncated the file to zero after each
   read: 3 MiB written, all 3 MiB read, two truncations, final file not sparse.
 
+**Live facts added 2026-11-21 (cross-phase amendment: what Phase 37 shipped; read at HEAD 5cf21ac, unit 38 stacked on Phase 37's
+code-review fold 42bad13; every line below was read in the code, `cross-ai.mjs` = `skills/ai-kit-spec-review/references/cross-ai.mjs`):**
+
+- *Size and shape.* The template is 15,179 lines at template version 9 (`cross-ai.mjs:2`, `cross_ai.py:60` `TEMPLATE_VERSION = 9`);
+  `--self-test-list` prints 626 cases (567 `logic`, 59 `runtime`, 19 `host-`). The harness now runs from `FAKE_PRELUDE`
+  (`cross-ai.mjs:6433`) through the fakes (`writeFakePi` :6468 to `writeFakeHerdr` :7133), `STATUS_HEAD_RE` (:7187), the case
+  runners (`reapUnder` :7315, `runSelfTestCase` :7524, `selfTestRoot` :7581) and `blackBoxSelfTest` (:7591 to :14783); `callOf`
+  (:14785) and `main` (:14831) follow it. The 2026-11-16 figures (lines 5400 to 12550 of 12,840, about 430 cases) are superseded.
+- *Findings line numbers.* `watchChunk(cli, source, relay, state, chunk)` is at `cross-ai.mjs:5310` (callers :5357, :5365), the
+  `dropState` test `STATE_DELETE.has(status) || (status !== 'quota' && !QUOTA_KEEP.has(status))` at :5624, and the redundant
+  assignment before `return argv` in `build_runner_argv` at `runner_dispatch.py:273-277`. `clampAttemptTimeout` (:3775), `clampCapS`
+  (:3781), `liveMatch` (:5287) and `armLimit` (:5300) are present.
+- *Run record and run directory (plan 37-19, fixed; Phase 38 reads them and renames nothing).* `tests/fixtures/runner_host_protocol.json`
+  pins `run_dir` `<state home>/ai-kit/spec/host/<token>`, `dir_mode` 700, `file_mode` 600, the files `run.json`, `launch.sh`, `env`,
+  `prompt`, `out`, `err`, `pid`, `rc` (`HOST_FILES`, `cross-ai.mjs:4706`), `token_pattern` `^[0-9a-f]{12}$`, the label
+  `aikit:(review|execute):<runtime>:<token>` (pattern and `max_length` 63 in the fixture), `typed_line` `sh <launcher path>`,
+  `done_line` `AIKIT-HOST-DONE <token> rc=<rc>`, `verdict` `rc`, and `run_record_fields`, exactly: `checkout_root`, `created_ms`,
+  `host_name`, `label`, `launcher_pgid`, `launcher_pid`, `launcher_start`, `pane_id`, `role`, `runner_pid`, `runner_start`,
+  `runtime`, `tab_id`, `token`, `version` (`RUN_RECORD_VERSION = 1`; written by `writeRunDir`, :4828-4846, through
+  `writeCycleState`). `launcher_pgid` is a field R12's list did not name. The record is rewritten at `tab create` (:4943) and at the
+  first pid read (`adoptPid`, :4982-4993), also from a `finalize` that runs before the first poll (37 review MEDIUM-6).
+- *The launcher's group.* The launcher re-execs itself under `/usr/bin/env -i ... /usr/bin/setsid /bin/sh "$0"` (`buildLauncher`,
+  :4808); util-linux `setsid` forks when the caller already leads its group (a pane job does), and the `pid` file is written by the
+  forked shell (`$$`, :4815), so it holds the real launcher pid, which leads its own session and group (session id = group id = pid).
+  `launcher_pgid` is `procGroup(launcher pid)` at adoption. Any liveness test or signal of Phase 38 for a hosted lane (the R3/R12
+  lock's "child group", the R12 idle kill, the sweep's "launcher group is gone") targets the recorded `launcher_pgid` with the rule
+  37 shipped: a verified leader (`launcherVerified`, :4891: recorded start not `-`, unchanged start, group id equal to pid) or, when
+  the leader is gone, a live member of that group and session (`groupMembers(pgid, sid)`, :4768, a `/proc` scan; neither id is
+  reused while a member lives); a launcher that was already gone at adoption is unverified and only members of the session it made
+  itself (sid = pgid = pid) count. Since the 37 review (MEDIUM-1) `hostedChild.finalize` ends that group on every exit (SIGTERM,
+  wait unless the lane exited, SIGKILL) and the idle kill must reuse that finalize path, not a second kill routine.
+- *Liveness helpers are runtime code.* `pidAlive` (zombie-aware, :4712), `procStartTime` (field 22 after the last `)`, `-` when
+  unreadable, :4741), `procGroup` (:4749), `procSession` (:4758) and `groupMembers` (:4768) live in the runner's hosted-lane block,
+  not only in the self-test; R3's start-time read and R12's checks reuse them. Linux only: there is no `ps -o lstart=` fallback in
+  the code yet (R3's non-Linux read is new work).
+- *What R12 already has.* The launcher sources `env`, opens `prompt` on file descriptor 3 (or reads it for an argv prompt) and
+  deletes both before it writes `pid` (:4810-4815); it appends to `out` and `err` (`>>`, :4817); the runner's `dropSecrets` and
+  `keepRecordOnly` (:4871-4880) run on every exit path it controls, and `exitFlushed` (:1334-1343) retries the tabs in `openTabs`
+  and keeps only `run.json` when a close is not confirmed ("kept ... for the sweep"). Not shipped: the sweep, `--sweep`, `tab list`,
+  the 2x-cap truncation (`hostedChild.readNew`, :4963-4972, reads into `pushCapped` buffers but never truncates a file), the idle
+  hook, and a lock. The runner has no `process.on('exit')` handler; `exitFlushed` is its one exit path (R3's release joins it).
+- *herdr verbs, three places.* `HERDR_VERBS = ['tab create', 'pane run', 'tab close']` (:4674, comment "Phase 38 adds tab list"),
+  the arch rule `HERDR_VERBS_ALLOWED` (`tests/test_arch.py:1860-1862`) and the fixture's `herdr_verbs` move together when `tab
+  list` joins; `herdrCall` (:4678) stays the one herdr spawn site. The fake herdr (`writeFakeHerdr`, :7133) answers `tab create`,
+  `pane run`, `tab close` and exits 2 on any other verb; it already holds a foreign tab `t0` labelled `aikit:review:pi:000000000000`.
+- *Status line, settings report, sessions, `--describe`.* Phase 37's group is `session=<id|-> applied=<..> ignored=<..> unknown=<..>
+  escalate=<..>` after `attempts= cycles=` and before `retry_after_s= cycle=` (`finish`, :1288-1313; `STATUS_HEAD_RE`, :7187-7190);
+  R5's `coverage= findings=` group goes between `escalate=` and `retry_after_s=` and `STATUS_HEAD_RE` gains it as one optional group.
+  Python reads the line token by token (`parse_status_line`, `runner_dispatch.py:280-286`). The settings report prints `cross-ai:
+  setting <name>=<value> applied|ignored reason=<r>` for the closed names `SETTING_NAMES` (:1570: model, provider, role, effort,
+  context, session, escalate_runtime, escalate_model, host, skill, mcp) and reasons `SETTING_REASONS` (:1569); the idle watchdog,
+  the lock, `--baseline`, `--plan-id`, `--forbid` and `--sweep` are runner supervision flags, not lane settings, so neither list
+  changes (R11: "Phase 37's reason list unchanged"). `--describe` prints `{schema: 1, template_version, settings, reasons, states,
+  runtimes, host}` (`describeJson`, :14810-14829; golden `tests/fixtures/runner_describe_golden.json`) and has no status, flag or
+  finding key today, so "`--describe` lists" (R5, R11, R12) means new keys added beside the existing ones, which stay unchanged.
+- *`--print-argv` stability.* Python reads `--print-argv` stdout and stderr lines (`print_argv_lines`, `runner_dispatch.py:301-323`;
+  `preview_model_id` reads the `cross-ai: model-id` line). For a call that passes none of the new flags, the stdout argv line and
+  every existing stderr line stay byte-identical; the only differences allowed are the ones this SPEC adds: R1's one idle line and
+  R5's status-line group (`coverage=- findings=-` on a no-spawn call).
+- *Node children (Volta shim hazard).* `node` on PATH here is a Volta shim that forks a chain a plain `subprocess.run` timeout does not
+  stop. Product code that spawns node runs it through `run_in_own_group` (`ai_kit_spec/detection.py:951`: own session, group killed on
+  timeout), as `print_argv_lines` does; tests take node from `tests.cross_ai_selftest._real_node_executable()` (:39). This binds R9's
+  gsd-core call and every new test that runs the runner.
+- *Runner copy rule.* The live `.planning/scripts/cross-ai.mjs` (header `sha256=` stamp) is re-rendered through curated-config
+  `ensure-runner` (`cross_ai_script.ensure_runner`); `make check-dogfood` must end `check-dogfood: ok` (the 37 review's first fold
+  push was refused on a stale copy). A phase 38 template change therefore ends with a re-render of the live copy and a re-record of
+  the self-test shard times (`python3 tests/cross_ai_selftest.py --record-times`, `tests/fixtures/cross_ai_selftest_secs.json`), as
+  plan 37-23 did; the template version goes from 9 to 10 (`TEMPLATE_VERSION` and the header) in the same step.
+- *Hardcoding baseline.* `tests/fixtures/no_hardcoded_models_baseline.json` still holds the runner entry with 14 hits and
+  `"cleaned_by": "37"` (Phase 37 did not clean it). The guard is shrink-only and scans `skills/`, so moving harness text into
+  `cross-ai-selftest.mjs` cannot carry a hit to a new path: R8's "entries removed" means each hit is rewritten to an allowed form
+  (`router-env/<x>`, `fake/<token>`, `fake-<token>`, `placeholder-model-<n>`) or removed with the runner entry.
+- *Judge state.* `ai-kit-cross-ai` met the bar in Phase 37 (loop 37 round 3, worst 83.2 B, critical 0; three high findings fixed under
+  the fix-3-or-fewer rule; digest stale by design; `37-VERIFICATION.md` on the unit 37 branch). R11's material SKILL.md update still
+  runs the judge loop (AGENTS.md), with no regression beyond run-to-run variation against 83.2 B.
+- *Grok.* Grok is not a target (owner, 2026-11-19; Phase 39.1 removes it). No Phase 38 plan, test, fixture, list or doc adds or extends
+  a line naming grok; existing grok text stays untouched.
+
 **Findings (existing code paths; some Phase 25 items are stale):**
 
 - `watchChunk(cli, source, relay, state, chunk)` uses only `relay` and `chunk` (cross-ai.mjs:4611); the `dropState` test
   `STATE_DELETE.has(s) || (s !== 'quota' && !QUOTA_KEEP.has(s))` equals `!QUOTA_KEEP.has(s)` (:4901);
   `runner_dispatch.py:260` ends `return argv` after an assignment (to re-check at plan time). Already gone: the `stoppedWhy`
   cooldown branch and `clampCooldownS`. Not dead: `clampCapS` (the 4-hour bound, T-25-13) and `clampAttemptTimeout` (read by
-  `attemptCapMs`); `liveMatch`, `armLimit` and the stdout limit watcher are live (CR-01).
+  `attemptCapMs`); `liveMatch`, `armLimit` and the stdout limit watcher are live (CR-01). *(Line numbers amended 2026-11-21: the
+  items now sit at `cross-ai.mjs:5310`, `:5624` and `runner_dispatch.py:273-277`; see Live facts added 2026-11-21.)*
 - WR-05 (a user's lower `cross_ai_timeout` lost on cleanup) lived in `skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/cli.py`
   (`clear-workflow-keys`), removed in Phase 31 (commit d1f0f9f). No flow today unsets the key. The only raise is curated-config's
   `timeout_value` (`cross_ai.py:166`, a value below 1800 becomes 1800) shown in the plan entry, with a per-apply backup.
@@ -122,6 +201,8 @@ probe itself; the scripts and outputs are under `tmp/spec-discuss-35-39/`, not c
   `query agent-skills <agent> --json` verb that reports `reason` and `warnings`.
 - The embedded self-test harness runs from about line 5400 to line 12550 of the 12,840-line template and holds about 430
   cases (`--self-test-list`, run live). Rendering is a config-block splice plus a hash header (`cross_ai_script.py`).
+  *(Amended 2026-11-21: 15,179 lines and 626 cases after Phase 37, harness from `:6433` to `:14783`; see Live facts added
+  2026-11-21.)*
 
 ## Requirements
 
@@ -152,6 +233,9 @@ probe itself; the scripts and outputs are under `tmp/spec-discuss-35-39/`, not c
      the watchdog never ends a lane that keeps printing.
    - *Amended 2026-11-16 (38 D-28, R12):* "byte on the child's stdout or stderr" also means growth of `out` or `err` for a lane
      Phase 37 hosts in a herdr tab; the clock, the notices, the attempt line and the ladder are unchanged.
+   - *Amended 2026-11-21 (Phase 37 shipped; Live facts added 2026-11-21):* the idle line printed by `--print-argv` is one added
+     stderr line; the stdout argv line and every other existing line of a call without the new flags stay byte-identical. A hosted
+     lane's idle end goes through `hostedChild`'s own `finalize` (37 review MEDIUM-1), which signals the recorded `launcher_pgid`.
 
 2. **An execute lane's idle clock also resets on tree or commit change, and a lane that prints but changes nothing is
    reported (RUN-03)**.
@@ -195,6 +279,9 @@ probe itself; the scripts and outputs are under `tmp/spec-discuss-35-39/`, not c
    - *Amended 2026-11-16 (38 D-26, R12):* for a lane Phase 37 hosts in a herdr tab, "the child process group once spawned" is the
      launcher's process group (with the run token and tab id beside it) and "its recorded child group is dead too" reads that
      group; a surviving tab is not a live lane and does not keep a lock.
+   - *Amended 2026-11-21 (Phase 37 shipped; Live facts added 2026-11-21):* the start-time read reuses the runner's `procStartTime`
+     and the group test reuses `pidAlive`, `launcherVerified` and `groupMembers` (runtime code since 37-19/37-20); the hosted lane's
+     group is the recorded `launcher_pgid`. The runner has no `exit` handler today: the backstop is new, beside `exitFlushed`.
    - Acceptance: a self-test case starts two execute runs on one fake checkout at the same moment: exactly one runs, the other
      prints the message and ends `locked`/75 with no spawn; a record with a dead pid is cleared with the stale notice and the
      run proceeds; a dead runner with a live recorded group refuses; a record of another host refuses; the lock file is absent
@@ -261,6 +348,9 @@ probe itself; the scripts and outputs are under `tmp/spec-discuss-35-39/`, not c
    - *Amended 2026-11-16 (38 D-29, R12):* a lane Phase 37 hosts in a herdr tab is checked by the same functions on the same
      inputs (the captured `out` is the answer, `rc` is the verdict, the reads are against the checkout); the finding list and the
      status-line group are unchanged, and a state home inside the checkout is excluded from the snapshot.
+   - *Amended 2026-11-21 (Phase 37 shipped; Live facts added 2026-11-21):* the group `coverage= findings=` sits between Phase 37's
+     `escalate=` and `retry_after_s=` (`finish`, `cross-ai.mjs:1288-1313`), `STATUS_HEAD_RE` (:7187) gains it as one optional group,
+     and `--describe` lists the statuses and finding codes under new keys beside its existing ones (golden updated in the same plan).
 
 6. **One confirmed-router rule (RUN-04)**.
    - Current: `resolve_route` and `router_confirmed` are two rules (Findings), and Phase 35 D-15 leaves router aliases
@@ -300,6 +390,11 @@ probe itself; the scripts and outputs are under `tmp/spec-discuss-35-39/`, not c
      smaller by the harness, runs `--print-argv` and one fake lane, and `--self-test` on it prints the refusal; the sync test
      passes unchanged; a test fails when the harness names a runner symbol the export list lacks; `make check-dogfood` passes
      on the re-rendered live copy; the hardcoding baseline entries for the runner's self-test are removed.
+   - *Amended 2026-11-21 (Phase 37 shipped; Live facts added 2026-11-21):* the harness range is now `FAKE_PRELUDE`
+     (`cross-ai.mjs:6433`) to the end of `blackBoxSelfTest` (:14783), about 8,350 of 15,179 lines, 626 cases; the runtime liveness
+     helpers (`pidAlive`, `procStartTime`, `procGroup`, `procSession`, `groupMembers`) stay in the runner and are exported to the
+     harness. The 14 runner baseline hits are rewritten to allowed forms (a shrink-only guard cannot move them to the sibling's path).
+     Tests that run the runner or the sibling take node from `_real_node_executable()`.
 
 9. **curated-config asks gsd-core which skills it would skip (RUN-04)**.
    - Current: `plan_io.py` and `skills.py` re-implement gsd-core's skill-resolution rules (Findings).
@@ -307,6 +402,9 @@ probe itself; the scripts and outputs are under `tmp/spec-discuss-35-39/`, not c
      gsd-core, resolved the way the repository's other gsd-core calls resolve it) against the candidate config and reads its
      diagnostics; the cause and fix text of each skipped entry is built from those diagnostics. The re-implemented resolution
      code is deleted. With no gsd-core present the check is skipped with a named note and never blocks or crashes.
+   - *Amended 2026-11-21 (Phase 37 shipped; Live facts added 2026-11-21):* the node child runs through `run_in_own_group`
+     (`ai_kit_spec/detection.py:951`), never a bare `subprocess.run` of PATH `node`; `buildAgentSkillsBlock` is at
+     `.claude/gsd-core/bin/lib/init.cjs:3828`, exported at :4361.
    - Acceptance: with the real project-local gsd-core a skipped entry (a missing path, an untrusted root) yields its cause from
      gsd-core's diagnostics and the same fix command as today; without gsd-core a plan edit proceeds with the note; the deleted
      functions are gone; the existing `skipped_skill_problem` tests pass or are replaced by tests of the same cases.
@@ -429,6 +527,14 @@ probe itself; the scripts and outputs are under `tmp/spec-discuss-35-39/`, not c
       deletes env and prompt before the lane runs and a planted key shape is in no file after the run; a hosted and a headless run of
       the same fake execute lane give the same findings, status line and exit code; the lock record of a hosted lane names the
       launcher group and `locked` names it; `--describe` lists `--sweep`; the headless path with no herdr is unchanged.
+    - *Amended 2026-11-21 (Phase 37 shipped; Live facts added 2026-11-21):* the run record, its order of creation, the launcher's
+      deletion of `env` and `prompt`, the append mode and the runner's secret removal on its own exit paths shipped in Phase 37
+      (37-19, 37-20, 37-25, review MEDIUM-1 and MEDIUM-6); Phase 38 reads `run.json` with the 15 field names of the protocol fixture
+      (including `launcher_pgid`) and renames none. New in Phase 38: `tab list` in `HERDR_VERBS`, the arch rule and the fixture
+      together; the fake herdr's `tab list` and the two recorded error shapes; the sweep and `--sweep`; the 2x-cap truncation in
+      `hostedChild.readNew`; the idle hook in `hostedChild`; the lock and baseline for a hosted lane. The sweep's "launcher group is
+      gone" uses the verified-leader and `groupMembers` rule of the Live facts, against `launcher_pgid`; a record whose
+      `launcher_pgid` is null (the launcher never wrote `pid`) has no group to test, so only the runner's liveness decides.
 
 ## Boundaries
 
