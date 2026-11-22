@@ -106,7 +106,7 @@ attempted this task [N] times; you own it now. Read the report file for what was
 the pick as ranked above the anchor in the execute order: its greater capability is inferred from
 that order, not verified. This run is the pre-dispatch choice for a fix round, not a recovery
 from a failed dispatch: a dispatch that then fails does not re-enter it (NEVER index; Step 3's
-`"quota"` and `"real_error"` branches decide the stop or the one-shot wake).
+`"quota_cycle"`, `"quota"` and `"real_error"` branches decide the stop or the one-shot wake).
 
 The floor needs no separate persistence: it is recomputed every time from `$LADDER_KEYS_JSON` and
 `$ESCALATION_ANCHOR_KEY`, and the latter is persisted. Round 5's stuck key is round 4's bumped

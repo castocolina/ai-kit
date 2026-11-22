@@ -260,12 +260,13 @@ path, report-file path and findings, with the report file as the persistent memo
 **MANDATORY: read [`references/dispatch-external-cli.md`](references/dispatch-external-cli.md) in
 full before the first `dispatch-task` of a task and again before acting on its result.** Do NOT
 load it for `mode == "native"`. It holds the artifact setup, Compose, Status contract and
-Dispatch steps, the **Classify** step (`ok`, `quota`, `real_error`) and, inside `quota`, the
+Dispatch steps, the **Classify** step (`ok`, `quota_cycle`, `quota`, `real_error`) and, inside `quota_cycle` and `quota`, the
 **Schedule-or-stop** step. What each outcome comes to:
 
 - **`"ok"`** — clear the resume state (block above), read the status from `stdout` only, and
   continue with subagent-driven-development's "2. Handle the report".
-- **`"quota"`** — only `RETURNCODE` 75 with whole-number `retry_after_s` and `cycle` gets one
+- **`"quota_cycle"`** and **`"quota"`** — only `quota_cycle` (`RETURNCODE` 75 with whole-number
+  `retry_after_s` and `cycle`) gets one
   one-shot wait and a re-dispatch of the same injection (Schedule-or-stop); every `RETURNCODE` 69
   (`stopped=hard-waits`, `stopped=cap`, or tokenless), a bare 75 and any other quota class are owner stops.
 - **`"real_error"`** — stop for the owner with the pinned state written.

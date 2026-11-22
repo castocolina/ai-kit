@@ -52,6 +52,9 @@ STATUS_TO_REASON: dict[str, str | None] = {
     "contract_violation": "real_error",
     "signal": "real_error",
     "git_error": "real_error",
+    # 38 R7: runner outcomes, never a host quota (a refused lock exits 75 with no retry_after_s).
+    "locked": "real_error",
+    "partial": "real_error",
     "git_timeout": "git_timeout",
 }
 # Exit code -> reason when no status line counts (D-12: exit 2 is configuration, 124 the

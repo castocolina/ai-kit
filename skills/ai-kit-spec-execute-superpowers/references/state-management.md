@@ -187,7 +187,7 @@ scheduled; the owner re-invokes to resume.
 
 ## Pinned-injection state write
 
-Step 3's `"quota"` branch (after its own fold) and `"real_error"` branch run this block verbatim
+Step 3's `"quota_cycle"` and `"quota"` branch (after its own fold) and `"real_error"` branch run this block verbatim
 instead of the one above. It is the same write with the two `WAVE_*` fold lines removed and
 `injection_json` added, so a wake or an owner re-invoke re-dispatches the exact injection that
 stopped, at the same fix round and anchor. Do not assemble it by editing the block above.
