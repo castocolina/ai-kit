@@ -128,6 +128,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [ ] **Phase 38.1: Runner error classification and retry policy (INSERTED)** - Wider error catalogue, stdout limit matching, router cooldowns and the owner's retry policy
 - [ ] **Phase 39: Lane capability blocks and lens skills** - Each lane is told only the tools it really has; lens skills reach reviewers
 - [ ] **Phase 39.1: Remove the grok runtime (INSERTED)** - The grok CLI runtime leaves detection, command building, the runner table, profiles, docs and tests; its models stay reachable through opencode, pi and cursor-agent *(inserted 2026-11-19, owner decision)*
+- [ ] **Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)** - The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks *(inserted 2026-11-23, owner decision)*
 - [ ] **Phase 40: Resilient review sized by jev** - A failing lane no longer ends a review; jev sizes and classifies
 - [ ] **Phase 41: Superpowers adapter refactor with spec-config handoff** - One resume path, one stop path, session-model fallback, complete executor briefs
 - [ ] **Phase 42: Code review after execution and jev-picked executors** - Implementation is reviewed in a capped loop; jev picks the executor and lane transport
@@ -1013,6 +1014,25 @@ Plans:
 
 **Plans**: TBD
 
+### Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)
+
+**Goal**: The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks. *(inserted 2026-11-23, owner decision; no SPEC yet, the SPEC step finalizes the criteria below)*
+**Depends on**: Phase 39
+**Requirements**: none yet (the SPEC step defines them)
+**Success Criteria** (what must be TRUE; seeded from the 2026-11-23 requirement candidates, the SPEC step finalizes them):
+  1. Each file is committed on the branch of the lowest open unit that owns it: a phase's own SPEC, CONTEXT and log on its unit; a cross-phase amendment on the amended phase's branch; REQUIREMENTS, ROADMAP, STATE and the goal file on the lowest open unit; the units above are restacked after each phase step. Test: an eval over three phases where the third amends the first ends with the amendment on the first unit, visible on all three, and no restack conflict.
+  2. A read-only where-am-I step runs at setup and before each phase: current branch, stack order with unit states, and the branch holding each phase's documents; it never edits the stack record. Test: a doc-contract test pins the step; an eval checks the printed fields.
+  3. Every later step that reads or writes phase N's files first runs `fold.py start --phase N` (reuse and checkout) and `fold.py guard --phase N`; the goal-prompt rails say the same for planning or executing an earlier phase. Test: an eval "plan the first phase after the chain" reads nothing from the top branch.
+  4. The end report states the branch the checkout is left on (the lowest phase of the range), the stack order with tips, which branch holds each phase's documents, the goal file's path and branch, and every `unit flow off` line. Test: a doc-contract test pins the fields.
+  5. Before the first `start`, the run stops with a reason when GSD's `git.branching_strategy` is not `none`, or when HEAD is an unrecorded branch with commits the trunk lacks; the agent moves no branch and edits no record. Test: two fixture repos, each refused with its reason.
+  6. The fold tool restacks the units above after a plain commit on a lower unit (no fold rewrite, no push), offers a read-only all-units view, and names a stale parent unit instead of `no_trunk`. Test: fixture-repo tests for each, with non-vacuity cases.
+  7. A recipe table in a spec-discuss reference maps each refusal or symptom (`ref_mismatch`, `wrong_parent`, `plan_not_carried`, `branch_missing`, stale unit, GSD branching on, unrecorded HEAD branch, inserted phase below open units, paused restack) to the next step. Test: a doc-contract test checks every listed reason appears with an action.
+  8. The changed SKILL.md files meet the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
+**Requirement candidates (captured 2026-11-23, owner request)**: spec-discuss branch strategy for stacked units. No v2.0 phase edits `ai-kit-gsd-spec-discuss` today; inserted as this phase on 2026-11-23, owner decision. Source: `.planning/todos/pending/2026-11-23-spec-discuss-branch-strategy-after-the-chain.md`.
+
+**Plans**: TBD
+
 ### Phase 40: Resilient review sized by jev
 
 **Goal**: A review survives a failing lane, and jev sizes the review and classifies disagreements before the owner is asked.
@@ -1313,7 +1333,7 @@ Plans:
 
 ## Progress
 
-**Execution Order:** 28 → 29 → 29.1 → 30 → 30.1 → 30.2 → 31 → 32 → 32.1 → 32.2 → 32.3 → 32.4 → 33 → ... → 38 → 38.1 → 39 → 39.1 → ... → 45 → 45.1 → 46 → 47 → 47.1 → 47.2 → 48 → ... → 54
+**Execution Order:** 28 → 29 → 29.1 → 30 → 30.1 → 30.2 → 31 → 32 → 32.1 → 32.2 → 32.3 → 32.4 → 33 → ... → 38 → 38.1 → 39 → 39.1 → 39.2 → ... → 45 → 45.1 → 46 → 47 → 47.1 → 47.2 → 48 → ... → 54
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
