@@ -34,5 +34,9 @@ run (523 s, 220 s).
   (the plan text named `escape_value` alone for some of them).
 - The code-index route choice lives in a helper `_index_route` (pylint branch and return caps); the tooling lines are built in one loop
   over the two names; docstrings are shorter than the plan's texts.
+- Open item (found after the fold, not changed): `child_path` joins an empty PATH entry onto `cwd`
+  (`child_path("", "/x") == "/x/"`, `child_path("/usr/bin:", "/x") == "/usr/bin:/x/"`), so with `cwd` set an absent PATH or an empty
+  segment resolves tools and the MCP command from the child's working directory; the plan says an empty PATH finds nothing and the
+  test for it leaves `cwd` unset. 39-12 is the first caller that passes `cwd`; dropping empty entries is the orchestrator's call.
 - Two newline expectations in Task 2 were written as the escaped form `\u000a` that `escape_value` prints (the plan said "escaped on one
   line" without the literal).

@@ -37,5 +37,7 @@ abaeddd (`test(39-11): pin lens pre-checks, the budget loop and the lens-note li
 - Docstrings and comments are shorter than the plan's texts; Task 1 left out the `json` and `shutil` imports until Task 2 used them.
 - `_read_raw` reads with a size-tracked loop (`os.read(fd, FILE_READ_MAX + 1 - size)`) instead of summing the chunk list each round
   (same bound); the frontmatter name lookup is a helper `_frontmatter_name` shared by `_runner_name` and the aliases.
+- The R8 position label of the `SKILL.md` check is `lens SKILL.md` without the lens name (the plan: `lens <name> SKILL.md`); the
+  label only appears in a rejection record that `check_lens` maps to `path_rejected`, so nothing shows it today.
 - A pathless row that is not delivered by name keeps `skill_name` None (the plan text is ambiguous there); such a row is never passed as
   a runner flag.
