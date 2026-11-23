@@ -1,0 +1,10 @@
+# Loop 38.1 round 1 fixes: ai-kit-cross-ai
+
+Four high findings (referee-one; referee-two had none), more than three, so `decide.py met 4 1` gave
+`next-round`: they are fixed here and the skill gets round 2. Each was checked against the runner
+template `skills/ai-kit-spec-review/references/cross-ai.mjs` first.
+
+- referee-one D8-1 (SKILL.md:100): confirmed (`migrateRetrySources` runs on every launching call except `--print-argv`, cross-ai.mjs:7018, and rewrites the legacy GSD file, :3631-3708). Section 2 now says the role confines the child, not the runner, names the one-time migration, and tells the caller to stop and ask the owner to migrate first before a review that must leave the checkout and the config untouched. File: skills/ai-kit-cross-ai/SKILL.md.
+- referee-one D8-3 (subprocess-quota-policy.md:55): confirmed (an applied `--session-id` pins the session: `sessionResets: pinned ? 0 : ...` and the refused fresh-session step, cross-ai.mjs:5686-5690, 6053-6069). The soft-series section gains a bullet for the pinned session, and section 5 of SKILL.md points to it. Files: skills/ai-kit-cross-ai/references/subprocess-quota-policy.md, skills/ai-kit-cross-ai/SKILL.md.
+- referee-one D8-4 (SKILL.md:181): confirmed (128+n is printed for a signal the runner itself catches, SIGTERM, SIGINT or SIGHUP, cross-ai.mjs:5388-5406; a child that dies on a signal is a failed attempt, :6044-6045). The exit-table row now says so. File: skills/ai-kit-cross-ai/SKILL.md.
+- referee-one D8-5 (launch-and-wait.md:58): the claim that opencode's shell tool has a background mode with a completion notice is not verified here (the recorded opencode help fixtures show none), so the fix is capability-based: the opencode section separates a completion notice from a delayed schedule, uses a background run with a completion notice when the session's own shell tool offers one, else the foreground wait, and schedules nothing either way; the fallback section names that exception. File: skills/ai-kit-cross-ai/references/launch-and-wait.md.

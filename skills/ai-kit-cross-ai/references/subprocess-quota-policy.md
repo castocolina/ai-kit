@@ -34,9 +34,12 @@ The catalog classifies each failed attempt:
   with no quota match. A timeout reaches the soft ladder only when `attemptTimeoutS` is set: with
   the shipped 0 the attempt uses the whole deadline, so a plain timeout stops as `timeout` (124).
 - `quota`: usage limit, quota, rate limit, 429. On a confirmed router lane, billing, access and
-  router-tail credential rows count as `quota` too. A lane is confirmed by `--route-<cli> router`
-  or by `CONFIG.routerBacked[cli] === true`; a name-only match is `router-inferred` and is not
-  confirmed.
+  router-tail credential rows count as `quota` too. A lane is confirmed by `--route-<cli> router`,
+  or by `CONFIG.routerBacked[cli] === true` when the call's model is that CLI's pinned
+  `CONFIG.models[cli]` (or none is pinned): another model on that CLI is `unknown`. The flag wins
+  over CONFIG (`--route-<cli> unknown` overrides the boolean). A name-only match is
+  `router-inferred` and is not confirmed. Read the status line's `route=` before treating a quota
+  stop as one that cycles.
 - Everything else is one attempt and a stop: auth, off-router billing, permission, bad model,
   `bad_request` (the provider refused the request itself, such as data inspection, context length
   or a client rule; exit 69), crash, empty answer, no change.
@@ -57,6 +60,11 @@ Both soft classes (transient, and quota on a confirmed router lane) share one la
 - A CLI with no session resume runs each soft retry as a new session, under the dirty-tree rule;
   `session_resets` does nothing there. The dirty-tree rule gates a fresh session: the tree
   must be unchanged, or the only changed paths must be the prompt's `<files>` paths.
+- An applied `--session-id` pins the session: the runner retries only that session, never resets
+  it (`session_resets` counts as 0), and a step that would start a fresh session (a retry on a
+  CLI that cannot resume that id) ends the call with the attempt's class and
+  `stopped=class`, after `cross-ai: --session-id was given; no fresh session is started (next=<step> refused)`.
+  A resumed call that fails this way gets no new session from the runner.
 - When the soft series is spent, or a deadline cuts it short, the runner exits 75 with the report
   and `retry_after_s=`. A deadline-cut series gets the hard tier too, never a bare exit 75.
 
