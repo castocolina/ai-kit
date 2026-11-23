@@ -795,8 +795,7 @@ def _build_parser():
     parser = argparse.ArgumentParser(prog="ai-kit-gsd-curated-config")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_ensure = sub.add_parser("ensure-project")
-    p_ensure.add_argument("--project-dir", required=True)
+    sub.add_parser("ensure-project").add_argument("--project-dir", required=True)
 
     p_profile = sub.add_parser("apply-profile")
     p_profile.add_argument("--project-dir", required=True)
@@ -876,7 +875,35 @@ def _build_parser():
     p_apply_workflow_defaults.add_argument(
         "--ui-review", required=True, choices=("true", "false")
     )
+    _register_skill_sort_parsers(sub)
     return parser
+
+
+def _register_skill_sort_parsers(sub) -> None:
+    """Use the review package's parsers, or register fallback flags for its missing-sibling note."""
+    module = gsd_catalog.load_ai_kit_spec_module("skill_classify")
+    if module is not None:
+        module.register_parsers(sub)
+        return
+    sub.add_parser("classify-skills").add_argument("--cwd", default=None)
+    confirm = sub.add_parser("confirm-skill-role")
+    confirm.add_argument("--name", required=True)
+    confirm.add_argument("--role", required=True)
+    confirm.add_argument("--global", dest="use_global", action="store_true")
+    confirm.add_argument("--cwd", default=None)
+
+
+def _cmd_skill_sort(args, which_fn, run_fn, env_fn) -> int:
+    """Run the review package's skill-sort handlers with this CLI's seams."""
+    module = gsd_catalog.load_ai_kit_spec_module("skill_classify")
+    if module is None:
+        print(f"ai-kit-gsd-curated-config: {gsd_catalog.SIBLING_MISSING}", file=sys.stderr)
+        return 2
+    try:
+        return module.COMMANDS[args.command](args, host.InventoryDeps(which_fn, run_fn, env_fn))
+    except ValueError as exc:
+        print(f"ai-kit-gsd-curated-config: config error: {exc}", file=sys.stderr)
+        return 2
 
 
 _COMMAND_HANDLERS = {
@@ -898,6 +925,8 @@ _COMMAND_HANDLERS = {
     "plan-unset": _cmd_plan_unset,
     "apply": _cmd_apply,
     "followups": _cmd_followups,
+    "classify-skills": _cmd_skill_sort,
+    "confirm-skill-role": _cmd_skill_sort,
 }
 
 

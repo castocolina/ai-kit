@@ -328,6 +328,7 @@ than `ok` comes up.
   is false, and `GSD_PATH_JEV=1` or `0` overrides that for one session.
 - **`ponytail_visibility`** lists the ponytail skills in each host's global skills root
   only; on claude they usually arrive as plugin rows in `skills`. Report what inventory says.
+- **Skill roles:** inventory's `skill_roles` gives each host's skills and MCP servers a role; for an `unsorted` skill run `classify-skills` (advisory proposals when jev is installed, none without it), show each proposal, and run `confirm-skill-role --name <n> --role <r>` only for a sort the user accepts.
 - **Limit:** skills kept only in a project's `.claude/skills` are **not** scanned.
 - **Plugin skills** need install plus layered `enabledPlugins` (user, project, local).
   Per-key layering is **unverified**: entries that rely on it carry an `effect` flag.

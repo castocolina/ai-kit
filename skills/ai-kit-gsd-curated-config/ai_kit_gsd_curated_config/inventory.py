@@ -370,6 +370,25 @@ _HOST_ROOT_WARN = (
 _SKILLS_ROOTS_WARN = (
     "gsd-core skills roots unavailable; global and plugin skills are not inventoried"
 )
+_SKILL_TABLE_MISSING_WARN = (
+    "the review skill's skill_table module is unavailable (older install); "
+    "skill_roles is not inventoried"
+)
+_SKILL_ROLES_NOTE_WARN = "skill_roles: {note}"
+
+
+def _skill_roles(project_dir, env, parts) -> None:
+    """Load the shared table once; surface missing modules and scan notes as warnings."""
+    table = gsd_catalog.load_ai_kit_spec_module("skill_table")
+    parts["skill_table"] = table
+    if table is None:
+        parts["config_warnings"] = [*parts["config_warnings"], _SKILL_TABLE_MISSING_WARN]
+        return
+    parts["skill_roles"] = table.scan(env, project_dir)
+    for note in next(iter(parts["skill_roles"].values()), {}).get("notes", []):
+        parts["config_warnings"] = [
+            *parts["config_warnings"], _SKILL_ROLES_NOTE_WARN.format(note=note)
+        ]
 
 
 def _normalize_lane_tables(tables: dict, host_name: str) -> tuple[dict, list[str]]:
@@ -403,7 +422,7 @@ def _assemble_inventory(project_dir, host_name, host_source, core: host.GsdCore,
     home = parts["home"]
     skills_roots = parts["tables"].get("skills_roots") or {}
     skills = skill_scan.scan_skills(project_dir, host_name, skills_roots, home)
-    ponytail = skill_scan.ponytail_visibility(skills_roots, home)
+    ponytail = skill_scan.ponytail_visibility(skills_roots, home, parts.get("skill_table"))
     if any(row.get("root_kind") == "plugin" for row in skills):
         info.append(
             _item(
@@ -442,6 +461,7 @@ def _assemble_inventory(project_dir, host_name, host_source, core: host.GsdCore,
         # apply's gsd-core skill check runs under this HOME, the one the skills were scanned in
         "home": home,
         **({"pi_session": parts["pi_session"]} if "pi_session" in parts else {}),
+        **({"skill_roles": parts["skill_roles"]} if "skill_roles" in parts else {}),
     }
 
 
@@ -489,4 +509,5 @@ def build_inventory(project_dir, opts: InventoryOpts, deps: host.InventoryDeps):
     parts["system_one_backend"] = skill_scan.system_one_backend(
         deps.env_fn(), deps.connect_fn
     )
+    _skill_roles(project_dir, deps.env_fn(), parts)
     return _assemble_inventory(project_dir, host_name, host_source, core, parts), None
