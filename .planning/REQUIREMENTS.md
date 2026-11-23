@@ -432,7 +432,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   from the router's own log (level warning), not from a client body, so the rows are scoped to confirmed router lanes with class
   `quota`, keep the reset as a display field `reset_after_s`, and are labeled unverified until a client body is captured; the
   wildcard rows stay transient)*
-- [ ] **RUN-11**: The owner decides the runner's retry policy: soft retries for transient faults, periodic retries
+- [x] **RUN-11**: The owner decides the runner's retry policy: soft retries for transient faults, periodic retries
   for 5xx and quota errors with checks for an early reset, and the 10-minute and 4-hour ladder against the shipped
   single wait. The evidence is the retry outcomes in the runner logs since Phase 25.1, the error catalogue's classes
   and the observed recovery times by route (router combos versus direct providers). The decision is recorded in
@@ -1129,7 +1129,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-08 | Phase 38 | Complete |
 | RUN-09 | Phase 38.1 | Complete |
 | RUN-10 | Phase 38.1 | Complete |
-| RUN-11 | Phase 38.1 | Pending |
+| RUN-11 | Phase 38.1 | Complete |
 | RUN-12 | Phase 37 | Complete |
 | RUN-13 | Phase 38 | Complete |
 | RUN-14 | Phase 38.1 | Complete |
