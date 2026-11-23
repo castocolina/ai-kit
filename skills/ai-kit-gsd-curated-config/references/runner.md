@@ -1,4 +1,4 @@
-# Runner details (template 8)
+# Runner details (template 9)
 
 Read when a runner upgrade, a `.new` merge, `ensure-runner`, the template flags, the live
 timeout, hand-edited CONFIG `extraArgs`, retry tuning ([runner.retry] in ai-kit's config.toml), or a dispatch
@@ -35,6 +35,14 @@ read-only and still reaches that shared service.
   `--dangerously-bypass-approvals-and-sandbox`; every other exec target always runs with full
   permissions (no sandbox, no ask mode), and any guidance it receives is prose, not a boundary.
 
+The call vocabulary (how to read each setting line and status field is [`../../ai-kit-cross-ai/SKILL.md`](../../ai-kit-cross-ai/SKILL.md)); ai-kit's hook builder and Python layer pass `--role`, the lane's settings and `--host auto`:
+
+- `--role execute|review` names the contract; `--mode exec|review` stays an alias, and two values that disagree are a usage error (exit 2).
+- `--effort <level>` (any lowercase token; `--codex-effort` stays an alias), `--context <label>`, `--escalate-runtime`, `--escalate-model` and `--session-id <id>`: each named setting prints one `cross-ai: setting` line, `applied`, `ignored` with a reason, or `unknown`, and the status line carries `session=`, `applied=`, `ignored=`, `unknown=` and `escalate=`.
+- `--host auto|none`: `auto` runs the lane in a herdr tab when herdr is available; the runner's own default is `none`, and `AIKIT_HOST=none` wins over `auto`. The `host` line reads `applied`, or `ignored` with `no_herdr` or `host_failed`; the run directory `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/host/<run token>/` is removed after the lane.
+- `--skill-path <dir>`, `--skill-name <name>` and `--mcp-config <file>` hand a lane skills and MCP servers through the host's own forms only.
+- `--argv-file <path>` serves a runtime the runner has no formula for; `--describe` prints the runner's forms, reasons and states as JSON with no model call.
+
 ## Failure ladder
 
 The soft retry series and one session reset plus second soft series run inside a call, configured by
@@ -58,7 +66,7 @@ script:cross-ai.model.<runner>`, a dry run and an apply. A pristine
 current-template runner takes a same-version body fix the same way and is otherwise kept
 byte for byte; an edited runner is never replaced — a `.new` file is
 written for the owner to merge (`ensure-runner` reports `runner: "new-as-.new"` and `ready:
-false` below template 8; v2 `apply` reports `script.active: false`).
+false` below template 9; v2 `apply` reports `script.active: false`).
 So only a newly rendered or successfully upgraded active copy carries the ladder, and the way to
 see what a project actually runs is the active runner's line-2 `template=<n>` header, never the
 `.new` file.
@@ -67,7 +75,7 @@ see what a project actually runs is the active runner's line-2 `template=<n>` he
 comes from the JSON it prints (`ready`, `runner`, `notes`), not from whether a `.new` file
 exists. A user-edited runner already on the current template is kept as-is and reported ready,
 with no `.new` file. An edited runner on an older template gets a `.new` file plus the printed
-notes. The readiness floor is template 8, the first with `--runtime` and retry config. Template 7
+notes. The readiness floor is template 9, the first that takes the flags ai-kit's builders emit (`--role`, `--host auto` and the lane settings); template 8 added `--runtime` and the retry config. Template 7
 has neither `--runtime` nor the configurable retry series; it carries only the fixed
 `sameSessionRetries`/`cooldownS` knobs. A hook built with `--runtime` against a project's template-7 copy fails with `unknown
 argument` (exit 2) until `ensure-runner` re-renders it: a pristine copy upgrades in place, while an
@@ -81,17 +89,20 @@ that render is ready.
 root `.planning/config.json` only when a workstream lacks the key; no valid value means 300 s. It
 uses the smaller of that value and the timeout baked in at apply.
 
-**Opt-in skills and MCP servers:** hand-edit the generated script's CONFIG `extraArgs` per
-target. The next apply then writes `cross-ai.mjs.new` instead of overwriting the live runner.
-Review mode refuses (exit 2) any `extraArgs` entry outside the runtime's review allowlist
-(pi `--skill <path>` only), so extras for exec lanes cannot also run review lanes on that runtime.
+**Opt-in skills and MCP servers:** a call passes `--skill-path`, `--skill-name` and `--mcp-config` (above). Hand-editing the generated script's CONFIG `extraArgs` per target still works; the next apply then writes `cross-ai.mjs.new` instead of overwriting the live runner. Review mode refuses (exit 2) any `extraArgs` entry outside the runtime's review allowlist (pi `--skill <path>`), so extras for exec lanes cannot also run review lanes on that runtime. The MCP flags are not allowlist entries: the runner's own formulas turn `--mcp-config <file>` into `--mcp-config <file> --strict-mcp-config` for claude and `--additional-mcp-config @<file>` for copilot, so `CONFIG.extraArgs` cannot add an unreported server to a review lane.
 
 **`.new` is not active:** the live runner keeps its old CONFIG and apply reports
 `script.active: false`. Merge `.new` by hand (keep customizations), check the **active**
-runner (the runner resolves its config from its cwd, so run it inside the target), then
-delete `.new`:
+runner (the runner resolves its config from its cwd, so run it inside the target), and
+delete `.new` only when that check passes:
 
 ```bash
 cd <target> && node .planning/scripts/cross-ai.mjs --print-argv
 ```
+
+The check passes only when the active runner's line-2 `template=` header names the bundled
+template and the printed line names the approved runtime, an installed binary (not `MISSING`),
+the approved model and an argv (not `NO MODEL`). `--print-argv` exits 0 in every one of those
+cases, so the exit code proves nothing. On any mismatch keep `.new`, dispatch no model and report
+the printed line to the owner.
 

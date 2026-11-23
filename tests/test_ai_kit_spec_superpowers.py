@@ -439,9 +439,9 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 ),
                 options=dispatch_injection.BuildInjectionOptions(quota={}),
             )
-        self.assertEqual(ctx.exception.reasons, {candidates[0]["key"]: "no_formula"})
-        self.assertIn(f"skipping {candidates[0]['key']} for execution: route no_formula: "
-                      "the runner has no exec formula for claude", stderr.getvalue())
+        self.assertEqual(ctx.exception.reasons, {candidates[0]["key"]: "not_installed"})
+        self.assertIn(f"skipping {candidates[0]['key']} for execution: route not_installed",
+                      stderr.getvalue())
 
     def test_cli_purpose_execute_claude_is_routed_no_formula(self):
         candidates = [

@@ -141,6 +141,25 @@ class TestResolveModelMatrixPi(TestResolveModelMatrix):
                 self.assertEqual(probe["wire"], probe["planned"])
 
 
+class TestP2ApplyRemovesOmit(_RealGsdTestCase):
+    """gsd-core 1.22.0 resolves a Claude agent under `omit` to its tier alias, so no matrix row
+    sees a P2 apply that leaves the poisoned `omit` behind; this checks the applied config."""
+
+    def test_p2_apply_removes_the_poisoned_omit(self) -> None:
+        node_bin = _gsd16_or_skip(self)
+        ctx = ev._seams(node_bin, _TOOLS, self.child_env["HOME"], "claude")
+        # the seeder refuses unless config-new-project copied the poison into the config
+        bundle = ev._bundle_for(ctx, ("standard", "adaptive"), "P2", ev.POISON_DEFAULTS)
+        self.addCleanup(shutil.rmtree, bundle["scratch"], ignore_errors=True)
+        entries = ev._load_plan(bundle)["entries"]
+        self.assertIn(("unset", "resolve_model_ids"), {(e["op"], e["key"]) for e in entries})
+        ev._apply_bundle(bundle, ctx.home, node_bin, ctx.apply_fn, "claude")
+        config = json.loads(
+            pathlib.Path(bundle["project"], ".planning", "config.json").read_text(encoding="utf-8")
+        )
+        self.assertNotIn("resolve_model_ids", config)
+
+
 class TestCoreTreeHash(unittest.TestCase):
     """Pure (runs on any gsd-core): why the matrix hashes the resolved folder, not the link."""
 

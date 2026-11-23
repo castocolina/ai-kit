@@ -1,7 +1,8 @@
 import shlex
 from typing import NamedTuple
 
-from ai_kit_spec.detection import RUNTIMES, exec_formula_source, has_exec_formula, runtime_id
+from ai_kit_spec import runner_facts
+from ai_kit_spec.detection import runtime_id
 
 # ── Policy resolution ────────────────────────────────────────────────────────
 
@@ -58,57 +59,15 @@ def split_command_template(key: str, template: str | None) -> list[str]:
     return shlex.split(template)
 
 
-# The runtimes the runner can execute: rows whose exec formula has a head (36 D-08). Derived from
-# the runtime table, never hand-maintained; any other choice is refused by execute_cli_error.
-SUPPORTED_EXECUTE_CLIS = tuple(sorted(
-    rid for rid, row in RUNTIMES.items() if has_exec_formula(row)
-))
-
-
-def execute_cli_error(cli) -> str | None:
-    """None when the runner has an exec formula for `cli` (exact, case-sensitive; a legacy
-    name maps to its runtime id), else the refusal naming the fact: the missing formula for a
-    table row, or the custom-lane rule for a runtime outside the table. Callers fail before any
-    spawn or config write when this returns a message (36 SPEC R7)."""
-    row = RUNTIMES.get(runtime_id(cli))
-    if row is None:
-        return (f"{cli!r} is not a runtime in the table; store it as a custom `command` lane "
-                "(custom lanes run in review mode only)")
-    if has_exec_formula(row):
-        return None
-    return (f"{cli!r} has no exec formula in the runner (route no_formula): "
-            f"{exec_formula_source(row)}")
-
-
-def build_cursor_agent_model_id(base_model: str, effort=None, fast=None, context=None) -> str:
-    """cursor's own per-call effort/fast/context tuning lives in the --model
-    argument itself via bracket-parameter overrides (confirmed live, --help:
-    "Parameterized models accept quoted bracket overrides, e.g.
-    'claude-opus-4-8[context=1m,effort=high, fast=false]'"), not a separate
-    runner flag — this builds that string for the reviewer entry's own
-    `model` field instead. Returns `base_model` unchanged when no overrides
-    are given, so calling this is always safe even with nothing to override."""
-    overrides = []
-    if effort:
-        overrides.append(f"effort={effort}")
-    if fast is not None:
-        overrides.append(f"fast={'true' if fast else 'false'}")
-    if context:
-        overrides.append(f"context={context}")
-    if not overrides:
-        return base_model
-    return f"{base_model}[{','.join(overrides)}]"
-
-
-def build_reviewer_model_id(cli: str, base_model: str, effort=None, fast=None,
-                             context=None) -> str:
-    """The `model` field itself. Only cursor encodes effort/fast/context as
-    bracket overrides on the model id; every other runtime takes its knobs as
-    runner flags, so this returns base_model unchanged for them rather than
-    raising."""
-    if runtime_id(cli) == "cursor":
-        return build_cursor_agent_model_id(base_model, effort=effort, fast=fast, context=context)
-    return base_model
+def execute_cli_error(cli, fact=None) -> str | None:
+    """None unless a recorded runner fact says the runner has no exec formula for `cli`
+    (a legacy name maps to its runtime id; 37 R9). An absent fact never refuses: the runner
+    refuses at run time with its own named reason."""
+    runtime = runtime_id(cli)
+    if runner_facts.runner_has_exec(fact, runtime) is False:
+        return (f"{cli!r} has no exec formula in the runner (route no_formula): "
+                f"{runner_facts.FACT_SOURCE}")
+    return None
 
 
 def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> list[str]:

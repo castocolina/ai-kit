@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=9120f57b140deb4116919c2ca52675843c53b2043f2728afbb1ba9398a5ef140
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=9 sha256=213aa21081782e306c0878ccb67b7f5c44847bfca39ffe8912c69f22962c9ff8
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v9).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
@@ -20,7 +20,7 @@
  * generator will then refuse to overwrite this file silently (sha256 header above).
  *
  * Flags:
- *   --runtime <id>                           the one CLI this call runs
+ *   --runtime <id>                           the one CLI this call runs; an id with no formula is refused unless --argv-file declares its command
  *   --prefer <list>                          alias: only the first entry runs (notice
  *                                            names the rest)
  *   --model <id>                             model for the selected runtime (wins over
@@ -29,7 +29,22 @@
  *   --route-<cli> router|unknown             confirmed route of that CLI (wins over CONFIG)
  *   --classify-only <path>                   classify a JSON case file and exit (no spawn,
  *                                            no write, stdin ignored; path relative to cwd)
+ *   --role review|execute                    documented mode; --mode is an alias; disagreement is a usage error
  *   --mode exec|review                       exec = full permissions (default); review = read-only
+ *   --effort <level>                         generic effort, shape ^[a-z][a-z0-9_-]{0,15}$
+ *   --context <label>                        context label
+ *   --escalate-runtime                       carried, never acted on
+ *   --escalate-model                         carried, never acted on
+ *   --session-id <id>                        session id
+ *   --host auto|none                         hosting choice
+ *   --skill-path <dir>                       repeatable skill path
+ *   --skill-name <name>                      repeatable skill name
+ *   --mcp-config <file>                      MCP configuration path
+ *   --argv-file <path>                       a JSON array: the command and its arguments for a runtime id with no formula
+ *                                            (the file must lie inside the cwd tree; the command resolves through PATH;
+ *                                            {model}, {effort}, {session} are the only placeholders;
+ *                                            the prompt goes on stdin; a setting with no placeholder is reported no_slot)
+ *   --describe                               describe runner capabilities
  *   --tools-profile exec|review|none         named tool set from the runtime's table row
  *                                            (review accepts review or none)
  *   --timeout <s>                            inner deadline (lowers default; never above derived inner)
@@ -45,7 +60,7 @@
  *   --child-pgid-file <path>                 append spawn <pid> / exit <pid>
  *                                            per detached child, for a
  *                                            supervising caller's cleanup
- *   --codex-effort minimal|low|medium|high|xhigh   overrides CONFIG.effort.codex
+ *   --codex-effort <level>                   alias of --effort (both given with different values: usage error)
  *   --codex-service-tier <id>                codex -c service_tier=
  *   --cursor-mode ask|plan                   review mode only (replaces cursor --mode)
  *   --self-test                              hermetic black-box checks (no real CLIs); its ceilings scale
@@ -53,8 +68,8 @@
  *   --self-test-list                         print each self-test case as name<TAB>kind (logic or runtime);
  *                                            AIKIT_XAI_SELFTEST_CASES=a,b runs only the named cases
  *
- * CONFIG.effort pins the selected effort per runner: pi --thinking (skipped when the model
- * has a :level suffix) and codex model_reasoning_effort.
+ * CONFIG.effort.<runtime> is the baked default effort beneath the call's --effort, for every
+ * runtime; --print-argv prints how each runtime takes it (cross-ai: setting effort=...).
  *
  * Live outer timeout reads workflow.cross_ai_timeout the way gsd-tools config-get does:
  * .planning[/$GSD_PROJECT][/workstreams/$GSD_WORKSTREAM]/config.json, then the root config
@@ -1226,6 +1241,8 @@ let liveFields = {
   cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean',
   route: 'unknown', rule: '-', pattern: 'none',
 };
+// The settings report, session id and escalation flags the status line's 37 group prints (D-12); main fills it.
+let liveSettings = { report: [], sessionId: null, escalation: { runtime: false, model: false } };
 let finished = false;
 let finishedExit = 1;
 let runDeadline = 0;
@@ -1236,6 +1253,8 @@ let aborting = 0;
 let signalBy = 0;
 let backstop = null;
 const tempDirs = new Set();
+// Tabs a hosted lane opened and has not confirmed closed; exitFlushed retries them (D-26).
+const openTabs = new Map();
 const sleepers = new Set();
 
 function budgetMs(capMs, limit) {
@@ -1300,6 +1319,9 @@ function finish(status, fields) {
     `exit=${exit} cli_rc=${fields.cli_rc ?? '-'} elapsed=${elapsed}s out=${fields.out ?? 0} ` +
     `tree=${tree} action=stop route=${route} rule=${rule} pattern=${pattern}` +
     ` attempts=${attempts} cycles=${cycles}`;
+  let group = 'session=- applied=- ignored=- unknown=- escalate=-';
+  try { group = String(statusGroup(liveSettings.report, liveSettings.sessionId, liveSettings.escalation)).trim(); } catch { /* the one status line is printed whatever the group does (Pitfall 4) */ }
+  line += ` ${group}`;
   if (fields.retryAfterS !== undefined && fields.retryAfterS !== null) {
     line += ` retry_after_s=${fields.retryAfterS} cycle=${fields.cycle ?? cycles}`;
   }
@@ -1311,13 +1333,17 @@ function finish(status, fields) {
 
 // Declared above RUNTIMES: a row's modelId reads these at module load, and a later const
 // would be in its temporal dead zone.
-// No leading dash (read as a CLI option) and no shell or space characters (U-4).
+// SPEC R5 floor, the one model id refusal for every runtime: non-empty, no leading dash (read
+// as a CLI option), no whitespace, no shell, control or non-ASCII character, one optional
+// trailing [k=v,...] bracket. The per-runtime seed shapes below only advise (a note in main).
+const MODEL_ID_FLOOR = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\[[A-Za-z0-9._=,-]+\])?$/;
+// Seed shapes (advisory only): no leading dash and no shell or space characters (U-4).
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/;
 // Cursor only: one trailing [k=v,...] bracket (D-18). No space, quote, `$` or `;`.
 const CURSOR_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\[[A-Za-z0-9._=,-]+\])?$/;
 // pi: provider/model. pi matches the whole id first and splits a trailing :<thinking> only
-// when it is one of the seven levels (its model-resolver), so `:` inside the model part
-// (Ollama tags such as qwen3:8b) is part of the id; modelSuffix strips only a known level.
+// when it is one of the seven levels (its model-resolver), so `:` inside the model part (a
+// tag such as <name>:<tag>) is part of the id; modelSuffix strips only a known level.
 const PI_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._@+-]*\/[A-Za-z0-9][A-Za-z0-9._:\/@+-]*$/;
 // opencode: provider/model (`:` stays inside the model part) and one trailing #variant.
 const OPENCODE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._@+-]*\/[A-Za-z0-9][A-Za-z0-9._:\/@+-]*(?:#[A-Za-z0-9._-]+)?$/;
@@ -1328,6 +1354,11 @@ function exitFlushed(code) {
   if (backstop) clearTimeout(backstop);
   // Every exit drops the temp folders still registered (an early return skips its finally).
   // The catch keeps a failing rm from looping through the crash handler back to here.
+  for (const [tab, dir] of [...openTabs]) {
+    let closed = false;
+    try { closed = closeTab(tab, 1000); } catch { /* retry failed */ }
+    if (!closed) { dropSecrets(dir); keepRecordOnly(dir, tab); }
+  }
   for (const dir of [...tempDirs]) { try { dropTemp(dir); } catch { tempDirs.delete(dir); } }
   process.exitCode = code;
   let pending = 2;
@@ -1352,6 +1383,13 @@ process.on('uncaughtException', (e) => {
       ));
 });
 
+// SPEC R6: the live record of claude's permission flag (37-SPIKE.md Q3b); it labels only the flag.
+const CLAUDE_EXEC_PROBE_RECORD = null;
+// SPEC R6: the live record of the whole execute formula and its resume; null keeps it unverified, with a note on every execute call.
+const CLAUDE_EXEC_FORMULA_RECORD = null;
+const MCP_SERVER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const SKILL_PROSE = { label: { state: 'verified', source: 'runner: the SKILL.md text inlined before the prompt (stdin, or the copilot -p argument)' } };
+function skillsNone(source) { return { name: { form: null, label: { state: 'unknown', source } }, path: { flag: null, label: { state: 'unknown', source } }, prose: SKILL_PROSE }; }
 const RUNTIMES = {
   cursor: {
     bins: ['cursor-agent', 'agent'],
@@ -1370,6 +1408,14 @@ const RUNTIMES = {
     profiles: null,
     reviewExtras: [],
     env: {},
+    forms: {
+      mcp: null,
+      skills: skillsNone('cursor-agent 2026.11.13 help 2026-11-21: no skill form'),
+      context: { kind: 'bracket', key: 'context', valueKind: 'label', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--model <model>" with the bracket example "[context=1m,effort=high,fast=false]"; meaning per model unverified' } },
+      session: { style: 'minted', resumeFlag: '--resume', label: { state: 'unverified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--resume [chatId] Select a session to resume"; resume not live-probed' } },
+      effort: { kind: 'id-bracket', key: 'effort', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--model <model>" with the bracket example "[context=1m,effort=high,fast=false]"' } },
+      provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
+    },
   },
   // opencode 2.3.2 run --help formulas (recorded: tests/fixtures/cli_help/opencode/); partial bare profile: opencode still loads
   // ~/.agents/skills and ~/.config/opencode/skills (opencode docs). --standalone (a global flag) runs a headless run
@@ -1387,14 +1433,22 @@ const RUNTIMES = {
     profiles: null,
     reviewExtras: [],
     env: { OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1' },
+    forms: {
+      mcp: null,
+      skills: skillsNone('opencode 2.3.2 help 2026-11-21: no skill form'),
+      context: { kind: 'none', valueKind: null, label: { state: 'unknown', source: 'opencode 2.3.2 run --help 2026-11-21: no context form' } },
+      session: { style: 'minted', resumeFlag: '--session', label: { state: 'unverified', source: 'opencode 2.3.2 run --help 2026-11-21: "Session ID to continue, or to create if it does not exist"; caller-chosen id shapes unverified (a ses_ id was accepted live on 2026-11-16)' } },
+      effort: { kind: 'id-suffix', key: '#', label: { state: 'verified', source: 'opencode 2.3.2 run --help 2026-11-21: "Model to use in the format provider/model#variant"' } },
+      provider: { kind: 'id-prefix', label: { state: 'verified', source: 'opencode 2.3.2 run --help 2026-11-21: "Model to use in the format provider/model#variant"' } },
+    },
   },
   pi: {
     bins: ['pi'],
     list: { argv: PI_RPC_ARGS, input: PI_RPC_REQUEST, parse: parsePiListingIds },
-    exec: (m, c) => ['-p', '--model', m, ...piThinkingArgs(m, c), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
-      ...(c.profileFlags || [])],
-    review: (m, c) => ['-p', '--model', m, ...piThinkingArgs(m, c), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
-      ...(c.profileFlags || [])],
+    exec: (m, c) => ['-p', '--model', m, ...(c.adds?.effort || []), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
+      ...(c.profileFlags || []), ...(c.adds?.skills || [])],
+    review: (m, c) => ['-p', '--model', m, ...(c.adds?.effort || []), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
+      ...(c.profileFlags || []), ...(c.adds?.skills || [])],
     resume: (m, c, sid, mode) => RUNTIMES.pi[mode](m, c),
     parse: (out) => ({ text: out, sessionId: null, error: null }),
     // pi documents --model provider/id[:thinking]; the listing has bare ids.
@@ -1408,6 +1462,14 @@ const RUNTIMES = {
     },
     reviewExtras: ['--skill'],
     env: {},
+    forms: {
+      mcp: null,
+      skills: { name: { form: null, reason: 'mode_forbids', label: { state: 'unknown', source: 'pi 1.5.2 help 2026-11-21: no load-by-name form; the formulas pass --no-skills' } }, path: { flag: '--skill', label: { state: 'verified', source: 'pi 1.5.2 help 2026-11-21: "--skill <path> Load a skill file or directory (can be used multiple times)"' } }, prose: SKILL_PROSE },
+      context: { kind: 'none', valueKind: null, label: { state: 'unknown', source: 'pi 1.5.2 --help 2026-11-21: no context form' } },
+      session: { style: 'chosen', flag: '--session-id', label: { state: 'unverified', source: 'pi 1.5.2 --help 2026-11-21: "--session-id <id> Use the current directory existing session with the ID, creating it otherwise"; resume not live-probed' } },
+      effort: { kind: 'flag', flag: '--thinking', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--thinking <level> Set thinking level: off, minimal, low, medium, high, xhigh, max"' } },
+      provider: { kind: 'id-prefix', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--model <pattern> Model pattern or ID (supports provider/id and optional :<thinking>)"' } },
+    },
   },
   // unverified (outside the default prefer)
   codex: {
@@ -1434,14 +1496,25 @@ const RUNTIMES = {
     profiles: null,
     reviewExtras: [],
     env: {},
+    forms: {
+      mcp: { flag: null, prefix: '', after: [], label: { state: 'unverified', source: 'codex 0.170.0 help 2026-11-21: a generic -c key=value override whose help names no MCP key; it would put server values on argv' } },
+      skills: skillsNone('codex 0.170.0 help 2026-11-21: no skill form'),
+      context: { kind: 'config', key: 'model_context_window', valueKind: 'tokens', label: { state: 'verified', source: 'codex 0.170.0 exec --help 2026-11-21: "-c, --config <key=value>"; a zero-token config parse rejected a non-integer model_context_window as "expected i64" (2026-11-16); its effect on a model window is unverified' } },
+      session: { style: 'minted', resumeFlag: null, noResume: ['review', 'sandbox'], label: { state: 'unverified', source: 'codex 0.170.0 exec --help 2026-11-21: "resume Resume a previous session by id"; exec resume has no read-only sandbox form; resume not live-probed' } },
+      effort: { kind: 'config', key: 'model_reasoning_effort', label: { state: 'verified', source: 'codex 0.170.0 exec --help 2026-11-21: "-c, --config <key=value>"; model_reasoning_effort is the runner\'s existing codex effort key' } },
+      provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
+    },
   },
   // read-only enforcement not live-verified
+  // execute formula: full permissions like every other execute runtime; labelled by execLabel until a live record of the exact formula and its resume exists (SPEC R6).
   claude: {
     bins: ['claude'],
     list: null,
-    exec: null,
-    review: (m) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'plan'],
-    resume: null,
+    exec: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'bypassPermissions', ...(c.adds?.effort || []), ...(c.adds?.skills || []), ...(c.adds?.mcp || [])],
+    review: (m, c) => ['-p', '--model', m, '--output-format', 'json', '--permission-mode', 'plan', ...(c.adds?.effort || []), ...(c.adds?.skills || []), ...(c.adds?.mcp || [])],
+    resume: (m, c, sid, mode) => [...RUNTIMES.claude[mode](m, c), '--resume', sid],
+    permissionLabel: CLAUDE_EXEC_PROBE_RECORD === null ? { state: 'unverified', source: 'claude permission flag: no live probe record (37-SPIKE.md Q3b)' } : { state: 'verified', source: CLAUDE_EXEC_PROBE_RECORD },
+    execLabel: CLAUDE_EXEC_FORMULA_RECORD === null ? { state: 'unverified', source: 'claude execute formula: no live record of the exact formula and its resume (37-SPIKE.md Q3)' } : { state: 'verified', source: CLAUDE_EXEC_FORMULA_RECORD },
     parse: (out) => {
       const j = parseJson((out || '').trim());
       if (!j || typeof j !== 'object') return { text: '', sessionId: null, error: 'no claude json' };
@@ -1454,6 +1527,14 @@ const RUNTIMES = {
     profiles: null,
     reviewExtras: [],
     env: {},
+    forms: {
+      mcp: { flag: '--mcp-config', prefix: '', after: ['--strict-mcp-config'], label: { state: 'verified', source: 'claude 2.1.330 help 2026-11-21: "--mcp-config <configs...> Load MCP servers from JSON files or strings" and "--strict-mcp-config Only use MCP servers from --mcp-config"' } },
+      skills: { name: { form: '/<name>', label: { state: 'unverified', source: 'claude 2.1.330 help 2026-11-21: "Skills still resolve via /skill-name" appears only in the bare-mode text' } }, path: { flag: '--add-dir', label: { state: 'unverified', source: 'claude 2.1.330 help 2026-11-21: "--add-dir <directories...> More directories Claude can access" names no skill loading' } }, prose: SKILL_PROSE },
+      context: { kind: 'id-suffix', valueKind: null, label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: no model-context flag; the [1m] model suffix is not in the help' } },
+      session: { style: 'minted', resumeFlag: '--resume', label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: "-r, --resume [value] Resume a conversation by session ID or name"; resume not live-probed' } },
+      effort: { kind: 'flag', flag: '--effort', label: { state: 'verified', source: 'claude 2.1.330 --help 2026-11-21: "--effort <level> Effort level for the current session (low, medium, high, xhigh, max)"' } },
+      provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
+    },
   },
   // Flags documented in copilot 1.0.103 `--help` and `help permissions`; error, quota and
   // exit-code shapes unverified (no real copilot run in this phase).
@@ -1463,8 +1544,8 @@ const RUNTIMES = {
     argvPrompt: true,
     errorsUnverified: true,
     modelId: MODEL_ID,
-    exec: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.profileFlags || [])],
-    review: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.profileFlags || [])],
+    exec: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.adds?.context || []), '--session-id', c.sid, ...(c.profileFlags || []), ...(c.adds?.skills || []), ...(c.adds?.mcp || [])],
+    review: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.adds?.effort || []), ...(c.adds?.context || []), '--session-id', c.sid, ...(c.profileFlags || []), ...(c.adds?.skills || []), ...(c.adds?.mcp || [])],
     resume: null,
     parse: (out) => ({ text: out, sessionId: null, error: null }),
     modelSuffix: null,
@@ -1476,18 +1557,248 @@ const RUNTIMES = {
         '--disable-builtin-mcps'],
     },
     reviewExtras: [],
+    forms: {
+      mcp: { flag: '--additional-mcp-config', prefix: '@', after: [], label: { state: 'verified', source: 'copilot 1.0.112 help 2026-11-21: "--additional-mcp-config <json> Additional MCP servers configuration as JSON string or file path (prefix with @)"; augments the user servers, no strict form' } },
+      skills: { name: { form: null, label: { state: 'unverified', source: 'copilot 1.0.112 skill help 2026-11-21: discovery roots only, no load-by-name form' } }, path: { flag: '--add-dir', root: '.github/skills', label: { state: 'unverified', source: 'copilot 1.0.112 help 2026-11-21: "--add-dir <directory> Allow file access to a directory and load its .github/skills" as trusted configuration; layout effect untested' } }, prose: SKILL_PROSE },
+      context: { kind: 'flag', flag: '--context', valueKind: 'enum', values: ['default', 'long_context'], label: { state: 'verified', source: 'copilot 1.0.112 --help 2026-11-21: "--context <tier> Set the context window tier (overrides persisted setting) [possible values: default, long_context]"' } },
+      session: { style: 'chosen', flag: '--session-id', label: { state: 'unverified', source: 'copilot 1.0.112 --help 2026-11-21: "--session-id <id> Resume an existing session or task by ID, or set the UUID for a new session"; resume not live-probed' } },
+      effort: { kind: 'flag', flag: '--reasoning-effort', label: { state: 'verified', source: 'copilot 1.0.112 --help 2026-11-21: "--reasoning-effort <level> Set the reasoning effort level; supported levels depend on the model"' } },
+      provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
+    },
   },
 };
 
-// CONFIG.effort.pi pins thinking unless the model spec already carries a :level suffix
-// (without either, pi runs the user's default, xhigh on some machines).
-function piThinkingArgs(model, ctx) {
-  return ctx.piThinking && !RUNTIMES.pi.modelSuffix.test(model) ? ['--thinking', ctx.piThinking] : [];
+// R9: provenance of each formula and listing, from the recorded help under tests/fixtures/cli_help (labels only; nothing decides on them).
+const FORMULA_LABELS = Object.fromEntries([
+  ['claude', '2.1.330', '2026-11-21', ['exec', 'review', 'resume']],
+  ['codex', '0.170.0', '2026-11-21', ['exec', 'review', 'resume', 'listing']],
+  ['copilot', '1.0.112', '2026-11-21', ['exec', 'review']],
+  ['cursor', '2026.11.13', '2026-11-21', ['exec', 'review', 'resume', 'listing']],
+  ['opencode', '2.3.2', '2026-11-20', ['exec', 'review', 'resume', 'listing']],
+  ['pi', '1.5.2', '2026-11-21', ['exec', 'review', 'resume', 'listing']],
+].map(([id, version, recorded, facts]) => [id, Object.fromEntries(facts.map((fact) => [fact, {
+  state: 'verified', source: `verified: ${id} ${version} help recorded ${recorded} (tests/fixtures/cli_help/${id}/)`,
+}]))]));
+
+// SPEC R4: the only placeholders a declared argv file may hold; the prompt always goes on stdin.
+const ARGV_FILE_PLACEHOLDERS = ['{model}', '{effort}', '{session}'];
+const ARGV_FILE_NO_FORM = Object.freeze({ kind: 'none', style: 'none', flag: null, key: null, valueKind: null, label: Object.freeze({ state: 'unknown', source: 'declared by --argv-file' }) });
+
+// Settings planner (D-11, D-14): rows carry forms as data; one pure planSettings decides argv additions and the report.
+const SETTING_REASONS = ['no_form', 'id_carries', 'unverified_form', 'mode_forbids', 'no_slot', 'recorded_only', 'no_provider_form', 'bad_value', 'no_herdr', 'host_failed'];
+const SETTING_NAMES = ['model', 'provider', 'role', 'effort', 'context', 'session', 'escalate_runtime', 'escalate_model', 'host', 'skill', 'mcp'];
+const SETTING_STATES = ['applied', 'ignored', 'unknown'];
+
+function bracketValue(model, key) {
+  const match = model.match(/\[([^\]]*)\]$/);
+  if (!match) return null;
+  for (const item of match[1].split(',')) {
+    const at = item.indexOf('=');
+    if (at >= 0 && item.slice(0, at) === key) return item.slice(at + 1);
+  }
+  return null;
+}
+
+function mergeBracket(model, key, value) {
+  const match = model.match(/\[([^\]]*)\]$/);
+  if (!match) return `${model}[${key}=${value}]`;
+  return `${model.slice(0, match.index)}[${match[1] ? `${match[1]},` : ''}${key}=${value}]`;
+}
+
+function contextTokens(label) {
+  // Decimal k and m, accepted assumption A1.
+  const match = /^([1-9][0-9]*)([km]?)$/.exec(label);
+  if (!match) return null;
+  const value = Number(match[1]) * (match[2] === 'k' ? 1000 : match[2] === 'm' ? 1000000 : 1);
+  return Number.isSafeInteger(value) && value >= 1 && value <= 1000000000 ? value : null;
+}
+
+function cleanSettingValue(name, value) {
+  const text = String(value ?? '-').replace(/[\x00-\x1f\x7f-\x9f]/g, '');
+  // BROAD_RES redacts every UUID, and a session id must stay reusable.
+  return name === 'session' ? redactKeyShapes(text) : redactSecrets(text);
+}
+
+const SETTING_HANDLERS = {
+  model: (plan, row, role, call) => {
+    plan.report.push({ name: 'model', value: call.model, state: 'applied', proof: 'model' });
+  },
+  provider: (plan, row, role, call) => {
+    const slash = call.model.indexOf('/');
+    if (slash <= 0) return;
+    const prefix = call.model.slice(0, slash);
+    if (row.forms?.provider?.kind === 'id-prefix') {
+      plan.provider = prefix;
+      plan.report.push({ name: 'provider', value: prefix, state: 'applied', proof: { slotPrefix: `${prefix}/` } });
+    } else {
+      plan.report.push({ name: 'provider', value: prefix, state: 'unknown', reason: 'no_provider_form' });
+    }
+  },
+  role: (plan, row, role) => {
+    plan.report.push({ name: 'role', value: role === 'exec' ? 'execute' : 'review', state: 'applied', proof: { mode: role } });
+  },
+  effort: (plan, row, role, call) => {
+    const level = call.effort ?? call.configEffort ?? null;
+    if (level === null) return;
+    const form = row.forms?.effort || { kind: 'none' };
+    let reason = null;
+    if (form.kind === 'none') reason = 'no_form';
+    else if (form.label?.state !== 'verified') reason = 'unverified_form';
+    else if (!LEVEL_RE.test(String(level))) reason = 'bad_value';
+    else if (form.kind === 'id-bracket' ? bracketValue(plan.model, form.key) !== null : Boolean(row.modelSuffix && row.modelSuffix.test(plan.model))) reason = 'id_carries';
+    if (reason) {
+      plan.report.push({ name: 'effort', value: level, state: 'ignored', reason });
+      return;
+    }
+    let proof = 'model';
+    if (form.kind === 'flag') proof = plan.adds.effort = [form.flag, level];
+    else if (form.kind === 'config') proof = plan.adds.effort = ['-c', `${form.key}=${level}`];
+    else if (form.kind === 'id-bracket') plan.model = mergeBracket(plan.model, form.key, level);
+    else if (form.kind === 'id-suffix') plan.model = `${plan.model}${form.key}${level}`;
+    plan.report.push({ name: 'effort', value: level, state: 'applied', proof });
+  },
+  context: (plan, row, role, call) => {
+    const label = call.context ?? null;
+    if (label === null) return;
+    const form = row.forms?.context || { kind: 'none' };
+    let reason = null;
+    if (form.kind === 'none') reason = 'no_form';
+    else if (form.label?.state !== 'verified') reason = 'unverified_form';
+    else if (form.valueKind === 'enum' && !(form.values || []).includes(label)) reason = 'bad_value';
+    else if (form.valueKind === 'tokens' && contextTokens(label) === null) reason = 'bad_value';
+    else if (form.kind === 'bracket' && bracketValue(plan.model, form.key) !== null) reason = 'id_carries';
+    if (reason) { plan.report.push({ name: 'context', value: label, state: 'ignored', reason }); return; }
+    let proof = 'model';
+    if (form.kind === 'flag') proof = plan.adds.context = [form.flag, label];
+    else if (form.kind === 'config') proof = plan.adds.context = ['-c', `${form.key}=${form.valueKind === 'tokens' ? String(contextTokens(label)) : label}`];
+    else if (form.kind === 'bracket') plan.model = mergeBracket(plan.model, form.key, label);
+    else { plan.report.push({ name: 'context', value: label, state: 'ignored', reason: 'no_form' }); return; }
+    plan.report.push({ name: 'context', value: label, state: 'applied', proof });
+  },
+  session: (plan, row, role, call) => {
+    const form = row.forms?.session || { style: 'none' };
+    const id = call.sessionId ?? null;
+    if (form.style === 'chosen') plan.sessionId = id ?? call.newSessionId ?? null;
+    if (id === null) return;
+    // SPEC R7 requires resume; D-17 labels evidence rather than refusing it.
+    let reason = null;
+    if (form.style === 'none') reason = 'no_form';
+    else if (form.style === 'chosen') { plan.report.push({ name: 'session', value: id, state: 'applied', proof: [form.flag, id] }); return; }
+    else if (typeof row.resume !== 'function') reason = 'no_form';
+    else if ((form.noResume || []).some((k) => (k === 'review' && role === 'review') || (k === 'sandbox' && call.sandbox))) reason = 'mode_forbids';
+    if (reason) { plan.report.push({ name: 'session', value: id, state: 'ignored', reason }); return; }
+    plan.sessionId = id;
+    plan.resume = true;
+    const proof = form.resumeFlag ? [form.resumeFlag, id] : { runs: [['exec', 'resume'], [id, '-']] };
+    plan.report.push({ name: 'session', value: id, state: 'applied', proof });
+  },
+  escalate_runtime: (plan, row, role, call) => {
+    if (call.escalateRuntime) plan.report.push({ name: 'escalate_runtime', value: 'true', state: 'ignored', reason: 'recorded_only' });
+  },
+  escalate_model: (plan, row, role, call) => {
+    if (call.escalateModel) plan.report.push({ name: 'escalate_model', value: 'true', state: 'ignored', reason: 'recorded_only' });
+  },
+  host: (plan, row, role, call) => {
+    const setting = call.hostSetting;
+    if (!setting || setting.value === null) return;
+    if (setting.value === 'none' || (setting.value === 'auto' && setting.available)) {
+      plan.report.push({ name: 'host', value: setting.value === 'none' ? 'none' : 'herdr', state: 'applied', proof: { unprovable: 'transport (D-28)' } });
+    } else if (setting.value === 'auto') plan.report.push({ name: 'host', value: 'auto', state: 'ignored', reason: 'no_herdr' });
+  },
+  skill: (plan, row, role, call) => {
+    if (call.skillPlan) { plan.adds.skills.push(...call.skillPlan.adds); plan.report.push(...call.skillPlan.report); }
+  },
+  mcp: (plan, row, role, call) => {
+    const mp = planMcp(row, role, call.mcp);
+    plan.adds.mcp.push(...mp.adds); plan.report.push(...mp.report);
+  },
+};
+
+function fillArgvFile(list, model, ctx) {
+  const s = (ctx && ctx.adds && ctx.adds.slots) || {};
+  return list.map((el) => el.replaceAll('{model}', () => model).replaceAll('{effort}', () => s.effort ?? '').replaceAll('{session}', () => s.session ?? ''));
+}
+
+function argvFileAllowed(row, mode) { return !row || typeof row[mode] !== 'function'; }
+
+function argvFileRow(declared) {
+  const formula = (m, c) => fillArgvFile(declared.argv.slice(1), m, c);
+  const forms = Object.fromEntries(Object.keys(RUNTIMES.claude.forms || {}).map((k) => [k, ARGV_FILE_NO_FORM]));
+  forms.skills = { ...skillsNone('argv file lane: no skill slot'), name: { form: null, reason: 'no_slot', label: { state: 'unknown', source: 'argv file lane: no skill slot' } } };
+  forms.mcp = { flag: null, prefix: '', after: [], reason: 'no_slot', label: { state: 'unknown', source: 'argv file lane: no MCP slot' } };
+  return { argvFile: true, slots: declared.slots, argvRest: declared.argv.slice(1), bins: [declared.argv[0]], list: null, exec: formula, review: formula, resume: null, parse: (out) => ({ text: out, sessionId: null, error: null }), modelSuffix: null, modelId: null, profiles: null, reviewExtras: [], env: {}, errorsUnverified: true, forms };
+}
+
+function planArgvFile(plan, row) {
+  const slots = row.slots;
+  const effortEntry = plan.report.find((e) => e.name === 'effort');
+  const sessionEntry = plan.report.find((e) => e.name === 'session');
+  if (slots.effort && !effortEntry) return { ...plan, error: '--argv-file holds {effort} and the call names no effort (pass --effort)' };
+  if (slots.session && !sessionEntry) return { ...plan, error: '--argv-file holds {session} and the call names no session id (pass --session-id)' };
+  const values = { effort: effortEntry?.value ?? null, session: sessionEntry?.value ?? null };
+  const slotElement = (name) => fillArgvFile([row.argvRest.find((el) => el.includes(`{${name}}`))], plan.model, { adds: { slots: values } })[0];
+  const report = plan.report.map((entry) => {
+    if (entry.name === 'provider') {
+      const { reason, proof, ...rest } = entry;
+      return { ...rest, value: '-', state: 'unknown' };
+    }
+    if (['model', 'effort', 'session', 'context'].includes(entry.name)) {
+      const { reason, proof, ...rest } = entry;
+      return slots[entry.name] ? { ...rest, state: 'applied', proof: [slotElement(entry.name)] } : { ...rest, state: 'ignored', reason: 'no_slot' };
+    }
+    return entry;
+  });
+  return { ...plan, report, resume: false, sessionId: slots.session ? sessionEntry.value : null, adds: { ...plan.adds, slots: { effort: slots.effort ? effortEntry.value : null, session: slots.session ? sessionEntry.value : null } } };
+}
+
+// Pure: no fs, env, spawn or clock. role is 'review' | 'exec'. Returns an object so later members (capabilities) fit.
+function planSettings(row, role, call) {
+  if (row.argvFile) return planArgvFile(planSettings({ ...row, argvFile: false }, role, call), row);
+  const plan = { model: call.model, adds: { session: [], effort: [], context: [], skills: [], mcp: [] }, sessionId: null, resume: false, report: [], provider: null, promptPrefix: call.skillPlan?.promptPrefix ?? '' };
+  for (const name of SETTING_NAMES) SETTING_HANDLERS[name]?.(plan, row, role, call);
+  for (const entry of plan.report) if (entry.proof === 'model') entry.proof = { slot: plan.model };
+  return plan;
+}
+
+const MODEL_SLOT_FLAGS = ['--model', '-m'];
+
+// The state comes from the built argv, never from the request (SPEC R13/R14 prohibition).
+function confirmReport(report, argv, promptPrefix = '', builtMode = null) {
+  const hasRun = (run) => argv.some((_, i) => run.every((value, j) => argv[i + j] === value));
+  const index = argv.findIndex((value) => MODEL_SLOT_FLAGS.includes(value));
+  for (const e of report) {
+    if (e.state !== 'applied') continue;
+    const p = e.proof;
+    let ok;
+    if (Array.isArray(p)) ok = hasRun(p);
+    else if (p && Array.isArray(p.runs)) ok = p.runs.every(hasRun);
+    else if (p && 'slot' in p) ok = index >= 0 && argv[index + 1] === p.slot;
+    else if (p && 'slotPrefix' in p) ok = index >= 0 && (argv[index + 1] || '').startsWith(p.slotPrefix);
+    else if (p && 'mode' in p) ok = p.mode === builtMode;
+    else if (p && typeof p.unprovable === 'string' && p.unprovable) ok = true;
+    else if (typeof e.proofPrompt === 'string') ok = promptPrefix.includes(e.proofPrompt);
+    else throw new Error(`settings report entry ${e.name} has no proof`);
+    if (!ok) throw new Error(`settings report claims ${e.name}=${e.value} applied but the built argv does not carry it`);
+  }
+  return report;
+}
+
+function statusGroup(report, sessionId, escalation) {
+  const group = (state) => report.filter((e) => e.state === state).map((e) =>
+    ['skill', 'mcp'].includes(e.name) ? `${e.name}:${redactKeyShapes(String(e.value))}` : e.name).join(',') || '-';
+  const session = typeof sessionId === 'string' && SESSION_ID_RE.test(sessionId) ? redactKeyShapes(sessionId) : '-';
+  const flags = [escalation.runtime && 'runtime', escalation.model && 'model'].filter(Boolean).join(',') || '-';
+  return `session=${session} applied=${group('applied')} ignored=${group('ignored')} unknown=${group('unknown')} escalate=${flags}`;
+}
+
+function reportLines(report) {
+  return report.map((e) => `cross-ai: setting ${e.name}=${cleanSettingValue(e.name, e.value)} ${e.state}${e.reason ? ` reason=${e.reason}` : ''}${e.form ? ` form=${e.form}` : ''}`);
 }
 
 function withCodexKnobs(argv, ctx) {
   const out = [...argv];
-  if (ctx.codexEffort) out.push('-c', `model_reasoning_effort=${ctx.codexEffort}`);
+  out.push(...(ctx.adds?.effort || []));
+  if (ctx.adds) out.push(...ctx.adds.context);
   if (ctx.codexServiceTier) out.push('-c', `service_tier=${ctx.codexServiceTier}`);
   return out;
 }
@@ -2468,10 +2779,10 @@ const CLASSIFY_CASES = [
 function routeOf(cli, model, routes) {
   const flagged = routes && Object.hasOwn(routes, cli) ? routes[cli] : undefined;
   if (flagged === 'router' || flagged === 'unknown') return flagged;
-  const baked = CONFIG.routerBacked[cli];
+  const baked = ownValue(CONFIG.routerBacked, cli);
   // routerBacked is per CLI and was confirmed for its pinned model: another model on that CLI
   // is not the confirmed lane (ponytail review, 25).
-  const pinned = CONFIG.models && CONFIG.models[cli];
+  const pinned = ownValue(CONFIG.models, cli);
   if (baked === true) return pinned && pinned !== model ? 'unknown' : 'router';
   if (baked === false) return 'unknown';
   const id = String(model || '').toLowerCase();
@@ -4106,15 +4417,18 @@ function hardWaitFor(cycle, waits, capLeftS) {
 // Rung 1 continues the captured session. Null when no session can be continued: no id,
 // no resume formula, a sandboxed codex exec, or codex review (its resume argv has no
 // read-only sandbox).
+// An id is printed or passed back only inside the session charset and when no key shape matches it (SPEC R7; redactSecrets would also hide a UUID).
+function sessionShown(id) { return typeof id === 'string' && SESSION_ID_RE.test(id) && redactKeyShapes(id) === id; }
+
 function sameSessionArgv(name, rt, model, ctx, sid, mode, input = RESUME_MSG) {
   if (!sid || !rt.resume) return null;
   if (name === 'codex' && (mode === 'review' || ctx.codexSandbox)) return null;
   return { argv: withExtra(name, rt.resume(model, ctx, sid, mode)), input };
 }
 
-// Rung 2 is a fresh argv on the same CLI and model. Pi gets a new session id.
-function newSessionArgv(name, rt, model, ctx, mode, prompt) {
-  if (name === 'pi') ctx.sid = crypto.randomUUID();
+// Rung 2 is a fresh argv on the same CLI and model; every chosen row (pi, copilot) gets a new session id.
+function newSessionArgv(name, rt, model, ctx, mode, prompt, keepSid = false) {
+  if (!keepSid && rt.forms?.session?.style === 'chosen') ctx.sid = crypto.randomUUID();
   if (rt.argvPrompt) {
     ctx.promptArg = argvPromptElement(prompt);
     return { argv: withExtra(name, rt[mode](model, ctx)), input: null };
@@ -4143,6 +4457,10 @@ function argvPromptProblem(prompt) {
 function displayArgv(argv, promptEl) {
   if (promptEl === undefined) return argv;
   return argv.map((el) => (el === promptEl ? '<prompt>' : el));
+}
+// 37 R4: an argv file is caller-written and may carry a key; the printed copy is redacted, the spawned argv stays raw.
+function shownArgv(rt, argv) {
+  return rt?.argvFile ? argv.map((el) => redactSecrets(el)) : argv;
 }
 function readOr(p, dflt) { try { return fs.readFileSync(p, 'utf8'); } catch { return dflt; } }
 
@@ -4364,6 +4682,388 @@ function runChild(bin, argv, opts = {}) {
   });
 }
 
+// Hosted lane (SPEC R12, D-22 to D-28): herdr is called only by the transport in this block.
+const HERDR_BIN = 'herdr';
+// D-23/D-28: availability is HERDR_ENV=1 plus a herdr on PATH, read without calling herdr.
+function hostAvailable(env, whichFn = which) {
+  return env.HERDR_ENV === '1' && Boolean(env.PATH) && Boolean(whichFn(HERDR_BIN, env.PATH));
+}
+
+// D-22 / 0b-6: the only herdr commands the runner runs; Phase 38 adds tab list.
+const HERDR_VERBS = Object.freeze(['tab create', 'pane run', 'tab close']);
+const HERDR_TIMEOUT_MS = 5000;
+
+// The one herdr spawn site (arch rule): a verb outside HERDR_VERBS throws.
+function herdrCall(verb, args, timeoutMs = HERDR_TIMEOUT_MS) {
+  if (!HERDR_VERBS.includes(verb)) throw new Error(`herdr verb ${verb} is not one of ${HERDR_VERBS.join(', ')}`);
+  const r = spawnSync(HERDR_BIN, [...verb.split(' '), ...args], { encoding: 'utf8', timeout: Math.max(1, timeoutMs), stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+  let detail = null;
+  if (r.error) detail = r.error.code === 'ETIMEDOUT' ? 'timeout' : `spawn ${r.error.code || r.error.message}`;
+  else if (r.signal) detail = `signal ${r.signal}`;
+  else if (r.status !== 0) detail = `exit ${r.status}`;
+  return { ok: detail === null, stdout: r.stdout || '', stderr: r.stderr || '', detail };
+}
+
+// SPEC R12 precision: one integer 0-255 or a signal name; anything else is a crash, never coerced.
+function parseRc(text) {
+  const body = String(text ?? '').replace(/\n$/, '');
+  if (body === '') return null;
+  if (/^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/.test(body)) return { code: Number(body), signal: null };
+  if (/^SIG[A-Z0-9]{2,8}$/.test(body)) return { code: null, signal: body };
+  return { code: null, signal: null, bad: body.split('\n')[0].replace(/[\x00-\x1f\x7f-\x9f]/g, '').slice(0, 80) };
+}
+
+function hostStartProblem(dir) {
+  if (!HOST_PATH_SAFE.test(dir)) return 'state home path holds a character outside [A-Za-z0-9._/-]';
+  const tool = HOST_TOOLS.find((item) => !isExec(item));
+  return tool ? `${tool} is not executable` : null;
+}
+
+// D-24 to D-27: the hosted-lane protocol (pinned by tests/fixtures/runner_host_protocol.json).
+const HOST_LABEL_PREFIX = 'aikit';
+const HOST_PATH_SAFE = /^[A-Za-z0-9._\/-]+$/;
+const HOST_FILES = Object.freeze({ run: 'run.json', launcher: 'launch.sh', env: 'env', prompt: 'prompt', out: 'out', err: 'err', pid: 'pid', rc: 'rc' });
+const HOST_TOOLS = Object.freeze(['/bin/sh', '/usr/bin/env', '/bin/rm', '/bin/mv', '/bin/cat']);
+const HOST_SETSID = '/usr/bin/setsid';
+const RUN_RECORD_VERSION = 1;
+
+// Run time and self-test both use it (moved from the self-test helpers for the hosted lane).
+function pidAlive(pid) {
+  try { process.kill(pid, 0); } catch { return false; }
+  try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, 'utf8')); } catch { return true; }
+}
+
+function shQuote(value) {
+  const text = String(value);
+  if (text.includes('\0')) throw new Error('argv element holds a NUL byte');
+  return "'" + text.replace(/'/g, "'\\''") + "'";
+}
+
+function hostToken() {
+  return crypto.randomBytes(6).toString('hex');
+}
+
+function hostLabel(role, runtime, token) {
+  return `${HOST_LABEL_PREFIX}:${role}:${runtime}:${token}`;
+}
+
+function hostRunDir(home, token) {
+  return path.join(home, 'ai-kit', 'spec', 'host', token);
+}
+
+function writePrivate(file, text) {
+  const fd = fs.openSync(file, 'wx', 0o600);
+  try { fs.writeFileSync(fd, text); } finally { fs.closeSync(fd); }
+}
+
+// Field 22 (start ticks), parsed after the last ')' so a command name with spaces cannot shift it (0b-3).
+function procStartTime(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/);
+    return /^\d+$/.test(fields[19]) ? fields[19] : '-';
+  } catch { return '-'; }
+}
+
+function procGroup(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/);
+    return /^\d+$/.test(fields[2]) ? Number(fields[2]) : null;
+  } catch { return null; }
+}
+
+// Field 6 (session id), parsed after the last ')' like procGroup.
+function procSession(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/);
+    return /^\d+$/.test(fields[3]) ? Number(fields[3]) : null;
+  } catch { return null; }
+}
+
+// Live members of process group `pgid` inside session `sid`. Neither id is reused while a member
+// lives, so a signal to -pgid then reaches only that group.
+function groupMembers(pgid, sid) {
+  if (!Number.isInteger(pgid) || pgid <= 1 || !Number.isInteger(sid)) return [];
+  let names;
+  try { names = fs.readdirSync('/proc'); } catch { return []; }
+  const members = [];
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    let stat;
+    try { stat = fs.readFileSync(`/proc/${name}/stat`, 'utf8'); } catch { continue; }
+    const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/);
+    if (fields[0] !== 'Z' && Number(fields[2]) === pgid && Number(fields[3]) === sid) members.push(Number(name));
+  }
+  return members;
+}
+
+function hostTypedLine(files) {
+  return 'sh ' + files.launcher;
+}
+
+function hostEnvText(env) {
+  const lines = [];
+  let skipped = 0;
+  for (const [name, value] of Object.entries(env)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) lines.push(`export ${name}=${shQuote(value)}`);
+    else skipped++;
+  }
+  return { text: lines.join('\n') + '\n', skipped };
+}
+
+// 0b-2: clean environment in its own group, env file, prompt fd or variable, delete both, pid; rc is renamed into place after out and err close.
+function buildLauncher(lane, files, token) {
+  const stdinPrompt = lane.input !== null;
+  const argvPrompt = lane.promptArg !== undefined && lane.promptArg !== null;
+  const at = argvPrompt ? lane.argv.indexOf(lane.promptArg) : -1;
+  if (argvPrompt && at < 0) throw new Error('argv prompt element not found');
+  const q = shQuote;
+  const quotedArgv = lane.argv.map(q);
+  const command = [q(lane.bin), ...quotedArgv.map((el, i) => (i === at ? '"$aikit_prompt"' : el))].join(' ');
+  const lines = [
+    '#!/bin/sh',
+    `[ "\${AIKIT_HOST_CLEAN:-}" = ${q(token)} ] || { [ -x /usr/bin/setsid ] && exec /usr/bin/env -i AIKIT_HOST_CLEAN=${q(token)} /usr/bin/setsid /bin/sh "$0"; exec /usr/bin/env -i AIKIT_HOST_CLEAN=${q(token)} /bin/sh "$0"; }`,
+    'unset AIKIT_HOST_CLEAN',
+    `. ${q(files.env)}`,
+  ];
+  if (stdinPrompt) lines.push(`exec 3< ${q(files.prompt)}`);
+  if (argvPrompt) lines.push(`aikit_prompt=$(/bin/cat ${q(files.prompt)}; printf x); aikit_prompt=\${aikit_prompt%x}`);
+  lines.push(`/bin/rm -f ${q(files.env)}${stdinPrompt || argvPrompt ? ' ' + q(files.prompt) : ''}`);
+  lines.push(`printf '%s\\n' "$$" > ${q(files.pid + '.tmp')} && /bin/mv ${q(files.pid + '.tmp')} ${q(files.pid)}`);
+  lines.push(`printf 'AIKIT-HOST-START %s\\n' ${q(token)}`);
+  lines.push(`cd ${q(lane.cwd)} && ${command}${stdinPrompt ? ' <&3 3<&-' : ' < /dev/null'} >> ${q(files.out)} 2>> ${q(files.err)}`);
+  lines.push('rc=$?');
+  if (stdinPrompt) lines.push('exec 3<&-');
+  if (argvPrompt) lines.push('unset aikit_prompt');
+  lines.push('if [ "$rc" -gt 128 ] && sig=$(kill -l "$rc" 2>/dev/null); then rc="SIG$sig"; fi');
+  lines.push(`printf '%s\\n' "$rc" > ${q(files.rc + '.tmp')} && /bin/mv ${q(files.rc + '.tmp')} ${q(files.rc)}`);
+  lines.push(`printf 'AIKIT-HOST-DONE %s rc=%s\\n' ${q(token)} "$rc"`);
+  return lines.join('\n') + '\n';
+}
+
+// 0b-3: run.json first, then env and prompt; the tab comes after (plan 37-20).
+function writeRunDir(home, token, lane) {
+  const dir = hostRunDir(home, token);
+  const files = Object.fromEntries(Object.entries(HOST_FILES).map(([key, name]) => [key, path.join(dir, name)]));
+  const label = hostLabel(lane.role, lane.runtime, token);
+  const launcher = buildLauncher(lane, files, token);
+  let checkout;
+  try { checkout = fs.realpathSync(lane.cwd); } catch { checkout = lane.cwd; }
+  const record = { version: RUN_RECORD_VERSION, token, runner_pid: process.pid, runner_start: procStartTime(process.pid), host_name: os.hostname(), checkout_root: checkout, role: lane.role, runtime: lane.runtime, label, tab_id: null, pane_id: null, launcher_pid: null, launcher_pgid: null, launcher_start: null, created_ms: Date.now() };
+  writeCycleState(files.run, record);
+  const envText = hostEnvText(lane.env || {});
+  writePrivate(files.env, envText.text);
+  const prompted = lane.input !== null || (lane.promptArg !== undefined && lane.promptArg !== null);
+  if (lane.input !== null) writePrivate(files.prompt, String(lane.input ?? ''));
+  else if (prompted) writePrivate(files.prompt, String(lane.promptArg));
+  writePrivate(files.launcher, launcher);
+  writePrivate(files.out, '');
+  writePrivate(files.err, '');
+  return { dir, files, label, record, prompted, envSkipped: envText.skipped };
+}
+
+// D-23: none from the flag or AIKIT_HOST wins; auto from either asks for hosting; anything else is ignored with a note.
+function hostSettingValue(flag, envValue) {
+  const env = typeof envValue === 'string' ? envValue.trim() : '';
+  const safe = redactSecrets(redactSecrets(env).replace(/[\x00-\x1f\x7f-\x9f]/g, '')).slice(0, 40);
+  const note = env && env !== 'auto' && env !== 'none' ? `cross-ai: AIKIT_HOST=${safe} is not auto or none; ignored` : null;
+  if (flag === 'none' || env === 'none') return { value: 'none', note };
+  if (flag === 'auto' || env === 'auto') return { value: 'auto', note };
+  return { value: null, note };
+}
+
+// 0b-4: 250 ms measured 0.08 % of a core.
+const HOST_POLL_MS = 250;
+const HOST_ID_RX = /^[A-Za-z0-9._:-]{1,64}$/;
+const HOST_ADMIT_GRACE_MS = 1000;
+// Review c1: a pane shell may take seconds to start the typed line; no pid by then means not started or dead.
+const HOST_PID_GRACE_MS = 5000;
+
+function closeTab(tabId, timeoutMs = HERDR_TIMEOUT_MS) {
+  const r = herdrCall('tab close', [tabId], timeoutMs);
+  if (r.ok) { openTabs.delete(tabId); return true; }
+  log(`cross-ai: host: tab close ${tabId} failed (${r.detail})`);
+  return false;
+}
+function dropSecrets(dir) {
+  for (const name of [HOST_FILES.env, HOST_FILES.prompt]) {
+    try { fs.rmSync(path.join(dir, name), { force: true }); } catch { /* best effort */ }
+  }
+}
+function keepRecordOnly(dir, tabId) {
+  try { for (const name of fs.readdirSync(dir)) if (name !== HOST_FILES.run) fs.rmSync(path.join(dir, name), { force: true }); } catch { /* best effort */ }
+  tempDirs.delete(dir);
+  log(`cross-ai: host: kept ${dir}/run.json for tab ${tabId ?? '-'} (close not confirmed)`);
+}
+async function waitDead(pid, ms) {
+  const end = Date.now() + ms;
+  while (pidAlive(pid) && Date.now() < end) await sleep(50);
+}
+async function waitForFile(file, ms) {
+  const end = Date.now() + ms;
+  while (!fs.existsSync(file) && Date.now() < end) await sleep(100);
+  return fs.existsSync(file);
+}
+// Review c1: signal only a verified group leader with an unchanged start time; anything unreadable means no signal.
+function launcherVerified(pid, recordedStart, currentStart, currentGroup) {
+  return recordedStart !== '-' && currentStart === recordedStart && currentGroup === pid;
+}
+async function hostedChild(bin, argv, opts) {
+  const capMs = opts.capMs ?? Number.POSITIVE_INFINITY;
+  const limit = opts.limit ?? finalizeBy;
+  const none = { code: null, signal: null, timedOut: false, limited: false, spawnErr: null, stdout: '', stderr: '' };
+  if (budgetMs(capMs, limit) <= 0) return { ...none, timedOut: true };
+  const home = path.resolve(stateHome());
+  const token = hostToken();
+  const dir = hostRunDir(home, token);
+  const problem = hostStartProblem(dir);
+  if (problem) return { hostFailed: problem, rerun: true };
+  const laneCwd = opts.cwd || process.cwd();
+  let made;
+  try {
+    made = writeRunDir(home, token, { role: opts.host.role, runtime: opts.host.runtime, cwd: laneCwd, bin, argv, env: opts.env || process.env, input: opts.input === undefined ? '' : opts.input, promptArg: opts.promptArg });
+  } catch (e) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+    return { hostFailed: `run directory not written (${e.code || e.message})`, rerun: true };
+  }
+  tempDirs.add(dir);
+  if (made.envSkipped) log(`cross-ai: host: ${made.envSkipped} environment names are not shell names and are not passed`);
+  let tabId = null;
+  let stop = null;
+  let typedSent = false;
+  const startupFinalize = (reason) => { stop = reason; };
+  currentFinalize = startupFinalize;
+  const startupEnd = (result) => {
+    dropSecrets(dir);
+    if (tabId !== null && !closeTab(tabId, Math.max(500, budgetMs(HERDR_TIMEOUT_MS, finalizeBy)))) keepRecordOnly(dir, tabId);
+    else dropTemp(dir);
+    if (currentFinalize === startupFinalize) currentFinalize = null;
+    return result;
+  };
+  let record;
+  try {
+    const created = herdrCall('tab create', ['--label', made.label, '--no-focus', '--cwd', laneCwd]);
+    const answer = created.ok ? parseJson(created.stdout.trim()) : null;
+    const id = answer?.result?.tab?.tab_id;
+    const paneId = answer?.result?.root_pane?.pane_id;
+    if (!HOST_ID_RX.test(id || '')) {
+      if (!created.ok && String(created.detail).startsWith('exit ')) return startupEnd({ hostFailed: `tab create failed (${created.detail})`, rerun: true });
+      dropSecrets(dir);
+      keepRecordOnly(dir, null);
+      if (currentFinalize === startupFinalize) currentFinalize = null;
+      return { hostFailed: `tab create answer lost (${created.detail || 'no tab id in its answer'}); kept the run record for the sweep`, rerun: true };
+    }
+    tabId = id;
+    openTabs.set(tabId, dir);
+    if (aborting || stop) return startupEnd(none);
+    if (!HOST_ID_RX.test(paneId || '')) return startupEnd({ hostFailed: 'tab create failed (no pane id in its answer)', rerun: true });
+    record = { ...made.record, tab_id: tabId, pane_id: paneId };
+    writeCycleState(made.files.run, record);
+    log(`cross-ai: host herdr tab=${tabId} label=${made.label}`);
+    typedSent = true;
+    const typed = herdrCall('pane run', [paneId, hostTypedLine(made.files)]);
+    if (aborting || stop) return startupEnd(none);
+    if (!typed.ok) {
+      const definite = String(typed.detail).startsWith('exit ');
+      const started = await waitForFile(made.files.pid, definite ? HOST_ADMIT_GRACE_MS : HOST_PID_GRACE_MS);
+      if (aborting || stop) return startupEnd(none);
+      if (!started) return startupEnd({ hostFailed: definite ? `pane run failed (${typed.detail})` : `pane run answer unclear (${typed.detail})`, rerun: definite });
+    }
+  } catch (e) { return startupEnd({ hostFailed: `startup failed (${e.code || e.message})`, rerun: !typedSent }); }
+  return new Promise((resolve) => {
+    let settled = false, timer = null, poller = null, timedOut = false, limited = false;
+    const out = { chunks: [], bytes: 0, dropped: false }, err = { chunks: [], bytes: 0, dropped: false };
+    const pos = { out: 0, err: 0 };
+    const fds = { out: fs.openSync(made.files.out, 'r'), err: fs.openSync(made.files.err, 'r') };
+    let launcherPid = null, launcherStart = null, launcherSid = null, verified = false, pseudo = null;
+    const pidDeadline = Date.now() + HOST_PID_GRACE_MS;
+    const readNew = (key) => {
+      const buf = Buffer.alloc(65536);
+      let n;
+      while ((n = fs.readSync(fds[key], buf, 0, buf.length, pos[key])) > 0) {
+        pos[key] += n;
+        const d = Buffer.from(buf.subarray(0, n));
+        pushCapped(key === 'out' ? out : err, d);
+        if (key === 'out') opts.onStdout?.(d); else opts.onStderr?.(d);
+      }
+    };
+    // One path for the poll and for a finalize that runs before the first poll saw the pid: the
+    // group is registered and run.json names the launcher, so a kept record can still be swept.
+    const leaderAlive = () => launcherVerified(launcherPid, launcherStart, procStartTime(launcherPid), procGroup(launcherPid));
+    // R12: the lane's group ends on every exit, like the headless kill. A live verified leader, or a
+    // member left in the leader's group and session, keeps the group id in use. A launcher already gone
+    // when its pid was first read cannot be verified; then only members of the session it made itself
+    // (session id = group id = its pid, from setsid) are signalled.
+    const groupAlive = () => launcherPid !== null && ((verified && leaderAlive()) || groupMembers(launcherPid, verified ? launcherSid : launcherPid).length > 0);
+    const signalGroup = (sig) => { try { process.kill(-launcherPid, sig); } catch { /* gone */ } };
+    const adoptPid = () => {
+      const pidText = readOr(made.files.pid, '');
+      if (launcherPid !== null || !/^\d+\n?$/.test(pidText)) return;
+      launcherPid = Number(pidText); launcherStart = procStartTime(launcherPid);
+      const group = procGroup(launcherPid);
+      verified = launcherVerified(launcherPid, launcherStart, launcherStart, group);
+      if (verified) { launcherSid = procSession(launcherPid); pseudo = { pid: launcherPid, kill: (sig) => { try { if (leaderAlive()) process.kill(launcherPid, sig); } catch { /* gone */ } } }; current = pseudo; }
+      else log(`cross-ai: host: launcher ${launcherPid} is not a verified group leader; not signalled`);
+      noteChildPgid('spawn', launcherPid);
+      record = { ...record, launcher_pid: launcherPid, launcher_pgid: group, launcher_start: launcherStart };
+      writeCycleState(made.files.run, record);
+    };
+    const finalize = async (reason, rc = null) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poller); clearTimeout(timer);
+      if (currentFinalize === finalize) currentFinalize = null;
+      if (reason === 'limit') limited = true;
+      // A signal can arrive after the launcher starts but before the first poll.
+      adoptPid();
+      if (groupAlive()) {
+        signalGroup('SIGTERM');
+        if (!['exit', 'dead', 'nopid'].includes(reason)) await waitDead(launcherPid, budgetMs(aborting ? SIGNAL_GRACE_MS : KILL_GRACE_MS, finalizeBy));
+        if (groupAlive()) signalGroup('SIGKILL');
+      }
+      readNew('out'); readNew('err');
+      fs.closeSync(fds.out); fs.closeSync(fds.err);
+      dropSecrets(dir);
+      const closed = closeTab(tabId, Math.max(500, budgetMs(HERDR_TIMEOUT_MS, finalizeBy)));
+      if (closed) dropTemp(dir); else keepRecordOnly(dir, tabId);
+      if (launcherPid !== null) noteChildPgid('exit', launcherPid);
+      if (current === pseudo) current = null;
+      for (const [label, buf] of [['stdout', out], ['stderr', err]]) {
+        if (buf.dropped) log(`cross-ai: child ${label} passed ${CAPTURE_MAX_BYTES} bytes; kept the newest ${buf.bytes}`);
+      }
+      let code = null, signal = null;
+      if (rc?.bad) log(redactSecrets(`cross-ai: host: rc file is not an exit code: ${rc.bad}`));
+      else if (rc) { code = rc.code; signal = rc.signal; }
+      // shortcut: the launcher died without writing rc; the real signal is unknown, reported as SIGKILL.
+      else if (reason === 'dead') signal = 'SIGKILL';
+      else if (reason === 'nopid') log(`cross-ai: host: the launcher wrote no pid within ${HOST_PID_GRACE_MS} ms; not rerun`);
+      else if (launcherPid !== null) signal = 'SIGTERM';
+      resolve({ code, signal, timedOut, limited, spawnErr: null, stdout: Buffer.concat(out.chunks).toString('utf8'), stderr: Buffer.concat(err.chunks).toString('utf8') });
+    };
+    const tick = () => {
+      if (settled) return;
+      try {
+        readNew('out'); readNew('err');
+        adoptPid();
+        const rc = parseRc(readOr(made.files.rc, ''));
+        if (rc !== null) { finalize('exit', rc); return; }
+        if (launcherPid !== null && !pidAlive(launcherPid)) { const late = parseRc(readOr(made.files.rc, '')); finalize(late ? 'exit' : 'dead', late); }
+        else if (launcherPid === null && Date.now() > pidDeadline) finalize('nopid');
+      } catch (e) { log(`cross-ai: host: poll failed (${e.code || e.message})`); finalize('dead'); }
+    };
+    currentFinalize = finalize;
+    timer = setTimeout(() => { timedOut = true; finalize('timeout'); }, budgetMs(capMs, limit));
+    poller = setInterval(tick, HOST_POLL_MS);
+  });
+}
+function hostFailedNote(host, reason, rerun) {
+  log(`cross-ai: host: ${reason}; ${rerun ? 'the lane runs headless' : 'the lane may have started, so it is not rerun'}`);
+  host.failed = true; host.entry.state = 'ignored'; host.entry.reason = 'host_failed';
+  for (const line of reportLines([host.entry])) log(line);
+}
+
 function parsePiListingIds(stdout) {
   if (typeof stdout !== 'string') return null;
   let envelope = null;
@@ -4549,7 +5249,7 @@ function childEnv(extra, baseEnv) {
 }
 
 function withExtra(cli, argv) {
-  const extra = CONFIG.extraArgs[cli];
+  const extra = ownValue(CONFIG.extraArgs, cli);
   return extra && extra.length ? [...argv, ...extra] : argv;
 }
 
@@ -4676,7 +5376,7 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
     watchChunk(cli, 'stderr', errRelay, state, text);
     errTail = (errTail + text).slice(-INPUT_CAP);
   };
-  const r = await runChild(bin, argv, {
+  const childOpts = {
     cwd, env, input, capMs: budgetMs(opts.capMs ?? Number.POSITIVE_INFINITY, childLimit),
     limit: childLimit,
     onStdout: (d) => {
@@ -4684,7 +5384,16 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
       watchChunk(cli, 'stdout', outRelay, state, outDecoder.write(d));
     },
     onStderr: (d) => onErrText(errDecoder.write(d)),
-  });
+  };
+  let r = null;
+  if (opts.host && !opts.host.failed) {
+    const hosted = await hostedChild(bin, argv, { ...childOpts, host: opts.host, promptArg: opts.promptArg });
+    if (hosted.hostFailed) {
+      hostFailedNote(opts.host, hosted.hostFailed, hosted.rerun);
+      if (!hosted.rerun) r = { code: null, signal: null, timedOut: false, limited: false, spawnErr: null, stdout: '', stderr: '' };
+    } else r = hosted;
+  }
+  if (!r) r = await runChild(bin, argv, childOpts);
   clearInterval(hb);
   if (state.limitTimer) clearTimeout(state.limitTimer);
   const outRest = outDecoder.end();
@@ -4780,18 +5489,24 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const tmp = makeTemp('cross-ai-');
   const ctx = {
     cwd: process.cwd(), sid: crypto.randomUUID(), outFile: path.join(tmp, 'last-message.md'),
-    codexEffort: opts.codexEffort, codexServiceTier: opts.codexServiceTier,
+    adds: opts.adds, codexServiceTier: opts.codexServiceTier,
     cursorMode: opts.cursorMode,
-    piThinking: opts.piThinking, codexSandbox: opts.codexSandbox,
+    codexSandbox: opts.codexSandbox,
     profileFlags: opts.profileFlags || [],
     promptArg: '<prompt>',
   };
+  if (opts.sessionId) ctx.sid = opts.sessionId;
+  // An explicit id the planner applied is pinned: retries keep it and no rung starts a fresh session (SPEC R7).
+  const pinned = opts.pinSession ? opts.sessionId : null;
+  const chosen = rt.forms?.session?.style === 'chosen';
+  // A pinned chosen row continues through its create-or-continue form with the same id.
+  const sameArgv = (sid, input) => sameSessionArgv(name, rt, model, ctx, sid, mode, input) || (pinned && chosen && sid === pinned ? newSessionArgv(name, rt, model, ctx, mode, input, true) : null);
   const env = childEnv(rt.env, process.env);
   // A resume argv is checked against the runtime's own resume formula, so its session flag is
   // trusted and only extras beyond the formula count as a widening.
   const reviewProblem = (argv, sid = null) => {
     if (mode !== 'review') return null;
-    const base = sid ? rt.resume(model, ctx, sid, mode) : rt.review(model, ctx);
+    const base = sid && rt.resume ? rt.resume(model, ctx, sid, mode) : rt.review(model, ctx);
     return reviewArgvProblem(argv, base, rt.reviewExtras || []);
   };
   const refuseReview = (problem) => {
@@ -4800,10 +5515,19 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     return { ok: false, status: 'usage', exit: 2, cli_rc: '-', outBytes: 0 };
   };
   if (rt.argvPrompt) ctx.promptArg = argvPromptElement(prompt);
-  let argv = withExtra(name, rt[mode](model, ctx));
-  const initialProblem = reviewProblem(argv);
+  // The first attempt spawns the argv the settings report was confirmed against (SPEC R2, R7).
+  const first = opts.resume && opts.sessionId ? sameSessionArgv(name, rt, model, ctx, opts.sessionId, mode, prompt) : null;
+  let argv = first ? first.argv : withExtra(name, rt[mode](model, ctx));
+  // SPEC R12 encoding: no argv element may hold a NUL byte, hosted or headless (a spawn would throw).
+  if (argv.some((el) => String(el).includes('\0'))) {
+    log(`cross-ai: argv for ${name} holds a NUL byte; refused`);
+    return { ok: false, status: 'usage', exit: 2, cli_rc: '-', outBytes: 0 };
+  }
+  const initialProblem = reviewProblem(argv, first ? opts.sessionId : null);
   if (initialProblem) return refuseReview(initialProblem);
-  let input = rt.argvPrompt ? null : prompt;
+  let input = first ? first.input : (rt.argvPrompt ? null : prompt);
+  let attemptSid = rt.argvFile ? (opts.sessionId ?? null) : (first ? opts.sessionId : (argv.includes(ctx.sid) ? ctx.sid : null));
+  let unshownNoted = false;
   // The dirty-tree gate runs once, when a fresh series opens, and its input covers every
   // call of that series. Re-running it mid-series would see the series' own edits.
   let seriesInput = prompt;
@@ -4970,19 +5694,25 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     };
   };
   try {
-    if (persisted && persisted.task_digest === digest && persisted.last_sid) {
-      ctx.sid = persisted.last_sid;
-      // A re-entry repeats the task on the saved session, so the session gets the prompt
-      // itself; the resume note would hide it.
-      const retry = sameSessionArgv(name, rt, model, ctx, persisted.last_sid, mode, prompt);
-      if (retry) {
-        argv = retry.argv;
-        input = retry.input;
-        seriesInput = prompt;
-        continued = true;
-        ladder.canResume = true;
+    if (!opts.callSessionId && persisted && persisted.task_digest === digest && persisted.last_sid) {
+      if (!sessionShown(persisted.last_sid)) {
+        log('cross-ai: note: the quota record\'s session id is outside [A-Za-z0-9._:-] or shaped like a key; it is not reused');
+      } else {
+        ctx.sid = persisted.last_sid;
+        // A re-entry repeats the task on the saved session, so the session gets the prompt
+        // itself; the resume note would hide it.
+        const retry = sameSessionArgv(name, rt, model, ctx, persisted.last_sid, mode, prompt);
+        if (retry) {
+          argv = retry.argv;
+          input = retry.input;
+          seriesInput = prompt;
+          continued = true;
+          ladder.canResume = true;
+          attemptSid = persisted.last_sid;
+        }
       }
     }
+    liveSettings.sessionId = sessionShown(attemptSid) ? attemptSid : null;
     for (let attempt = 0; ; attempt++) {
       // Before the child runs: the snapshot after it would race the next attempt's edits.
       if (mode === 'exec' && seenSig !== null) {
@@ -4993,11 +5723,11 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const childCap = attemptCapMs(opts, startedMs, episodeEnd());
       const left = Math.max(0, Math.round(childCap / 1000));
       log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${left}s`);
-      log(`cross-ai: argv=${JSON.stringify(displayArgv(argv, rt.argvPrompt ? ctx.promptArg : undefined))}`);
+      log(`cross-ai: argv=${JSON.stringify(shownArgv(rt, displayArgv(argv, rt.argvPrompt ? ctx.promptArg : undefined)))}`);
       const childLimit = episodeEnd() ? Math.min(runDeadline, episodeEnd()) : runDeadline;
       const route = opts.route || 'unknown';
       const r = await runOnce(binPath, argv, input, env, ctx.cwd, name,
-        { capMs: childCap, limit: childLimit, route, model });
+        { capMs: childCap, limit: childLimit, route, model, host: opts.host, promptArg: rt.argvPrompt ? ctx.promptArg : undefined });
       // Self-test fakes only (FAKE_CALLS): a fake child stalls the post-run git snapshot only
       // while it is alive. A real run never touches the caller's home.
       if (process.env.FAKE_CALLS) {
@@ -5007,9 +5737,9 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const lane = confirmedRoute(route);
       const evidenceOf = (cls) => {
         const rule = cls && cls.rule ? cls.rule : '-';
-        // A runtime whose error wording is uncaptured reports every pattern unverified,
-        // even a wildcard row the catalog itself labels verified.
-        const pattern = rt.errorsUnverified ? 'unverified' : (cls && cls.label ? cls.label : 'none');
+        // A runtime whose error wording is uncaptured, or whose execute formula is unverified on an execute call, reports every pattern unverified.
+        const unverified = rt.errorsUnverified || (mode === 'exec' && rt.execLabel?.state === 'unverified');
+        const pattern = unverified ? 'unverified' : (cls && cls.label ? cls.label : 'none');
         return { route, rule, pattern, upstream: upstreamOf(cls, r, name) };
       };
       if (r.spawnErr) {
@@ -5024,6 +5754,13 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         };
       }
       const p = rt.parse(r.stdout, ctx);
+      const hostSid = sessionShown(p.sessionId) ? p.sessionId : null;
+      if (p.sessionId && !hostSid && !unshownNoted) {
+        unshownNoted = true;
+        log(`cross-ai: note: ${name} printed a session id outside [A-Za-z0-9._:-] or shaped like a key; session=- and it is not passed back`);
+      }
+      const usedSid = hostSid || attemptSid;
+      liveSettings.sessionId = sessionShown(usedSid) ? usedSid : null;
       // A live hit wins only when it ended the child: one that finished on its own with exit 0
       // and an answer succeeded, whatever it printed on stderr on the way.
       // A late error (after our turn ended) does not discard a complete answer.
@@ -5036,7 +5773,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       // A non-retryable class ends the call here; both class checks below share it.
       const classStop = () => {
         attempts += 1;
-        logAttempt(attempts, rungOf(), ladder.cycle, p.sessionId, hit, evidence.rule,
+        logAttempt(attempts, rungOf(), ladder.cycle, usedSid, hit, evidence.rule,
           evidence.pattern, startedMs);
         lastFailureMs = Date.now();
         if (!firstFailureMs) firstFailureMs = startedMs;
@@ -5091,7 +5828,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       attempts += 1;
       lastFailureMs = Date.now();
       if (!firstFailureMs) firstFailureMs = startedMs;
-      const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
+      const sid = usedSid;
       const rung = rungOf();
       logAttempt(attempts, rung, ladder.cycle, sid, hit || (r.timedOut ? 'timeout' : 'crash'),
         hit ? evidence.rule : '-', hit ? evidence.pattern : '-', startedMs);
@@ -5099,7 +5836,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       if (soft && !ladder.firstMs) ladder.firstMs = Date.now();
       const sig = r.signal ? ' ' + r.signal : '';
       log(`cross-ai: ${name} failed (exit ${r.code}${sig}, rule=${hit ? evidence.rule : '-' })`);
-      ladder.canResume = Boolean(sameSessionArgv(name, rt, model, ctx, sid, mode));
+      ladder.canResume = Boolean(sameArgv(sid));
       // k restarts at 1 with every series, so the reset and the first retry after it both wait
       // about base_s, and the ordering floor applies within one series only.
       const k = ladder.retry < retryCfg.max_retries ? ladder.retry + 1 : 1;
@@ -5107,11 +5844,16 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const nominal = softWaitMs(retryCfg, k, Math.random, prevMs);
       const end = episodeEnd();
       const step = ladderNext(ladder, cls, Date.now(), {
-        maxRetries: retryCfg.max_retries, sessionResets: retryCfg.session_resets,
+        maxRetries: retryCfg.max_retries, sessionResets: pinned ? 0 : retryCfg.session_resets,
         deadlineMs: runDeadline, waitMs: nominal, capMs,
       });
       const wait = end ? Math.min(nominal, Math.max(0, end - Date.now())) : nominal;
       log(`cross-ai: ladder ${name} next=${step.next} why=${step.why}`);
+      if (pinned && (step.next === 'new' || step.next === 'reset')) {
+        log(`cross-ai: --session-id was given; no fresh session is started (next=${step.next} refused)`);
+        dropState(hit || 'crash');
+        return { ok: false, status: hit || 'crash', outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(), stopped: 'class' };
+      }
       if (step.next === 'hard') return hardHandler(r, evidence, step.why, sid, cls);
       if (step.next === 'stop') {
         // A no-budget timeout, the first attempt stopped before any retry was admitted, stays
@@ -5188,10 +5930,11 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         // A fresh series opened over a dirty tree keeps the gate's resume text; every other
         // same-session retry gets the plain resume note.
         const resumed = gated ? seriesInput : RESUME_MSG;
-        const retry = sameSessionArgv(name, rt, model, ctx, sid, mode, resumed);
+        const retry = sameArgv(sid, resumed);
         const resumeProblem = reviewProblem(retry.argv, sid);
         if (resumeProblem) return refuseReview(resumeProblem);
         argv = retry.argv;
+        attemptSid = sid;
         input = retry.input;
       } else if (step.next === 'reset') {
         ladder.resets += 1;
@@ -5199,6 +5942,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         rungLabel = 'reset';
         const retry = newSessionArgv(name, rt, model, ctx, mode, nextInput);
         argv = retry.argv;
+        attemptSid = rt.argvFile ? (opts.sessionId ?? null) : (argv.includes(ctx.sid) ? ctx.sid : null);
         input = retry.input;
       } else {
         ladder.retry += 1;
@@ -5208,6 +5952,8 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         const fresh = gated ? nextInput : prompt;
         const retry = newSessionArgv(name, rt, model, ctx, mode, fresh);
         argv = retry.argv;
+        // An argv-file row rebuilds the same filled argv, so its explicit id (maybe embedded, such as --session=<id>) stays.
+        attemptSid = rt.argvFile ? (opts.sessionId ?? null) : (argv.includes(ctx.sid) ? ctx.sid : null);
         input = retry.input;
       }
     }
@@ -5269,45 +6015,248 @@ async function rung2Gate(cwd, beforeSig, prompt, midSig) {
   return { stop: false, input: `${RESUME_MSG}\n\n${prompt}` };
 }
 
-const CODEX_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
-const PI_THINKING = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+// One cap for every file a call names (argv file, SKILL.md body, MCP file); equals INPUT_CAP (SPEC R4, R13, R14).
+const FILE_READ_MAX = 65536;
+
+// Strict reader for files a call names: read once, non-blocking open, same file as checked, regular file, size-capped, strict UTF-8, no BOM.
+function readCallFile(flag, relPath, opts = {}) {
+  const { cwdOnly = false, mode = 0, cwd = process.cwd() } = opts;
+  const unreadable = () => new Error(`${flag} unreadable: ${relPath}`);
+  let abs, pre, fd;
+  try { abs = fs.realpathSync(path.resolve(cwd, relPath)); } catch { throw unreadable(); }
+  if (cwdOnly) {
+    let rel;
+    try { rel = path.relative(fs.realpathSync(cwd), abs); } catch { throw unreadable(); }
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`${flag} must name a file inside the working directory: ${relPath}`);
+  }
+  try { pre = fs.statSync(abs); } catch { throw unreadable(); }
+  try { fd = fs.openSync(abs, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK); } catch { throw unreadable(); }
+  try {
+    const st = fs.fstatSync(fd);
+    if (st.dev !== pre.dev || st.ino !== pre.ino) throw new Error(`${flag} changed while it was opened: ${relPath}`);
+    if (!st.isFile()) throw new Error(`${flag} must name a regular file: ${relPath}`);
+    if (mode && (st.mode & mode)) throw new Error(`${flag} must not be accessible by group or others (mode ${(st.mode & 0o777).toString(8).padStart(3, '0')}): ${relPath}`);
+    const buf = Buffer.alloc(FILE_READ_MAX + 1);
+    let n = 0;
+    while (n < buf.length) { const count = fs.readSync(fd, buf, n, buf.length - n, null); if (!count) break; n += count; }
+    if (n > FILE_READ_MAX) throw new Error(`${flag} is over ${FILE_READ_MAX} bytes: ${relPath}`);
+    const bytes = buf.subarray(0, n);
+    let text;
+    try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch { throw new Error(`${flag} is not valid UTF-8: ${relPath}`); }
+    if (text.startsWith('\uFEFF')) throw new Error(`${flag} starts with a byte-order mark: ${relPath}`);
+    return { abs, bytes, text };
+  } finally { fs.closeSync(fd); }
+}
+
+function loadMcpConfig(o) {
+  if (o.mcpConfig === null) return null;
+  const { abs, text } = readCallFile('--mcp-config', o.mcpConfig, { mode: 0o077 });
+  const shown = redactSecrets(redactSecrets(o.mcpConfig).replace(/[\x00-\x1f\x7f-\x9f]/g, ''));
+  let doc;
+  try { doc = strictJson(text); } catch (e) {
+    throw new Error(e.message.startsWith('duplicate key') ? `--mcp-config holds a duplicate key (key not shown): ${shown}` : `--mcp-config is not valid JSON (content not shown): ${shown}`);
+  }
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (!isObj(doc)) throw new Error('--mcp-config: the top level must be a JSON object');
+  const names = isObj(doc.mcpServers) ? jsonKeys(doc.mcpServers) : [];
+  if (!names.length) throw new Error('--mcp-config: mcpServers must be a non-empty object');
+  for (const [i, name] of names.entries()) if (!MCP_SERVER_RE.test(name)) throw new Error(`--mcp-config: server name ${i + 1} (in file order) must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`);
+  return { file: abs, servers: names };
+}
+
+function planMcp(row, role, mcp) {
+  if (!mcp) return { adds: [], report: [] };
+  const form = row.forms?.mcp ?? null;
+  let reason = null;
+  if ((row.profiles?.[role] || []).includes('--no-mcp')) reason = 'mode_forbids';
+  else if (!form || form.label.state === 'unknown') reason = form?.reason || 'no_form';
+  else if (form.label.state === 'unverified') reason = form.reason || 'unverified_form';
+  const adds = reason ? [] : [form.flag, `${form.prefix || ''}${mcp.file}`, ...(form.after || [])];
+  const report = mcp.servers.map((value) => reason ? { name: 'mcp', value, state: 'ignored', reason } : { name: 'mcp', value, state: 'applied', proof: adds });
+  return { adds, report };
+}
+
+function skillFrontmatterName(text) {
+  const front = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+  return front ? (/^name:[ \t]*["']?([^"'\r\n]*?)["']?[ \t]*$/m.exec(front[1])?.[1] ?? null) : null;
+}
+
+function loadSkills(o) {
+  const skills = [];
+  for (const [at, item] of o.skillArgs.entries()) {
+    if (item.flag !== '--skill-path') continue;
+    const shown = redactSecrets(item.value.replace(/[\x00-\x1f\x7f-\x9f]/g, ''));
+    if (CONTROL_CHAR_RE.test(item.value)) throw new Error('--skill-path: the path holds a control character');
+    let dir;
+    try { dir = fs.realpathSync(path.resolve(process.cwd(), item.value)); if (!fs.statSync(dir).isDirectory()) throw new Error(); }
+    catch { throw new Error(`--skill-path ${shown}: no such directory`); }
+    if (CONTROL_CHAR_RE.test(dir)) throw new Error('--skill-path: the path holds a control character');
+    if (skills.some((s) => s.path === dir)) continue;
+    const file = path.join(dir, 'SKILL.md');
+    if (!fs.existsSync(file)) throw new Error(`--skill-path ${shown}: no SKILL.md in the directory`);
+    const { bytes, text } = readCallFile('--skill-path', file);
+    if (text === '') throw new Error(`--skill-path ${shown}: SKILL.md is empty`);
+    const dirName = path.basename(dir), fmName = skillFrontmatterName(text);
+    const name = fmName && SKILL_NAME_RE.test(fmName) ? fmName : SKILL_NAME_RE.test(dirName) ? dirName : null;
+    if (!name) throw new Error(`--skill-path ${shown}: the skill needs a name of shape ^[a-z0-9][a-z0-9-]{0,63}$ (frontmatter name or directory name)`);
+    skills.push({ name, path: dir, dirName, fmName, sha256: crypto.createHash('sha256').update(bytes).digest('hex'), body: text, byName: false, at });
+  }
+  for (const [at, item] of o.skillArgs.entries()) {
+    if (item.flag !== '--skill-name') continue;
+    const s = skills.find((v) => v.path && (v.dirName === item.value || v.fmName === item.value));
+    if (s) { s.byName = true; s.name = item.value; s.at = Math.min(s.at, at); }
+    else if (!skills.some((v) => !v.path && v.name === item.value)) skills.push({ name: item.value, path: null, dirName: null, fmName: null, sha256: null, body: null, byName: true, at });
+  }
+  return skills.sort((a, b) => a.at - b.at);
+}
+
+function skillPathArg(form, s) {
+  if (!form.flag || form.label.state !== 'verified') return null;
+  if (!form.root) return s.path;
+  const tail = path.sep + form.root.split('/').join(path.sep) + path.sep + s.dirName;
+  return s.path.endsWith(tail) ? s.path.slice(0, -tail.length) : null;
+}
+function skillBlock(s) { return `<skill name="${s.name}" path="${s.path}" sha256="${s.sha256}">\n${s.body}\n</skill>\n`; }
+function planSkills(row, skills) {
+  const forms = row.forms?.skills || skillsNone('no recorded skill form');
+  const adds = [], report = []; let promptPrefix = '';
+  for (const s of skills) {
+    const entry = { name: 'skill', value: s.name };
+    if (s.byName && forms.name.form && forms.name.label.state === 'verified') {
+      const text = forms.name.form.replace('<name>', s.name) + '\n';
+      promptPrefix += text; report.push({ ...entry, state: 'applied', form: 'name', proofPrompt: text });
+    } else if (s.path && skillPathArg(forms.path, s) !== null) {
+      const frag = [forms.path.flag, skillPathArg(forms.path, s)];
+      adds.push(...frag); report.push({ ...entry, state: 'applied', form: 'path', proof: frag });
+    } else if (s.path && forms.prose.label.state === 'verified') {
+      const text = skillBlock(s); promptPrefix += text;
+      report.push({ ...entry, state: 'applied', form: 'prose', proofPrompt: text, sha256: s.sha256 });
+    } else {
+      const why = s.byName ? forms.name : forms.path;
+      report.push({ ...entry, state: 'ignored', reason: why.reason || (why.label.state === 'unverified' ? 'unverified_form' : 'no_form') });
+    }
+  }
+  return { adds, promptPrefix, report };
+}
+function skillBlockLines(report) { return report.filter((e) => e.name === 'skill' && e.form === 'prose').map((e) => `cross-ai: skill-block ${e.value} bytes=${Buffer.byteLength(e.proofPrompt)} sha256=${e.sha256}`); }
+function composePrompt(prefix, prepended, raw, preamble) { return prefix + (prepended === null ? raw : `${prepended.replace(/^(?:<!--[^\n]*-->\r?\n)+/, '')}\n\n${raw}`) + preamble; }
+
+const JSON_KEY_ORDER = new WeakMap();
+function jsonKeys(obj) { return JSON_KEY_ORDER.get(obj) || Object.keys(obj); }
+
+// JSON.parse keeps the last duplicate key; a call file must not hold one (SPEC R14 adjacency).
+function strictJson(text) {
+  const value = JSON.parse(text);
+  const stack = [], records = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      const start = i++;
+      while (text[i] !== '"') { if (text[i] === '\\') i++; i++; }
+      const frame = stack[stack.length - 1];
+      if (frame && frame.wantKey) {
+        const key = JSON.parse(text.slice(start, i + 1));
+        if (frame.keys.has(key)) throw new SyntaxError(`duplicate key ${JSON.stringify(key)}`);
+        frame.keys.add(key); frame.order.push(key); frame.key = key; frame.wantKey = false;
+      }
+    } else if (c === '{') {
+      const parent = stack[stack.length - 1];
+      const objectPath = stack.length === 0 ? [] : parent?.path != null ? [...parent.path, parent.key] : null;
+      stack.push({ keys: new Set(), wantKey: true, order: [], path: objectPath, key: null });
+    } else if (c === '[') stack.push(null);
+    else if (c === '}' || c === ']') {
+      const frame = stack.pop();
+      if (frame && frame.path !== null) records.push([frame.path, frame.order]);
+    } else if (c === ',') { const frame = stack[stack.length - 1]; if (frame) frame.wantKey = true; }
+  }
+  for (const [objectPath, order] of records) {
+    let target = value;
+    for (const key of objectPath) target = target == null ? undefined : Object.getOwnPropertyDescriptor(target, key)?.value;
+    if (target !== null && typeof target === 'object') JSON_KEY_ORDER.set(target, order);
+  }
+  return value;
+}
+
+function loadArgvFile(relPath, text = null) {
+  if (text === null) {
+    try { text = readCallFile('--argv-file', relPath, { cwdOnly: true }).text; } catch (e) { return { error: e.message }; }
+  }
+  let argv;
+  try { argv = strictJson(text); } catch { return { error: `--argv-file is not strict JSON: ${relPath}` }; }
+  if (!Array.isArray(argv)) return { error: '--argv-file must hold a JSON array of strings' };
+  if (!argv.length) return { error: '--argv-file holds an empty array; the first element is the command' };
+  for (const [i, el] of argv.entries()) {
+    if (typeof el !== 'string') return { error: `--argv-file element ${i} is not a string` };
+    if (!el) return { error: `--argv-file element ${i} is empty` };
+    if (el.includes('\u0000')) return { error: `--argv-file element ${i} holds a NUL character` };
+    const remainder = ARGV_FILE_PLACEHOLDERS.reduce((s, placeholder) => s.replaceAll(placeholder, ''), el);
+    if (/[{}]/.test(remainder)) return { error: `--argv-file element ${i} holds an unknown placeholder (only {model}, {effort} and {session})` };
+    if (i === 0 && ARGV_FILE_PLACEHOLDERS.some((placeholder) => el.includes(placeholder))) return { error: '--argv-file element 0 is the command and holds no placeholder' };
+  }
+  const slots = Object.fromEntries(['model', 'effort', 'session'].map((name) => [name, argv.slice(1).some((el) => el.includes(`{${name}}`))]));
+  return { argv, slots };
+}
+
 const CURSOR_MODES = new Set(['ask', 'plan']);
 const ROUTE_VALUES = new Set(['router', 'unknown']);
+// SPEC R4, 0c: a runtime id is a name checked by shape, never a table verdict; ids match exactly and case-sensitively.
+const RUNTIME_ID_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,31}$/;
+// SPEC R4: --prefer, --model-<cli> and --route-<cli> may name any cli; only the selected runtime's value is read.
+const CLI_NAME_RE = /^[a-z0-9-]+$/;
+function ownValue(obj, key) { return obj && Object.hasOwn(obj, key) ? obj[key] : undefined; }
+// D-07 level token.
+const LEVEL_RE = /^[a-z][a-z0-9_-]{0,15}$/;
+// D-15 context label.
+const CONTEXT_RE = /^[a-z0-9][a-z0-9._-]{0,15}$/;
+// SPEC R7 session id.
+const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+// SPEC R13 skill name.
+const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+// C0, DEL and C1 control characters.
+const CONTROL_CHAR_RE = /[\x00-\x1f\x7f-\x9f]/;
 
 function parseArgs(argv) {
   const o = {
     runtime: null, prefer: null, model: null, toolsProfile: null,
-    models: {}, routes: {}, mode: 'exec', timeout: null, outerTimeout: null,
+    models: Object.create(null), routes: Object.create(null), mode: 'exec', timeout: null, outerTimeout: null,
     printArgv: false, preamble: true, selfTest: false, selfTestList: false, classifyOnly: null,
     codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
+    role: null, effort: null, context: null, escalateRuntime: false, escalateModel: false,
+    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false,
   };
+  let modeFlag = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]; const v = () => { if (i + 1 >= argv.length) throw new Error(`${a} needs a value`); return argv[++i]; };
-    if (a === '--runtime') o.runtime = v();
+    if (a === '--runtime') {
+      o.runtime = v();
+      if (!RUNTIME_ID_RE.test(o.runtime)) throw new Error(`--runtime must match ${RUNTIME_ID_RE.source}`);
+    }
     else if (a === '--prefer') o.prefer = v().split(',').filter(Boolean);
     else if (a === '--model') {
-      // The runtime is not known yet, and --model may come before --runtime, so this is the
-      // superset charset (every MODEL_ID id plus one cursor bracket). The row's modelId is
-      // checked in main on the selected runtime only.
+      // The universal floor (SPEC R5); --model may precede runtime selection.
+      // The selected row's seed shape only advises, in main.
       o.model = v();
-      if (!CURSOR_MODEL_ID.test(o.model)) throw new Error(`--model must match ${CURSOR_MODEL_ID.source}`);
+      if (!MODEL_ID_FLOOR.test(o.model)) throw new Error(`--model must match ${MODEL_ID_FLOOR.source}`);
     } else if (a === '--tools-profile') {
       o.toolsProfile = v();
       if (!['exec', 'review', 'none'].includes(o.toolsProfile)) {
         throw new Error('--tools-profile must be exec, review or none');
       }
     } else if (a.startsWith('--model-')) {
+      const cli = a.slice(8);
+      if (!CLI_NAME_RE.test(cli)) throw new Error(`${a}: the cli name must match ${CLI_NAME_RE.source}`);
       const id = v();
-      const modelRe = a === '--model-cursor' ? CURSOR_MODEL_ID : MODEL_ID;
-      if (!modelRe.test(id)) throw new Error(`${a} must match ${modelRe.source}`);
-      o.models[a.slice(8)] = id;
+      if (!MODEL_ID_FLOOR.test(id)) throw new Error(`${a} must match ${MODEL_ID_FLOOR.source}`);
+      o.models[cli] = id;
     } else if (a.startsWith('--route-')) {
+      const cli = a.slice(8);
+      if (!CLI_NAME_RE.test(cli)) throw new Error(`${a}: the cli name must match ${CLI_NAME_RE.source}`);
       const route = v();
       if (!ROUTE_VALUES.has(route)) throw new Error(`${a} must be router or unknown`);
-      o.routes[a.slice(8)] = route;
+      o.routes[cli] = route;
     } else if (a === '--classify-only') o.classifyOnly = v();
-    else if (a === '--mode') { o.mode = v(); if (!['exec', 'review'].includes(o.mode)) throw new Error('--mode must be exec or review'); }
+    else if (a === '--mode') { o.mode = v(); if (!['exec', 'review'].includes(o.mode)) throw new Error('--mode must be exec or review'); modeFlag = o.mode; }
     else if (a === '--timeout') { o.timeout = Number(v()); if (!(o.timeout > 0)) throw new Error('--timeout must be > 0'); }
     else if (a === '--outer-timeout') {
       o.outerTimeout = Number(v());
@@ -5323,7 +6272,7 @@ function parseArgs(argv) {
     } else if (a === '--child-pgid-file') o.childPgidFile = v();
     else if (a === '--codex-effort') {
       o.codexEffort = v();
-      if (!CODEX_EFFORTS.has(o.codexEffort)) throw new Error('--codex-effort must be minimal|low|medium|high|xhigh');
+      if (!LEVEL_RE.test(o.codexEffort)) throw new Error(`${a} must match ${LEVEL_RE.source}`);
     } else if (a === '--codex-service-tier') {
       o.codexServiceTier = v();
       if (!/^[A-Za-z0-9_-]+$/.test(o.codexServiceTier)) throw new Error('--codex-service-tier must match [A-Za-z0-9_-]+');
@@ -5332,17 +6281,34 @@ function parseArgs(argv) {
       if (!CURSOR_MODES.has(o.cursorMode)) throw new Error('--cursor-mode must be ask or plan');
     } else if (a === '--self-test') o.selfTest = true;
     else if (a === '--self-test-list') { o.selfTest = true; o.selfTestList = true; }
+    else if (a === '--role') { o.role = v(); if (!['review', 'execute'].includes(o.role)) throw new Error('--role must be review or execute'); }
+    else if (a === '--effort') { o.effort = v(); if (!LEVEL_RE.test(o.effort)) throw new Error(`${a} must match ${LEVEL_RE.source}`); }
+    else if (a === '--context') { o.context = v(); if (!CONTEXT_RE.test(o.context)) throw new Error(`${a} must match ${CONTEXT_RE.source}`); }
+    else if (a === '--escalate-runtime') o.escalateRuntime = true;
+    else if (a === '--escalate-model') o.escalateModel = true;
+    else if (a === '--session-id') { o.sessionId = v(); if (!SESSION_ID_RE.test(o.sessionId)) throw new Error(`${a} must match ${SESSION_ID_RE.source}`); }
+    else if (a === '--host') { o.host = v(); if (!['auto', 'none'].includes(o.host)) throw new Error('--host must be auto or none'); }
+    else if (a === '--skill-name') { const n = v(); if (!SKILL_NAME_RE.test(n)) throw new Error(`${a} must match ${SKILL_NAME_RE.source}`); o.skillNames.push(n); o.skillArgs.push({ flag: a, value: n }); }
+    else if (['--skill-path', '--mcp-config', '--argv-file'].includes(a)) {
+      const p = v();
+      if (p === '' || CONTROL_CHAR_RE.test(p)) throw new Error(`${a} must be a non-empty path without control characters`);
+      if (a === '--skill-path') { o.skillPaths.push(p); o.skillArgs.push({ flag: a, value: p }); }
+      else if (a === '--mcp-config') o.mcpConfig = p;
+      else o.argvFile = p;
+    } else if (a === '--describe') o.describe = true;
     else throw new Error(`unknown argument: ${a}`);
   }
-  if (o.mode === 'exec' && o.cursorMode) throw new Error('--cursor-mode is review-only');
-  const known = Object.keys(RUNTIMES).join(', ');
-  if (o.runtime !== null && !Object.hasOwn(RUNTIMES, o.runtime)) {
-    throw new Error(`unknown runtime: ${o.runtime} (known: ${known})`);
+  if (o.effort !== null && o.codexEffort !== null && o.effort !== o.codexEffort) throw new Error('--effort and --codex-effort disagree');
+  if (o.effort === null) o.effort = o.codexEffort;
+  if (o.role !== null) {
+    const fromRole = o.role === 'execute' ? 'exec' : 'review';
+    if (modeFlag !== null && modeFlag !== fromRole) throw new Error('--role and --mode disagree');
+    o.mode = fromRole;
   }
+  if (o.mode === 'exec' && o.cursorMode) throw new Error('--cursor-mode is review-only');
   // SPEC R6: only the entry that runs is checked; the ignored rest gets resolveRuntime's notice.
-  const runs = o.runtime === null && o.prefer && o.prefer.length ? [o.prefer[0]] : [];
-  for (const n of [...runs, ...Object.keys(o.models), ...Object.keys(o.routes)]) {
-    if (!Object.hasOwn(RUNTIMES, n)) throw new Error(`unknown cli: ${n} (known: ${known})`);
+  if (o.runtime === null && o.prefer && o.prefer.length && !CLI_NAME_RE.test(o.prefer[0])) {
+    throw new Error(`--prefer: the entry that runs must match ${CLI_NAME_RE.source}`);
   }
   return o;
 }
@@ -5350,7 +6316,6 @@ function parseArgs(argv) {
 // One runtime per call (SPEC R6, D-13): --runtime, then the first --prefer entry, then
 // CONFIG.runtime, then the first CONFIG.prefer entry. A list is never walked.
 function resolveRuntime(o) {
-  const known = (name) => typeof name === 'string' && Object.hasOwn(RUNTIMES, name);
   const ignored = (source, first, rest) => (
     `cross-ai: ${source} reads only its first entry (${first}); ignored: ${rest.join(', ')}`
   );
@@ -5367,12 +6332,12 @@ function resolveRuntime(o) {
     return { name: o.prefer[0], notes };
   }
   if (typeof CONFIG.runtime === 'string') {
-    if (!known(CONFIG.runtime)) return { error: `cross-ai: unknown runtime: ${CONFIG.runtime}` };
+    if (!RUNTIME_ID_RE.test(CONFIG.runtime)) return { error: `cross-ai: CONFIG.runtime must match ${RUNTIME_ID_RE.source}` };
     return { name: CONFIG.runtime, notes: [] };
   }
   const prefer = Array.isArray(CONFIG.prefer) ? CONFIG.prefer.filter((n) => typeof n === 'string' && n) : [];
   if (prefer.length) {
-    if (!known(prefer[0])) return { error: `cross-ai: unknown runtime: ${prefer[0]}` };
+    if (!RUNTIME_ID_RE.test(prefer[0])) return { error: `cross-ai: the first CONFIG.prefer entry must match ${RUNTIME_ID_RE.source}` };
     const notes = [];
     if (prefer.length > 1) notes.push(ignored('CONFIG.prefer', prefer[0], prefer.slice(1)));
     return { name: prefer[0], notes };
@@ -5401,8 +6366,8 @@ function runClassifyOnly(file) {
   const lines = [];
   for (const entry of cases) {
     const cli = entry && entry.cli;
-    if (!Object.hasOwn(RUNTIMES, cli)) {
-      log(`cross-ai: --classify-only unknown cli: ${cli}`);
+    if (typeof cli !== 'string' || !RUNTIME_ID_RE.test(cli)) {
+      log(`cross-ai: --classify-only cli must match ${RUNTIME_ID_RE.source}`);
       return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
     if (entry.route !== undefined && entry.route !== 'router-inferred' && !ROUTE_VALUES.has(entry.route)) {
@@ -5415,8 +6380,8 @@ function runClassifyOnly(file) {
       cli, route, model: entry.model || '', stderr: entry.stderr || '',
       events: extractEvents(cli, entry.stdout || ''),
     });
-    // Same rule as a live run: an uncaptured runtime reports every pattern unverified.
-    const pattern = RUNTIMES[cli].errorsUnverified ? 'unverified' : cls.label;
+    // Same rule as a live run: an uncaptured runtime, or a cli with no row, reports every pattern unverified.
+    const pattern = !Object.hasOwn(RUNTIMES, cli) || RUNTIMES[cli].errorsUnverified ? 'unverified' : cls.label;
     lines.push(JSON.stringify({ name: entry.name, status: cls.status, rule: cls.rule, pattern, route }));
   }
   if (lines.length) process.stdout.write(`${lines.join('\n')}\n`);
@@ -5490,6 +6455,7 @@ const log = (line) => { if (calls) fs.appendFileSync(calls, line + '\n'); };
 const recordPid = (name, pid) => { if (process.env.FAKE_PIDS) fs.appendFileSync(process.env.FAKE_PIDS, name + ' ' + pid + '\n'); };
 recordPid(process.argv[1].split('/').pop(), process.pid);
 const argOf = (flag) => { const i = process.argv.indexOf(flag); return i >= 0 ? process.argv[i + 1] || '' : ''; };
+const recordSession = (cli, id, input) => { if (process.env.FAKE_SESSIONS) fs.appendFileSync(process.env.FAKE_SESSIONS, cli + ' ' + (id || '-') + ' ' + (String(input || '').startsWith('You were interrupted') ? 'resume-note' : 'prompt') + '\n'); };
 `;
 
 function writeExe(binDir, name, imports, body) {
@@ -5532,6 +6498,13 @@ const STICKY_FAKE = new Set([
 ]);
 let stdinBuf = '';
 const FAKE_MODES = {
+  // Hosted only: kills the launcher shell so it never writes rc; under a node parent it exits 3.
+  killparent: () => {
+    let comm = '';
+    try { comm = fs.readFileSync('/proc/' + process.ppid + '/comm', 'utf8').trim(); } catch { /* unavailable */ }
+    if (!['sh', 'dash', 'bash'].includes(comm)) process.exit(3);
+    process.kill(process.ppid, 'SIGKILL');
+  },
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
   envmarker: () => {
     fs.writeFileSync('marker.seen', process.env.AI_KIT_CROSS_AI_CHILD ?? '<unset>');
@@ -5733,6 +6706,13 @@ const FAKE_MODES = {
     fs.appendFileSync('a.txt', 'gt\n');
     process.stdout.write('# Summary\nok');
   },
+  gcleft: () => {
+    const gc = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'], { stdio: 'ignore' });
+    recordGc(gc.pid);
+    gc.unref();
+    fs.appendFileSync('a.txt', 'gl\n');
+    process.stdout.write('# Summary\nok');
+  },
   gcescape: () => {
     const gc = spawn(process.execPath, ['-e', 'const fs=require("fs");fs.writeFileSync("gc.pid",String(process.pid));if(process.env.FAKE_PIDS)fs.appendFileSync(process.env.FAKE_PIDS,"gc "+process.pid+String.fromCharCode(10));setInterval(()=>process.stderr.write("gc-late"+String.fromCharCode(10)),100);setInterval(()=>{},1<<30);'], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     gc.stderr.on('data', (d) => process.stderr.write(d));
@@ -5905,7 +6885,12 @@ if (sub[0] === 'models') {
 }
 const model = argOf('--model');
 log('cursor-agent ' + model);
-process.stdin.on('data', () => {}).on('end', () => {
+let input = ''; process.stdin.on('data', (d) => { input += d; }).on('end', () => {
+  const given = argOf('--resume');
+  recordSession('cursor-agent', given, input);
+  if (given.startsWith('rejected-')) { process.stderr.write('fake-session: no session ' + given + '\n'); process.exit(7); }
+  if (given.startsWith('rejected503-')) { process.stderr.write('503 Service Unavailable\n'); console.log(JSON.stringify({ type: 'result', is_error: true, result: '503 Service Unavailable', session_id: given })); process.exit(1); }
+  if (process.env.FAKE_SESSION_MODE === 'badsid-503') { process.stderr.write('503 Service Unavailable\n'); console.log(JSON.stringify({ type: 'result', is_error: true, result: '503 Service Unavailable', session_id: 'bad id!' })); process.exit(1); }
   if (model === 'fake-err-cursor') {
     console.log(JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized', session_id: 'c2' }));
     process.exit(0);
@@ -5941,7 +6926,7 @@ process.stdin.on('data', () => {}).on('end', () => {
     process.exit(0);
   }
   fs.appendFileSync('a.txt', 'cursor\n');
-  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '## Summary\nok', session_id: 'c1' }));
+  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '## Summary\nok', session_id: given || 'c1' }));
 });
 `);
 }
@@ -5956,7 +6941,10 @@ if (sub[0] === 'models') {
 }
 const model = argOf('--model');
 log('opencode ' + model);
-process.stdin.on('data', () => {}).on('end', () => {
+let input = '';
+process.stdin.on('data', (d) => { input += d; }).on('end', () => {
+  const given = argOf('--session');
+  recordSession('opencode', given, input);
   if (model === 'fake/ok' && ['upstream-event', 'two-events'].includes(process.env.FAKE_OPENCODE_MODE)) {
     const acct = 'acct-' + process.pid;
     const token = process.env.AIKIT_XAI_SENTINEL || 'sentinel';
@@ -6006,9 +6994,9 @@ process.stdin.on('data', () => {}).on('end', () => {
     process.exit(process.env.FAKE_OPENCODE_MODE === 'late-error' ? 1 : 0);
   }
   const lines = [
-    JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { id: 'p1', messageID: 'm1', type: 'text', text: 'Plan first.' } }),
-    JSON.stringify({ type: 'tool_use', sessionID: 'ses_1', part: { type: 'tool', tool: 'bash' } }),
-    JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { id: 'p2', messageID: 'm2', type: 'text', text: '## Summary\ndone' } }),
+    JSON.stringify({ type: 'text', sessionID: given || 'ses_1', part: { id: 'p1', messageID: 'm1', type: 'text', text: 'Plan first.' } }),
+    JSON.stringify({ type: 'tool_use', sessionID: given || 'ses_1', part: { type: 'tool', tool: 'bash' } }),
+    JSON.stringify({ type: 'text', sessionID: given || 'ses_1', part: { id: 'p2', messageID: 'm2', type: 'text', text: '## Summary\ndone' } }),
   ];
   for (const l of lines) console.log(l);
 });
@@ -6021,6 +7009,8 @@ const model = argOf('--model');
 const mode = model.startsWith('fake-') ? model.slice(5) : '';
 log('copilot ' + mode);
 const seen = process.env.FAKE_COPILOT_SEEN;
+const mcpCount = (file) => { try { return Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers || {}).length; } catch { return -1; } };
+recordSession('copilot', argOf('--session-id'), argOf('-p'));
 const tokenNames = ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'];
 let stdinFifo = false;
 let stdinBytes = 0;
@@ -6037,8 +7027,10 @@ if (seen) {
     argv: process.argv.slice(2), prompt: argOf('-p'),
     promptBytes: Buffer.byteLength(argOf('-p')), stdinFifo, stdinBytes, stdinError,
     tokens, allowAll: process.env.COPILOT_ALLOW_ALL !== undefined,
+    mcpCount: argOf('--additional-mcp-config') ? mcpCount(argOf('--additional-mcp-config').slice(1)) : null,
   }));
 }
+if (process.env.FAKE_SKILL_EDIT) fs.appendFileSync(process.env.FAKE_SKILL_EDIT, 'edited\n');
 if (!tokens.length) {
   process.stderr.write('Error: not logged in. Run copilot login or set COPILOT_GITHUB_TOKEN.\n');
   process.exit(1);
@@ -6047,17 +7039,55 @@ if (mode === 'event400') {
   process.stderr.write('[400]: event: error\n');
   process.exit(1);
 }
-fs.appendFileSync('a.txt', 'ok-line\n');
+if (mode !== 'readonly') fs.appendFileSync('a.txt', 'ok-line\n');
 process.stderr.write('copilot: using token ' + process.env[tokens[0]] + '\n');
 process.stdout.write('# Summary\nok');
 `);
 }
 
 function writeFakeClaude(binDir) {
-  writeExe(binDir, 'claude', '', String.raw`
+  writeExe(binDir, 'claude', "import { spawnSync } from 'node:child_process';\n", String.raw`
 log('claude ' + argOf('--model'));
-process.stdin.on('data', () => {}).on('end', () => {
-  console.log(JSON.stringify({ type: 'result', result: 'ok', session_id: 'x', is_error: false }));
+const mcpCount = (file) => { try { return Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers || {}).length; } catch { return -1; } };
+let input = '';
+process.stdin.on('data', (d) => { input += d; }).on('end', () => {
+  if (process.env.FAKE_CLAUDE_SEEN) fs.writeFileSync(process.env.FAKE_CLAUDE_SEEN, JSON.stringify({ argv: process.argv.slice(2), stdin: input, mcpCount: argOf('--mcp-config') ? mcpCount(argOf('--mcp-config')) : null }));
+  const given = argOf('--resume');
+  recordSession('claude', given, input);
+  if (argOf('--model') === 'fake-auth') {
+    process.stderr.write('401 unauthorized\n');
+    console.log(JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized' }));
+    process.exit(1);
+  }
+  const execute = argOf('--permission-mode') !== 'plan';
+  if (execute) {
+    fs.appendFileSync('a.txt', 'claude\n');
+    spawnSync('git', ['add', 'a.txt']);
+    spawnSync('git', ['commit', '-q', '-m', 'fake claude execute']);
+  }
+  const result = { type: 'result', result: execute ? '## Summary\nok' : 'ok', is_error: false };
+  if (process.env.FAKE_SESSION_MODE !== 'nosid') result.session_id = given || 'x';
+  console.log(JSON.stringify(result));
+  process.exit(0);
+});
+`);
+}
+
+function writeFakeDeclared(binDir) {
+  writeExe(binDir, 'placeholder-cli-1', '', String.raw`
+let stdin = '';
+process.stdin.on('data', (d) => { stdin += d; }).on('end', () => {
+  const argv = process.argv.slice(2);
+  log('declared ' + JSON.stringify(argv));
+  if (process.env.FAKE_DECLARED_SEEN) fs.writeFileSync(process.env.FAKE_DECLARED_SEEN, JSON.stringify({ argv, stdin }));
+  const chosen = argOf('--model');
+  if (chosen === 'fake-crash') { process.stderr.write('placeholder failure ' + (process.env.AIKIT_XAI_SENTINEL || '') + '\n'); process.exit(7); }
+  if (chosen === 'fake-edit-then-ok' && !fs.readFileSync('ign/argv.json', 'utf8').includes('changed-command')) {
+    fs.writeFileSync('ign/argv.json', '["changed-command"]');
+    process.stderr.write('circuit_open\n'); process.exit(1);
+  }
+  if (chosen !== 'fake-review') fs.appendFileSync('a.txt', 'declared\n');
+  process.stdout.write('# Summary\nok');
   process.exit(0);
 });
 `);
@@ -6076,13 +7106,17 @@ if (sub[0] === 'debug' && sub[1] === 'models') {
   process.exit(0);
 }
 const outFile = argOf('-o');
+const dash = sub.lastIndexOf('-');
+const resumeId = sub[1] === 'resume' && dash > 0 ? sub[dash - 1] : '';
 if (sub[0] === 'exec' && sub[1] === 'resume') log('codex-resume ' + argOf('-m'));
 log('codex ' + argOf('-m'));
-process.stdin.on('data', () => {}).on('end', () => {
+let input = '';
+process.stdin.on('data', (d) => { input += d; }).on('end', () => {
+  recordSession('codex', resumeId, input);
   const model = argOf('-m');
   if (model !== 'fake-event400-codex') fs.appendFileSync('a.txt', 'cx\n');
   if (outFile) fs.writeFileSync(outFile, '## Summary\nok');
-  console.log(JSON.stringify({ type: 'thread.started', thread_id: 't1' }));
+  console.log(JSON.stringify({ type: 'thread.started', thread_id: resumeId || 't1' }));
   const limitText = 'You\u2019ve hit your usage limit. Upgrade to Pro, or try again later.';
   if (model === 'fake-retry-codex') {
     console.log(JSON.stringify({ type: 'error', message: 'stream disconnected; retrying 1/5' }));
@@ -6115,9 +7149,63 @@ process.stdin.on('data', () => {}).on('end', () => {
 `);
 }
 
+function writeFakeHerdr(binDir) {
+  writeExe(binDir, HERDR_BIN, "import { spawn } from 'node:child_process';\nimport path from 'node:path';\n", String.raw`
+const home = process.env.HOME || '.';
+const hlog = (line) => fs.appendFileSync(path.join(home, 'herdr.log'), line + '\n');
+const args = process.argv.slice(2);
+hlog('argv ' + JSON.stringify(args));
+const lock = path.join(home, 'herdr-state.lock');
+let held = false;
+for (let i = 0; i < 400; i++) {
+  try { fs.mkdirSync(lock); held = true; break; } catch { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); }
+}
+const unlock = () => { if (held) { try { fs.rmdirSync(lock); } catch { /* not held */ } held = false; } };
+process.on('exit', unlock);
+const fail = process.env.FAKE_HERDR_FAIL || '';
+const stateFile = path.join(home, 'herdr-state.json');
+let state = { next: 1, tabs: { t0: { label: 'aikit:review:pi:000000000000', pane: 'p0', cwd: home, pgid: null, dir: null, closed: false } } };
+try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { /* new state */ }
+const save = () => fs.writeFileSync(stateFile, JSON.stringify(state));
+const mode = (p) => { try { return (fs.statSync(p).mode & 0o777).toString(8); } catch { return '-'; } };
+const verb = args[0] + ' ' + args[1];
+if (verb === 'tab create') {
+  if (fail === 'create') { console.error('{"error":"fake create failure"}'); process.exit(1); }
+  const id = 't' + state.next, pane = 'p' + state.next++;
+  state.tabs[id] = { label: argOf('--label'), pane, cwd: argOf('--cwd'), pgid: null, dir: null, closed: false };
+  save();
+  if (fail === 'create-lost') { console.log('not json'); process.exit(0); }
+  console.log(JSON.stringify({ result: { tab: { tab_id: id, label: argOf('--label') }, root_pane: { pane_id: pane } } }));
+} else if (verb === 'pane run') {
+  if (fail === 'run') { console.error('{"error":"fake pane run failure"}'); process.exit(1); }
+  if (fail === 'run-lost') { unlock(); process.kill(process.pid, 'SIGKILL'); }
+  if (fail === 'nolaunch') { hlog('nolaunch'); process.exit(0); }
+  const tab = Object.values(state.tabs).find((t) => t.pane === args[2]);
+  if (!tab || tab.closed) { console.error('{"error":"fake pane run failure"}'); process.exit(1); }
+  const m = /^sh (\/[A-Za-z0-9._\/-]+)$/.exec(args[3] || '');
+  if (!m) { hlog('typed-line-rejected'); process.exit(1); }
+  const dir = path.dirname(m[1]);
+  hlog('modes dir=' + mode(dir) + ' env=' + mode(path.join(dir, 'env')) + ' prompt=' + mode(path.join(dir, 'prompt')) + ' run=' + mode(path.join(dir, 'run.json')) + ' launch=' + mode(m[1]));
+  const rec = JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8'));
+  hlog('record tab=' + rec.tab_id + ' pane=' + rec.pane_id);
+  const child = spawn('/bin/sh', [m[1]], { cwd: tab.cwd, detached: true, stdio: 'ignore', env: process.env });
+  recordPid('launcher', child.pid); child.unref();
+  tab.pgid = child.pid; tab.dir = dir; tab.closed = process.env.FAKE_HERDR_PRECLOSED === '1'; save();
+  if (fail === 'run-after') { console.error('{"error":"fake pane run failure"}'); process.exit(1); }
+} else if (verb === 'tab close') {
+  const tab = state.tabs[args[2]];
+  hlog('close ' + args[2] + ' dir=' + (tab && tab.dir ? (fs.existsSync(tab.dir) ? 'present' : 'gone') : '-') + (tab && tab.closed ? ' already-closed' : ''));
+  if (fail === 'close') { console.error('{"error":"fake close failure"}'); process.exit(1); }
+  if (tab && !tab.closed && tab.pgid) { try { process.kill(-tab.pgid, 'SIGHUP'); } catch { /* gone */ } }
+  if (tab) tab.closed = true;
+  save(); console.log('{"result":{"type":"ok"}}');
+} else { hlog('unknown-verb ' + verb); process.exit(2); }
+`);
+}
+
 const STATUS_HEAD_RE = new RegExp(
   '^(.* action=stop)(?: (route=\\S+ rule=\\S+ pattern=\\S+))?' +
-  '(?: (attempts=\\S+ cycles=\\S+))?(?: (retry_after_s=\\S+ cycle=\\S+))?(?: upstream=\\S+)?$',
+  '(?: (attempts=\\S+ cycles=\\S+))?(?: (session=\\S+ applied=\\S+ ignored=\\S+ unknown=\\S+ escalate=\\S+))?(?: (retry_after_s=\\S+ cycle=\\S+))?(?: upstream=\\S+)?$',
 );
 
 function statusLineOk(stderr, pattern) {
@@ -6153,23 +7241,37 @@ function retryLine(r, fragment) {
   return lines[0].includes(fragment) ? null : lines[0];
 }
 
+function hostFilesDigest(home) {
+  const lines = [];
+  for (const rel of ['.claude', '.claude.json', '.agents', '.copilot', '.cursor', '.pi', '.codex', path.join('.config', 'opencode')]) {
+    const root = path.join(home, rel);
+    if (!fs.existsSync(root)) continue;
+    const files = fs.statSync(root).isDirectory()
+      ? fs.readdirSync(root, { withFileTypes: true, recursive: true }).filter((e) => e.isFile()).map((e) => path.join(e.parentPath || e.path, e.name))
+      : [root];
+    for (const file of files) {
+      const stat = fs.statSync(file);
+      if (stat.isFile()) lines.push(`${path.relative(home, file)}\t${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}\t${stat.mtimeMs}\t${stat.size}`);
+    }
+  }
+  return lines.sort().join('\n');
+}
+
 function statusTail(stderr) {
   const line = stderr.split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
   const parts = STATUS_HEAD_RE.exec(line);
   if (!parts || !parts[2]) return null;
-  const tail = [parts[2], parts[3], parts[4]].filter(Boolean).join(' ');
+  const tail = [parts[2], parts[3], parts[4], parts[5]].filter(Boolean).join(' ');
   const tok = Object.fromEntries(tail.split(' ').map((t) => t.split('=')));
   return {
     route: tok.route, rule: tok.rule, pattern: tok.pattern,
     attempts: tok.attempts, cycles: tok.cycles,
     retry_after_s: tok.retry_after_s, cycle: tok.cycle,
+    session: tok.session, applied: tok.applied, ignored: tok.ignored, unknown: tok.unknown, escalate: tok.escalate,
   };
 }
 
-function pidAlive(pid) {
-  try { process.kill(pid, 0); } catch { return false; }
-  try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, 'utf8')); } catch { return true; }
-}
+function sessionRows(ctx) { return readOr(ctx.env.FAKE_SESSIONS, '').trim().split('\n').filter(Boolean).map((l) => l.split(' ')); }
 
 // Self-test load scaling (D-10): every ceiling is multiplied by one factor read once per run
 // (load per CPU clamped to 1..4); floors and the real run limits are never scaled.
@@ -6472,6 +7574,7 @@ async function runSelfTestCase(tmp, spec) {
     XDG_STATE_HOME: path.join(home, '.local', 'state', spec.name),
     FAKE_CALLS: calls, FAKE_PIDS: pidFile,
     FAKE_SIDS: path.join(tmp, `sids-${spec.name}.log`),
+    FAKE_SESSIONS: path.join(tmp, `sessions-${spec.name}.log`),
     AIKIT_XAI_SENTINEL: 'sk-aikit-SENTINEL-' + process.pid,
     AIKIT_XAI_BEARER: 'brtok-' + process.pid,
     ...(spec.fakeOpencodeMode ? { FAKE_OPENCODE_MODE: spec.fakeOpencodeMode } : {}),
@@ -6529,12 +7632,18 @@ async function blackBoxSelfTest(listOnly = false) {
     writeFakeCodex(binDir);
     writeFakeClaude(binDir);
     writeFakeCopilot(binDir);
+    writeFakeDeclared(binDir);
     for (const name of fs.readdirSync(binDir)) {
       if (name === 'codex') continue;
       const src = path.join(binDir, name);
       const dst = path.join(binNoCodex, name);
       if (!fs.existsSync(dst)) fs.symlinkSync(src, dst);
     }
+
+    const herdrDir = path.join(tmp, 'bin-herdr');
+    fs.mkdirSync(herdrDir, { recursive: true });
+    writeFakeHerdr(herdrDir);
+    const hostedPath = [path.join(tmp, 'bin'), herdrDir].join(path.delimiter);
 
     // D-09 self-tests: another CLI's `agent` first on PATH; `script` is what it runs.
     const otherAgentFirst = (c, name, script = '#!/bin/sh\nexit 0\n') => {
@@ -6553,6 +7662,83 @@ async function blackBoxSelfTest(listOnly = false) {
       spawnSync('git', ['commit', '-q', '-m', 'agent'], { cwd: c.repo, env: c.env });
     };
 
+    const noFormula = (id) => `cross-ai: no formula for ${id} in the runner; pass --argv-file, or use a runtime it has a formula for`;
+    const advisory = (rt, re) => `cross-ai: note: model id shape is unusual for ${rt} (seed shape: ${re.source})`;
+    const keyId = ['sk', 'aikit', 'SENTINEL', String(process.pid)].join('-');
+    const skillBody = (n) => `# placeholder skill ${n}\n\nUse the word placeholder-token-${n}.\n`;
+    const expectSkillBlock = (dir, n, body) => `<skill name="placeholder-skill-${n}" path="${fs.realpathSync(dir)}" sha256="${crypto.createHash('sha256').update(Buffer.from(body, 'utf8')).digest('hex')}">\n${body}\n</skill>\n`;
+    const makeSkill = (c, n) => {
+      const dir = path.join(c.tmp, 'skills', `placeholder-skill-${n}`);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'SKILL.md'), skillBody(n));
+      return dir;
+    };
+    const hostedUsable = (c) => HOST_PATH_SAFE.test(path.resolve(c.env.XDG_STATE_HOME));
+    // A TMPDIR with a space makes every case's state home unsafe: the hosted cases then run headless once (host_failed).
+    const hostedHere = HOST_PATH_SAFE.test(path.resolve(tmp));
+    const hostFailedOnly = (r, c) => r.stderr.includes('cross-ai: setting host=herdr ignored reason=host_failed') && !fs.existsSync(path.join(c.home, 'herdr.log')) ? null : 'expected host_failed and no herdr call';
+    const statusFields = (r) => {
+      const line = r.stderr.split('\n').filter((s) => s.startsWith('AIKIT-XAI ')).at(-1) || '';
+      const fields = Object.fromEntries(line.split(' ').slice(1).map((s) => s.split('=')));
+      const selected = {};
+      for (const key of 'status cli model exit cli_rc out tree route rule pattern attempts cycles session unknown escalate'.split(' ')) selected[key] = fields[key];
+      for (const key of ['applied', 'ignored']) selected[key] = (fields[key] || '-').split(',').filter((s) => s !== 'host' && s !== '-').join(',') || '-';
+      return JSON.stringify(selected);
+    };
+    const hostLogProblem = (c, tabs, closeTail = '') => {
+      const text = readOr(path.join(c.home, 'herdr.log'), '');
+      const lines = text.split('\n');
+      const calls = lines.filter((s) => s.startsWith('argv ')).map((s) => JSON.parse(s.slice(5)));
+      const verbs = calls.map((a) => a.slice(0, 2).join(' '));
+      if (verbs.some((v) => !HERDR_VERBS.includes(v))) return `herdr verbs ${verbs}`;
+      if (calls.some((a) => a.includes('t0') || a.includes('p0'))) return 'the foreign tab t0 was touched';
+      if (verbs.filter((v) => v === 'tab create').length !== tabs) return `tab create count ${verbs.filter((v) => v === 'tab create').length}`;
+      if (text.includes(c.env.AIKIT_XAI_SENTINEL)) return 'a key reached herdr';
+      for (let i = 1; i <= tabs; i++) for (const line of [`record tab=t${i} pane=p${i}`, 'modes dir=700 env=600 prompt=600 run=600 launch=600', `close t${i} dir=present${closeTail}`]) if (!lines.includes(line)) return `herdr log lacks: ${line}`;
+      const dir = path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host');
+      if (fs.existsSync(dir) && fs.readdirSync(dir).length) return `run dirs left: ${fs.readdirSync(dir)}`;
+      return null;
+    };
+    const hostPairCheck = (both, c, extra) => {
+      const lines = (r, prefix) => r.stderr.split('\n').filter((s) => s.startsWith(prefix));
+      if (!both.again.stderr.includes('cross-ai: setting host=none applied')) return 'headless run lacks host=none';
+      if (both.first.stdout !== both.again.stdout) return 'stdout differs';
+      if (JSON.stringify(both.calls1) !== JSON.stringify(both.calls2)) return `lane calls differ: ${both.calls1} | ${both.calls2}`;
+      if (JSON.stringify(lines(both.first, 'cross-ai: argv=')) !== JSON.stringify(lines(both.again, 'cross-ai: argv='))) return 'argv lines differ';
+      const settings = (r) => lines(r, 'cross-ai: setting ').filter((s) => !s.startsWith('cross-ai: setting host='));
+      if (JSON.stringify(settings(both.first)) !== JSON.stringify(settings(both.again))) return 'settings lines differ';
+      if (statusFields(both.first) !== statusFields(both.again)) return `status fields differ: ${statusFields(both.first)} | ${statusFields(both.again)}`;
+      if (both.first.stderr.includes(c.env.AIKIT_XAI_SENTINEL) || both.again.stderr.includes(c.env.AIKIT_XAI_SENTINEL)) return 'a key reached stderr';
+      for (const name of extra.dead || []) for (const pid of recordedPids(c.pidFile)[name] || []) if (pidLingers(pid)) return `${name} ${pid} still alive`;
+      if (!hostedUsable(c)) return hostFailedOnly(both.first, c);
+      if (!both.first.stderr.includes('cross-ai: setting host=herdr applied')) return 'hosted run lacks host=herdr';
+      if (!lines(both.first, 'cross-ai: host herdr tab=t1 label=aikit:execute:pi:').length) return 'no host line';
+      return hostLogProblem(c, 1, extra.closeTail || '');
+    };
+    const hostPair = (name, model, exit, status, extra = {}) => {
+      const base = ['--runtime', 'pi', '--model', model, '--session-id', 'placeholder-sid-' + name, ...(extra.args || [])];
+      return { name, kind: 'runtime', args: [...base, '--host', 'auto'], env: { HERDR_ENV: '1', PATH: hostedPath, ...(extra.env || {}) }, exit, status, second: { args: [...base, '--host', 'none'], exit, status }, check: (both, c) => hostPairCheck(both, c, extra) };
+    };
+    const keptRecords = (c) => {
+      const root = path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'host');
+      if (!fs.existsSync(root)) return [];
+      const records = [];
+      for (const name of fs.readdirSync(root)) {
+        const folder = path.join(root, name);
+        const files = fs.readdirSync(folder);
+        if (files.length !== 1 || files[0] !== 'run.json') return `extra files in ${folder}`;
+        records.push(JSON.parse(fs.readFileSync(path.join(folder, 'run.json'), 'utf8')));
+      }
+      return records.sort((a, b) => (a.tab_id || '').localeCompare(b.tab_id || ''));
+    };
+    const fakeTabs = (c) => JSON.parse(readOr(path.join(c.home, 'herdr-state.json'), '{"tabs":{}}')).tabs;
+    const hostCalls = (c) => readOr(path.join(c.home, 'herdr.log'), '').split('\n').filter((s) => s.startsWith('argv ')).map((s) => JSON.parse(s.slice(5)));
+    const hostSafety = (calls) => {
+      const verbs = calls.map((a) => a.slice(0, 2).join(' '));
+      if (verbs.some((v) => !HERDR_VERBS.includes(v))) return `herdr verbs ${verbs}`;
+      if (calls.some((a) => a.includes('t0') || a.includes('p0'))) return 'the foreign tab t0 was touched';
+      return null;
+    };
     const cases = [
       {
         name: 'ok',
@@ -6692,23 +7878,24 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
-        name: 'model-invalid-pi-bare',
+        name: 'model-unusual-pi-bare',
         kind: 'logic',
-        args: ['--runtime', 'pi', '--model', 'glm'],
-        exit: 2,
-        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        args: ['--runtime', 'pi', '--model', 'glm', '--print-argv'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
         check: (r) => {
-          const line = (r.stderr || '').split('\n').find((l) => l.includes('must match'));
-          if (!line || !line.includes('pi model glm must match')) return `line=${line}`;
-          return line.includes(PI_MODEL_ID.source) ? null : 'message omits the pi grammar';
+          const lines = (r.stderr || '').split('\n');
+          if (!lines.includes(advisory('pi', PI_MODEL_ID))) return 'missing advisory';
+          return lines.some((line) => line.includes('must match')) ? 'unexpected refusal' : null;
         },
       },
       {
-        name: 'model-invalid-bracket-pi',
+        name: 'model-unusual-bracket-pi',
         kind: 'logic',
-        args: ['--runtime', 'pi', '--model', 'fake/ok[x=1]'],
-        exit: 2,
-        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        args: ['--runtime', 'pi', '--model', 'fake/ok[x=1]', '--print-argv'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => (r.stderr || '').split('\n').includes(advisory('pi', PI_MODEL_ID)) && (r.stdout || '').split('\n').some((l) => l.startsWith('pi\t') && l.includes('fake/ok[x=1]')) ? null : 'missing advisory or argv',
       },
       {
         // 25.1 WR-05: a colon that is not a thinking level is part of pi's model id.
@@ -6731,12 +7918,79 @@ async function blackBoxSelfTest(listOnly = false) {
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
       },
       {
-        name: 'model-opencode-two-variants',
+        name: 'model-unusual-opencode-two-variants',
         kind: 'logic',
         args: ['--runtime', 'opencode', '--model', 'fake/ok#a#b', '--print-argv'],
-        exit: 2,
-        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => (r.stderr || '').split('\n').includes(advisory('opencode', OPENCODE_MODEL_ID)) && (r.stdout || '').includes('fake/ok#a#b') ? null : 'missing advisory or argv',
       },
+      {
+        name: 'model-usual-shape-no-advisory', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--print-argv'], exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => (r.stderr || '').split('\n').some((l) => l.startsWith('cross-ai: note: model id shape')) ? 'unexpected advisory' : null,
+      },
+      {
+        name: 'model-unusual-shape-spawns', kind: 'logic',
+        args: ['--runtime', 'claude', '--mode', 'review', '--model', 'fake-ok[x=1]'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok\[x=1\] exit=0 .* tree=clean action=stop$/,
+        check: (r, ctx) => (r.stderr || '').split('\n').includes(advisory('claude', MODEL_ID)) && ctx.calls.includes('claude fake-ok[x=1]') ? null : 'missing advisory or call',
+      },
+      {
+        name: 'model-cli-flag-floor', kind: 'logic',
+        args: ['--runtime', 'claude', '--mode', 'review', '--model-claude', 'fake-ok[x=1]', '--print-argv'], exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => (r.stderr || '').split('\n').includes(advisory('claude', MODEL_ID)) ? null : 'missing advisory',
+      },
+      {
+        name: 'model-advisory-no-key', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', keyId, '--print-argv'], exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: note:'));
+          return lines.includes(advisory('pi', PI_MODEL_ID)) && !lines.some((l) => l.includes(keyId)) ? null : 'missing or leaking advisory';
+        },
+      },
+      ...['fake-ok\x07', 'fake-ok\u00e9', 'fake-\tok'].map((value, i) => ({
+        name: `model-floor-refuses-${i}`, kind: 'logic',
+        args: ['--runtime', 'claude', '--mode', 'review', '--model', value], exit: 2,
+        status: /^AIKIT-XAI status=usage .* action=stop$/,
+        check: (r) => (r.stderr || '').split('\n').includes(`cross-ai: ${'--model'} must match ${MODEL_ID_FLOOR.source}`) ? null : 'missing floor refusal',
+      })),
+      {
+        name: 'pure-model-id-floor', kind: 'logic', pure: () => {
+          const accept = ['a', 'fake-ok', 'fake/ok', 'fake/ok:free', 'fake/ok:high', 'fake/ok#fast', 'fake-ok[effort=high]'];
+          const refuse = ['', '-x', '--yolo', 'a b', 'a\tb', 'x;rm', 'a$b', "a'b", 'a`b', 'a\x07', 'a\u00e9', 'a[x=1][y=2]', 'a[x y]'];
+          for (const id of accept) if (!MODEL_ID_FLOOR.test(id)) return `floor refused ${id}`;
+          for (const id of refuse) if (MODEL_ID_FLOOR.test(id)) return `floor accepted ${id}`;
+          return MODEL_ID_FLOOR.source === CURSOR_MODEL_ID.source ? null : 'floor differs from the superset charset';
+        },
+      },
+      {
+        name: 'model-config-floor-refuses', kind: 'logic', config: { models: { pi: 'a b' } },
+        args: ['--runtime', 'pi', '--print-argv'], exit: 2, status: /^AIKIT-XAI status=usage .* action=stop$/,
+        check: (r) => (r.stderr || '').split('\n').includes(`cross-ai: the model for pi must match ${MODEL_ID_FLOOR.source}`) && !(r.stderr || '').includes('a b') ? null : 'missing or leaking refusal',
+      },
+      {
+        name: 'model-config-valid', kind: 'logic', config: { models: { pi: 'fake-ok' } },
+        args: ['--runtime', 'pi', '--print-argv'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => (r.stderr || '').split('\n').includes(advisory('pi', PI_MODEL_ID)) ? null : 'missing advisory',
+      },
+      {
+        name: 'model-config-empty-no-model', kind: 'logic', config: { models: { pi: '' } },
+        args: ['--runtime', 'pi'], exit: 2, status: /^AIKIT-XAI status=no_model .* action=stop$/,
+      },
+      {
+        name: 'model-unusual-shape-spawns-copilot', kind: 'logic', env: { COPILOT_GITHUB_TOKEN: 'fake-token' },
+        args: ['--runtime', 'copilot', '--model', 'fake-ok[x=1]'], exit: 0, status: /^AIKIT-XAI status=ok cli=copilot .* action=stop$/,
+        check: (r, ctx) => (r.stderr || '').split('\n').includes(advisory('copilot', MODEL_ID)) && ctx.calls.includes('copilot ok[x=1]') ? null : 'missing advisory or call',
+      },
+      ...[['pi', 'fake-unlisted', PI_MODEL_ID], ['codex', 'fake-unlisted[x=1]', MODEL_ID]].map(([rt, id, re]) => ({
+        name: `model-unusual-shape-listing-${rt}`, kind: 'logic', args: ['--runtime', rt, '--model', id], exit: 69,
+        status: /^AIKIT-XAI status=bad_model .* action=stop$/,
+        check: (r) => (r.stderr || '').split('\n').includes(advisory(rt, re)) && !(r.stderr || '').includes('must match') ? null : 'missing advisory or unexpected refusal',
+      })),
       {
         name: 'model-other-runtime-not-checked',
         kind: 'logic',
@@ -6879,6 +8133,228 @@ async function blackBoxSelfTest(listOnly = false) {
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
         check: (r) => ((r.stderr || '').includes(
           'cross-ai: --prefer reads only its first entry (pi); ignored: nosuchcli') ? null : 'missing notice'),
+      },
+      {
+        name: 'gate-runtime-no-formula', kind: 'logic',
+        args: ['--runtime', 'placeholder-cli-1', '--model', 'fake-ok'], exit: 2,
+        status: /^AIKIT-XAI status=usage .* action=stop$/,
+        check: (r, ctx) => {
+          const lines = (r.stderr || '').split('\n');
+          return lines.includes(noFormula('placeholder-cli-1')) && !lines.some((line) => line.includes('known:')) && ctx.calls.length === 0 ? null : 'missing refusal or unexpected call';
+        },
+      },
+      {
+        name: 'gate-classify-unknown-cli', kind: 'logic',
+        files: { 'cases.json': [{ name: 'g', cli: 'placeholder-cli-1', stderr: 'circuit_open' }] },
+        args: ['--classify-only', 'cases.json'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => (r.stdout || '').split('\n')[0] === JSON.stringify({ name: 'g', status: 'transient', rule: 'omniroute-circuit-open', pattern: 'unverified', route: 'unknown' }) ? null : 'unexpected classification',
+      },
+      {
+        name: 'gate-classify-bad-cli', kind: 'logic',
+        files: { 'cases.json': [{ name: 'b', cli: 'a b', stderr: 'x' }] },
+        args: ['--classify-only', 'cases.json'], exit: 2, status: /^AIKIT-XAI status=usage .* action=stop$/,
+        check: (r) => (r.stderr || '').split('\n').includes(`cross-ai: --classify-only cli must match ${RUNTIME_ID_RE.source}`) ? null : 'missing refusal',
+      },
+      ...[
+        ['runtime-case-sensitive', ['--runtime', 'Claude', '--model', 'fake-ok'], null, [noFormula('Claude')]],
+        ['prefer-no-formula', ['--prefer', 'placeholder-cli-1,pi', '--model', 'fake-ok'], null, ['cross-ai: --prefer reads only its first entry (placeholder-cli-1); ignored: pi', noFormula('placeholder-cli-1')]],
+        ['config-runtime-no-formula', ['--model', 'fake-ok'], { runtime: 'placeholder-cli-1' }, [noFormula('placeholder-cli-1')]],
+        ['config-prefer-no-formula', ['--model', 'fake-ok'], { prefer: ['placeholder-cli-1', 'pi'] }, ['cross-ai: CONFIG.prefer reads only its first entry (placeholder-cli-1); ignored: pi', noFormula('placeholder-cli-1')]],
+        ['runtime-charset', ['--runtime', 'x;y', '--model', 'fake-ok'], null, [`cross-ai: --runtime must match ${RUNTIME_ID_RE.source}`]],
+        ['config-runtime-charset', ['--model', 'fake-ok'], { runtime: 'a b' }, [`cross-ai: CONFIG.runtime must match ${RUNTIME_ID_RE.source}`]],
+        ['cli-name-charset', ['--runtime', 'pi', '--model', 'fake/ok', '--model-Bad', 'fake-ok'], null, [`cross-ai: --model-Bad: the cli name must match ${CLI_NAME_RE.source}`]],
+      ].map(([suffix, args, config, expected]) => ({
+        name: `gate-${suffix}`, kind: 'logic', args, ...(config ? { config } : {}), exit: 2,
+        status: /^AIKIT-XAI status=usage .* action=stop$/,
+        check: (r, ctx) => {
+          const lines = (r.stderr || '').split('\n');
+          if (!expected.every((line) => lines.includes(line))) return 'missing refusal';
+          if (lines.some((line) => line.includes('known:'))) return 'unexpected known list';
+          return ctx.calls.length ? 'unexpected call' : null;
+        },
+      })),
+      {
+        name: 'gate-any-cli-name-read-only-selected', kind: 'logic',
+        args: ['--runtime', 'pi', '--model-pi', 'fake/ok', '--model-placeholder-cli-1', 'fake-ok', '--route-placeholder-cli-1', 'router', '--print-argv'],
+        exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
+          return line && line.includes('fake/ok') && !line.includes('fake-ok') ? null : 'unexpected argv';
+        },
+      },
+      {
+        name: 'argv-file-exec-ok', kind: 'logic',
+        // A key the caller wrote into the argv file reaches the child raw but no printed line.
+        files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}', '--effort={effort}', '--api-key', 'sk-' + 'b'.repeat(24)] },
+        env: { FAKE_DECLARED_SEEN: path.join(tmp, 'declared-exec-ok.json') },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'argv.json', '--model', 'fake-ok', '--effort', 'high', '--context', '1m'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=placeholder-cli-1 model=fake-ok exit=0 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          const seen = JSON.parse(fs.readFileSync(ctx.env.FAKE_DECLARED_SEEN, 'utf8'));
+          if (JSON.stringify(seen.argv) !== JSON.stringify(['--model', 'fake-ok', '--effort=high', '--api-key', 'sk-' + 'b'.repeat(24)])) return 'argv';
+          if (`${r.stdout || ''}${r.stderr || ''}`.includes('b'.repeat(24)) || !(r.stderr || '').includes('"--api-key","<redacted>"')) return 'key printed';
+          if (!seen.stdin.startsWith('prompt\n') || seen.argv.some((el) => el.includes('prompt'))) return 'stdin';
+          const lines = (r.stderr || '').split('\n');
+          for (const line of ['cross-ai: setting model=fake-ok applied', 'cross-ai: setting effort=high applied', 'cross-ai: setting context=1m ignored reason=no_slot']) if (!lines.includes(line)) return `missing ${line}`;
+          if (lines.some((line) => line.startsWith('cross-ai: setting provider=') && line !== 'cross-ai: setting provider=- unknown')) return 'provider';
+          return ctx.calls.filter((line) => line.startsWith('declared ')).length === 1 ? null : 'call count';
+        },
+      },
+      {
+        name: 'argv-file-print-argv', kind: 'logic',
+        files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}', '--effort={effort}', 'https://example.invalid/x?token=' + 'c'.repeat(20)] },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'argv.json', '--model', 'fake-ok', '--effort', 'high', '--print-argv'],
+        exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((s) => s.startsWith('placeholder-cli-1\t'));
+          if (line !== `placeholder-cli-1\t${path.join(tmp, 'bin', 'placeholder-cli-1')}\t["--model","fake-ok","--effort=high","https://example.invalid/x?token=<redacted>"]`) return 'argv';
+          if ((r.stderr || '').includes('c'.repeat(20)) || !(r.stderr || '').includes('cross-ai: rung2 placeholder-cli-1 argv=')) return 'rung2 key';
+          return (r.stderr || '').split('\n').includes('cross-ai: rung1 placeholder-cli-1 unavailable') ? null : 'rung1';
+        },
+      },
+      ...[
+        { suffix: 'outside', setup: (c) => { fs.writeFileSync(path.join(c.tmp, 'outside-argv.json'), '["placeholder-cli-1"]'); return null; }, args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', '../outside-argv.json', '--model', 'fake-ok'], text: '--argv-file must name a file inside the working directory: ../outside-argv.json' },
+        { suffix: 'symlink', setup: (c) => { const target = path.join(c.tmp, 'symlink-target.json'); fs.writeFileSync(target, '["placeholder-cli-1"]'); fs.symlinkSync(target, path.join(c.repo, 'argv.json')); return null; }, text: '--argv-file must name a file inside the working directory: argv.json' },
+        { suffix: 'oversize', files: ['placeholder-cli-1', 'x'.repeat(70000)], text: '--argv-file is over 65536 bytes: argv.json' },
+        { suffix: 'invalid-utf8', setup: (c) => { fs.writeFileSync(path.join(c.repo, 'argv.json'), Buffer.from([0x5b, 0x22, 0xff, 0x22, 0x5d])); return null; }, text: '--argv-file is not valid UTF-8: argv.json' },
+        { suffix: 'bom', setup: (c) => { fs.writeFileSync(path.join(c.repo, 'argv.json'), '\uFEFF["placeholder-cli-1"]'); return null; }, text: '--argv-file starts with a byte-order mark: argv.json' },
+        { suffix: 'bad-json', setup: (c) => { fs.writeFileSync(path.join(c.repo, 'argv.json'), '["placeholder-cli-1",'); return null; }, text: '--argv-file is not strict JSON: argv.json', exact: true },
+        { suffix: 'duplicate-key', setup: (c) => { fs.writeFileSync(path.join(c.repo, 'argv.json'), '["placeholder-cli-1",{"a":1,"a":2}]'); return null; }, text: '--argv-file is not strict JSON: argv.json', exact: true },
+        { suffix: 'not-array', files: { command: 'placeholder-cli-1' }, text: '--argv-file must hold a JSON array of strings' },
+        { suffix: 'empty-array', files: [], text: '--argv-file holds an empty array; the first element is the command' },
+        { suffix: 'non-string', files: ['placeholder-cli-1', 3], text: '--argv-file element 1 is not a string' },
+        { suffix: 'empty-element', files: ['placeholder-cli-1', ''], text: '--argv-file element 1 is empty' },
+        { suffix: 'nul-element', files: ['placeholder-cli-1', 'a\u0000b'], text: '--argv-file element 1 holds a NUL character' },
+        { suffix: 'unknown-placeholder', files: ['placeholder-cli-1', '-p', '{prompt}'], text: '--argv-file element 2 holds an unknown placeholder (only {model}, {effort} and {session})' },
+        { suffix: 'command-placeholder', files: ['{model}', '-p'], text: '--argv-file element 0 is the command and holds no placeholder' },
+        { suffix: 'effort-unset', files: ['placeholder-cli-1', '--effort', '{effort}'], text: '--argv-file holds {effort} and the call names no effort (pass --effort)' },
+        { suffix: 'session-unset', files: ['placeholder-cli-1', '--session', '{session}'], text: '--argv-file holds {session} and the call names no session id (pass --session-id)' },
+        { suffix: 'known-runtime', files: ['placeholder-cli-1'], args: ['--runtime', 'pi', '--role', 'execute', '--argv-file', 'argv.json', '--model', 'fake/ok'], text: '--argv-file needs a runtime with no execute formula in the runner; pi has one' },
+      ].map((row) => ({
+        name: `argv-file-refuse-${row.suffix}`, kind: 'logic',
+        args: row.args || ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'argv.json', '--model', 'fake-ok'],
+        ...(row.files ? { files: { 'argv.json': row.files } } : {}), ...(row.setup ? { setup: row.setup } : {}),
+        exit: 2, status: /^AIKIT-XAI status=usage .* action=stop$/,
+        check: (r, ctx) => {
+          const lines = (r.stderr || '').split('\n');
+          if (!lines.some((line) => row.exact ? line === `cross-ai: ${row.text}` : line.includes(`cross-ai: ${row.text}`))) return 'missing refusal';
+          return ctx.calls.some((line) => line.startsWith('declared ')) ? 'unexpected call' : null;
+        },
+      })),
+      {
+        name: 'pure-argv-file-allowed', kind: 'logic', pure: () => {
+          const row = { exec: null, review: () => [] };
+          return argvFileAllowed(undefined, 'exec') && argvFileAllowed(row, 'exec') && !argvFileAllowed(row, 'review') ? null : 'formula eligibility';
+        },
+      },
+      {
+        name: 'pure-argv-file-slot-proof', kind: 'logic', pure: () => {
+          const declared = { argv: ['placeholder-cli-1', '--effort={effort}', '-x', 'high'], slots: { model: false, effort: true, session: false } };
+          const plan = { model: 'fake-ok', adds: { session: [], effort: [], context: [], skills: [], mcp: [] }, sessionId: null, resume: false, report: [{ name: 'model', value: 'fake-ok', state: 'applied', proof: ['fake-ok'] }, { name: 'effort', value: 'high', state: 'ignored', reason: 'no_form' }], provider: null };
+          const out = planArgvFile(plan, argvFileRow(declared));
+          const effort = out.report.find((entry) => entry.name === 'effort');
+          const modelEntry = out.report.find((entry) => entry.name === 'model');
+          if (effort.state !== 'applied' || JSON.stringify(effort.proof) !== '["--effort=high"]') return 'effort proof';
+          if (modelEntry.state !== 'ignored' || modelEntry.reason !== 'no_slot' || 'proof' in modelEntry) return 'model proof';
+          try { confirmReport(out.report, ['--effort=high', '-x', 'high'], ''); } catch { return 'valid proof rejected'; }
+          try { confirmReport(out.report, ['--effort=low', '-x', 'high'], ''); } catch { return null; }
+          return 'unrelated argument proved slot';
+        },
+      },
+      {
+        name: 'argv-file-review-ok', kind: 'logic',
+        files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}', '--session', '{session}'] },
+        env: { FAKE_DECLARED_SEEN: path.join(tmp, 'declared-review-ok.json') },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'review', '--argv-file', 'argv.json', '--model', 'fake-review', '--effort', 'high', '--session-id', 'placeholder-sid-1'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=placeholder-cli-1 model=fake-review exit=0 .* tree=clean action=stop$/,
+        check: (r, ctx) => {
+          const seen = JSON.parse(fs.readFileSync(ctx.env.FAKE_DECLARED_SEEN, 'utf8'));
+          if (JSON.stringify(seen.argv) !== JSON.stringify(['--model', 'fake-review', '--session', 'placeholder-sid-1'])) return 'argv';
+          const lines = (r.stderr || '').split('\n');
+          if (!lines.includes('cross-ai: setting effort=high ignored reason=no_slot') || !lines.includes('cross-ai: setting session=placeholder-sid-1 applied')) return 'settings';
+          return lines.filter((line) => line.startsWith('AIKIT-XAI ')).at(-1)?.includes(' session=placeholder-sid-1 ') ? null : 'session';
+        },
+      },
+      {
+        name: 'argv-file-review-tree-check', kind: 'logic', files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}'] },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'review', '--argv-file', 'argv.json', '--model', 'fake-ok'],
+        exit: 1, status: /^AIKIT-XAI status=contract_violation cli=placeholder-cli-1 .* tree=dirty action=stop$/,
+      },
+      {
+        name: 'argv-file-crash-redacted', kind: 'logic', files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}'] },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'argv.json', '--model', 'fake-crash'],
+        exit: 1, status: /^AIKIT-XAI status=crash cli=placeholder-cli-1 model=fake-crash exit=1 cli_rc=7 .* tree=clean action=stop$/,
+        check: (r, ctx) => {
+          const stderr = r.stderr || ''; const line = stderr.split('\n').filter((s) => s.startsWith('AIKIT-XAI ')).at(-1);
+          if (!line?.includes(' pattern=unverified') || !stderr.includes('placeholder failure') || stderr.includes('sk-aikit-SENTINEL-' + process.pid)) return 'redaction or pattern';
+          return ctx.calls.filter((s) => s.startsWith('declared ')).length === 1 ? null : 'call count';
+        },
+      },
+      {
+        name: 'argv-file-same-argv-twice', kind: 'logic', files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}'] },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'review', '--argv-file', 'argv.json', '--model', 'fake-review'],
+        exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        second: { exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/ },
+        check: (both) => {
+          const first = both.calls1.filter((s) => s.startsWith('declared ')); const second = both.calls2.filter((s) => s.startsWith('declared '));
+          if (first.length !== 1 || second.length !== 1 || first[0] !== second[0]) return 'argv changed';
+          return fs.readFileSync(path.join(both.repo, 'argv.json'), 'utf8') === JSON.stringify(['placeholder-cli-1', '--model', '{model}']) ? null : 'file changed';
+        },
+      },
+      {
+        name: 'argv-file-read-once', kind: 'logic',
+        setup: (c) => {
+          fs.writeFileSync(path.join(c.repo, '.gitignore'), 'ign/\n');
+          fs.mkdirSync(path.join(c.repo, 'ign'));
+          fs.writeFileSync(path.join(c.repo, 'ign', 'argv.json'), JSON.stringify(['placeholder-cli-1', '--model', '{model}', '--session={session}']));
+          for (const args of [['add', '.gitignore'], ['commit', '-q', '-m', 'ignore']]) {
+            const g = spawnSync('git', args, { cwd: c.repo, env: c.env, encoding: 'utf8' });
+            if (g.status !== 0) return `setup git ${args.join(' ')}: ${g.stderr}`;
+          }
+          return null;
+        },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'execute', '--argv-file', 'ign/argv.json', '--model', 'fake-edit-then-ok', '--session-id', 'placeholder-sid-2'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=placeholder-cli-1 model=fake-edit-then-ok exit=0 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          const calls = ctx.calls.filter((s) => s.startsWith('declared ')); const lines = (r.stderr || '').split('\n');
+          if (calls.length !== 2 || calls.some((s) => s !== 'declared ["--model","fake-edit-then-ok","--session=placeholder-sid-2"]')) return 'retry argv';
+          if (lines.some((s) => s.includes('no fresh session is started')) || !lines.filter((s) => s.startsWith('AIKIT-XAI ')).at(-1)?.includes(' session=placeholder-sid-2 ')) return 'session';
+          return fs.readFileSync(path.join(ctx.repo, 'ign', 'argv.json'), 'utf8') === '["changed-command"]' ? null : 'file not changed';
+        },
+      },
+      {
+        name: 'argv-file-session-no-slot', kind: 'logic', files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}'] },
+        args: ['--runtime', 'placeholder-cli-1', '--role', 'review', '--argv-file', 'argv.json', '--model', 'fake-review', '--session-id', 'placeholder-sid-3'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=placeholder-cli-1 model=fake-review exit=0 .* tree=clean action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n'); const line = lines.filter((s) => s.startsWith('AIKIT-XAI ')).at(-1) || '';
+          return lines.includes('cross-ai: setting session=placeholder-sid-3 ignored reason=no_slot') && line.includes(' session=- ') && !line.includes(' session=placeholder-sid-3') ? null : 'session';
+        },
+      },
+      {
+        name: 'argv-file-constructor-no-model', kind: 'logic', files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}'] },
+        args: ['--runtime', 'constructor', '--role', 'review', '--argv-file', 'argv.json'], exit: 2, status: /^AIKIT-XAI status=no_model .* action=stop$/,
+        check: (r) => (r.stderr || '').includes('internal error') ? 'internal error' : null,
+      },
+      {
+        name: 'argv-file-constructor-model', kind: 'logic', files: { 'argv.json': ['placeholder-cli-1', '--model', '{model}'] },
+        args: ['--runtime', 'constructor', '--role', 'review', '--argv-file', 'argv.json', '--model', 'fake-review'],
+        exit: 0, status: /^AIKIT-XAI status=ok cli=constructor model=fake-review exit=0 .* tree=clean action=stop$/,
+      },
+      ...[['gate-runtime-constructor', ['--runtime', 'constructor']],
+        ['gate-runtime-constructor-model', ['--runtime', 'constructor', '--model-constructor', 'fake-ok']]].map(([name, args]) => ({
+        name, kind: 'logic', args, exit: 2, status: /^AIKIT-XAI status=usage .* action=stop$/,
+        check: (r, ctx) => {
+          const lines = (r.stderr || '').split('\n');
+          return lines.includes(noFormula('constructor')) && !lines.some((line) => line.includes('internal error')) && ctx.calls.length === 0 ? null : 'missing refusal or unexpected call';
+        },
+      })),
+      {
+        name: 'pure-own-value', kind: 'logic',
+        pure: () => parseArgs(['--runtime', 'constructor']).models.constructor === undefined
+          && parseArgs(['--route-pi', 'router']).routes.constructor === undefined
+          && ownValue({}, 'constructor') === undefined && ownValue({ pi: 'x' }, 'pi') === 'x'
+          && ownValue(null, 'pi') === undefined ? null : 'own-value lookup failed',
       },
       {
         // With HOME and XDG_CONFIG_HOME unset there is no user layer (C1-3): neither the account
@@ -9758,15 +11234,23 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
-        name: 'claude-exec-usage',
+        name: 'claude-exec-commit',
         kind: 'logic',
-        args: ['--prefer', 'claude', '--mode', 'exec', '--model-claude', 'fake-ok'],
-        exit: 2,
-        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
-        check: (r) => ((r.stderr || '').includes('claude is review-only') ? null : 'missing review-only line'),
+        args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          if ((r.stderr || '').includes('cross-ai: note: claude execute formula is unverified (no live probe record)') !== (CLAUDE_EXEC_FORMULA_RECORD === null)) return 'incorrect note';
+          const line = (r.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: argv='));
+          if (!line) return 'missing argv';
+          const expected = RUNTIMES.claude.exec('fake-ok', { cwd: ctx.repo, adds: { session: [], effort: [], context: [], skills: [], mcp: [] } });
+          if (JSON.stringify(JSON.parse(line.slice('cross-ai: argv='.length)).slice(0, expected.length)) !== JSON.stringify(expected)) return 'wrong argv';
+          const git = spawnSync('git', ['log', '--format=%s'], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
+          return git.stdout.includes('fake claude execute') ? null : 'missing commit';
+        },
       },
       {
-        // A later review-only entry is ignored, never started, and never rejects the first.
+        // A later --prefer entry is ignored, never started, and never rejects the first.
         name: 'review-only-later-menu-ok',
         kind: 'logic',
         args: ['--prefer', 'pi,claude', '--mode', 'exec', '--model-pi', 'fake/ok', '--model-claude', 'fake-ok'],
@@ -11427,12 +12911,189 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       })),
       {
+        // A level is shape-checked (LEVEL_RE): an uppercase level is refused.
         name: 'codex-effort-bogus',
         kind: 'logic',
-        args: ['--codex-effort', 'bogus', '--prefer', 'codex', '--model-codex', 'x'],
+        args: ['--codex-effort', 'Bogus', '--prefer', 'codex', '--model-codex', 'x'],
         config: { prefer: ['codex'] },
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'reader-call-file-cap', kind: 'logic', pure: () => {
+          const { root, work } = migrationScratch();
+          const msg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+          try {
+            const file = path.join(work, 'f.json'); fs.writeFileSync(file, 'a'.repeat(65536));
+            const r = readCallFile('--argv-file', 'f.json', { cwd: work, cwdOnly: true });
+            if (r.abs !== fs.realpathSync(file) || r.bytes.length !== 65536 || r.text.length !== 65536) return 'cap boundary';
+            fs.writeFileSync(file, 'a'.repeat(65537));
+            return msg(() => readCallFile('--argv-file', 'f.json', { cwd: work, cwdOnly: true })) === '--argv-file is over 65536 bytes: f.json' ? null : 'cap overflow';
+          } finally { fs.rmSync(root, { recursive: true, force: true }); }
+        },
+      },
+      {
+        name: 'reader-call-file-utf8', kind: 'logic', pure: () => {
+          const { root, work } = migrationScratch();
+          const msg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+          try {
+            fs.writeFileSync(path.join(work, 'bad.json'), Buffer.from([0x5b, 0xff, 0x5d]));
+            fs.writeFileSync(path.join(work, 'bom.json'), Buffer.from([0xef, 0xbb, 0xbf, 0x5b, 0x5d]));
+            const bytes = Buffer.from('["é"]'); fs.writeFileSync(path.join(work, 'ok.json'), bytes);
+            if (msg(() => readCallFile('--argv-file', 'bad.json', { cwd: work })) !== '--argv-file is not valid UTF-8: bad.json') return 'invalid UTF-8';
+            if (msg(() => readCallFile('--argv-file', 'bom.json', { cwd: work })) !== '--argv-file starts with a byte-order mark: bom.json') return 'BOM';
+            const r = readCallFile('--argv-file', 'ok.json', { cwd: work });
+            return r.bytes.equals(bytes) && r.text === '["é"]' ? null : 'UTF-8 roundtrip';
+          } finally { fs.rmSync(root, { recursive: true, force: true }); }
+        },
+      },
+      {
+        name: 'reader-call-file-place', kind: 'logic', pure: () => {
+          const { root, work } = migrationScratch();
+          const msg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+          try {
+            fs.writeFileSync(path.join(root, 'outside.json'), '[]'); fs.symlinkSync(path.join(root, 'outside.json'), path.join(work, 'link.json'));
+            fs.mkdirSync(path.join(work, 'dir'));
+            for (const p of ['../outside.json', 'link.json']) if (msg(() => readCallFile('--argv-file', p, { cwd: work, cwdOnly: true })) !== `--argv-file must name a file inside the working directory: ${p}`) return `outside ${p}`;
+            if (msg(() => readCallFile('--argv-file', 'dir', { cwd: work })) !== '--argv-file must name a regular file: dir') return 'directory';
+            if (msg(() => readCallFile('--argv-file', 'nope.json', { cwd: work })) !== '--argv-file unreadable: nope.json') return 'missing';
+            if (readCallFile('--argv-file', '../outside.json', { cwd: work }).text !== '[]') return 'outside allowed';
+            const file = path.join(work, 'm.json'); fs.writeFileSync(file, '{}');
+            for (const mode of [0o640, 0o620, 0o604, 0o602]) {
+              fs.chmodSync(file, mode);
+              if (msg(() => readCallFile('--mcp-config', 'm.json', { cwd: work, mode: 0o077 })) !== `--mcp-config must not be accessible by group or others (mode ${mode.toString(8)}): m.json`) return `mode ${mode.toString(8)}`;
+            }
+            fs.chmodSync(file, 0o600);
+            return readCallFile('--mcp-config', 'm.json', { cwd: work, mode: 0o077 }).text === '{}' ? null : 'private mode';
+          } finally { fs.rmSync(root, { recursive: true, force: true }); }
+        },
+      },
+      {
+        name: 'reader-call-file-fifo', kind: 'runtime', pure: () => {
+          const { root, work } = migrationScratch();
+          const msg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+          try {
+            if (spawnSync('mkfifo', [path.join(work, 'pipe.json')]).status !== 0) return 'mkfifo unavailable';
+            const t0 = Date.now(); const result = msg(() => readCallFile('--argv-file', 'pipe.json', { cwd: work, cwdOnly: true })); const took = Date.now() - t0;
+            return result === '--argv-file must name a regular file: pipe.json' && took < scaledMs(2000) ? null : 'FIFO refusal';
+          } finally { fs.rmSync(root, { recursive: true, force: true }); }
+        },
+      },
+      {
+        name: 'reader-call-file-swap', kind: 'logic', pure: () => {
+          const { root, work } = migrationScratch(); const saved = fs.openSync;
+          const msg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+          try {
+            fs.writeFileSync(path.join(work, 'f.json'), 'first'); fs.writeFileSync(path.join(work, 'other.json'), 'second');
+            fs.openSync = (...args) => { fs.renameSync(path.join(work, 'other.json'), path.join(work, 'f.json')); return saved(...args); };
+            const result = msg(() => readCallFile('--argv-file', 'f.json', { cwd: work, cwdOnly: true })); fs.openSync = saved;
+            if (result !== '--argv-file changed while it was opened: f.json') return 'swap';
+            return readCallFile('--argv-file', 'f.json', { cwd: work }).text === 'second' ? null : 'stable read';
+          } finally { fs.openSync = saved; fs.rmSync(root, { recursive: true, force: true }); }
+        },
+      },
+      {
+        name: 'reader-strict-json', kind: 'logic', pure: () => {
+          const { root } = migrationScratch();
+          const msg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+          try {
+            for (const [text, key] of [['{"a":1,"a":2}', 'a'], ['{"x":{"b":1,"b":2}}', 'b'], ['{"a":1,"\\u0061":2}', 'a']]) if (msg(() => strictJson(text)) !== `duplicate key "${key}"`) return `duplicate ${key}`;
+            for (const text of ['[{"a":1},{"a":2}]', '{"a":{"a":1}}', '{"s":"}{\\\"","t":["{"]}']) if (JSON.stringify(strictJson(text)) !== JSON.stringify(JSON.parse(text))) return 'valid JSON';
+            return msg(() => strictJson('{"a":1,}')) ? null : 'invalid JSON';
+          } finally { fs.rmSync(root, { recursive: true, force: true }); }
+        },
+      },
+      ...[
+        ['vocab-role-mode-disagree', ['--role', 'review', '--mode', 'exec'], '--role and --mode disagree'],
+        ['vocab-role-mode-disagree-exec', ['--mode', 'review', '--role', 'execute'], '--role and --mode disagree'],
+        ['vocab-role-bad', ['--role', 'exec'], '--role must be review or execute'],
+        ['vocab-effort-disagree', ['--effort', 'high', '--codex-effort', 'low'], '--effort and --codex-effort disagree'],
+        ['vocab-effort-empty', ['--effort', ''], `--effort must match ${LEVEL_RE.source}`],
+        ['vocab-effort-upper', ['--effort', 'High'], `--effort must match ${LEVEL_RE.source}`],
+        ['vocab-effort-dash', ['--effort', '-high'], `--effort must match ${LEVEL_RE.source}`],
+        ['vocab-effort-space', ['--effort', 'hi gh'], `--effort must match ${LEVEL_RE.source}`],
+        ['vocab-effort-17', ['--effort', 'a'.repeat(17)], `--effort must match ${LEVEL_RE.source}`],
+        ['vocab-effort-control', ['--effort', 'hi\x07'], `--effort must match ${LEVEL_RE.source}`],
+        ['vocab-codex-effort-upper', ['--codex-effort', 'High'], `--codex-effort must match ${LEVEL_RE.source}`],
+        ['vocab-context-upper', ['--context', '1M'], `--context must match ${CONTEXT_RE.source}`],
+        ['vocab-context-empty', ['--context', ''], `--context must match ${CONTEXT_RE.source}`],
+        ['vocab-session-129', ['--session-id', 'a'.repeat(129)], `--session-id must match ${SESSION_ID_RE.source}`],
+        ['vocab-session-empty', ['--session-id', ''], `--session-id must match ${SESSION_ID_RE.source}`],
+        ['vocab-session-dash', ['--session-id', '-x'], `--session-id must match ${SESSION_ID_RE.source}`],
+        ['vocab-host-bad', ['--host', 'herdr'], '--host must be auto or none'],
+        ['vocab-escalate-valued', ['--escalate-runtime', 'yes'], 'unknown argument: yes'],
+        ['vocab-skill-name-65', ['--skill-name', 'a'.repeat(65)], `--skill-name must match ${SKILL_NAME_RE.source}`],
+        ['vocab-skill-path-empty', ['--skill-path', ''], '--skill-path must be a non-empty path without control characters'],
+        ['vocab-skill-path-control', ['--skill-path', 'a\nb'], '--skill-path must be a non-empty path without control characters'],
+        ['vocab-mcp-config-empty', ['--mcp-config', ''], '--mcp-config must be a non-empty path without control characters'],
+        ['vocab-argv-file-empty', ['--argv-file', ''], '--argv-file must be a non-empty path without control characters'],
+      ].map(([name, extra, message]) => ({ name, kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', ...extra], exit: 2, status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/, check: (r) => ((r.stderr || '').split('\n').includes(`cross-ai: ${message}`) ? null : `stderr lacks the line: ${message}`) })),
+      {
+        name: 'vocab-role-alias', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--role', 'review', '--mode', 'review'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        async check (r, ctx) {
+          const run = (extra) => runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', ...extra] }, ctx);
+          const line = (x) => (x.stdout || '').split('\n').find((s) => s.startsWith('pi\t'));
+          const b = await run(['--mode', 'review']); const c = await run(['--role', 'execute']); const d = await run(['--mode', 'exec']);
+          return b.status === 0 && c.status === 0 && d.status === 0 && line(r) === line(b) && line(r)?.includes('"--no-mcp"') && line(c) === line(d) && !line(c)?.includes('"--no-mcp"') ? null : 'role alias mismatch';
+        },
+      },
+      {
+        name: 'vocab-boundaries-pass', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--effort', 'a', '--context', '1', '--session-id', 'a', '--skill-name', 'a'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        async check (_r, ctx) { const r = await runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--effort', 'a'.repeat(16), '--context', '1' + 'a'.repeat(15), '--session-id', 'a'.repeat(128), '--skill-name', 'a'.repeat(64)] }, ctx); return r.status === 0 ? null : 'upper boundaries'; },
+      },
+      {
+        name: 'vocab-stored-only', kind: 'logic', args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok', '--context', '1m', '--escalate-runtime', '--escalate-model', '--host', 'none', '--skill-name', 'placeholder-skill-1'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        async check (r, ctx) { const b = await runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--model', 'fake/ok'] }, ctx); const line = (x) => (x.stdout || '').split('\n').find((s) => s.startsWith('pi\t')); return b.status === 0 && line(r) === line(b) ? null : 'stored flags changed argv'; },
+      },
+      {
+        name: 'vocab-codex-effort-level', kind: 'logic', args: ['--print-argv', '--runtime', 'codex', '--model', 'fake-ok-codex', '--codex-effort', 'max'], exit: 0, status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        async check (r, ctx) { const b = await runCaseProcess({ args: ['--print-argv', '--runtime', 'codex', '--model', 'fake-ok-codex', '--codex-effort', 'ultra'] }, ctx); const line = (x) => (x.stdout || '').split('\n').find((s) => s.startsWith('codex\t')) || ''; return b.status === 0 && line(r).includes('model_reasoning_effort=max') && line(b).includes('model_reasoning_effort=ultra') ? null : 'codex levels'; },
+      },
+      {
+        name: 'planner-effort-no-form', kind: 'logic', pure: () => {
+          const row = { forms: { effort: { kind: 'none', label: { state: 'unknown', source: 'test' } } } };
+          const p = planSettings(row, 'exec', { model: 'fake-ok', effort: 'high' });
+          if (JSON.stringify(p.report.map(e => [e.name, e.value, e.state, e.reason || null])) !== JSON.stringify([['model','fake-ok','applied',null],['role','execute','applied',null],['effort','high','ignored','no_form']]) || p.adds.effort.length || p.model !== 'fake-ok') return 'no form';
+          row.forms.effort = { kind: 'flag', flag: '--effort', label: { state: 'unverified', source: 'test' } };
+          if (planSettings(row, 'exec', { model: 'fake-ok', effort: 'high' }).report.at(-1).reason !== 'unverified_form') return 'unverified';
+          row.forms.effort.label.state = 'verified';
+          const bad = planSettings(row, 'exec', { model: 'fake-ok', configEffort: 'Bad' });
+          if (bad.report.at(-1).reason !== 'bad_value' || bad.adds.effort.length) return 'bad value';
+          if (SETTING_REASONS.join(',') !== 'no_form,id_carries,unverified_form,mode_forbids,no_slot,recorded_only,no_provider_form,bad_value,no_herdr,host_failed' || SETTING_NAMES.join(',') !== 'model,provider,role,effort,context,session,escalate_runtime,escalate_model,host,skill,mcp' || SETTING_STATES.join(',') !== 'applied,ignored,unknown') return 'lists';
+          return bad.report.every(e => SETTING_STATES.includes(e.state) && (!e.reason || SETTING_REASONS.includes(e.reason))) ? null : 'state';
+        },
+      },
+      {
+        name: 'planner-confirm-report', kind: 'logic', pure: () => {
+          const entry = (proof) => [{ name: 'effort', value: 'high', state: 'applied', proof }];
+          const fails = (r, a, mode = 'exec') => { try { confirmReport(r, a, '', mode); return false; } catch { return true; } };
+          const e = entry(['--effort', 'high']);
+          if (confirmReport(e, ['-p', '--effort', 'high'], '', 'exec') !== e || !fails(e, ['-p', '--effort', 'low']) || !fails(e, ['--effort', 'x', 'high'])) return 'flag';
+          if (fails(entry({ slot: 'b' }), ['--model', 'b', 'x']) || fails(entry({ slot: 'b' }), ['-m', 'b']) || !fails(entry({ slot: 'b' }), ['--model', 'a', 'x', 'b'])) return 'slot';
+          // 'ake/' sits inside 'fake/ok' but not at its start: only a real prefix match passes.
+          if (fails(entry({ slotPrefix: 'fake/' }), ['--model', 'fake/ok']) || !fails(entry({ slotPrefix: 'fake/ok/' }), ['--model', 'fake/other']) || !fails(entry({ slotPrefix: 'ake/' }), ['--model', 'fake/ok'])) return 'prefix';
+          if (!fails(entry({ mode: 'review' }), [], 'exec') || fails(entry({ runs: [['exec', 'resume'], ['s-1', '-']] }), ['exec', 'resume', 's-1', '-']) || !fails(entry({ runs: [['exec', 'resume'], ['s-1', '-']] }), ['exec', 'resume'])) return 'mode or runs';
+          if (!fails([{ name: 'effort', state: 'applied' }], []) || fails([{ state: 'ignored' }, { state: 'unknown' }], [])) return 'missing proof';
+          for (const row of [RUNTIMES.pi, RUNTIMES.claude]) if (planSettings(row, 'review', { model: 'fake-ok', effort: 'high' }).report.some(x => x.state === 'applied' && !x.proof)) return 'planner proof';
+          return null;
+        },
+      },
+      {
+        name: 'planner-status-group', kind: 'logic', pure: () => {
+          const key = 'sk-' + 'a'.repeat(16);
+          const report = ['model', 'role', 'effort'].map(name => ({ name, state: 'applied' }));
+          report.push({ name: 'skill', value: 'placeholder-skill-1', state: 'applied' }, { name: 'escalate_runtime', state: 'ignored' }, { name: 'provider', state: 'unknown' });
+          if (statusGroup(report, 'abc-1', { runtime: true, model: false }) !== 'session=abc-1 applied=model,role,effort,skill:placeholder-skill-1 ignored=escalate_runtime unknown=provider escalate=runtime') return 'group';
+          if (statusGroup([], null, {}) !== 'session=- applied=- ignored=- unknown=- escalate=-') return 'empty';
+          const redacted = statusGroup([{ name: 'skill', value: key, state: 'applied' }, { name: 'mcp', value: key, state: 'applied' }], 'bad id', { runtime: true, model: true });
+          return redacted === 'session=- applied=skill:<redacted>,mcp:<redacted> ignored=- unknown=- escalate=runtime,model' ? null : 'redaction';
+        },
+      },
+      {
+        name: 'planner-report-lines', kind: 'logic', pure: () => {
+          const r = reportLines([{ name: 'effort', value: '\x07' + 'sk-' + 'a'.repeat(16), state: 'ignored', reason: 'bad_value' }, { name: 'session', value: '00000000-0000-4000-8000-000000000001', state: 'applied' }, { name: 'skill', value: 'placeholder-skill-1', state: 'applied', form: 'path' }]);
+          return JSON.stringify(r) === JSON.stringify(['cross-ai: setting effort=<redacted> ignored reason=bad_value', 'cross-ai: setting session=00000000-0000-4000-8000-000000000001 applied', 'cross-ai: setting skill=placeholder-skill-1 applied form=path']) ? null : 'lines';
+        },
       },
       {
         name: 'cursor-mode-plan',
@@ -11474,12 +13135,12 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
-        // Brackets are cursor-only; every other --model-<rt> keeps the template-2 charset.
+        // Brackets pass the universal floor for every runtime.
         name: 'cursor-bracket-other-rt',
         kind: 'logic',
         args: ['--print-argv', '--model-pi', 'fake/ok[x=1]'],
-        exit: 2,
-        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
       },
       {
         // D-02: a bare `agent` whose real path is not cursor-agent is not cursor.
@@ -12091,18 +13752,13 @@ async function blackBoxSelfTest(listOnly = false) {
         check: (_r, ctx) => (ctx.calls.length ? `calls=${ctx.calls.join('|')}` : null),
       },
       {
-        name: 'review-only-first-refused',
+        name: 'prefer-first-claude-exec-runs',
         kind: 'logic',
-        args: [
-          '--mode', 'exec', '--prefer', 'claude,pi', '--model-claude', 'fake-ok',
-          '--model-pi', 'fake/ok',
-        ],
-        exit: 2,
-        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        args: ['--mode', 'exec', '--prefer', 'claude,pi', '--model-claude', 'fake-ok', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* tree=dirty action=stop$/,
         check: (r, ctx) => {
-          if (!(r.stderr || '').includes('claude is review-only')) {
-            return 'missing review-only line';
-          }
+          if (!(r.stderr || '').includes('cross-ai: --prefer reads only its first entry (claude); ignored: pi')) return 'missing ignored note';
           return ctx.calls.some((l) => l.startsWith('pi ')) ? 'pi ran' : null;
         },
       },
@@ -12315,7 +13971,7 @@ async function blackBoxSelfTest(listOnly = false) {
           if (!line) return 'missing argv line';
           const argv = JSON.parse(line.split('\t')[2]);
           const want = ['-p', '<prompt>', '-s', '--no-ask-user', '--model', 'fake-ok',
-            '--allow-all-tools'];
+            '--session-id', '<sid>', '--allow-all-tools'];
           return JSON.stringify(argv) === JSON.stringify(want) ? null : `argv=${JSON.stringify(argv)}`;
         },
       },
@@ -12379,6 +14035,120 @@ async function blackBoxSelfTest(listOnly = false) {
           if (!report) return 'missing report line';
           if ((r.stderr || '').includes('pattern=verified')) return 'a copilot pattern read verified';
           return ctx.calls.length === 1 ? null : `calls=${ctx.calls.length}`;
+        },
+      },
+      {
+        name: 'pure-skill-forms-verified',
+        kind: 'logic',
+        pure: () => {
+          const row = { forms: { skills: { name: { form: '/<name>', label: { state: 'verified', source: 's' } }, path: { flag: '--add-dir', root: '.github/skills', label: { state: 'verified', source: 's' } }, prose: SKILL_PROSE } } };
+          const record = (n, p, byName) => ({ name: `placeholder-skill-${n}`, path: p, dirName: `placeholder-skill-${n}`, byName, body: skillBody(n), sha256: crypto.createHash('sha256').update(skillBody(n)).digest('hex') });
+          const plan = planSkills(row, [record(1, null, true), record(2, '/x/proj/.github/skills/placeholder-skill-2', false), record(3, '/x/other/placeholder-skill-3', false)]);
+          if (plan.report.map((e) => `${e.state}:${e.form}`).join(',') !== 'applied:name,applied:path,applied:prose') return 'forms';
+          if (!plan.promptPrefix.startsWith('/placeholder-skill-1\n') || JSON.stringify(plan.adds) !== JSON.stringify(['--add-dir', '/x/proj'])) return 'plan output';
+          confirmReport(plan.report, ['-p', '--add-dir', '/x/proj'], composePrompt(plan.promptPrefix, null, 'p', ''));
+          try { confirmReport(plan.report, ['-p', '--add-dir', '/x/proj'], 'p'); } catch { return null; }
+          return 'missing prompt proof accepted';
+        },
+      },
+      {
+        name: 'mcp-review-lanes-applied',
+        kind: 'logic',
+        env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* tree=clean action=stop$/,
+        setup: (c) => {
+          c.key = 'sk-' + 'Q'.repeat(40);
+          c.mcpFile = path.join(c.tmp, 'mcp-review.json');
+          fs.writeFileSync(c.mcpFile, JSON.stringify({ mcpServers: {
+            'placeholder-server-b': { command: 'placeholder-cmd', args: ['--token', c.key], env: { PLACEHOLDER_TOKEN: c.key } },
+            'placeholder-server-a': { url: 'https://example.invalid/mcp', headers: { Authorization: `Bearer ${c.key}` } },
+          } }));
+          fs.chmodSync(c.mcpFile, 0o600);
+          for (const [rel, content] of [['.claude.json', '{"mcpServers":{}}\n'], ['.copilot/mcp-config.json', '{"mcpServers":{}}\n'], ['.cursor/mcp.json', '{"mcpServers":{}}\n'], ['.pi/agent/mcp.json', '{"mcpServers":{}}\n'], ['.codex/config.toml', '# synthetic\n'], ['.config/opencode/opencode.jsonc', '{}\n']]) {
+            const file = path.join(c.home, rel); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, content);
+          }
+          c.hostBefore = hostFilesDigest(c.home);
+          c.env.FAKE_CLAUDE_SEEN = path.join(c.tmp, 'claude-mcp-seen');
+          c.env.FAKE_COPILOT_SEEN = path.join(c.tmp, 'copilot-mcp-seen');
+          c.args = ['--runtime', 'claude', '--mode', 'review', '--model', 'fake-ok', '--mcp-config', c.mcpFile];
+          return null;
+        },
+        check: async (r, c) => {
+          const seen = JSON.parse(fs.readFileSync(c.env.FAKE_CLAUDE_SEEN, 'utf8'));
+          if (JSON.stringify(seen.argv.slice(-3)) !== JSON.stringify(['--mcp-config', c.mcpFile, '--strict-mcp-config']) || seen.mcpCount !== 2) return 'claude MCP argv or count';
+          const lines = r.stderr.split('\n');
+          const settings = lines.filter((line) => line.startsWith('cross-ai: setting mcp='));
+          if (JSON.stringify(settings) !== JSON.stringify(['cross-ai: setting mcp=placeholder-server-b applied', 'cross-ai: setting mcp=placeholder-server-a applied'])) return 'MCP report order';
+          const tokens = Object.fromEntries((lines.filter((line) => line.startsWith('AIKIT-XAI ')).pop() || '').split(' ').slice(1).map((t) => t.split('=')));
+          if (!tokens.applied?.includes('mcp:placeholder-server-b') || !tokens.applied?.includes('mcp:placeholder-server-a')) return 'status MCP';
+          for (const value of [c.key, 'placeholder-cmd', 'example.invalid']) if ((r.stdout + r.stderr + JSON.stringify(seen.argv)).includes(value)) return 'claude value leaked';
+          if (hostFilesDigest(c.home) !== c.hostBefore) return 'claude host files changed';
+          const copilot = await runCaseProcess({ args: ['--runtime', 'copilot', '--mode', 'review', '--model', 'fake-readonly', '--mcp-config', c.mcpFile] }, c);
+          if (copilot.reason || copilot.status !== 0) return 'copilot failed';
+          const other = JSON.parse(fs.readFileSync(c.env.FAKE_COPILOT_SEEN, 'utf8'));
+          const at = other.argv.indexOf('--additional-mcp-config');
+          if (at < 0 || other.argv[at + 1] !== '@' + c.mcpFile || other.argv.indexOf('--disable-builtin-mcps') < 0 || other.argv.indexOf('--disable-builtin-mcps') >= at || other.mcpCount !== 2) return 'copilot MCP argv or count';
+          if (copilot.stderr.includes(c.key)) return 'copilot value leaked';
+          return hostFilesDigest(c.home) === c.hostBefore ? null : 'copilot host files changed';
+        },
+      },
+      {
+        name: 'skill-prose-claude-stdin',
+        kind: 'logic',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* action=stop$/,
+        setup: (c) => {
+          c.dir1 = makeSkill(c, 1); c.dir2 = makeSkill(c, 2);
+          fs.writeFileSync(path.join(c.repo, 'guide.md'), 'GUIDE\n');
+          for (const rel of ['.claude/skills/placeholder-skill-9/SKILL.md', '.agents/skills/placeholder-skill-9/SKILL.md', '.copilot/skills/placeholder-skill-9/SKILL.md', '.claude/settings.json']) {
+            const file = path.join(c.home, rel); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, '{}');
+          }
+          c.hostBefore = hostFilesDigest(c.home);
+          c.seen = path.join(c.tmp, 'claude-skill-seen'); c.env.FAKE_CLAUDE_SEEN = c.seen;
+          c.args = ['--runtime', 'claude', '--mode', 'review', '--model', 'fake-ok', '--no-preamble', '--prepend-file', 'guide.md', '--skill-path', c.dir2, '--skill-path', c.dir1];
+          return null;
+        },
+        check: (r, c) => {
+          const expected = expectSkillBlock(c.dir2, 2, skillBody(2)) + expectSkillBlock(c.dir1, 1, skillBody(1)) + 'GUIDE\n\n\nprompt\n';
+          if (JSON.parse(fs.readFileSync(c.seen, 'utf8')).stdin !== expected) return 'stdin differs';
+          const lines = r.stderr.split('\n');
+          const settings = lines.filter((l) => l.startsWith('cross-ai: setting skill='));
+          const blocks = lines.filter((l) => l.startsWith('cross-ai: skill-block '));
+          if (settings.length !== 2 || blocks.length !== 2 || !settings[0].includes('placeholder-skill-2') || !settings[1].includes('placeholder-skill-1') || !blocks[0].includes('placeholder-skill-2') || !blocks[1].includes('placeholder-skill-1')) return 'skill report order';
+          const tokens = Object.fromEntries((lines.filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '').split(' ').slice(1).map((t) => t.split('=')));
+          if (!tokens.applied?.includes('skill:placeholder-skill-2') || !tokens.applied?.includes('skill:placeholder-skill-1')) return 'status skills';
+          return hostFilesDigest(c.home) === c.hostBefore ? null : 'host files changed';
+        },
+      },
+      {
+        name: 'skill-prose-copilot-argv',
+        kind: 'logic',
+        env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
+        config: { retry: { max_retries: 2, session_resets: 1 } },
+        exit: 75,
+        status: /^AIKIT-XAI status=transient cli=copilot model=fake-event400 exit=75 .* action=stop$/,
+        setup: (c) => {
+          c.dir1 = makeSkill(c, 1); c.dir2 = makeSkill(c, 2);
+          c.seen = path.join(c.tmp, 'copilot-skill-seen'); c.env.FAKE_COPILOT_SEEN = c.seen;
+          c.env.FAKE_SKILL_EDIT = path.join(c.dir1, 'SKILL.md');
+          c.args = ['--runtime', 'copilot', '--model', 'fake-event400', '--no-preamble', '--skill-path', c.dir1];
+          return null;
+        },
+        check: async (_r, c) => {
+          if (c.calls.filter((l) => l.startsWith('copilot ')).length !== 3) return 'call count';
+          const seen = JSON.parse(fs.readFileSync(c.seen, 'utf8'));
+          const prefix = `${RESUME_MSG}\n\n`;
+          const prompt = seen.prompt.startsWith(prefix) ? seen.prompt.slice(prefix.length) : seen.prompt;
+          if (prompt !== expectSkillBlock(c.dir1, 1, skillBody(1)) + 'prompt\n') return 'retry prompt differs';
+          const block = expectSkillBlock(c.dir2, 2, skillBody(2));
+          const room = ARGV_PROMPT_MAX - Buffer.byteLength(prefix) - Buffer.byteLength(block);
+          const args = ['--runtime', 'copilot', '--model', 'fake-ok', '--no-preamble', '--skill-path', c.dir2];
+          const ctx = { ...c, env: { ...c.env, FAKE_SKILL_EDIT: '' } };
+          const fit = await runCaseProcess({ args, stdin: 'z'.repeat(room) }, ctx);
+          const over = await runCaseProcess({ args, stdin: 'z'.repeat(room + 1) }, ctx);
+          if (fit.status !== 0 || over.status !== 2 || !over.stderr.includes(`is over ${ARGV_PROMPT_MAX}`)) return `limits: ${fit.status},${over.status}`;
+          return null;
         },
       },
       {
@@ -12521,12 +14291,476 @@ async function blackBoxSelfTest(listOnly = false) {
           const tail = ['--allow-all-tools', '--available-tools=view,grep,glob',
             '--excluded-tools=bash,create,edit,apply_patch', '--deny-tool=shell',
             '--deny-tool=write', '--disable-builtin-mcps'];
-          const head = ['-p', '<prompt>', '-s', '--no-ask-user', '--model', 'fake-ok'];
+          const head = ['-p', '<prompt>', '-s', '--no-ask-user', '--model', 'fake-ok', '--session-id', '<sid>'];
           const want = [...head, ...tail];
           return JSON.stringify(argv) === JSON.stringify(want) ? null : `argv=${JSON.stringify(argv)}`;
         },
       },
+      {
+        name: 'settings-run-lines', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const lines = r.stderr.split('\n');
+          if (!lines.includes('cross-ai: setting model=fake/ok applied') ||
+              !lines.includes('cross-ai: setting role=execute applied')) return 'missing applied settings';
+          const last = lines.reduce((n, line, i) => line.startsWith('cross-ai: setting ') ? i : n, -1);
+          const first = lines.findIndex((line) => line.startsWith('cross-ai: cli=pi '));
+          if (first < 0 || last >= first) return 'settings not before cli';
+          const tail = statusTail(r.stderr);
+          if (!tail || tail.escalate !== '-' || tail.unknown === undefined ||
+              !tail.applied?.split(',').includes('model') || !tail.applied.split(',').includes('role')) return 'invalid settings status';
+          return null;
+        },
+      },
 
+      {
+        name: 'settings-effort-equals-config', kind: 'logic',
+        config: { effort: { pi: 'high' } },
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--effort', 'high'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: setting effort='));
+          if (lines.length !== 1 || lines[0] !== 'cross-ai: setting effort=high applied') return `effort lines=${JSON.stringify(lines)}`;
+          const line = (r.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: argv='));
+          if (!line) return 'missing argv';
+          const argv = JSON.parse(line.slice('cross-ai: argv='.length));
+          const i = argv.indexOf('--thinking');
+          return i >= 0 && argv[i + 1] === 'high' && argv.filter((a) => a === '--thinking').length === 1 ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
+      {
+        name: 'settings-config-effort-claude', kind: 'logic',
+        config: { effort: { claude: 'high' } },
+        args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-ok'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* tree=clean action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n');
+          if (!lines.includes('cross-ai: setting effort=high applied')) return 'missing effort line';
+          const line = lines.find((l) => l.startsWith('cross-ai: argv='));
+          if (!line) return 'missing argv';
+          const argv = JSON.parse(line.slice('cross-ai: argv='.length));
+          const i = argv.indexOf('--effort');
+          return i >= 0 && argv[i + 1] === 'high' ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
+      {
+        name: 'settings-context-not-fed', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--context', '1m'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n');
+          if (!lines.includes('cross-ai: setting context=1m ignored reason=no_form')) return 'missing context line';
+          const line = lines.find((l) => l.startsWith('cross-ai: argv='));
+          if (!line) return 'missing argv';
+          const argv = JSON.parse(line.slice('cross-ai: argv='.length));
+          return !argv.includes('--context') && !argv.some((a) => a.includes('1m')) ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
+      {
+        name: 'settings-status-model-as-called', kind: 'logic',
+        args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--effort', 'high'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=cursor model=fake-ok-cursor exit=0 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          const line = (r.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: argv='));
+          if (!line) return 'missing argv';
+          const argv = JSON.parse(line.slice('cross-ai: argv='.length));
+          const id = 'fake-ok-cursor' + '[effort=high]';
+          return argv.includes(id) && ctx.calls.includes('cursor-agent ' + id) ? null : `argv or calls=${JSON.stringify(ctx.calls)}`;
+        },
+      },
+      {
+        name: 'escalate-echo-both', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--escalate-runtime', '--escalate-model'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n');
+          for (const key of ['runtime', 'model']) {
+            const hits = lines.filter((l) => new RegExp(`^cross-ai: setting escalate_${key}=\\S+ ignored reason=recorded_only$`).test(l));
+            if (hits.length !== 1) return `escalate ${key} lines=${hits.length}`;
+          }
+          const tail = statusTail(r.stderr || '');
+          return tail?.escalate === 'runtime,model' && ['escalate_runtime', 'escalate_model'].every((k) => tail.ignored?.split(',').includes(k)) ? null : `tail=${JSON.stringify(tail)}`;
+        },
+      },
+      {
+        name: 'escalate-echo-model-only', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--escalate-model'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail?.escalate === 'model' && !(r.stderr || '').split('\n').some((l) => l.startsWith('cross-ai: setting escalate_runtime')) ? null : `tail=${JSON.stringify(tail)}`;
+        },
+      },
+      {
+        name: 'escalate-one-spawn', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/auth', '--escalate-runtime', '--escalate-model'], exit: 69,
+        status: /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 .* action=stop$/,
+        check: async (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi auth').length !== 1) return `calls=${JSON.stringify(ctx.calls)}`;
+          const lane = sameLane(ctx, 'pi', 'fake/auth');
+          if (lane) return lane;
+          const plain = await runCaseProcess({ args: ['--runtime', 'pi', '--model', 'fake/auth'] }, ctx);
+          return plain.status === 69 ? null : `plain status=${plain.status}`;
+        },
+      },
+      {
+        name: 'status-group-before-retry', kind: 'logic', config: { retry: { ...HARD_TIER_RETRY } },
+        args: ['--runtime', 'pi', '--model', 'fake/event400'], exit: 75,
+        status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 .* action=stop$/,
+        check: (r) => {
+          const line = (r.stderr || '').split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
+          if (!/ attempts=\d+ cycles=\d+ session=\S+ applied=\S+ ignored=\S+ unknown=\S+ escalate=\S+ retry_after_s=\d+ cycle=\d+$/.test(line)) return `status=${line}`;
+          const tail = statusTail(r.stderr || '');
+          return tail?.retry_after_s === '600' && tail.escalate === '-' ? null : `tail=${JSON.stringify(tail)}`;
+        },
+      },
+      {
+        name: 'settings-session-first-argv', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--session-id', 'placeholder-sid-1'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: async (r, ctx) => {
+          if (!(r.stderr || '').split('\n').includes('cross-ai: setting session=placeholder-sid-1 applied')) return 'missing session line';
+          const rows = () => readOr(ctx.env.FAKE_SIDS, '').split('\n').filter(Boolean).map((l) => l.split(' '));
+          if (rows().length !== 1 || rows()[0][0] !== 'placeholder-sid-1') return `sids=${JSON.stringify(rows())}`;
+          const cursor = await runCaseProcess({ args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--session-id', 'c1'] }, ctx);
+          const lines = (cursor.stderr || '').split('\n');
+          const line = lines.find((l) => l.startsWith('cross-ai: argv='));
+          if (cursor.status !== 0 || !lines.includes('cross-ai: setting session=c1 applied') || !line) return 'cursor session or status';
+          const argv = JSON.parse(line.slice('cross-ai: argv='.length));
+          if (JSON.stringify(argv.slice(-2)) !== JSON.stringify(['--resume', 'c1'])) return `cursor argv=${JSON.stringify(argv)}`;
+          const pi = await runCaseProcess({ args: ['--runtime', 'pi', '--model', 'fake/ok'] }, ctx);
+          const piLine = (pi.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: argv='));
+          if (pi.status !== 0 || !piLine) return 'pi status or argv';
+          const piArgv = JSON.parse(piLine.slice('cross-ai: argv='.length));
+          const i = piArgv.indexOf('--session-id');
+          return i >= 0 && rows().length === 2 && rows()[1][0] === piArgv[i + 1] ? null : `sids=${JSON.stringify(rows())}`;
+        },
+      },
+      {
+        name: 'session-roundtrip-cursor', kind: 'logic',
+        args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=cursor model=fake-ok-cursor exit=0 .* tree=dirty action=stop$/,
+        check: async (r, ctx) => {
+          if (statusTail(r.stderr || '')?.session !== 'c1') return 'initial session';
+          for (let i = 0; i < 2; i++) {
+            const next = await runCaseProcess({ args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--session-id', 'c1'] }, ctx);
+            if (next.status !== 0 || statusTail(next.stderr || '')?.session !== 'c1' || !(next.stderr || '').includes('"--resume","c1"')) return `resume=${next.status}`;
+          }
+          const expected = [['cursor-agent', '-', 'prompt'], ['cursor-agent', 'c1', 'prompt'], ['cursor-agent', 'c1', 'prompt']];
+          return JSON.stringify(sessionRows(ctx)) === JSON.stringify(expected) && !fs.existsSync(caseCycleFile(ctx, 'cursor', 'fake-ok-cursor', 'other')) ? null : `rows=${JSON.stringify(sessionRows(ctx))}`;
+        },
+      },
+      {
+        name: 'session-rejected-no-fresh', kind: 'logic',
+        args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--session-id', 'rejected-1'], exit: 1,
+        status: /^AIKIT-XAI status=crash cli=cursor model=fake-ok-cursor exit=1 cli_rc=7 .* action=stop$/,
+        check: (r, ctx) => statusTail(r.stderr || '')?.session === 'rejected-1' && (r.stderr || '').includes('fake-session: no session rejected-1') && JSON.stringify(sessionRows(ctx)) === JSON.stringify([['cursor-agent', 'rejected-1', 'prompt']]) ? null : `rows=${JSON.stringify(sessionRows(ctx))}`,
+      },
+      {
+        name: 'session-rejected-transient-no-fresh', kind: 'logic', config: { retry: { max_retries: 1 } },
+        args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--session-id', 'rejected503-1'], exit: 75,
+        status: /^AIKIT-XAI status=transient cli=cursor model=fake-ok-cursor exit=75 .* action=stop$/,
+        check: (r, ctx) => JSON.stringify(sessionRows(ctx)) === JSON.stringify([['cursor-agent', 'rejected503-1', 'prompt'], ['cursor-agent', 'rejected503-1', 'resume-note']]) ? null : `rows=${JSON.stringify(sessionRows(ctx))}`,
+      },
+      {
+        // R7: opencode preserves adjacent and maximum-length ids exactly.
+        name: 'session-roundtrip-opencode', kind: 'logic', args: ['--runtime', 'opencode', '--model', 'fake/ok'], exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: async (r, ctx) => {
+          const minted = sessionRows(ctx)[0]?.[1] !== '-' ? sessionRows(ctx)[0]?.[1] : 'ses_1';
+          if (statusTail(r.stderr || '')?.session !== minted) return 'initial id';
+          const ids = [minted, 'c1', 'P' + 'a.B:c-9'.repeat(18) + 'z'];
+          for (const id of ids) {
+            const next = await runCaseProcess({ args: ['--runtime', 'opencode', '--model', 'fake/ok', '--session-id', id] }, ctx);
+            if (next.status !== 0 || statusTail(next.stderr || '')?.session !== id) return `resume ${id}`;
+          }
+          return JSON.stringify(sessionRows(ctx).slice(1).map((row) => row[1])) === JSON.stringify(ids) ? null : 'rows';
+        },
+      },
+      {
+        // R7: codex resume passes the thread id before the final dash.
+        name: 'session-roundtrip-codex', kind: 'logic', args: ['--runtime', 'codex', '--model', 'fake-ok-codex'], exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: async (r, ctx) => {
+          const next = await runCaseProcess({ args: ['--runtime', 'codex', '--model', 'fake-ok-codex', '--session-id', 't1'] }, ctx);
+          return statusTail(r.stderr || '')?.session === 't1' && next.status === 0 && statusTail(next.stderr || '')?.session === 't1' && readOr(ctx.env.FAKE_CALLS, '').includes('codex-resume fake-ok-codex') && JSON.stringify(sessionRows(ctx)) === JSON.stringify([['codex', '-', 'prompt'], ['codex', 't1', 'prompt']]) ? null : 'codex roundtrip';
+        },
+      },
+      {
+        // R7: chosen pi ids reject empty input and allow concurrent explicit ids.
+        name: 'session-chosen-pi', kind: 'logic', args: ['--runtime', 'pi', '--model', 'fake/ok'], exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: async (r, ctx) => {
+          const rows = () => readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').filter(Boolean).map((l) => l.split(' '));
+          const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+          if (rows().length !== 1 || !uuid.test(rows()[0][0]) || statusTail(r.stderr || '')?.session !== rows()[0][0]) return 'initial id';
+          const args = ['--runtime', 'pi', '--model', 'fake/ok', '--session-id'];
+          const one = await runCaseProcess({ args: [...args, 'placeholder-sid-1'] }, ctx);
+          const empty = await runCaseProcess({ args: [...args, ''] }, ctx);
+          const pair = await Promise.all([0, 1].map(() => runCaseProcess({ args: [...args, 'placeholder-sid-6'] }, ctx)));
+          return one.status === 0 && statusTail(one.stderr || '')?.session === 'placeholder-sid-1' && empty.status === 2 && pair.every((x) => x.status === 0) && JSON.stringify(rows().slice(1).map((x) => x[0])) === JSON.stringify(['placeholder-sid-1', 'placeholder-sid-6', 'placeholder-sid-6']) ? null : 'pi ids';
+        },
+      },
+      {
+        // R7: copilot chosen ids are reported and reused.
+        name: 'session-chosen-copilot', kind: 'logic', env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) }, args: ['--runtime', 'copilot', '--model', 'fake-ok'], exit: 0, status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: async (r, ctx) => {
+          const id = sessionRows(ctx)[0]?.[1];
+          if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id || '') || statusTail(r.stderr || '')?.session !== id || JSON.stringify(sessionRows(ctx)) !== JSON.stringify([['copilot', id, 'prompt']])) return 'initial id';
+          const next = await runCaseProcess({ args: ['--runtime', 'copilot', '--model', 'fake-ok', '--session-id', 'placeholder-sid-2'] }, ctx);
+          return next.status === 0 && statusTail(next.stderr || '')?.session === 'placeholder-sid-2' && JSON.stringify(sessionRows(ctx)[1]) === JSON.stringify(['copilot', 'placeholder-sid-2', 'prompt']) ? null : 'copilot resume';
+        },
+      },
+      {
+        // R7: forbidden codex modes visibly start fresh.
+        name: 'session-mode-forbids-codex', kind: 'logic', config: { retry: { max_retries: 0, session_resets: 0 } }, args: ['--runtime', 'codex', '--role', 'review', '--model', 'fake-event400-codex', '--session-id', 'placeholder-sid-3'], exit: 75, status: /^AIKIT-XAI status=transient .* action=stop$/,
+        check: async (r, ctx) => {
+          const next = await runCaseProcess({ args: ['--runtime', 'codex', '--role', 'execute', '--codex-sandbox', 'workspace-write', '--model', 'fake-ok-codex', '--session-id', 'placeholder-sid-4'] }, ctx);
+          return (r.stderr || '').includes('cross-ai: setting session=placeholder-sid-3 ignored reason=mode_forbids') && statusTail(r.stderr || '')?.session === 't1' && next.status === 0 && (next.stderr || '').includes('cross-ai: setting session=placeholder-sid-4 ignored reason=mode_forbids') && statusTail(next.stderr || '')?.session === 't1' && JSON.stringify(sessionRows(ctx)) === JSON.stringify([['codex', '-', 'prompt'], ['codex', '-', 'prompt']]) ? null : 'forbidden mode';
+        },
+      },
+      {
+        // R7: explicit ids take precedence over the quota record.
+        name: 'session-explicit-beats-last-sid', kind: 'logic', stdin: 'same task\n', config: { retry: { ...HARD_TIER_RETRY } }, args: ['--runtime', 'pi', '--model', 'fake/event400', '--no-preamble', '--session-id', 'placeholder-sid-5'], exit: 75, status: /^AIKIT-XAI status=transient .* action=stop$/,
+        setup: (c) => { writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0, { last_sid: 'old-sid', task_digest: taskDigest('same task\n') }); return null; },
+        check: (r, ctx) => {
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').filter(Boolean).map((l) => l.split(' '));
+          return rows.length === 1 && rows[0][0] === 'placeholder-sid-5' && readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'))?.last_sid === 'placeholder-sid-5' && statusTail(r.stderr || '')?.session === 'placeholder-sid-5' ? null : 'precedence';
+        },
+      },
+      {
+        // R7: status reports the last session in rung order.
+        name: 'session-last-id-reported', kind: 'logic', config: { retry: { max_retries: 1, session_resets: 1 } }, args: ['--runtime', 'pi', '--model', 'fake/event400'], exit: 75, status: /^AIKIT-XAI status=transient .* action=stop$/,
+        check: (r, ctx) => {
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').filter(Boolean).map((l) => l.split(' '));
+          return rows.length >= 3 && rows.at(-1)[0] !== rows[0][0] && statusTail(r.stderr || '')?.session === rows.at(-1)[0] ? null : 'last id';
+        },
+      },
+      {
+        // R7: pinned copilot retries continue the same chosen session.
+        name: 'session-pinned-copilot-retry', kind: 'logic', env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) }, config: { retry: { max_retries: 1 } }, args: ['--runtime', 'copilot', '--model', 'fake-event400', '--session-id', 'placeholder-sid-7'], exit: 75,
+        status: /^AIKIT-XAI status=transient cli=copilot model=fake-event400 exit=75 .* action=stop$/,
+        check: (r, ctx) => JSON.stringify(sessionRows(ctx)) === JSON.stringify([['copilot', 'placeholder-sid-7', 'prompt'], ['copilot', 'placeholder-sid-7', 'resume-note']]) && !(r.stderr || '').includes('next=new refused') && statusTail(r.stderr || '')?.session === 'placeholder-sid-7' ? null : 'pinned retry',
+      },
+      {
+        // R7: key-shaped record ids are neither reused nor displayed.
+        name: 'session-record-id-unshown', kind: 'logic', stdin: 'same task\n', config: { retry: { ...HARD_TIER_RETRY } }, args: ['--runtime', 'pi', '--model', 'fake/event400', '--no-preamble'], exit: 75, status: /^AIKIT-XAI status=transient .* action=stop$/,
+        setup: (c) => { writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0, { last_sid: c.env.AIKIT_XAI_SENTINEL, task_digest: taskDigest('same task\n') }); return null; },
+        check: (r, ctx) => {
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').filter(Boolean).map((l) => l.split(' '));
+          const lines = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: attempt ') || l.startsWith('AIKIT-XAI '));
+          return (r.stderr || '').includes("cross-ai: note: the quota record's session id is outside [A-Za-z0-9._:-] or shaped like a key; it is not reused") && rows.length === 1 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(rows[0][0]) && readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'))?.last_sid === rows[0][0] && lines.every((l) => !l.includes(ctx.env.AIKIT_XAI_SENTINEL)) ? null : 'unshown record id';
+        },
+      },
+      {
+        // R7: invalid host and persisted ids are never displayed, saved or resumed.
+        name: 'session-host-id-unshown', kind: 'logic', env: { FAKE_SESSION_MODE: 'badsid-503' }, config: { retry: { max_retries: 1, session_resets: 0 } }, args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--no-preamble'], exit: 75,
+        status: /^AIKIT-XAI status=transient cli=cursor model=fake-ok-cursor exit=75 .* action=stop$/,
+        check: async (r, ctx) => {
+          const rows = sessionRows(ctx);
+          const note = ' printed a session id outside [A-Za-z0-9._:-] or shaped like a key; session=- and it is not passed back';
+          if (rows.length !== 2 || rows.some((x) => x[1] !== '-') || (r.stderr || '').split(note).length !== 2 || (r.stderr || '').split('\n').some((l) => l.startsWith('cross-ai: attempt ') && l.includes('bad')) || statusTail(r.stderr || '')?.session !== '-') return 'host id';
+          const file = caseCycleFile(ctx, 'cursor', 'fake-ok-cursor', 'other');
+          const saved = readCycleState(file);
+          if (!saved || saved.last_sid !== null) return 'saved host id';
+          writePriorRecord(ctx, 'cursor', 'fake-ok-cursor', 'other', 'transient', 0, { last_sid: 'bad id!', task_digest: taskDigest('prompt\n') });
+          const next = await runCaseProcess({ args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor', '--no-preamble'] }, ctx);
+          if (next.status !== 75 || !(next.stderr || '').includes("cross-ai: note: the quota record's session id is outside [A-Za-z0-9._:-] or shaped like a key; it is not reused") || sessionRows(ctx).slice(rows.length).some((x) => x[1] !== '-')) return 'record id';
+          const claude = await runCaseProcess({ args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-ok'] }, { ...ctx, env: { ...ctx.env, FAKE_SESSION_MODE: 'nosid' } });
+          if (claude.status !== 0 || statusTail(claude.stderr || '')?.session !== '-') return 'claude missing id';
+          const pi = await runCaseProcess({ args: ['--runtime', 'pi', '--model', 'fake/ok', '--session-id', ctx.env.AIKIT_XAI_SENTINEL] }, ctx);
+          const line = (pi.stderr || '').split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
+          return pi.status === 0 && !line.includes(ctx.env.AIKIT_XAI_SENTINEL) && statusTail(pi.stderr || '')?.session === '-' ? null : 'pi key-shaped id';
+        },
+      },
+      {
+        name: 'claude-exec-resume', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-ok'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* tree=dirty action=stop$/,
+        check: async (r, ctx) => {
+          if (statusTail(r.stderr || '')?.session !== 'x') return 'first session';
+          const next = await runCaseProcess({ args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-ok', '--session-id', 'x'] }, ctx);
+          if (next.status !== 0 || statusTail(next.stderr || '')?.session !== 'x' || !(next.stderr || '').includes('"--resume","x"')) return 'resume';
+          return JSON.stringify(sessionRows(ctx)) === JSON.stringify([['claude', '-', 'prompt'], ['claude', 'x', 'prompt']]) ? null : 'session rows';
+        },
+      },
+      {
+        name: 'claude-exec-pattern-unverified', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-auth'], exit: 69,
+        status: /^AIKIT-XAI status=auth cli=claude model=fake-auth exit=69 .* action=stop$/,
+        check: async (r, ctx) => {
+          if (statusTail(r.stderr || '')?.pattern !== (CLAUDE_EXEC_FORMULA_RECORD === null ? 'unverified' : 'verified')) return 'execute pattern';
+          const review = await runCaseProcess({ args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-auth'] }, ctx);
+          return review.status === 69 && statusTail(review.stderr || '')?.pattern === 'verified' ? null : 'review pattern';
+        },
+      },
+      {
+        name: 'claude-exec-no-model', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'execute'], exit: 2,
+        status: /^AIKIT-XAI status=no_model cli=claude .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'argv-nul-refused', kind: 'logic',
+        args: ['--runtime', 'copilot', '--model', 'fake-ok'], stdin: 'a\u0000b\n', exit: 2,
+        status: /^AIKIT-XAI status=usage cli=copilot model=fake-ok exit=2 cli_rc=- elapsed=\d+s out=\d+ tree=clean action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('cross-ai: argv for copilot holds a NUL byte; refused')) return 'no NUL refusal line';
+          return ctx.calls.some((line) => line.startsWith('copilot')) ? 'copilot was spawned' : null;
+        },
+      },
+      hostPair('host-ok', 'fake/ok', 0, /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/, { env: { FAKE_HERDR_PRECLOSED: '1' }, closeTail: ' already-closed' }),
+      hostPair('host-auth', 'fake/auth', 69, /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/),
+      hostPair('host-empty', 'fake/empty', 1, /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/),
+      hostPair('host-timeout', 'fake/hang', 124, /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 cli_rc=.* elapsed=\d+s out=\d+ tree=.* action=stop$/, { args: ['--timeout', '2'], dead: ['gc'] }),
+      hostPair('host-group-left', 'fake/gcleft', 0, /^AIKIT-XAI status=ok cli=pi model=fake\/gcleft exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/, { dead: ['gc'] }),
+      {
+        name: 'host-env-none', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath, AIKIT_HOST: 'none' }, exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        check: (r, c) => !r.stderr.includes('cross-ai: setting host=none applied') ? 'missing host=none' : fs.existsSync(path.join(c.home, 'herdr.log')) ? 'herdr was called' : null,
+      },
+      {
+        name: 'host-no-herdr', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'auto'],
+        env: { PATH: hostedPath, AIKIT_HOST: 'yes' }, exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        check: (r, c) => !r.stderr.includes('cross-ai: AIKIT_HOST=yes is not auto or none; ignored') ? 'missing invalid host note' : !r.stderr.includes('cross-ai: setting host=auto ignored reason=no_herdr') ? 'missing no_herdr' : fs.existsSync(path.join(c.home, 'herdr.log')) ? 'herdr was called' : null,
+      },
+      {
+        name: 'host-print-argv', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'auto', '--print-argv'],
+        env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r, c) => !r.stderr.includes('cross-ai: setting host=herdr applied') ? 'missing host=herdr' : r.stderr.includes('cross-ai: host herdr tab=') ? 'host tab line present' : fs.existsSync(path.join(c.home, 'herdr.log')) ? 'herdr was called' : null,
+      },
+      {
+        name: 'host-unsafe-path', kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0,
+        setup: (c) => { c.env.XDG_STATE_HOME = path.join(c.tmp, 'state home'); return null; },
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        check: (r, c) => {
+          if (!r.stderr.includes('cross-ai: host: state home path holds a character outside [A-Za-z0-9._/-]; the lane runs headless')) return 'missing unsafe path note';
+          return hostFailedOnly(r, c) || (c.calls.filter((s) => s === 'pi ok').length === 1 ? null : 'pi ok call count');
+        },
+      },
+      {
+        name: 'host-overlap', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/slowok', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath }, exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/slowok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        setup: (c) => {
+          const out = fs.openSync(path.join(c.home, 'overlap-out.txt'), 'w');
+          const err = fs.openSync(path.join(c.home, 'overlap-err.txt'), 'w');
+          const child = spawn(process.execPath, [c.copy, '--runtime', 'pi', '--model', 'fake/slowok', '--host', 'auto'], { cwd: c.repo, env: c.env, stdio: ['pipe', out, err], detached: true });
+          child.stdin.end('prompt\n');
+          fs.closeSync(out); fs.closeSync(err);
+          caseRunners.add(child);
+          c.overlapExit = new Promise((resolve) => child.once('exit', (code) => { caseRunners.delete(child); resolve(code); }));
+          return null;
+        },
+        check: async (r, c) => {
+          const err = path.join(c.home, 'overlap-err.txt');
+          const deadline = Date.now() + scaledMs(20000);
+          let stderr = '';
+          while (Date.now() < deadline) {
+            stderr = readOr(err, '');
+            if (stderr.split('\n').some((s) => s.startsWith('AIKIT-XAI '))) break;
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+          }
+          const status = statusLineOk(stderr, /^AIKIT-XAI status=ok cli=pi model=fake\/slowok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/);
+          if (status) return `background: ${status}`;
+          const code = await c.overlapExit;
+          if (code !== 0) return `background exit ${code}`;
+          if (!r.stdout.includes('# Summary') || !readOr(path.join(c.home, 'overlap-out.txt'), '').includes('# Summary')) return 'missing summary';
+          if (!hostedUsable(c)) return hostFailedOnly(r, c) || hostFailedOnly({ stderr }, c);
+          const labels = [r.stderr, stderr].map((text) => /cross-ai: host herdr tab=\S+ label=(\S+)/.exec(text)?.[1]);
+          if (!labels[0] || !labels[1] || labels[0] === labels[1]) return 'host labels missing or equal';
+          return hostLogProblem(c, 2);
+        },
+      },
+      {
+        name: 'host-signal-guard', kind: 'logic',
+        pure: () => {
+          const rows = [[100, '5', '5', 100, true], [100, '5', '6', 100, false], [100, '-', '-', 100, false], [100, '5', '5', 99, false], [100, '5', '-', 100, false]];
+          for (const [pid, recorded, current, group, expected] of rows) if (launcherVerified(pid, recorded, current, group) !== expected) return `wrong signal guard row: ${[pid, recorded, current, group]}`;
+          return null;
+        },
+      },
+      {
+        name: 'host-signal', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/hang', '--timeout', '60', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath },
+        signal: { when: (c) => fs.existsSync(path.join(c.repo, 'gc.pid')), sig: 'SIGTERM', withinMs: SELF_TEST_SIGNAL_EXIT_MS },
+        exit: 143, status: /^AIKIT-XAI status=signal cli=pi model=fake\/hang exit=143 .* action=stop$/,
+        check: (r, c) => deadCheck(c, ['pi', 'gc']) || (hostedUsable(c) ? hostLogProblem(c, 1) : hostFailedOnly(r, c)),
+      },
+      ...[
+        { name: 'host-failed-run', kind: 'runtime', fail: 'run', count: 1, message: 'pane run failed (exit 1); the lane runs headless', close: true },
+        { name: 'host-run-error-started', kind: 'runtime', fail: 'run-after', count: 1, started: true },
+        { name: 'host-run-unclear', kind: 'runtime', fail: 'run-lost', count: 0, message: 'pane run answer unclear (signal SIGKILL); the lane may have started, so it is not rerun', close: true },
+        { name: 'host-no-pid', kind: 'runtime', fail: 'nolaunch', count: 0, message: 'the launcher wrote no pid within 5000 ms; not rerun', close: true },
+        { name: 'host-create-refused', kind: 'logic', fail: 'create', count: 1, message: 'tab create failed (exit 1); the lane runs headless', noRun: true },
+        { name: 'host-create-lost', kind: 'logic', fail: 'create-lost', count: 1, message: 'tab create answer lost (no tab id in its answer); kept the run record for the sweep; the lane runs headless', noRun: true },
+      ].map((test) => (hostedHere ? test : { ...test, count: 1 })).map((test) => ({
+        name: test.name, kind: test.kind,
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath, FAKE_HERDR_FAIL: test.fail },
+        exit: test.count ? 0 : 1,
+        status: test.count ? /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/ : /^AIKIT-XAI status=crash cli=pi model=fake\/ok exit=1 cli_rc=- elapsed=\d+s out=\d+ tree=clean action=stop$/,
+        check: (r, c) => {
+          const count = c.calls.filter((s) => s === 'pi ok').length;
+          if (count !== test.count) return `pi ok calls ${count}`;
+          if (!hostedUsable(c)) return hostFailedOnly(r, c);
+          if (test.message && !r.stderr.includes(`cross-ai: host: ${test.message}`)) return 'missing host message';
+          if (test.fail === 'run') {
+            if (!r.stderr.includes('cross-ai: setting host=herdr ignored reason=host_failed')) return 'missing host_failed';
+            const line = r.stderr.split('\n').filter((s) => s.startsWith('AIKIT-XAI ')).at(-1) || '';
+            const ignored = (/ ignored=(\S+)/.exec(line)?.[1] || '').split(',');
+            const applied = (/ applied=(\S+)/.exec(line)?.[1] || '').split(',');
+            if (!ignored.includes('host') || applied.includes('host')) return 'status host lists';
+          }
+          if (test.started && (!r.stderr.includes('cross-ai: setting host=herdr applied') || r.stderr.includes('host_failed'))) return 'started host setting';
+          const calls = hostCalls(c);
+          const safety = hostSafety(calls); if (safety) return safety;
+          if (test.close && !calls.some((a) => JSON.stringify(a) === '["tab","close","t1"]')) return 'missing close';
+          if (test.noRun && calls.some((a) => ['pane run', 'tab close'].includes(a.slice(0, 2).join(' ')))) return 'unexpected run or close';
+          if (test.started) return hostLogProblem(c, 1);
+          if (test.fail === 'nolaunch') { const records = keptRecords(c); if (!Array.isArray(records) || records.length) return 'host records remain'; }
+          if (test.fail === 'create-lost') {
+            const records = keptRecords(c);
+            if (!Array.isArray(records) || records.length !== 1 || records[0].tab_id !== null || !records[0].label.startsWith('aikit:execute:pi:')) return 'lost create record';
+            if (fakeTabs(c).t1?.closed !== false) return 'lost create tab';
+          }
+          return null;
+        },
+      })),
+      {
+        name: 'host-dead-launcher', kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/killparent', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath, FAKE_HERDR_FAIL: 'close' }, exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/killparent exit=1 cli_rc=\S+ elapsed=\d+s out=\d+ tree=.* action=stop$/,
+        second: { exit: 1, status: /^AIKIT-XAI status=crash cli=pi model=fake\/killparent exit=1 cli_rc=\S+ elapsed=\d+s out=\d+ tree=.* action=stop$/ },
+        check: (both, c) => {
+          for (const calls of [both.calls1, both.calls2]) if (calls.filter((s) => s === 'pi killparent').length !== 1) return 'killparent call count';
+          if (!hostedUsable(c)) return hostFailedOnly(both.first, c);
+          const status = statusLineOk(both.first.stderr, /^AIKIT-XAI status=crash cli=pi model=fake\/killparent exit=1 cli_rc=\S+ elapsed=\d+s out=\d+ tree=.* action=stop$/);
+          if (status) return `first: ${status}`;
+          const labels = [];
+          for (const [i, r] of [both.first, both.again].entries()) {
+            const id = `t${i + 1}`;
+            if (!r.stderr.includes(' cli_rc=- ') || !r.stderr.includes('failed (exit null SIGKILL')) return 'dead launcher status';
+            if (!r.stderr.includes(`cross-ai: host: tab close ${id} failed (exit 1)`)) return 'close failure missing';
+            if (!r.stderr.split('\n').some((s) => s.startsWith('cross-ai: host: kept ') && s.endsWith(`/run.json for tab ${id} (close not confirmed)`))) return 'kept message missing';
+            labels.push(r.stderr.split('\n').find((s) => s.startsWith('cross-ai: host herdr tab='))?.split(' label=')[1]);
+          }
+          if (!labels[0] || !labels[1] || labels[0] === labels[1]) return 'labels not distinct';
+          const safety = hostSafety(hostCalls(c)); if (safety) return safety;
+          const records = keptRecords(c);
+          if (!Array.isArray(records) || records.length !== 2 || records[0].tab_id !== 't1' || records[1].tab_id !== 't2') return 'dead launcher records';
+          const tabs = fakeTabs(c);
+          return tabs.t1?.closed === false && tabs.t2?.closed === false ? null : 'dead launcher tabs';
+        },
+      },
     ];
 
     const unkinded = cases.filter((c) => c.kind !== 'logic' && c.kind !== 'runtime').map((c) => c.name);
@@ -12567,6 +14801,52 @@ async function blackBoxSelfTest(listOnly = false) {
   }
 }
 
+function callOf(o, name, model, newSessionId, skillPlan = null, mcp = null) { return { model, effort: o.effort, context: o.context, sessionId: o.sessionId, newSessionId, sandbox: o.mode === 'exec' && Boolean(o.codexSandbox), configEffort: ownValue(CONFIG.effort, name) ?? null, escalateRuntime: o.escalateRuntime, escalateModel: o.escalateModel, skillPlan, mcp, hostSetting: { value: hostSettingValue(o.host, process.env.AIKIT_HOST).value, available: hostAvailable(process.env) } }; }
+
+function logExecLabel(name, rt, mode) {
+  if (mode === 'exec' && rt.execLabel && rt.execLabel.state === 'unverified') log(`cross-ai: note: ${name} execute formula is unverified (no live probe record)`);
+}
+
+// --describe reports the template generation from the header that the render keeps.
+function ownTemplateVersion() {
+  const head = readOr(fileURLToPath(import.meta.url), '').slice(0, 512);
+  const match = head.match(/^\/\/ ai-kit-cross-ai generator=\S+ template=(\d+) /m);
+  return match ? Number(match[1]) : null;
+}
+
+// Sorted keys at every depth (SPEC R9 ordering): the golden file stays stable.
+function describeValue(value) {
+  if (Array.isArray(value)) return value.map(describeValue);
+  if (value instanceof RegExp) return value.source;
+  if (typeof value === 'function') return undefined;
+  if (value && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, describeValue(value[key])]));
+  }
+  return value;
+}
+
+// SPEC R9 / D-10: what Python reads instead of mirroring the rows. No classes key (0b-10): 38.1 adds it.
+function describeJson(env) {
+  const runtimes = {};
+  // 0b-12: forms are copied keyed by setting, so a later row field shows up with no change here.
+  for (const id of Object.keys(RUNTIMES).sort()) {
+    const row = RUNTIMES[id];
+    const label = (f) => typeof row[f] !== 'function' ? { state: 'unknown', source: 'no formula in the runner' } :
+      FORMULA_LABELS[id]?.[f] ?? { state: 'unverified', source: 'unverified: no label recorded' };
+    const entry = {
+      formulas: { exec: typeof row.exec === 'function', review: typeof row.review === 'function', resume: typeof row.resume === 'function' },
+      formula_labels: { exec: label('exec'), review: label('review'), resume: label('resume') },
+      listing: row.list ? row.list.argv : null,
+      listing_label: !row.list ? { state: 'unknown', source: 'no listing in the runner' } :
+        FORMULA_LABELS[id]?.listing ?? { state: 'unverified', source: 'unverified: no label recorded' },
+      source: typeof row.source === 'string' && row.source ? row.source : 'unverified',
+    };
+    for (const [setting, form] of Object.entries(row.forms || {})) entry[setting] = form;
+    runtimes[id] = entry;
+  }
+  return { schema: 1, template_version: ownTemplateVersion(), settings: [...SETTING_NAMES], reasons: [...SETTING_REASONS], states: [...SETTING_STATES], runtimes, host: { available: hostAvailable(env) } };
+}
+
 async function main(argv) {
   runStartedMs = Date.now();
   finished = false;
@@ -12574,6 +14854,7 @@ async function main(argv) {
     cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean',
     route: 'unknown', rule: '-', pattern: 'none',
   };
+  liveSettings = { report: [], sessionId: null, escalation: { runtime: false, model: false } };
   let o;
   try { o = parseArgs(argv); } catch (e) {
     log(`cross-ai: ${e.message}`);
@@ -12582,6 +14863,10 @@ async function main(argv) {
   OVERLAY_IDS = new Set();
   // The self-test never reads the owner's real overlay; each case builds its own.
   if (o.selfTest) return blackBoxSelfTest(o.selfTestList);
+  if (o.describe) {
+    process.stdout.write(`${JSON.stringify(describeValue(describeJson(process.env)), null, 2)}\n`);
+    return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
+  }
   TABLE = mergeCatalog(PATTERNS, loadOverlay(process.env));
   if (o.classifyOnly !== null) return runClassifyOnly(o.classifyOnly);
   childPgidFile = o.childPgidFile;
@@ -12593,24 +14878,43 @@ async function main(argv) {
   }
   for (const note of picked.notes) log(note);
   const name = picked.name;
-  const rt = RUNTIMES[name];
+  let declared = null;
+  if (o.argvFile) {
+    if (!argvFileAllowed(ownValue(RUNTIMES, name), o.mode)) {
+      log(`cross-ai: --argv-file needs a runtime with no ${o.mode === 'exec' ? 'execute' : 'review'} formula in the runner; ${name} has one`);
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
+    const loaded = loadArgvFile(o.argvFile);
+    if (loaded.error) {
+      log(loaded.error.startsWith('cross-ai: ') ? loaded.error : `cross-ai: ${loaded.error}`);
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
+    declared = argvFileRow(loaded);
+  } else if (!Object.hasOwn(RUNTIMES, name)) {
+    log(`cross-ai: no formula for ${name} in the runner; pass --argv-file, or use a runtime it has a formula for`);
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  const rt = declared || RUNTIMES[name];
+  let skills, skillPlan, mcp;
+  try { skills = loadSkills(o); skillPlan = planSkills(rt, skills); mcp = loadMcpConfig(o); } catch (e) {
+    log(`cross-ai: ${redactSecrets(redactSecrets(String(e.message)).replace(/[\x00-\x1f\x7f-\x9f]/g, ''))}`);
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
   if (o.model !== null && o.models[name] !== undefined) {
     log(`cross-ai: --model wins; ignored --model-${name} ${o.models[name]}`);
   }
-  const model = o.model ?? o.models[name] ?? CONFIG.models[name];
-  if (model && !rt.modelId.test(model)) {
-    log(`cross-ai: ${name} model ${model} must match ${rt.modelId.source}`);
-    return reportAndFinish('usage', { ...liveFields, cli: name, model, tree: 'unknown', exit: 2 });
+  const model = o.model ?? o.models[name] ?? ownValue(CONFIG.models, name);
+  if (model && !MODEL_ID_FLOOR.test(model)) {
+    log(`cross-ai: the model for ${name} must match ${MODEL_ID_FLOOR.source}`);
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  // SPEC R5: a seed shape advises and never refuses; the live listing below still ends bad_model.
+  if (model && rt.modelId && !rt.modelId.test(model)) {
+    log(redactSecrets(`cross-ai: note: model id shape is unusual for ${name} (seed shape: ${rt.modelId.source})`));
   }
   const c = {
     name, rt, model,
     bin: resolveBin(rt, process.env.PATH || ''),
-  };
-  // Baked per-runner effort (the plan's selection); --codex-effort still wins for codex.
-  const effort = CONFIG.effort || {};
-  const knobs = {
-    codexEffort: o.codexEffort ?? (CODEX_EFFORTS.has(effort.codex) ? effort.codex : null),
-    piThinking: PI_THINKING.has(effort.pi) ? effort.pi : null,
   };
   if (o.mode === 'exec' && !rt.exec) {
     log(`cross-ai: ${name} is review-only (no exec formula)`);
@@ -12645,23 +14949,38 @@ async function main(argv) {
   if (o.codexSandbox && o.mode !== 'exec') {
     log('cross-ai: --codex-sandbox applies to exec mode only; review already runs read-only');
   }
+  const hostNote = hostSettingValue(o.host, process.env.AIKIT_HOST).note;
+  if (hostNote) log(hostNote);
   if (o.printArgv) {
+    const plan = c.model ? planSettings(rt, o.mode, callOf(o, name, c.model, '<sid>', skillPlan, mcp)) : null;
+    if (plan?.error) {
+      log(`cross-ai: ${plan.error}`);
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
     const ctx = {
-      cwd: process.cwd(), sid: '<sid>', outFile: '<tmp>/last-message.md',
-      codexEffort: knobs.codexEffort, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
-      piThinking: knobs.piThinking, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
+      cwd: process.cwd(), sid: plan ? (plan.sessionId ?? '<sid>') : '<sid>', outFile: '<tmp>/last-message.md',
+      adds: plan ? plan.adds : undefined, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
+      codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
       profileFlags, promptArg: '<prompt>',
     };
     const formula = rt[o.mode];
     const argvOut = (c.model && typeof formula === 'function')
-      ? withExtra(name, formula(c.model, ctx)) : null;
-    process.stdout.write(`${name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(argvOut) : 'NO MODEL'}\n`);
-    if (c.model && argvOut) {
-      const rung1 = sameSessionArgv(name, rt, c.model, ctx, '<sid>', o.mode);
-      if (rung1) log(`cross-ai: rung1 ${name} argv=${JSON.stringify(rung1.argv)}`);
+      ? withExtra(name, plan.resume ? rt.resume(plan.model, ctx, plan.sessionId, o.mode) : formula(plan.model, ctx)) : null;
+    process.stdout.write(`${name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(shownArgv(rt, argvOut)) : 'NO MODEL'}\n`);
+    if (plan && argvOut) {
+      confirmReport(plan.report, argvOut, composePrompt(skillPlan.promptPrefix, null, '<prompt>', ''), o.mode);
+      for (const line of reportLines(plan.report)) log(line);
+      for (const line of skillBlockLines(plan.report)) log(line);
+      logExecLabel(name, rt, o.mode);
+      liveSettings.report = plan.report;
+      liveSettings.sessionId = rt.argvFile ? plan.sessionId : (o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null);
+      liveSettings.escalation = { runtime: Boolean(o.escalateRuntime), model: Boolean(o.escalateModel) };
+      log(`cross-ai: model-id ${redactKeyShapes(String(plan.model).replace(/[\x00-\x1f\x7f-\x9f]/g, ''))}`);
+      const rung1 = sameSessionArgv(name, rt, plan.model, ctx, '<sid>', o.mode);
+      if (rung1) log(`cross-ai: rung1 ${name} argv=${JSON.stringify(shownArgv(rt, rung1.argv))}`);
       else log(`cross-ai: rung1 ${name} unavailable`);
-      const rung2 = newSessionArgv(name, rt, c.model, ctx, o.mode, '<prompt>');
-      log(`cross-ai: rung2 ${name} argv=${JSON.stringify(rung2.argv)}`);
+      const rung2 = newSessionArgv(name, rt, plan.model, ctx, o.mode, '<prompt>');
+      log(`cross-ai: rung2 ${name} argv=${JSON.stringify(shownArgv(rt, rung2.argv))}`);
     }
     return reportAndFinish('ok', {
       ...liveFields, tree: 'clean', exit: 0, out: 0,
@@ -12673,9 +14992,8 @@ async function main(argv) {
     log('cross-ai: pipe the prompt on stdin');
     return reportAndFinish('empty_stdin', { ...liveFields, tree: 'clean', exit: 2 });
   }
-  let body = raw;
+  let prepended = null;
   if (o.prependFile) {
-    let prepended;
     try {
       prepended = fs.readFileSync(path.resolve(process.cwd(), o.prependFile), 'utf8');
     } catch {
@@ -12683,9 +15001,8 @@ async function main(argv) {
       return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
     // The guidance file's stamp lines are bookkeeping for a human editor, not prompt text.
-    body = `${prepended.replace(/^(?:<!--[^\n]*-->\r?\n)+/, '')}\n\n${raw}`;
   }
-  const prompt = body + (o.preamble ? (o.mode === 'exec' ? EXEC_PREAMBLE : REVIEW_PREAMBLE) : '');
+  const prompt = composePrompt(skillPlan.promptPrefix, prepended, raw, o.preamble ? (o.mode === 'exec' ? EXEC_PREAMBLE : REVIEW_PREAMBLE) : '');
   if (rt.argvPrompt) {
     const over = argvPromptProblem(prompt);
     if (over) {
@@ -12738,7 +15055,7 @@ async function main(argv) {
   if (o.mode === 'review' && c.model) {
     const probe = {
       cwd: process.cwd(), sid: '<sid>', outFile: '<tmp>/last-message.md',
-      cursorMode: o.cursorMode, piThinking: knobs.piThinking, profileFlags,
+      cursorMode: o.cursorMode, profileFlags,
       promptArg: '<prompt>',
     };
     const bare = c.rt.review(c.model, probe);
@@ -12750,15 +15067,34 @@ async function main(argv) {
       return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
   }
+  // SPEC R2: one plan per call; lines print after the review-argv check and before the listing preflight and the spawn.
+  const plan = planSettings(c.rt, o.mode, callOf(o, c.name, c.model, crypto.randomUUID(), skillPlan, mcp));
+  if (plan.error) {
+    log(`cross-ai: ${plan.error}`);
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  const runCtx = { cwd: process.cwd(), sid: plan.sessionId ?? '<sid>', outFile: '<tmp>/last-message.md', codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null, profileFlags, promptArg: '<prompt>', adds: plan.adds };
+  const resumed = plan.resume && plan.sessionId ? sameSessionArgv(c.name, c.rt, plan.model, runCtx, plan.sessionId, o.mode) : null;
+  const firstArgv = resumed ? resumed.argv : withExtra(c.name, c.rt[o.mode](plan.model, runCtx));
+  const report = confirmReport(plan.report, firstArgv, prompt, o.mode) || plan.report;
+  for (const line of reportLines(report)) log(line);
+  for (const line of skillBlockLines(report)) log(line);
+  logExecLabel(c.name, c.rt, o.mode);
+  liveSettings.report = report;
+  const hostEntry = report.find((e) => e.name === 'host');
+  const hostPlan = hostEntry && hostEntry.state === 'applied' && hostEntry.value === 'herdr' ? { role: o.mode === 'exec' ? 'execute' : 'review', runtime: c.name, entry: hostEntry, failed: false } : null;
+  const sessionEntry = report.find((e) => e.name === 'session');
+  liveSettings.sessionId = rt.argvFile ? plan.sessionId : (o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null);
+  liveSettings.escalation = { runtime: Boolean(o.escalateRuntime), model: Boolean(o.escalateModel) };
   const listEnv = childEnv(c.rt.env, process.env);
   const listing = await listModels(c.rt, c.bin, listEnv, runDeadline);
   if (listing.ok) {
-    const listed = c.rt.modelSuffix ? c.model.replace(c.rt.modelSuffix, '') : c.model;
-    if (listed !== c.model) {
-      log(`cross-ai: ${c.name} preflight checks ${listed}; the suffix ${c.model.slice(listed.length)} is not validated`);
+    const listed = c.rt.modelSuffix ? plan.model.replace(c.rt.modelSuffix, '') : plan.model;
+    if (listed !== plan.model) {
+      log(`cross-ai: ${c.name} preflight checks ${listed}; the suffix ${plan.model.slice(listed.length)} is not validated`);
     }
     if (!listing.ids.includes(listed)) {
-      log(`cross-ai: ${c.name} bad_model (${c.model} not in model list)`);
+      log(`cross-ai: ${c.name} bad_model (${plan.model} not in model list)`);
       return reportAndFinish('bad_model', {
         ...liveFields, cli: c.name, model: c.model, tree: 'clean', cli_rc: '-',
       });
@@ -12771,12 +15107,16 @@ async function main(argv) {
   }
   // From here until the next snapshot nothing proves the tree clean (CR-03).
   liveFields.tree = 'unknown';
-  const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, {
-    beforeSig: noTree ? null : stateSig(before), codexEffort: knobs.codexEffort,
-    piThinking: knobs.piThinking, codexServiceTier: o.codexServiceTier,
+  const r = await runCli(c.name, c.rt, c.bin, plan.model, o.mode, prompt, {
+    beforeSig: noTree ? null : stateSig(before),
+    adds: plan.adds, sessionId: plan.sessionId ?? null, resume: Boolean(plan.resume), callSessionId: o.sessionId ?? null,
+    // An argv-file retry re-runs the same filled argv, so its session is kept without the pin (no fresh id exists to refuse).
+    pinSession: !rt.argvFile && Boolean(o.sessionId) && sessionEntry?.state === 'applied',
+    codexServiceTier: o.codexServiceTier,
     cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
     route: liveFields.route, retry: resolved.retry, capS: resolved.capS,
     profileFlags,
+    host: hostPlan,
   });
   liveFields.out = r.outBytes || 0;
   liveFields.cli_rc = r.cli_rc ?? '-';

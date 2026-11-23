@@ -1856,6 +1856,77 @@ def runner_shape_problems(shapes, runner_text):
     return []
 
 
+# 37 D-22 / 0b-6: the runner template names no jev client and spawns herdr only through herdrCall,
+# limited to HERDR_VERBS; Phase 38 adds tab list. Full-line and block comments are not code.
+_JEV_CLIENT_RX = re.compile(r"\bjev|decide\.py|typesafe", re.IGNORECASE)
+HERDR_VERBS_ALLOWED = ("tab create", "pane run", "tab close")
+_JS_HERDR_VERBS = re.compile(r"^const HERDR_VERBS = Object\.freeze\(\[(.*)\]\);$", re.MULTILINE)
+_HERDR_CALL = re.compile(r"\bherdrCall\(\s*'([^']*)'")
+_HERDR_CALL_ANY = re.compile(r"\bherdrCall\(\s*(?!')")
+_HERDR_SPAWN = re.compile(r"\bspawn(?:Sync)?\(\s*HERDR_BIN\b")
+_HERDR_LITERAL_SPAWN = re.compile(
+    r"""\b(?:spawn|spawnSync|execFile|execFileSync|execSync|exec)\(\s*['"`]herdr['"`]""")
+
+
+def js_code_lines(text) -> list[tuple[int, str]]:
+    lines = []
+    in_block = False
+    for number, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if in_block:
+            if "*/" in line:
+                in_block = False
+            continue
+        if stripped.startswith("/*"):
+            in_block = "*/" not in line
+            continue
+        if stripped.startswith(("//", "*")):
+            continue
+        lines.append((number, line))
+    return lines
+
+
+def runner_jev_hits(text) -> list[str]:
+    hits = []
+    for number, line in js_code_lines(text):
+        match = _JEV_CLIENT_RX.search(line)
+        if match:
+            hits.append(f"{number}: {match.group(0)}")
+    return hits
+
+
+def runner_herdr_problems(text) -> list[str]:
+    code = js_code_lines(text)
+    match = _JS_HERDR_VERBS.search("\n".join(line for _, line in code))
+    if match is None:
+        return [f"{SHAPES_RUNNER}: no HERDR_VERBS line"]
+    verbs = tuple(re.findall(r"'([^']*)'", match.group(1)))
+    problems = [] if verbs == HERDR_VERBS_ALLOWED else [f"HERDR_VERBS is {list(verbs)}"]
+    inside = False
+    count = 0
+    for number, line in code:
+        stripped = line.strip()
+        if stripped.startswith("function herdrCall("):
+            inside = True
+        for call in _HERDR_CALL.finditer(line):
+            if call.group(1) not in HERDR_VERBS_ALLOWED:
+                problems.append(f"{number}: herdrCall verb {call.group(1)}")
+        if _HERDR_CALL_ANY.search(line) and not stripped.startswith("function herdrCall("):
+            problems.append(f"{number}: herdrCall verb is not a literal")
+        if _HERDR_LITERAL_SPAWN.search(line):
+            problems.append(f"{number}: spawns the herdr literal")
+        matches = len(_HERDR_SPAWN.findall(line))
+        count += matches
+        if matches and not inside:
+            problems.append(f"{number}: herdr spawn outside herdrCall")
+        if inside and (stripped == "}" or (stripped.startswith("function herdrCall(")
+                                           and line.count("{") == line.count("}"))):
+            inside = False
+    if count != 1:
+        problems.append(f"{count} herdr spawn sites (one expected, in herdrCall)")
+    return problems
+
+
 def _repo_bytes(relpath):
     """A repo file's bytes, or None when it is missing from disk."""
     path = os.path.join(_REPO_ROOT, relpath)
@@ -2396,6 +2467,17 @@ class TestArchitecture(unittest.TestCase):
                     files.append((relpath, handle.read()))
         self.assertGreater(len(files), 0)
         self.assertEqual([], key_shape_copy_hits(files))
+
+
+    def test_runner_template_names_no_jev_client(self):
+        with open(os.path.join(_REPO_ROOT, SHAPES_RUNNER), encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertGreater(len(js_code_lines(text)), 1000)
+        self.assertEqual([], runner_jev_hits(text))
+
+    def test_runner_spawns_herdr_only_through_three_verbs(self):
+        with open(os.path.join(_REPO_ROOT, SHAPES_RUNNER), encoding="utf-8") as handle:
+            self.assertEqual([], runner_herdr_problems(handle.read()))
 
 
 # --------------------------------------------------------------------------- #
@@ -3414,6 +3496,45 @@ class TestArchNonVacuity(unittest.TestCase):
         for name, files, expected in cases:
             with self.subTest(case=name):
                 self.assertEqual(expected, key_shape_copy_hits(files))
+
+
+    def test_jev_client_rule_flags_code_not_comments(self):
+        self.assertEqual(["2: jev"],
+                         runner_jev_hits("const a = 1;\nimport x from './jev-client.mjs';\n"))
+        self.assertEqual(["1: decide.py"],
+                         runner_jev_hits("spawnSync('python3', ['decide.py']);\n"))
+        self.assertEqual([], runner_jev_hits(
+            "// jev is never called\n/* typesafe\n jev */\nconst b = 2;\n"))
+
+    def test_herdr_rule_flags_each_widening(self):
+        good = ("const HERDR_BIN = 'herdr';\n"
+                "const HERDR_VERBS = Object.freeze(['tab create', 'pane run', 'tab close']);\n"
+                "function herdrCall(verb, args) { return spawnSync(HERDR_BIN, "
+                "[...verb.split(' '), ...args]); }\n"
+                "herdrCall('tab create', []);\n")
+        cases = (
+            ("good", good, []),
+            ("verbs", good.replace("'tab close']", "'tab close', 'pane read']"),
+             ["HERDR_VERBS is ['tab create', 'pane run', 'tab close', 'pane read']"]),
+            ("call", good + "herdrCall('agent prompt', []);\n", ["5: herdrCall verb agent prompt"]),
+            ("literal", good + "spawnSync('herdr', ['pane', 'read']);\n",
+             ["5: spawns the herdr literal"]),
+            ("spawn", good + "spawn(HERDR_BIN, ['tab', 'list']);\n",
+             ["5: herdr spawn outside herdrCall",
+              "2 herdr spawn sites (one expected, in herdrCall)"]),
+            ("missing", "\n".join(good.splitlines()[0:1] + good.splitlines()[2:]),
+             [f"{SHAPES_RUNNER}: no HERDR_VERBS line"]),
+            ("comment", good + "// spawnSync('herdr', ['pane', 'read'])\n", []),
+            ("dynamic", good + "herdrCall(verbName, []);\n",
+             ["5: herdrCall verb is not a literal"]),
+            ("outside", good.replace(good.splitlines()[2],
+             "function herdrCall(verb, args) { return run(verb, args); }\n"
+             "function other() { return spawnSync(HERDR_BIN, ['tab', 'list']); }"),
+             ["4: herdr spawn outside herdrCall"]),
+        )
+        for name, text, expected in cases:
+            with self.subTest(case=name):
+                self.assertEqual(expected, runner_herdr_problems(text))
 
 
 class TestSessionWakeIsolation(unittest.TestCase):

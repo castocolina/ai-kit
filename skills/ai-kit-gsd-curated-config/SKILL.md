@@ -129,8 +129,8 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
      cursor, opencode and codex; copilot is not a curated runner (`plan-set` refuses it).
      `plan-unset script:cross-ai.model.<runner>` reopens the choice for the selected runtime and
      drops any other runner from the menu.
-     A pi or codex model with reasoning modes also pins its effort (`config.effort`, medium
-     or the nearest mode); the runner passes it as pi `--thinking` / codex effort.
+     A runner model with reasoning modes also pins its effort (`config.effort`, medium or the
+     nearest mode) on any runner; the runner composes that runtime's form or reports it ignored.
    - **pi session steer** (`model_profile_overrides.pi.sonnet`, pi hosts only): the
      candidates are the bare model ids the session provider serves (`PI_PROVIDER`). pi sets
      `PI_PROVIDER` and `PI_MODEL` only for commands the pi agent runs through its own bash tool,
@@ -210,7 +210,7 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
 - **Runner `git_timeout` or `git_error` status** (git could not read the work tree): the call
   ends there, exit 1, with `tree=unknown`. Claim nothing about the tree, and report the
   `cross-ai: report`, `cross-ai: upstream` and `AIKIT-XAI` lines only. Nothing proves the CLI wrote nothing, and a
-  template 8 runner never runs a second CLI, whatever the outcome. **`tree=unknown`** on a run
+  template 9 runner never runs a second CLI, whatever the outcome. **`tree=unknown`** on a run
   outside any git work tree means the CLI ran without the check: report that, and do not read
   it as a clean or dirty tree.
 - **Effort sync** is not offered when the inventory points at a workstream config (gsd-core
@@ -219,7 +219,7 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
 ## Cross-AI execution
 
 v2 `apply` sets `workflow.cross_ai_command` to `node .planning/scripts/cross-ai.mjs` and renders
-the bundled template 8. Each call uses one runtime (`CONFIG.runtime`, set by the plan) and its
+the bundled template 9. Each call uses one runtime (`CONFIG.runtime`, set by the plan) and its
 model; a missing binary stops as `not_installed` and is never replaced. Only when the owner
 asks, never as an answer to a stop or to `not_installed`, the runtime changes through
 `plan-set script:cross-ai.runtime <id>`, a dry run and an apply. Never hand-edit CONFIG: edits
@@ -263,7 +263,7 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
   user. The owner chooses: merge `.new` (runner.md), or
   `plan-set workflow.cross_ai_execution false`, then dry-run and apply. Do neither unasked.
 - **`ensure-runner`:** an edited current-template runner is kept and ready; an edited older one
-  gets `.new` and is not ready below template 8 (the first with `--runtime` and retry config).
+  gets `.new` and is not ready below template 9 (the first that takes the flags ai-kit's builders emit: `--role`, `--host auto` and the lane settings).
 
 Check the active runner's line-2 `template=` header, never the `.new` file, to see which
 template a project runs. Never treat `.new` as live. **Read
@@ -350,7 +350,7 @@ than `ok` comes up.
 | `plan-unset` | `key`, `--plan` (`--inventory` optional) | Decline / remove a plan entry |
 | `apply` | `--plan`, `--inventory`, `--project-dir` | Write config + runner (`--dry-run` previews) |
 | `followups` | `--plan`, `--inventory`, `--project-dir` | List, or `--approve` the listed commands |
-| `ensure-runner` | `--cwd` | Render or upgrade `.planning/scripts/cross-ai.mjs`; prints JSON `{ready, runner, notes}`, exit 0 ready, 1 not ready, 2 on error. Readiness is the `ready` field: an edited current-template runner is kept ready; an edited older one gets `.new` (`runner: "new-as-.new"`) and is not ready below template 8 (the first with `--runtime` and retry config); a foreign one is not ready. The active file's line-2 `template=` header is what runs |
+| `ensure-runner` | `--cwd` | Render or upgrade `.planning/scripts/cross-ai.mjs`; prints JSON `{ready, runner, notes}`, exit 0 ready, 1 not ready, 2 on error. Readiness is the `ready` field: an edited current-template runner is kept ready; an edited older one gets `.new` (`runner: "new-as-.new"`) and is not ready below template 9 (the first that takes the flags ai-kit's builders emit: `--role`, `--host auto` and the lane settings); a foreign one is not ready. The active file's line-2 `template=` header is what runs |
 | v1 | `--project-dir`, except the two `detect-*-candidate` (no flags) | See `references/v1-path.md` |
 
 ## NEVER

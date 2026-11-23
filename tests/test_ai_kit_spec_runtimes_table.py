@@ -78,7 +78,6 @@ class TestRuntimeTable(unittest.TestCase):
             ["pi", "opencode", "cursor", "codex", "claude", "copilot", "grok"],
         )
         self.assertEqual(detection.KNOWN_CLIS, tuple(detection.RUNTIMES))
-        self.assertFalse(detection.has_exec_formula(detection.RUNTIMES["claude"]))
         self.assertFalse(detection.RUNTIMES["grok"].runner)
         self.assertEqual(detection.RUNTIMES["cursor"].model_suffix, r"\[[^\]]*\]$")
 
@@ -141,36 +140,12 @@ class TestRuntimeTable(unittest.TestCase):
             self.assertEqual(detection.detect_current_runtime(env), expected)
 
 
-class TestExecFormulaTable(unittest.TestCase):
+class TestAdviceLine(unittest.TestCase):
     def test_advice_line_is_labelled_unverified(self):
         self.assertEqual(detection.advice_line("claude"),
                          "usually the main agent in this host [seed row, unverified]")
         self.assertIsNone(detection.advice_line("codex"))
         self.assertIsNone(detection.advice_line("placeholder-cli-1"))
-
-    def test_exec_formula_source(self):
-        self.assertEqual(detection.exec_formula_source(detection.RUNTIMES["claude"]),
-                         "cross-ai.mjs RUNTIMES.claude.exec is null, read 2026-11-20")
-        row = detection.Runtime(("placeholder-cli-1",), ())
-        self.assertEqual(detection.exec_formula_source(row), detection.NO_RUNNER_ENTRY)
-        self.assertEqual(detection.NO_RUNNER_ENTRY,
-                         "cross-ai.mjs RUNTIMES has no entry for this runtime")
-
-    def test_formula_set_is_the_execute_set(self):
-        actual = tuple(sorted(rid for rid, row in detection.RUNTIMES.items()
-                              if detection.has_exec_formula(row)))
-        self.assertEqual(actual, commands.SUPPORTED_EXECUTE_CLIS)
-        self.assertEqual(actual, ("codex", "copilot", "cursor", "opencode", "pi"))
-
-    def test_runner_rows_carry_a_formula(self):
-        for rid, row in detection.RUNTIMES.items():
-            if row.runner:
-                self.assertIsNotNone(row.exec_formula, rid)
-        formula = detection.RUNTIMES["claude"].exec_formula
-        assert formula is not None
-        self.assertIsNone(formula.head)
-        self.assertFalse(detection.has_exec_formula(detection.RUNTIMES["claude"]))
-
 
 class TestCatalogRuntimeMigration(unittest.TestCase):
     def test_schema_2_renames_cursor_agent_and_keeps_confirmations(self):
@@ -437,18 +412,7 @@ class TestLegacyEntryPoints(unittest.TestCase):
     def test_legacy_name_matches_the_runtime_id(self):
         self.assertIsNone(commands.execute_cli_error("cursor"))
         self.assertIsNone(commands.execute_cli_error("cursor-agent"))
-        rejection = commands.execute_cli_error("claude")
-        self.assertIsNotNone(rejection)
-        assert rejection is not None
-        self.assertTrue(rejection.startswith("'claude' "), rejection)
-        self.assertEqual(
-            commands.build_reviewer_model_id("cursor", "m", effort="high"),
-            commands.build_reviewer_model_id("cursor-agent", "m", effort="high"),
-        )
-        self.assertEqual(
-            commands.build_reviewer_model_id("cursor", "m", effort="high"),
-            "m[effort=high]",
-        )
+        self.assertIsNone(commands.execute_cli_error("claude"))
 
     def test_cli_runtime_flag_matches_the_legacy_alias(self):
         legacy = io.StringIO()
@@ -486,7 +450,6 @@ class TestLegacyEntryPoints(unittest.TestCase):
 class TestRegistryIdsInTable(unittest.TestCase):
     def test_command_and_code_index_registries_use_table_ids(self):
         ids = set(detection.RUNTIMES)
-        self.assertTrue(set(commands.SUPPORTED_EXECUTE_CLIS) <= ids)
         self.assertTrue(set(execute_dispatch.OS_SANDBOXED_EXEC) <= ids)
         self.assertTrue(set(detection._MULTI_PROVIDER_CLIS) <= ids)
         self.assertTrue(set(detection.CBM_REGISTRATION_KEYS) <= ids)

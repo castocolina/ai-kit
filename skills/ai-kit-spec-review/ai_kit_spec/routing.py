@@ -10,6 +10,7 @@ import time
 from collections.abc import Mapping
 from typing import NamedTuple
 
+from ai_kit_spec import runner_facts
 from ai_kit_spec.cache import cache_is_stale, cache_read_json, cache_write_json
 from ai_kit_spec.detection import (
     CLAUDE_FALLBACK_MODEL_IDS,
@@ -23,8 +24,6 @@ from ai_kit_spec.detection import (
     claude_runtime_fields,
     claude_runtime_is_current,
     detect_current_runtime,
-    exec_formula_source,
-    has_exec_formula,
     list_runtime_models,
     normalize_runtime_keys,
     resolve_runtime_binary,
@@ -35,7 +34,7 @@ from ai_kit_spec.model_catalog import cache_catalog_path
 REFRESH_FLOOR_S = 60
 
 SKIP_ROUTES = frozenset({
-    "bad_model", "no_inventory", "not_installed", "unknown_runtime", "no_model", "no_formula",
+    "bad_model", "not_installed", "unknown_runtime", "no_model", "no_formula",
 })
 
 # Routes worth a quota probe: something will actually be spawned for them.
@@ -76,6 +75,7 @@ class RouteInput(NamedTuple):
 class Inventory(NamedTuple):
     installed: frozenset[str]
     models: Mapping[str, tuple[str, ...] | None]
+    runner: dict | None = None  # 37 D-10: the recorded --describe fact, or None.
 
 
 def _deduped(items) -> tuple[str, ...]:
@@ -119,7 +119,8 @@ def inventory_from_snapshot(snapshot: dict | None) -> Inventory:
             recorded = row.get("models")
             models[rid] = tuple(item for item in recorded if isinstance(item, str)) \
                 if isinstance(recorded, list) else None
-    return Inventory(frozenset(installed), models)
+    runner = snapshot.get("runner")
+    return Inventory(frozenset(installed), models, runner if isinstance(runner, dict) else None)
 
 
 def strip_model_suffix(runtime, model) -> str:
@@ -139,8 +140,8 @@ def _route_shape(entry: RouteInput, mode: str) -> str | None:
     if _is_custom(entry):
         return "no_formula" if mode == "exec" else "custom"
     runtime = entry.runtime
-    # An out-of-table runtime is a visible skip even without a model (D-20).
-    if runtime is not None and (not isinstance(runtime, str) or runtime not in RUNTIMES):
+    # A non-string runtime is malformed data (D-20); a string outside the table is served (37 R9).
+    if runtime is not None and not isinstance(runtime, str):
         return "unknown_runtime"
     if runtime is not None and (not isinstance(entry.model, str) or entry.model == ""):
         return "no_model"
@@ -155,8 +156,6 @@ def _route_inventory(entry: RouteInput, inventory: Inventory) -> str:
     runtime = entry.runtime
     if runtime not in inventory.installed:
         return "not_installed"
-    if RUNTIMES[runtime].list_argv is None and not RUNTIMES[runtime].runner:
-        return "no_inventory"
     known = inventory.models.get(runtime)
     if known is None:
         return "unverified"
@@ -176,9 +175,11 @@ def route(entry: RouteInput, host: str, mode: str, inventory: Inventory) -> str:
         return "unknown_runtime"
     if host_can_select(runtime, entry.model, host):
         return "native"
-    # 36 R7: the runner has no formula for this mode; a runner-less row keeps its inventory route.
-    if mode == "exec" and RUNTIMES[runtime].runner and not has_exec_formula(RUNTIMES[runtime]):
+    # 37 R9: only a recorded runner fact names a missing exec formula; an absent fact never refuses.
+    if mode == "exec" and runner_facts.runner_has_exec(inventory.runner, runtime) is False:
         return "no_formula"
+    if runtime not in RUNTIMES:
+        return "unverified"
     return _route_inventory(entry, inventory)
 
 
@@ -227,10 +228,9 @@ def host_context(mode: str, env: dict, seams: RuntimesSeams, persist=True) -> Ro
 def no_formula_detail(runtime: str | None) -> str:
     """Why a lane routed no_formula (36 SPEC R7): the runtime and the formula source,
     or the custom-lane fact."""
-    row = RUNTIMES.get(runtime) if isinstance(runtime, str) else None
-    if row is None:
+    if not isinstance(runtime, str) or not runtime:
         return "a custom command lane runs in review mode only"
-    return f"the runner has no exec formula for {runtime} ({exec_formula_source(row)})"
+    return f"the runner has no exec formula for {runtime} ({runner_facts.FACT_SOURCE})"
 
 
 def skip_note(subject: str, decision: str, runtime: str | None = None) -> str:
@@ -267,10 +267,14 @@ def load_runtimes_snapshot(env, seams, force=False, persist=True) -> tuple[dict,
     says this call built it."""
     path = cache_runtimes_path(env)
     if not force and runtimes_cache_is_fresh(path, env):
-        return cache_read_json(path) or {}, False
+        snapshot = cache_read_json(path) or {}
+        if runner_facts.refresh_fact(snapshot, seams.which_fn, seams.run_fn) and persist:
+            cache_write_json(path, snapshot)
+        return snapshot, False
     snapshot = build_runtimes_snapshot(
         which_fn=seams.which_fn, run_fn=seams.run_fn, catalog_fn=_catalog_reader(env),
         opencode=OpencodeSeams(seams.popen_fn, seams.urlopen_fn, env))
+    runner_facts.refresh_fact(snapshot, seams.which_fn, seams.run_fn)
     if persist:
         cache_write_json(path, snapshot)
     _REFRESHED.update(rid for rid in RUNTIMES if rid in snapshot.get("clis", {}))
@@ -348,6 +352,7 @@ def _within_floor(path) -> bool:
 
 def route_all(entries: list[dict], ctx: RouteContext) -> dict[str, str]:
     """key -> route for every dict entry that carries a key, with one bounded refresh."""
+    within_floor = _within_floor(cache_runtimes_path(ctx.env))
     snapshot, built = load_runtimes_snapshot(ctx.env, ctx.seams, persist=ctx.persist)
     state = {"inventory": inventory_from_snapshot(snapshot)}
 
@@ -356,7 +361,7 @@ def route_all(entries: list[dict], ctx: RouteContext) -> dict[str, str]:
 
     routes = {entry["key"]: decide(entry) for entry in entries
               if isinstance(entry, dict) and "key" in entry}
-    if built or _within_floor(cache_runtimes_path(ctx.env)):
+    if built or within_floor:
         return routes
     targets = [rid for rid in _refresh_targets(entries, routes) if rid not in _REFRESHED]
     if not targets:

@@ -123,7 +123,8 @@ COMBOS = (
 )
 PATHS = ("P1", "P2")
 
-# Poison fixture (D-08): `resolve_model_ids` is the key that empties `resolve-model`; a
+# Poison fixture (D-08): `resolve_model_ids` is the key that empties `resolve-model` (on a
+# Claude host only before gsd-core 1.22.0, which resolves `omit` to the tier alias there); a
 # `model_policy` resolves before the omit gate and would hide the bug, so it is absent.
 POISON_DEFAULTS = {"resolve_model_ids": "omit", "runtime": "codex"}
 # Control one omits pi's resolver setting to prove the oracle discriminates.
@@ -143,9 +144,11 @@ _HEX16 = re.compile(r"\b[0-9a-f]{16}\b")
 # tests/test_curated_config_apply_e2e.py so the two guards cannot drift. R-7: the checkout-local
 # install is gitignored and shared by every worktree, so its version is a fact of the moment, not
 # of the plan. `MODEL_PROFILES` and `AGENT_TO_PHASE_TYPE` were byte-identical between 1.16.0 and
-# 1.17.0 (2026-10-17) and value-equal again in 1.20.0 (2026-11-06). Any release at or above
-# 1.16.0 runs: the matrix re-checks the installed tables' key parity, and a real table change
-# fails its rows instead of skipping them. An older release is refused with a reason.
+# 1.17.0 (2026-10-17) and value-equal again in 1.20.0 (2026-11-06). 1.22.0 (2026-11-22) passes
+# every matrix row but no longer blanks a Claude agent under `omit` (see `_control_one`). Any
+# release at or above 1.16.0 runs: the matrix re-checks the installed tables' key parity, and a
+# real table change fails its rows instead of skipping them. An older release is refused with a
+# reason.
 
 
 def product_module(name: str):
@@ -903,50 +906,40 @@ def _overridden(agents: list[str], plan: dict) -> list[str]:
     return [agent for agent in sorted(agents) if f"model_overrides.{agent}" in overrides]
 
 
-def _unoverridden(agents: list[str], plan: dict) -> list[str]:
-    """Agents without an explicit model override."""
-    overridden = set(_overridden(agents, plan))
-    return [agent for agent in sorted(agents) if agent not in overridden]
-
-
-def _write_control_plan(bundle: dict, plan: dict, host: str = "claude") -> None:
-    """Write a discriminating plan copy: remove omit for Claude, overrides elsewhere."""
+def _write_control_plan(bundle: dict, plan: dict) -> None:
+    """Write a discriminating plan copy without its `model_overrides.*` entries."""
     entries = plan.get("entries") or []
-    if host == "claude":
-        kept = [entry for entry in entries if entry.get("key") != "resolve_model_ids"]
-        reason = "control 1: no resolve_model_ids entry to remove"
-    else:
-        kept = [
-            entry
-            for entry in entries
-            if not (
-                isinstance(entry, dict) and str(entry.get("key", "")).startswith("model_overrides.")
-            )
-        ]
-        reason = "control 1: no model_overrides entry to remove"
+    kept = [
+        entry
+        for entry in entries
+        if not (
+            isinstance(entry, dict) and str(entry.get("key", "")).startswith("model_overrides.")
+        )
+    ]
     if len(kept) == len(entries):
-        raise _refusal(1, reason)
+        raise _refusal(1, "control 1: no model_overrides entry to remove")
     path = os.path.join(os.path.dirname(bundle["plan_path"]), "plan-control1.json")
     _write_json(_abs(path), {**plan, "entries": kept})
     bundle["plan_path"] = path
 
 
 def _control_one(ctx: _MatrixCtx, agents: list[str], tables: dict) -> dict:
-    """Control 1 (D-09, T-19-01): a P2 poisoned bundle applied from a plan copy with the
-    `resolve_model_ids` unset removed. Every agent without a `model_overrides` entry must
-    then fail; if one of them matches, the oracle is not discriminating and the matrix must
-    exit 1 with `control 1 vacuous`."""
+    """Control 1 (D-09, T-19-01): a P2 poisoned bundle applied from a plan copy with its
+    `model_overrides.*` entries removed. Every overridden agent must then fail; if one of them
+    matches, the oracle is not discriminating and the matrix must exit 1 with
+    `control 1 vacuous`. The Claude copy once dropped the `resolve_model_ids` unset instead,
+    but gsd-core 1.22.0 (#3703) resolves a Claude agent under `omit` to its tier alias, so that
+    copy failed no agent; dropped overrides fail on every gsd-core line. The unset itself is
+    checked on the applied config by tests.test_ai_kit_gsd_curated_config_matrix's
+    `TestP2ApplyRemovesOmit`."""
     defaults = PI_CONTROL_ONE_DEFAULTS if ctx.host == "pi" else POISON_DEFAULTS
     start = "P1" if ctx.host == "pi" else "P2"
     bundle = _bundle_for(ctx, ("standard", "adaptive"), start, defaults)
     try:
         plan = _load_plan(bundle)
-        expected = (
-            sorted(agents) if ctx.host == "pi"
-            else _unoverridden(agents, plan) if ctx.host == "claude" else _overridden(agents, plan)
-        )
+        expected = sorted(agents) if ctx.host == "pi" else _overridden(agents, plan)
         if ctx.host != "pi":
-            _write_control_plan(bundle, plan, ctx.host)
+            _write_control_plan(bundle, plan)
         env = _apply_bundle(bundle, ctx.home, ctx.node_bin, ctx.apply_fn, ctx.host)
         got = _resolve_all(ctx, agents, bundle["project"], env)
         mismatches = _mismatches(agents, plan, tables, got, ctx.host)

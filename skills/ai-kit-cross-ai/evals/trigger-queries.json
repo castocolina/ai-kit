@@ -1,0 +1,66 @@
+[
+ {
+  "query": "Run this review prompt through the cross-AI runner on opencode and wait for the result",
+  "should_trigger": true
+ },
+ {
+  "query": "The pi lane exited 75 with retry_after_s=600, what should I do now?",
+  "should_trigger": true
+ },
+ {
+  "query": "Resume the last cross-ai lane in the same session for the second review round",
+  "should_trigger": true
+ },
+ {
+  "query": "What does ignored with reason=id_carries mean in the runner's setting lines?",
+  "should_trigger": true
+ },
+ {
+  "query": "Launch cross-ai.mjs with an argv file for a CLI the runner has no formula for",
+  "should_trigger": true
+ },
+ {
+  "query": "My cross-AI execute lane hit a 429 rate limit; should I move it to another model?",
+  "should_trigger": true
+ },
+ {
+  "query": "Pass a skill directory and an MCP config file to a review lane through the runner",
+  "should_trigger": true
+ },
+ {
+  "query": "Stop cross-ai lanes from opening herdr tabs when I run reviews",
+  "should_trigger": true
+ },
+ {
+  "query": "Set up which reviewers and models my project uses for cross-AI review",
+  "should_trigger": false
+ },
+ {
+  "query": "Configure .planning/config.json for GSD with the curated preset",
+  "should_trigger": false
+ },
+ {
+  "query": "Fold the commits of the finished plan into one commit per feature",
+  "should_trigger": false
+ },
+ {
+  "query": "Review my design doc for gaps before I write the implementation plan",
+  "should_trigger": false
+ },
+ {
+  "query": "Write a goal prompt that finishes phases 40 to 42 unattended",
+  "should_trigger": false
+ },
+ {
+  "query": "Arm a session wake so this run resumes after the usage limit",
+  "should_trigger": false
+ },
+ {
+  "query": "Show me a dashboard of which AI CLIs I used most last week",
+  "should_trigger": false
+ },
+ {
+  "query": "Install the ai-kit skills into my Claude Code home directory",
+  "should_trigger": false
+ }
+]

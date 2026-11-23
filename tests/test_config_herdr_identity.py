@@ -56,6 +56,13 @@ def _fake_runner(_spec, _prompt, _seams):
     return RunnerResult(0, "Hello world!", {"status": "ok"}, None, False, [], "")
 
 
+def _fake_preview(_spec, *_args, **_kwargs):
+    """The effort probe's --print-argv step, stubbed: under this test's scratch HOME the Volta
+    `node` shim on PATH cannot find its toolchain and re-runs `node` from PATH (itself) without
+    end."""
+    return ["cross-ai: setting effort=high applied"]
+
+
 class TestHerdrIdentity(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -99,6 +106,7 @@ class TestHerdrIdentity(unittest.TestCase):
             out, err = io.StringIO(), io.StringIO()
             with (mock.patch.dict(os.environ, env, clear=True),
                   mock.patch("time.time", return_value=1000.0),
+                  mock.patch("ai_kit_spec.effort_probe.print_argv_lines", _fake_preview),
                   redirect_stdout(out), redirect_stderr(err)):
                 code = cli.main(argv, env_fn=lambda: dict(env), runner_fn=_fake_runner)
             runs.append((argv[0], code, out.getvalue(), err.getvalue()))

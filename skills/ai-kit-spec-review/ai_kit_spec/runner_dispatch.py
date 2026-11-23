@@ -21,10 +21,9 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from ai_kit_spec.cache import cache_read_json
-from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS
-from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
+from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS, bounded_run, run_in_own_group
 from ai_kit_spec.error_classifier import classify_error, reason_for_status
-from ai_kit_spec.lane_effort import effort_form
+from ai_kit_spec.lane_settings import lane_escalation
 from ai_kit_spec.model_catalog import cache_catalog_path, split_catalog_meta
 from ai_kit_spec.routing import strip_model_suffix
 from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
@@ -48,20 +47,12 @@ _STDERR_TAIL_LINES = 64  # lines kept in memory; the result keeps their last _ST
 _POLL_SLICE_S = 0.2
 _STATUS_PREFIX = "AIKIT-XAI "
 
-# The template's regex sources verbatim (cross-ai.mjs MODEL_ID / CURSOR_MODEL_ID /
-# PI_MODEL_ID / OPENCODE_MODEL_ID).
-MODEL_ID_SRC = "/^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/"
-CURSOR_MODEL_ID_SRC = "/^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\\[[A-Za-z0-9._=,-]+\\])?$/"
-PI_MODEL_ID_SRC = "/^[A-Za-z0-9][A-Za-z0-9._@+-]*\\/[A-Za-z0-9][A-Za-z0-9._:\\/@+-]*$/"
-OPENCODE_MODEL_ID_SRC = (
-    "/^[A-Za-z0-9][A-Za-z0-9._@+-]*\\/[A-Za-z0-9][A-Za-z0-9._:\\/@+-]*"
-    "(?:#[A-Za-z0-9._-]+)?$/"
+PREVIEW_TIMEOUT_S = 30
+MODEL_ID_PREFIX = "cross-ai: model-id "
+SETTING_LINE_RE = re.compile(
+    r"^cross-ai: setting (?P<name>[a-z_]+)=\S* (?P<state>applied|ignored|unknown)"
+    r"(?: reason=(?P<reason>[a-z_]+))?"
 )
-_MODEL_ID_SRC = {
-    "cursor": CURSOR_MODEL_ID_SRC,
-    "pi": PI_MODEL_ID_SRC,
-    "opencode": OPENCODE_MODEL_ID_SRC,
-}
 
 _NO_NODE_LINE = "ai-kit-spec: subprocess dispatch needs Node (node not found on PATH)"
 _NO_TEMPLATE_LINE = "ai-kit-spec: runner template not found"
@@ -71,17 +62,6 @@ _STDERR_OPEN_LINE = (
 _TRAILER_IGNORE_LINE = (
     "ai-kit-spec: ignoring a runner status line that does not match this run"
 )
-
-
-def model_id_ok(runtime: str, model: str) -> bool:
-    """True when `model` matches the grammar the runner itself accepts for `runtime`."""
-    src = _MODEL_ID_SRC.get(runtime, MODEL_ID_SRC)
-    return re.fullmatch(src[1:-1], model) is not None
-
-
-def model_id_src(runtime: str) -> str:
-    """The grammar source `run_runner` names when it refuses `runtime`'s model id."""
-    return _MODEL_ID_SRC.get(runtime, MODEL_ID_SRC)
 
 
 class RunnerSpec(NamedTuple):
@@ -95,18 +75,33 @@ class RunnerSpec(NamedTuple):
     cursor_mode: str | None = None
     codex_sandbox: str | None = None  # the sandbox mode; None is workspace-write
     route: str | None = None  # a confirmed catalog route; None defers to the runner
-    # An effort the runtime cannot take: the line run_runner prints (36 D-05).
-    ignored: str | None = None
+    context: str | None = None
+    session_id: str | None = None
+    escalate_runtime: bool = False
+    escalate_model: bool = False
+    # D-23: ai-kit calls host by default; the runner's own default stays none.
+    host: str | None = "auto"
+
+    @property
+    def role(self) -> str:
+        return "execute" if self.mode == "exec" else "review"
 
 
 def spec_with_effort(runtime: str, model: str, mode: str, timeout_s: int,
                      knobs: dict) -> RunnerSpec:
-    """Compose effort before constructing the spec so trailer checks see the runner's id."""
-    form = effort_form(runtime, model, knobs.get("effort"))
+    """Pass the bare model and effort to the runner, which composes and reports its form.
+
+    Escalation flags are read only through lane_settings.lane_escalation (SPEC R1, R10).
+    """
+    escalation = lane_escalation(knobs)
+    effort = knobs.get("effort")
     return RunnerSpec(
-        runtime, form.model, mode, timeout_s, cwd=knobs.get("cwd"),
-        effort=form.flags[1] if form.flags else None, service_tier=knobs.get("service_tier"),
-        cursor_mode=knobs.get("cursor_mode"), ignored=form.ignored,
+        runtime, model, mode, timeout_s, cwd=knobs.get("cwd"),
+        effort=None if effort is None else str(effort), service_tier=knobs.get("service_tier"),
+        cursor_mode=knobs.get("cursor_mode"),
+        escalate_runtime=escalation.runtime, escalate_model=escalation.model,
+        # No lane key holds a context label or a session id yet (Phases 40 and 41 adopt them).
+        context=None, session_id=None,
     )
 
 
@@ -114,11 +109,8 @@ def review_spec(runtime: str, model: str, extra: dict | None, timeout_s: int,
                 cwd: str | None = None) -> RunnerSpec:
     """One review-mode spec from an entry's per-candidate knobs (`extra`). The probe, the
     review and the argv display all build theirs here, so they never disagree."""
-    knobs = extra or {}
-    return spec_with_effort(runtime, model, "review", timeout_s, {
-        "cwd": cwd, "effort": knobs.get("effort"), "service_tier": knobs.get("service_tier"),
-        "cursor_mode": knobs.get("cursor_mode"),
-    })
+    knobs = {**(extra or {}), "cwd": cwd}
+    return spec_with_effort(runtime, model, "review", timeout_s, knobs)
 
 
 class RunnerResult(NamedTuple):
@@ -196,30 +188,41 @@ EXEC_NOTES = {"pi": PI_EXEC_NOTE, "copilot": COPILOT_EXEC_NOTE}
 
 
 def project_runner_command(spec: RunnerSpec) -> str | None:
-    """The project-local hook string, or None when a token is unsafe or unsupported.
+    """The project-local hook string, or None when a token is unsafe (D-06).
 
     GSD expands the value unquoted (word splitting and globbing), so the tokens are joined
     with single spaces and never quoted; any token outside the allowlist, a cursor bracket
-    model included, returns None instead of a command. So does a model id outside the
-    runtime's runner grammar: the runner would refuse every call with exit 2."""
-    if spec.runtime not in SUPPORTED_EXECUTE_CLIS or not model_id_ok(spec.runtime, spec.model):
-        return None
+    model included, returns None. The runner itself answers an unknown runtime or a model id
+    below its floor with exit 2 and a named line."""
     tokens = ["node", PROJECT_RUNNER_PATH, *runner_flags(spec)]
     if not all(HOOK_TOKEN_RE.fullmatch(token) for token in tokens):
         return None
     return " ".join(tokens)
 
 
+# SPEC R1: one fixed order for every runtime; an unset setting emits nothing.
+_SETTING_FLAGS = (
+    ("effort", "--effort", "value"),
+    ("context", "--context", "value"),
+    ("session_id", "--session-id", "value"),
+    ("escalate_runtime", "--escalate-runtime", "bool"),
+    ("escalate_model", "--escalate-model", "bool"),
+    ("host", "--host", "value"),
+)
+
+
 def runner_flags(spec: RunnerSpec) -> list[str]:
     """The runner flags one `RunnerSpec` turns into. Never a shell string."""
-    flags = [
-        "--runtime", spec.runtime, "--model", spec.model, "--mode", spec.mode,
-    ]
+    flags = ["--runtime", spec.runtime, "--model", spec.model, "--role", spec.role]
     if spec.route in ("router", "unknown"):
         flags += [f"--route-{spec.runtime}", spec.route]
+    for attr, flag, kind in _SETTING_FLAGS:
+        value = getattr(spec, attr)
+        if kind == "bool" and value is True:
+            flags.append(flag)
+        elif kind == "value" and value is not None:
+            flags.extend([flag, value])
     if spec.runtime == "codex":
-        if spec.effort:
-            flags += ["--codex-effort", spec.effort]
         if spec.service_tier:
             flags += ["--codex-service-tier", spec.service_tier]
         if spec.runtime in OS_SANDBOXED_EXEC and spec.mode == "exec":
@@ -293,6 +296,46 @@ class RunnerSeams(NamedTuple):
     runner_path_fn: Callable[[], str | None] = resolve_cross_ai_template_path
     env_fn: Callable[[], dict] = lambda: dict(os.environ)
     route_fn: Callable[[str, str, dict], str | None] = resolve_route
+
+
+def print_argv_lines(spec: RunnerSpec, seams: RunnerSeams | None = None,
+                     run_fn: Callable[..., Any] = run_in_own_group) -> list[str] | None:
+    """The runner's own dry run for one spec (D-01): stdout and stderr lines of --print-argv,
+    or None when node or the template is missing or the call fails to start. No model call.
+    The real spawn runs in its own process group, killed on a timeout (see run_in_own_group)."""
+    run_fn = bounded_run(run_fn)
+    active = seams or RunnerSeams()
+    node = active.which_fn("node")
+    template = active.runner_path_fn()
+    if not node or not template:
+        return None
+    try:
+        proc = run_fn([node, template, *runner_flags(spec), "--print-argv"],
+                      stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                      timeout=PREVIEW_TIMEOUT_S, cwd=spec.cwd,
+                      env=child_env(env=active.env_fn()), check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    stdout: str = proc.stdout or ""
+    stderr: str = proc.stderr or ""
+    return stdout.splitlines() + stderr.splitlines()
+
+
+def preview_model_id(lines) -> str | None:
+    """Return the first model id printed by the runner."""
+    return next((line[len(MODEL_ID_PREFIX):].strip() for line in lines
+                 if line.startswith(MODEL_ID_PREFIX)), None)
+
+
+def preview_setting(lines, name: str) -> tuple[str, str | None] | None:
+    """Return the first matching setting's state and optional reason."""
+    for line in lines:
+        match = SETTING_LINE_RE.match(line)
+        if match and match.group("name") == name:
+            return match.group("state"), match.group("reason")
+    return None
 
 
 def _start_stderr_relay(stream, seams: RunnerSeams) -> tuple[threading.Thread, _RelayState]:
@@ -597,21 +640,12 @@ def _runner_reason(result: RunnerResult, spec: RunnerSpec, seams: RunnerSeams) -
 def run_runner(spec: RunnerSpec, prompt: str, seams: RunnerSeams | None = None) -> RunnerResult:
     """Runs one candidate through the runner template. No node or template fails closed."""
     active = seams or RunnerSeams()
-    # Before the node check: no path drops a set effort without a line (SPEC R4).
-    if spec.ignored:
-        active.print_fn(f"ai-kit-spec: {spec.ignored}")
     node = active.which_fn("node")
     if not node:
         return _unavailable([], _NO_NODE_LINE, active)
     runner_path = active.runner_path_fn()
     if not runner_path:
         return _unavailable([], _NO_TEMPLATE_LINE, active)
-    if not model_id_ok(spec.runtime, spec.model):
-        active.print_fn(
-            f"ai-kit-spec: model id {spec.model} is not a valid {spec.runtime} model id"
-            f" (must match {model_id_src(spec.runtime)})"
-        )
-        return RunnerResult(None, "", None, "configuration", False, [], "")
     if spec.route is None:
         spec = spec._replace(route=active.route_fn(spec.runtime, spec.model, active.env_fn()))
     argv = build_runner_argv(spec, runner_path, node)

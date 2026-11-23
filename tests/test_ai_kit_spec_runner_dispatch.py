@@ -5,7 +5,6 @@ import errno
 import io
 import json
 import os
-import re
 import signal
 import sys
 import tempfile
@@ -21,19 +20,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-k
 from ai_kit_spec import detection, execute_dispatch, lane_effort, quota, reviewer_dispatch
 from ai_kit_spec import runner_dispatch as rd
 from ai_kit_spec.cli import main
-from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS, ResolvedReviewer
+from ai_kit_spec.commands import ResolvedReviewer
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.model_catalog import CATALOG_SCHEMA_VERSION
 from ai_kit_spec.runner_dispatch import (
-    CURSOR_MODEL_ID_SRC,
-    MODEL_ID_SRC,
-    OPENCODE_MODEL_ID_SRC,
-    PI_MODEL_ID_SRC,
     CustomSpec,
     RunnerSeams,
     RunnerSpec,
     build_runner_argv,
-    model_id_ok,
     parse_status_line,
     review_spec,
     run_custom_command,
@@ -41,7 +35,6 @@ from ai_kit_spec.runner_dispatch import (
     run_runner_tiers,
     runner_flags,
 )
-from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
 _STATUS = (
     "AIKIT-XAI status={status} cli={cli} model={model} exit={exit} cli_rc=0 "
@@ -141,7 +134,7 @@ class TestProjectRunnerCommand(unittest.TestCase):
         self.assertEqual(
             rd.project_runner_command(spec),
             "node .planning/scripts/cross-ai.mjs --runtime opencode "
-            "--model router-env/my-coding --mode exec",
+            "--model router-env/my-coding --role execute --host auto",
         )
 
     def test_codex_sandbox_only_in_exec_mode(self):
@@ -154,9 +147,12 @@ class TestProjectRunnerCommand(unittest.TestCase):
         assert review_cmd is not None
         self.assertNotIn("codex-sandbox", review_cmd)
 
-    def test_unsupported_runtime_is_none(self):
-        spec = RunnerSpec("claude", "opus", "exec", 0)
-        self.assertIsNone(rd.project_runner_command(spec))
+    def test_any_runtime_gets_a_hook(self):
+        for runtime in ("claude", "placeholder-cli-1"):
+            spec = RunnerSpec(runtime, "placeholder-model-1", "exec", 0)
+            self.assertEqual(rd.project_runner_command(spec),
+                             f"node .planning/scripts/cross-ai.mjs --runtime {runtime} "
+                             "--model placeholder-model-1 --role execute --host auto")
 
     def test_unsafe_model_tokens_are_none(self):
         for model in ("has space", "quo'te", "dol$lar", "star*", "paren("):
@@ -164,17 +160,17 @@ class TestProjectRunnerCommand(unittest.TestCase):
                 spec = RunnerSpec("opencode", model, "exec", 0)
                 self.assertIsNone(rd.project_runner_command(spec))
 
-    def test_model_outside_the_runner_grammar_is_none(self):
-        # 25.1 CR-01: the runner exits 2 on these, so no hook may carry them.
-        for runtime, model in (("pi", "glm-4.6"), ("opencode", "gpt-5")):
-            with self.subTest(runtime=runtime, model=model):
-                self.assertIsNone(rd.project_runner_command(RunnerSpec(runtime, model, "exec", 0)))
+    def test_unusual_model_shapes_get_a_hook(self):
+        for runtime in ("pi", "opencode"):
+            with self.subTest(runtime=runtime):
+                self.assertIsNotNone(rd.project_runner_command(
+                    RunnerSpec(runtime, "placeholder-model-1", "exec", 0)))
 
     def test_bracket_model_is_never_a_hook_token(self):
-        # GSD globs the unquoted hook: `gpt-6[effort=high]` would match a file `gpt-6e`.
+        # GSD globs the unquoted hook, so a bracket expression is unsafe.
         for runtime in ("cursor", "opencode"):
             with self.subTest(runtime=runtime):
-                spec = RunnerSpec(runtime, "gpt-6[effort=high]", "exec", 0)
+                spec = RunnerSpec(runtime, "placeholder-model-1[effort=high]", "exec", 0)
                 self.assertIsNone(rd.project_runner_command(spec))
 
 
@@ -184,8 +180,8 @@ class TestBuildRunnerArgv(unittest.TestCase):
         argv = build_runner_argv(spec, "/runner/cross-ai.mjs", "node")
         self.assertEqual(argv, [
             "node", "/runner/cross-ai.mjs", "--runtime", "opencode", "--model",
-            "fake/ok", "--mode", "review", "--timeout", "600", "--outer-timeout", "630",
-            "--no-preamble",
+            "fake/ok", "--role", "review", "--host", "auto", "--timeout", "600",
+            "--outer-timeout", "630", "--no-preamble",
         ])
 
     def test_codex_exec_knobs(self):
@@ -194,7 +190,7 @@ class TestBuildRunnerArgv(unittest.TestCase):
             service_tier="priority", codex_sandbox="workspace-write",
         )
         flags = runner_flags(spec)
-        self.assertIn("--codex-effort", flags)
+        self.assertEqual(flags[flags.index("--effort") + 1], "high")
         self.assertIn("--codex-service-tier", flags)
         self.assertEqual(flags[flags.index("--codex-sandbox") + 1], "workspace-write")
 
@@ -231,7 +227,7 @@ class TestBuildRunnerArgv(unittest.TestCase):
                 )
                 self.assertEqual(argv[argv.index("--route-pi") + 1], route)
                 self.assertEqual(argv[:8], ["node", "/runner/cross-ai.mjs", "--runtime", "pi",
-                                            "--model", "fake/ok", "--mode", "review"])
+                                            "--model", "fake/ok", "--role", "review"])
 
     def test_no_route_leaves_the_argv_unchanged(self):
         argv = build_runner_argv(_spec(), "/runner/cross-ai.mjs", "node")
@@ -249,69 +245,26 @@ class TestBuildRunnerArgv(unittest.TestCase):
         self.assertNotIn("--route-", bare)
 
 
-def _template_regex(name: str) -> str:
-    template = resolve_cross_ai_template_path()
-    assert template is not None
-    with open(template, encoding="utf-8") as handle:
-        source = handle.read()
-    match = re.search(rf"const {name} = (/.*?/);", source)
-    assert match is not None, name
-    return match.group(1)
-
-
-class TestModelIdCharsetParity(unittest.TestCase):
-    def test_sources_match_the_template(self):
-        self.assertEqual(MODEL_ID_SRC, _template_regex("MODEL_ID"))
-        self.assertEqual(CURSOR_MODEL_ID_SRC, _template_regex("CURSOR_MODEL_ID"))
-        self.assertEqual(PI_MODEL_ID_SRC, _template_regex("PI_MODEL_ID"))
-        self.assertEqual(OPENCODE_MODEL_ID_SRC, _template_regex("OPENCODE_MODEL_ID"))
-
-    def test_model_id_ok_uses_the_runtime_grammar(self):
-        self.assertFalse(model_id_ok("pi", "glm"))
-        self.assertFalse(model_id_ok("opencode", "glm"))
-        # 25.1 WR-05: pi resolves the whole id first and splits only a known thinking level,
-        # so a colon inside the model part (Ollama tags, `:free`) is part of the id.
-        self.assertTrue(model_id_ok("pi", "fake/ok:free"))
-        self.assertTrue(model_id_ok("pi", "ollama/qwen3:8b"))
-        self.assertTrue(model_id_ok("pi", "ollama/qwen3:8b:high"))
-        self.assertFalse(model_id_ok("pi", "ollama/:8b"))
-        self.assertTrue(model_id_ok("pi", "router-env/my-coding:high"))
-        self.assertTrue(model_id_ok("opencode", "fake/ok#fast"))
-
-    def test_bare_pi_id_names_the_grammar_and_never_spawns(self):
-        popen = _ScriptedPopen([])
+class TestRunnerOwnsTheModelFloor(unittest.TestCase):
+    def _reaches(self, runtime, model):
+        popen = _ScriptedPopen([_FakeProc([_status_line(cli=runtime, model=model)])])
         lines: list[str] = []
-        result = run_runner(_spec(runtime="pi", model="glm"), "hi", _seams(popen, lines, []))
-        self.assertEqual(result.reason, "configuration")
-        self.assertEqual(popen.argvs, [])
-        self.assertTrue(any("is not a valid pi model id" in line for line in lines))
-        self.assertTrue(any(PI_MODEL_ID_SRC in line for line in lines))
-
-    def _refused(self, model):
-        popen = _ScriptedPopen([])
-        lines: list[str] = []
-        result = run_runner(_spec(model=model), "hi", _seams(popen, lines, []))
-        self.assertEqual(result.reason, "configuration")
-        self.assertEqual(popen.argvs, [])
-        self.assertTrue(any("is not a valid opencode model id" in line for line in lines))
-
-    def test_leading_dash_refused(self):
-        self._refused("-x")
-
-    def test_space_refused(self):
-        self._refused("a b")
-
-    def test_bracket_refused_for_opencode_accepted_for_cursor(self):
-        popen = _ScriptedPopen([_FakeProc([_status_line(cli="cursor", model="m[e=1]")])])
-        lines: list[str] = []
-        refused = run_runner(_spec(model="m[e=1]"), "hi", _seams(popen, lines, []))
-        self.assertEqual(refused.reason, "configuration")
-        self.assertEqual(popen.argvs, [])
-        accepted = run_runner(
-            _spec(runtime="cursor", model="m[e=1]"), "hi", _seams(popen, lines, [])
-        )
-        self.assertIsNone(accepted.reason)
+        run_runner(_spec(runtime=runtime, model=model), "hi", _seams(popen, lines, []))
         self.assertEqual(len(popen.argvs), 1)
+        self.assertEqual(popen.argvs[0][popen.argvs[0].index("--model") + 1], model)
+        self.assertFalse(any("is not a valid" in line for line in lines))
+
+    def test_unusual_pi_shape_reaches_the_runner(self):
+        self._reaches("pi", "placeholder-model-1")
+
+    def test_leading_dash_reaches_the_runner(self):
+        self._reaches("opencode", "-x")
+
+    def test_space_reaches_the_runner(self):
+        self._reaches("opencode", "a b")
+
+    def test_bracket_reaches_the_runner(self):
+        self._reaches("opencode", "placeholder-model-2[e=1]")
 
 
 class TestParseStatusLine(unittest.TestCase):
@@ -805,6 +758,7 @@ def _runner_result(stdout="### Status: Approved\n", returncode=0, reason=None,
 
 
 _EFFORT_RUNTIMES = ("codex", "pi", "cursor", "opencode", "claude", "copilot")
+_EXEC_RUNTIMES = ("codex", "copilot", "cursor", "opencode", "pi")
 
 
 def _base_id(runtime):
@@ -812,47 +766,21 @@ def _base_id(runtime):
 
 
 def _check_effort_spec(test, spec, runtime, base):
-    expected = lane_effort.effort_form(runtime, base, "high")
-    test.assertEqual(spec.model, expected.model)
-    test.assertEqual(spec.ignored, expected.ignored)
+    test.assertEqual(spec.runtime, runtime)
+    test.assertEqual(spec.model, base)
+    test.assertEqual(spec.effort, "high")
     flags = runner_flags(spec)
-    if runtime == "codex":
-        test.assertEqual(flags[flags.index("--codex-effort") + 1], "high")
-    elif expected.ignored:
-        test.assertNotIn("high", flags)
-        test.assertTrue(expected.ignored.startswith("ignored: "))
-        test.assertIn(runtime, expected.ignored)
-    else:
-        test.assertNotEqual(spec.model, base)
+    test.assertEqual(flags[flags.index("--effort") + 1], "high")
 
 
 class TestEffortWiring(unittest.TestCase):
-    def test_composed_pi_model_keeps_the_trailer(self):
+    def test_bare_pi_model_keeps_the_trailer(self):
         spec = review_spec("pi", _base_id("pi"), {"effort": "high"}, 30)
         popen = _ScriptedPopen([_FakeProc([_status_line(cli="pi", model=spec.model)])])
         result = run_runner(spec, "hello", _seams(popen, [], []))
         self.assertIsNotNone(result.status)
         self.assertIsNone(result.reason)
         self.assertEqual(popen.argvs[0][popen.argvs[0].index("--model") + 1], spec.model)
-
-    def test_run_runner_prints_the_ignored_line_first(self):
-        spec = review_spec("copilot", _base_id("copilot"), {"effort": "high"}, 30)
-        lines = []
-        popen = _ScriptedPopen([_FakeProc([_status_line(cli="copilot", model=spec.model)])])
-        run_runner(spec, "hello", _seams(popen, lines, []))
-        self.assertEqual(lines[0], "ai-kit-spec: " + str(spec.ignored))
-        self.assertNotIn("high", popen.argvs[0])
-
-    def test_ignored_line_prints_without_node(self):
-        spec = review_spec("copilot", _base_id("copilot"), {"effort": "high"}, 30)
-        lines = []
-        popen = _ScriptedPopen([])
-        seams = _seams(popen, lines, [])._replace(which_fn=lambda _: None)
-        result = run_runner(spec, "hello", seams)
-        self.assertEqual(lines[0], "ai-kit-spec: " + str(spec.ignored))
-        self.assertTrue(lines[1].startswith("ai-kit-spec: subprocess dispatch needs Node"))
-        self.assertEqual(result.reason, "dispatch_unavailable")
-        self.assertEqual(popen.argvs, [])
 
     def test_no_effort_prints_nothing(self):
         spec = review_spec("opencode", _base_id("opencode"), None, 30)
@@ -865,7 +793,6 @@ class TestEffortWiring(unittest.TestCase):
                            {"effort": "high", "service_tier": "priority"}, 30)
         self.assertEqual(spec.effort, "high")
         self.assertEqual(spec.service_tier, "priority")
-        self.assertIsNone(spec.ignored)
         _check_effort_spec(self, spec, "codex", _base_id("codex"))
 
     def _paths(self, runtime, effort):
@@ -883,7 +810,7 @@ class TestEffortWiring(unittest.TestCase):
             reviewer_dispatch.ReviewerDispatchSpec(entry, "review this", [600], {}), seams)
         quota.probe_reviewer_quota(ResolvedReviewer("k", base, "", runtime, None, extra),
                                    seams=quota.ProbeSeams(runner_fn=fake))
-        if runtime in SUPPORTED_EXECUTE_CLIS:
+        if runtime in _EXEC_RUNTIMES:
             with tempfile.TemporaryDirectory() as target:
                 candidate = {"runtime": runtime, "model": base, **extra}
                 execute_dispatch.dispatch_execute(
@@ -898,7 +825,7 @@ class TestEffortWiring(unittest.TestCase):
                 _check_effort_spec(self, self._paths(runtime, True)[0], runtime, _base_id(runtime))
 
     def test_dispatch_execute_forms(self):
-        for runtime in SUPPORTED_EXECUTE_CLIS:
+        for runtime in _EXEC_RUNTIMES:
             with self.subTest(runtime=runtime):
                 _check_effort_spec(self, self._paths(runtime, True)[2], runtime, _base_id(runtime))
 
@@ -912,8 +839,7 @@ class TestEffortWiring(unittest.TestCase):
             with self.subTest(runtime=runtime):
                 for spec in self._paths(runtime, False):
                     self.assertEqual(spec.model, _base_id(runtime))
-                    self.assertIsNone(spec.ignored)
-                    self.assertNotIn("--codex-effort", runner_flags(spec))
+                    self.assertNotIn("--effort", runner_flags(spec))
 
     def test_build_command_forms(self):
         for runtime in _EFFORT_RUNTIMES:
@@ -923,13 +849,9 @@ class TestEffortWiring(unittest.TestCase):
                     code = main(["build-command", "--runtime", runtime, "--effort", "high"])
                 self.assertEqual(code, 0)
                 argv = json.loads(out.getvalue())["argv"]
-                expected = lane_effort.effort_form(runtime, "{model}", "high")
-                self.assertEqual(argv[argv.index("--model") + 1], expected.model)
-                if expected.ignored:
-                    self.assertIn("build-command: " + expected.ignored, err.getvalue())
-                    self.assertNotIn("high", argv)
-                if runtime == "codex":
-                    self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
+                self.assertEqual(argv[argv.index("--model") + 1], "{model}")
+                self.assertEqual(argv[argv.index("--effort") + 1], "high")
+                self.assertNotIn("build-command: ignored", err.getvalue())
 
     def test_render_command_forms_and_advice(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -950,10 +872,9 @@ class TestEffortWiring(unittest.TestCase):
                         code = main(args, which_fn=lambda _: None)
                     self.assertEqual(code, 0)
                     argv = json.loads(out.getvalue())
-                    expected = lane_effort.effort_form(runtime, base, "high")
-                    self.assertEqual(argv[argv.index("--model") + 1], expected.model)
-                    if expected.ignored:
-                        self.assertIn("render-command: " + expected.ignored, err.getvalue())
+                    self.assertEqual(argv[argv.index("--model") + 1], base)
+                    self.assertEqual(argv[argv.index("--effort") + 1], "high")
+                    self.assertNotIn("render-command: ignored", err.getvalue())
                     if runtime == "claude":
                         advice = detection.advice_line(runtime)
                         self.assertIsNotNone(advice)
@@ -988,7 +909,7 @@ class TestEffortWiring(unittest.TestCase):
                 with redirect_stdout(out), self.assertRaises(SystemExit):
                     main([sub, "--help"])
                 text = " ".join(out.getvalue().split())
-                self.assertIn("'ignored:' line", text)
+                self.assertIn("reports it ignored with a reason", text)
                 self.assertNotIn("silently ignore", text)
 
 
@@ -1036,8 +957,8 @@ class TestDispatchReviewerRunner(unittest.TestCase):
         self.assertEqual(code, 0, err.getvalue())
         spec = seen["spec"]
         self.assertEqual(spec.runtime, "opencode")
-        self.assertEqual(spec.model, "fake/placeholder-model-1#high")
-        self.assertIsNone(spec.ignored)
+        self.assertEqual(spec.model, "fake/placeholder-model-1")
+        self.assertEqual(spec.effort, "high")
         self.assertEqual(spec.mode, "review")
         self.assertEqual(spec.timeout_s, 600)
         self.assertIsNone(spec.cwd)
@@ -1107,7 +1028,7 @@ class TestDispatchReviewerRunner(unittest.TestCase):
         self.assertEqual(code, 0)
         argv = json.loads(out.getvalue())
         self.assertEqual(argv[argv.index("--timeout") + 1], "900")
-        self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
+        self.assertEqual(argv[argv.index("--effort") + 1], "high")
 
     def test_skip_route_and_model_less_entry_raise_and_spawn_nothing(self):
         def never(*_args):

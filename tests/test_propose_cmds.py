@@ -181,9 +181,9 @@ class TestProposeLanes(_Scratch):
 
     def test_effort_levels_per_row(self):
         _, data, _ = self._propose("review")
-        self.assertEqual(data["pool"][5]["efforts"], ["high"])
-        self.assertEqual(data["pool"][5]["efforts_refused"][0][0], "max")
-        self.assertEqual(data["pool"][7]["efforts"], [])
+        self.assertEqual(data["pool"][5]["efforts"], ["high", "max"])
+        self.assertEqual(data["pool"][5]["efforts_refused"], [])
+        self.assertEqual(data["pool"][7]["efforts"], ["high"])
 
     def test_malformed_numbers_still_propose(self):
         entries = _catalog()

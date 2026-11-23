@@ -86,12 +86,12 @@
     {
       "number": "36",
       "name": "spec-config as the hub",
-      "status": "complete"
+      "status": "in_progress"
     },
     {
       "number": "37",
       "name": "Shared runner options and session ids",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "38",
@@ -204,5 +204,5 @@
     "label": "Advance to the next step (verify)",
     "reason": "Phase 16 of 40 · 40% · ready to verify"
   },
-  "updated_at": "2026-11-21T09:20:23.799Z"
+  "updated_at": "2026-11-22T01:23:15.719Z"
 }

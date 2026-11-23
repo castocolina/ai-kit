@@ -17,6 +17,7 @@ import shlex
 from collections.abc import Callable
 from typing import NamedTuple
 
+from ai_kit_spec import runner_facts
 from ai_kit_spec.commands import execute_cli_error
 from ai_kit_spec.detection import runtime_id
 from ai_kit_spec.dispatch_guidance import build_dispatch_reinforcement_guidance
@@ -99,8 +100,7 @@ def build_execute_guidance(spec: ExecuteDispatchSpec, seams: ExecuteSeams) -> st
 def _runner_spec(candidate: dict, spec: ExecuteDispatchSpec) -> RunnerSpec:
     """One exec-mode runner spec; runner_flags adds codex's OS write confinement (D-27)."""
     return spec_with_effort(candidate["runtime"], candidate["model"], "exec", spec.timeout,
-                            {"cwd": spec.target_dir, "effort": candidate.get("effort"),
-                             "service_tier": candidate.get("service_tier")})
+                            {**candidate, "cwd": spec.target_dir})
 
 
 def _refuse_candidate(candidate: dict, target_dir: str) -> str:
@@ -111,7 +111,7 @@ def _refuse_candidate(candidate: dict, target_dir: str) -> str:
             "dispatch_execute is for cross-AI (runtime-set) candidates only -- a native "
             "(runtime is None) candidate executes in-process and never reaches this function"
         )
-    rejection = execute_cli_error(runtime)
+    rejection = execute_cli_error(runtime, runner_facts.stored_fact(dict(os.environ)))
     if rejection:
         return rejection
     if not os.path.isdir(target_dir):

@@ -355,7 +355,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### Shared runner
 
-- [ ] **RUN-01**: One runner serves open-gsd cross-AI and ai-kit review and execute, taking runtime, provider and
+- [x] **RUN-01**: One runner serves open-gsd cross-AI and ai-kit review and execute, taking runtime, provider and
   model, effort, escalation flags and the role (review or execute) per call, from the config or from the calling
   skill's decision. Every setting a call names is reported as applied or ignored with the reason (a runtime that
   takes no model flag or no effort is never fed one and says so). A runtime table (the `RUNTIMES` tables in
@@ -369,8 +369,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   `--escalate-runtime`, `--escalate-model`, `--session-id`; the runner composes each runtime's effort form and checks a
   level's shape only; every named setting prints applied, ignored or unknown with a reason from a closed list; a runtime
   with no formula runs from a declared argv file and otherwise gets a named refusal; a model id passes a universal safety
-  floor with an advisory for unusual shapes; the Python mirrors give way to the runner's `--describe`)*
-- [ ] **RUN-02**: The runner accepts a session id and prints the one it used, so a lane can resume across rounds.
+  floor with an advisory for unusual shapes; the Python mirrors give way to the runner's `--describe`)* *(amended 2026-11-21,
+  plan time, 37 D-31 to D-34, owner requests of 2026-11-19 and directive of 2026-11-20: the settings also cover the skills and MCP
+  servers a call names: the runner records per host how a lane takes a skill (by name, by path or as inlined prose) and an MCP
+  server (the host's per-invocation form only), each form with a source label from the host's own help (2026-11-21: only pi's
+  `--skill` and claude's and copilot's MCP flags are fed), delivers a skill in the first verified form in the order name, path,
+  prose, and reports each skill and server applied or ignored with a reason; it never picks them (Phase 39, REV-03, REV-05),
+  never edits a host's config and never prints a server's values; grok is not a target)*
+- [x] **RUN-02**: The runner accepts a session id and prints the one it used, so a lane can resume across rounds.
   *(amended 2026-11-16, 37 D-03: one `--session-id` flag, `session=` in the status line, chosen or minted per runtime row,
   a rejected id fails visibly)*
 - [ ] **RUN-03**: An opt-in idle watchdog ends a lane's process group after a set time without output, using the
@@ -399,7 +405,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   Phase 38's outcomes `partial` and `locked`; four hosts' own "model does not exist" wording was captured live on 2026-11-16 and is
   added per host, labeled verified; the listed real-run bodies are added labeled unverified where no body was captured; the five
   rows with recorded real evidence are promoted)*
-- [ ] **RUN-06**: A test keeps the runner template and the rendered project copy in sync. *(amended 2026-11-16, 37 D-18:
+- [x] **RUN-06**: A test keeps the runner template and the rendered project copy in sync. *(amended 2026-11-16, 37 D-18:
   the test renders into a scratch project and reads no `.planning/` path; `tools/check_dogfood.py` stays the live check)*
 - [ ] **RUN-07**: An execute run through the runner records a start-of-run tree baseline and takes a run lock,
   because the lock exists to stop two runs from sharing one checkout: two runs started at once on the same checkout
@@ -438,7 +444,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   quota errors" means 5xx on every lane and quota on confirmed router lanes only; a direct lane keeps the 2026-11-02 rule (a quota
   error stops at once). Evidence: 34 router cooldowns, 24 under 2 minutes and 8 over 4 hours; recorded in
   `38.1-RETRY-POLICY.md`)*
-- [ ] **RUN-12**: Where herdr is available at runtime (`HERDR_ENV=1` and the `herdr` CLI), the runner may run a lane in a tab it
+- [x] **RUN-12**: Where herdr is available at runtime (`HERDR_ENV=1` and the `herdr` CLI), the runner may run a lane in a tab it
   opens and closes what it opened when the lane ends; the lane's command line, settings, session id, classification and exit codes
   are identical to the headless run, and the headless path stays the unchanged default, tested without herdr, with `--host none`
   and with `AIKIT_HOST=none`. A pane has no exit code, so a hosted lane reports through its own files (output, error, exit code),
@@ -1113,18 +1119,18 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | EXE-07 | Phase 42 | Pending |
 | EXE-08 | Phase 41 | Pending |
 | EXE-09 | Phase 41 | Pending |
-| RUN-01 | Phase 37 | Pending |
-| RUN-02 | Phase 37 | Pending |
+| RUN-01 | Phase 37 | Complete |
+| RUN-02 | Phase 37 | Complete |
 | RUN-03 | Phase 38 | Pending |
 | RUN-04 | Phase 38 | Pending |
 | RUN-05 | Phase 38.1 | Pending |
-| RUN-06 | Phase 37 | Pending |
+| RUN-06 | Phase 37 | Complete |
 | RUN-07 | Phase 38 | Pending |
 | RUN-08 | Phase 38 | Pending |
 | RUN-09 | Phase 38.1 | Pending |
 | RUN-10 | Phase 38.1 | Pending |
 | RUN-11 | Phase 38.1 | Pending |
-| RUN-12 | Phase 37 | Pending |
+| RUN-12 | Phase 37 | Complete |
 | RUN-13 | Phase 38 | Pending |
 | RUN-14 | Phase 38.1 | Pending |
 | RUN-15 | Phase 39.1 | Pending |

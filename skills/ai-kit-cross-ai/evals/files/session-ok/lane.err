@@ -1,0 +1,4 @@
+cross-ai: setting model=fake/ok applied
+cross-ai: setting provider=fake applied
+cross-ai: setting role=review applied
+AIKIT-XAI status=ok cli=opencode model=fake/ok exit=0 cli_rc=0 elapsed=0s out=296 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_1 applied=model,provider,role ignored=- unknown=- escalate=-

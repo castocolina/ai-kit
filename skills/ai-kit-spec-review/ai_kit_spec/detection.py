@@ -72,16 +72,6 @@ _LABEL_CODEX = (
 _LABEL_CLAUDE = "live-verified (01.2) via the process's own env dump."
 
 
-class ExecFormula(NamedTuple):
-    """The runner's exec entry for one runtime (36 D-08): the leading argv tokens its
-    --print-argv prints in exec mode, or None when the runner's exec entry is null.
-    tests/test_ai_kit_spec_exec_formula_e2e.py fails on drift; Phase 37 deletes this mirror.
-    """
-
-    head: tuple[str, ...] | None
-    source: str
-
-
 class Advice(NamedTuple):
     """Seed advice the wizard and the preview show, labelled unverified; no branch reads it
     (36 SPEC R7).
@@ -100,7 +90,6 @@ class Runtime(NamedTuple):
     model_suffix: str | None = None
     multi_provider: bool = False
     runner: bool = True
-    exec_formula: ExecFormula | None = None
     advice: Advice | None = None
 
 
@@ -113,8 +102,6 @@ RUNTIMES: dict[str, Runtime] = {
         (("PI_CODING_AGENT", _LABEL_PI),),
         list_argv=PI_RPC_ARGS,
         model_suffix=r":(?:off|minimal|low|medium|high|xhigh|max)$",
-        exec_formula=ExecFormula(
-            ("-p", "--model"), "cross-ai.mjs RUNTIMES.pi.exec, read 2026-11-20"),
     ),
     "opencode": Runtime(
         ("opencode",),
@@ -122,8 +109,6 @@ RUNTIMES: dict[str, Runtime] = {
         list_argv=("models",),
         model_suffix=r"#[^#/]+$",
         multi_provider=True,
-        exec_formula=ExecFormula(
-            ("run", "--model"), "cross-ai.mjs RUNTIMES.opencode.exec, read 2026-11-20"),
     ),
     "cursor": Runtime(
         ("cursor-agent", "agent"),
@@ -131,34 +116,23 @@ RUNTIMES: dict[str, Runtime] = {
         list_argv=("models",),
         model_suffix=r"\[[^\]]*\]$",
         multi_provider=True,
-        exec_formula=ExecFormula(
-            ("-p", "--output-format", "json", "--model"),
-            "cross-ai.mjs RUNTIMES.cursor.exec, read 2026-11-20"),
     ),
     "codex": Runtime(
         ("codex",),
         (("CODEX_THREAD_ID", _LABEL_CODEX), ("CODEX_VERSION", _LABEL_CODEX)),
         scrub_signals=("CODEX_SANDBOX",),
         list_argv=("debug", "models"),
-        exec_formula=ExecFormula(
-            ("exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "-C"),
-            "cross-ai.mjs RUNTIMES.codex.exec, read 2026-11-20"),
     ),
     "claude": Runtime(
         ("claude",),
         (("CLAUDECODE", _LABEL_CLAUDE),),
         scrub_signals=("CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"),
         native_selectors=("fable", "opus", "sonnet", "haiku"),
-        exec_formula=ExecFormula(
-            None, "cross-ai.mjs RUNTIMES.claude.exec is null, read 2026-11-20"),
         advice=Advice("usually the main agent in this host", "seed row"),
     ),
     # copilot has no known host signal (unverified) and its runner rows are unverified.
     "copilot": Runtime(
-        ("copilot",), (), runner=True,
-        exec_formula=ExecFormula(
-            ("-p", "<prompt>", "-s", "--no-ask-user", "--model"),
-            "cross-ai.mjs RUNTIMES.copilot.exec, read 2026-11-20")),
+        ("copilot",), (), runner=True),
     "grok": Runtime(
         ("grok",),
         (),
@@ -168,21 +142,6 @@ RUNTIMES: dict[str, Runtime] = {
 }
 
 KNOWN_CLIS = tuple(RUNTIMES)
-
-
-def has_exec_formula(row: Runtime) -> bool:
-    """True when the runner has an exec formula for this row (36 D-08): the one predicate
-    the execute set and routing read.
-    """
-    return row.exec_formula is not None and row.exec_formula.head is not None
-
-
-NO_RUNNER_ENTRY = "cross-ai.mjs RUNTIMES has no entry for this runtime"
-
-
-def exec_formula_source(row: Runtime) -> str:
-    """The source label a no-formula refusal cites (36 SPEC R7)."""
-    return row.exec_formula.source if row.exec_formula is not None else NO_RUNNER_ENTRY
 
 
 def advice_line(runtime: str) -> str | None:
@@ -987,6 +946,36 @@ def _signal_server(proc, sig) -> None:
             proc.terminate()
         else:
             proc.kill()
+
+
+def run_in_own_group(argv, *, timeout, capture_output=False, check=False,
+                     **kwargs: Any) -> subprocess.CompletedProcess:
+    """`subprocess.run` for a short node child, but the child leads its own session and, on a
+    timeout or any other error, its whole process group is killed. A launcher shim that runs
+    itself again (Volta's `node` under a HOME without its toolchain) forks a chain inside that
+    group; `subprocess.run` would kill only the first link and leave the chain forking."""
+    if capture_output:
+        kwargs["stdout"] = kwargs["stderr"] = subprocess.PIPE
+    with subprocess.Popen(argv, start_new_session=True, **kwargs) as proc:
+        finished = False
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            finished = True
+        finally:
+            if not finished:  # the leader is not reaped yet, so its group id is still ours
+                _signal_server(proc, _SIGKILL)
+    result = subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+    if check:
+        result.check_returncode()
+    return result
+
+
+_real_run = subprocess.run  # captured at import, so a test's mock.patch never compares equal
+
+
+def bounded_run(run_fn):
+    """The real `subprocess.run` becomes run_in_own_group; any other run_fn is a test seam."""
+    return run_in_own_group if run_fn is _real_run else run_fn
 
 
 _SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)

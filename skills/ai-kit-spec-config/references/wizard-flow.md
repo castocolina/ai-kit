@@ -45,13 +45,13 @@ A stored model id that already carries an effort keeps it; a different `effort` 
 
 ## 6. Test the pair
 
-Run Step 2.5's write-risk question and test call for every chosen table-runtime lane. For a zero-price lane, say in one line before the call: "This test call spends part of the lane's allowance." On a skipped write-risk question no call runs and Step 2.5 saves the lane as untested. A lane the owner drops after a failed test leaves the set.
+Run Step 2.5's write-risk question and test call for every chosen lane: a table-runtime lane with `--runtime`, and a custom entry (no `runtime`) with `--command '<template>'`. A custom command has no profile, so its write risk is unconfirmed: show its template, ask the write-risk question, and run the call only on yes; on skip, save it as untested like any other skipped lane. For a zero-price lane, say in one line before the call: "This test call spends part of the lane's allowance." On a skipped write-risk question no call runs and Step 2.5 saves the lane as untested. A lane the owner drops after a failed test leaves the set.
 
 Then, for each kept lane, run the code-index alternative check of [`cli-model-selection.md`](cli-model-selection.md) item 6 (it prints a non-null `alternative_cli` only for a CLI whose codebase-memory-mcp registration ai-kit cannot read) before step 7:
 
 - Run: `check-code-index-alternative --runtime <runtime-id> --model <model-id> --runtimes-json <runtimes.json>`
 
-  When `alternative_cli` is not null, tell the owner in one line, as item 6 says; the owner still decides, and nothing is replaced or dropped.
+  When `alternative_cli` is not null, tell the owner in one line, as item 6 says; the owner still decides, and nothing is replaced or dropped. A custom lane passes the id of the CLI its command wraps as `--runtime` (the runtime `build-command` printed it for); a script that wraps no known CLI skips this check, and the owner is told so in one line.
 
 ## 7. Session default
 

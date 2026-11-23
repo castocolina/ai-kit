@@ -22,6 +22,7 @@ from ai_kit_spec import (
     provider_check,
     role_orders,
     routing,
+    runner_facts,
     secret_shapes,
     toml_splice,
     trust,
@@ -44,7 +45,6 @@ from ai_kit_spec.catalog_labels import now_iso
 from ai_kit_spec.commands import (
     ResolvedReviewer,
     build_grok_command,
-    build_reviewer_model_id,
     execute_cli_error,
     render_reviewer_command,
     split_command_template,
@@ -116,6 +116,8 @@ from ai_kit_spec.routing import RuntimesSeams
 from ai_kit_spec.runner_dispatch import (
     RunnerSpec,
     build_runner_argv,
+    preview_model_id,
+    print_argv_lines,
     review_spec,
     run_custom_command,
     run_runner,
@@ -298,9 +300,8 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
 
 
 
-_EFFORT_HELP = ("the lane's effort level: codex gets --codex-effort; pi, cursor and opencode "
-                "carry it in the model id (:level, [effort=...], #variant); any other runtime "
-                "passes nothing and prints an 'ignored:' line naming the reason")
+_EFFORT_HELP = ("the lane's effort level, passed to the runner as --effort; the runner "
+                "applies it in the runtime's own form or reports it ignored with a reason")
 
 
 def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
@@ -360,6 +361,9 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
     p_build_cmd = sub.add_parser("build-command")
     p_build_cmd.add_argument("--runtime", "--cli", dest="runtime", required=True,
                               help="runtime id, e.g. opencode, cursor")
+    p_build_cmd.add_argument("--role", choices=["review", "execute"], default="review",
+                              help="the lane role; execute builds the exec-mode flags "
+                                   "(default review)")
     p_build_cmd.add_argument("--effort", default=None, help=_EFFORT_HELP)
     p_build_cmd.add_argument("--service-tier", default=None)
     p_build_cmd.add_argument("--mode", default=None,
@@ -523,6 +527,9 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
     # bounded refresh cannot drift.
     if (args.if_stale and not args.extra_runtime
             and routing.runtimes_cache_is_fresh(args.if_stale, deps.env_fn())):
+        cached = cache_read_json(args.if_stale) or {}
+        if runner_facts.refresh_fact(cached, deps.which_fn, deps.run_fn):
+            cache_write_json(args.if_stale, cached)
         print(json.dumps({}))  # fresh — caller should treat this as "nothing to do"
         return 0
     snapshot = build_runtimes_snapshot(which_fn=deps.which_fn, run_fn=deps.run_fn,
@@ -530,6 +537,7 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
                                         opencode=OpencodeSeams(deps.popen_fn, deps.urlopen_fn,
                                                                deps.env_fn()))
     snapshot["clis"].update(detect_unlisted_runtimes(args.extra_runtime, deps.which_fn))
+    runner_facts.refresh_fact(snapshot, deps.which_fn, deps.run_fn)
     save_path = args.if_stale or args.save
     if save_path:
         cache_write_json(save_path, snapshot)
@@ -1049,9 +1057,6 @@ def _preview_notes(entry: dict) -> list[str]:
             return []
         return [lane_effort.NO_RUNTIME_IGNORED]
     notes = []
-    ignored = _display_spec(entry).ignored
-    if ignored:
-        notes.append(ignored)
     advice = advice_line(entry["runtime"])
     if advice is not None:
         notes.append(f"advice for {entry['runtime']}: {advice}")
@@ -1162,14 +1167,13 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
     rid = runtime_id(args.runtime)
     row = RUNTIMES.get(rid)
     if row is not None and row.runner:
-        spec = spec_with_effort(rid, "{model}", "review", 600, {
+        spec = spec_with_effort(rid, "{model}",
+                                "exec" if args.role == "execute" else "review", 600, {
             "effort": args.effort, "service_tier": args.service_tier,
             "cursor_mode": args.mode if rid == "cursor" else None,
         })
         argv = build_runner_argv(spec, "<runner>", "node")
         print(json.dumps({"kind": "runner", "argv": argv}))
-        if spec.ignored:
-            print(f"build-command: {spec.ignored}", file=sys.stderr)
         print(f"build-command: a config.toml lane stores runtime and model for {rid}; "
               f"the runner builds this argv at dispatch", file=sys.stderr)
         return 0
@@ -1182,10 +1186,36 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
           f"hand-written command", file=sys.stderr)
     return 1
 
+def _with_fast(base: str, fast: str) -> str:
+    # The runner has no fast setting; this is cursor's own bracket key.
+    # The runner composes effort and context.
+    if base.endswith("]") and "[" in base:
+        return f"{base[:-1]},fast={fast}]"
+    return f"{base}[fast={fast}]"
+
+
 def _cmd_build_model_id(args: argparse.Namespace, deps: CliDeps) -> int:
-    fast = {"true": True, "false": False, None: None}[args.fast]
-    print(build_reviewer_model_id(runtime_id(args.runtime), args.base_model, effort=args.effort,
-                                   fast=fast, context=args.context))
+    rid = runtime_id(args.runtime)
+    base = args.base_model
+    if args.fast is not None:
+        if rid == "cursor":
+            base = _with_fast(base, args.fast)
+        else:
+            print("build-model-id: --fast applies to cursor only; ignored", file=sys.stderr)
+    lines = print_argv_lines(RunnerSpec(rid, base, "review", 30, effort=args.effort,
+                                        context=args.context))
+    if lines is None:
+        print("build-model-id: the runner preview did not run "
+              "(node or the runner template is missing)", file=sys.stderr)
+        return 1
+    for line in lines:
+        if line.startswith("cross-ai: setting "):
+            print(f"build-model-id: {line}", file=sys.stderr)
+    model = preview_model_id(lines)
+    if model is None:
+        print("build-model-id: the runner printed no model-id line", file=sys.stderr)
+        return 1
+    print(model)
     return 0
 
 def _cmd_group_models(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -1203,10 +1233,10 @@ def _cmd_check_code_index_alternative(args: argparse.Namespace, deps: CliDeps) -
     return 0
 
 def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
-    # D-15 hardening: an explicit claude/grok executor choice is rejected before the prompt
-    # is read or any dispatch function is called -- nothing is spawned, ever.
+    # 37 R9: a recorded runner fact that says no exec formula fails before the prompt
+    # is read or any dispatch function is called.
     rid = runtime_id(args.runtime)
-    rejection = execute_cli_error(rid)
+    rejection = execute_cli_error(rid, runner_facts.stored_fact(dict(os.environ)))
     if rejection:
         print(f"ai-kit-spec: {rejection}", file=sys.stderr)
         return 2

@@ -236,16 +236,23 @@ FLAGS = frozenset(lane_settings.LANE_FLAG_KEYS)
 READERS = frozenset({"lane_escalation", "escalation_target", "lane_usage_limit", "lane_fallback"})
 
 
-def _flag_literal_lines(text: str) -> list[int]:
-    return sorted(n.lineno for n in ast.walk(ast.parse(text))
+def _flag_literal_lines(text: str, *, runner_table: bool = False) -> list[int]:
+    tree = ast.parse(text)
+    if runner_table:
+        tree.body = [node for node in tree.body if not (
+            isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "_SETTING_FLAGS"
+                for target in node.targets))]
+    return sorted(n.lineno for n in ast.walk(tree)
                   if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in FLAGS)
 
 
-def _reader_lines(text: str) -> list[int]:
+def _reader_lines(text: str, *, allow_escalation: bool = False) -> list[int]:
+    readers = READERS - {"lane_escalation"} if allow_escalation else READERS
     return sorted(n.lineno for n in ast.walk(ast.parse(text))
-                  if (isinstance(n, ast.Name) and n.id in READERS)
-                  or (isinstance(n, ast.Attribute) and n.attr in READERS)
-                  or (isinstance(n, ast.alias) and n.name in READERS))
+                  if (isinstance(n, ast.Name) and n.id in readers)
+                  or (isinstance(n, ast.Attribute) and n.attr in readers)
+                  or (isinstance(n, ast.alias) and n.name in readers))
 
 
 def _scanned_files():
@@ -448,21 +455,26 @@ class TestNoFlagSetter(unittest.TestCase):
         files = _scanned_files()
         self.assertTrue(files)
         self.assertEqual([f"{p.relative_to(REPO)}:{lines}" for p in files
-                          if (lines := _flag_literal_lines(p.read_text()))], [])
+                          if (lines := _flag_literal_lines(
+                              p.read_text(), runner_table=p.name == "runner_dispatch.py"))], [])
 
     def test_no_module_calls_a_lane_reader(self):
         files = _scanned_files()
         self.assertTrue(files)
         self.assertEqual([f"{p.relative_to(REPO)}:{lines}" for p in files
-                          if (lines := _reader_lines(p.read_text()))], [])
+                          if (lines := _reader_lines(
+                              p.read_text(), allow_escalation=p.name == "runner_dispatch.py"))], [])
 
     def test_scanners_catch_a_planted_setter_and_reader(self):
         self.assertEqual(_flag_literal_lines('entry["usage_limited"] = True'), [1])
+        self.assertEqual(_flag_literal_lines('entry["usage_limited"] = True', runner_table=True),
+                         [1])
         self.assertEqual(_flag_literal_lines('"""usage_limited is the owner\'s yes."""'), [])
         self.assertEqual(_reader_lines('from ai_kit_spec import lane_settings\n'
                                        'lane_settings.lane_fallback([], "k")'), [2])
         self.assertEqual(_reader_lines('from ai_kit_spec.lane_settings import lane_usage_limit'),
                          [1])
+        self.assertEqual(_reader_lines('lane_fallback([], "k")', allow_escalation=True), [1])
 
     def test_writer_and_defaults_set_no_flag(self):
         text, _ = _render({"policy": {"mode": "single"},

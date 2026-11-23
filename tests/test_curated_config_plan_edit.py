@@ -36,9 +36,10 @@ def _read_bytes(path: str) -> bytes:
 
 
 def _run_plan_set(plan_path, inv_path, key, value, *, force=False):
-    flags = ["plan-set", key, value, "--plan", plan_path, "--inventory", inv_path]
+    flags = ["plan-set", "--plan", plan_path, "--inventory", inv_path]
     if force:
         flags.append("--force")
+    flags.extend(["--", key, value])
     out, err = io.StringIO(), io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
         code = cli.main(flags)
@@ -706,26 +707,38 @@ class TestPlanValidator(unittest.TestCase):
                 entry["status"] = "needs_choice"
         self.assertIsNone(plan_io.validate_plan(plan))
 
-    def test_artifact_effort_rules(self):
-        """WR-06: effort is optional; only pinnable runners, known levels, with a model."""
-        for effort, ok in (
-            ({}, True),
-            ({"pi": "medium"}, True),
-            ({"pi": "max"}, True),
-            ({"pi": "bogus"}, False),
-            ({"cursor": "medium"}, False),
-            ({"codex": "medium"}, False),  # codex has no model in this plan
-            (["medium"], False),
+    def test_artifact_effort_is_a_token_on_a_runner_with_a_model(self):
+        """WR-06 / 37 D-07: effort is optional; any runner with a model, any level token."""
+        for effort, want in (
+            ({}, None),
+            ({"pi": "medium"}, None),
+            ({"pi": "max"}, None),
+            ({"pi": "ultra"}, None),
+            ({"cursor": "medium"}, None),
+            ({"opencode": "xhigh"}, None),
+            ({"codex": "medium"}, "artifacts[0].config.effort: id 'codex' has no model"),
+            (["medium"], "artifacts[0].config.effort: expected object"),
         ):
             with self.subTest(effort=effort):
                 plan = self._golden_plan()
                 plan["artifacts"][0]["config"]["effort"] = effort
                 problem = plan_io.validate_plan(plan)
-                if ok:
+                if want is None:
                     self.assertIsNone(problem)
                 else:
-                    self.assertIsNotNone(problem)
-                    self.assertIn("effort", str(problem))
+                    self.assertIn(want, str(problem))
+
+    def test_artifact_effort_outside_the_token_shape_is_refused(self):
+        """Non-vacuity: every level outside the D-07 shape is refused, the value not echoed."""
+        pattern = cross_ai.EFFORT_LEVEL_RE.pattern
+        for level in ("High", "hi gh", "-low", "a" * 17, "", 3, None):
+            with self.subTest(level=level):
+                plan = self._golden_plan()
+                plan["artifacts"][0]["config"]["effort"] = {"pi": level}
+                self.assertEqual(
+                    plan_io.validate_plan(plan),
+                    f"artifacts[0].config.effort.pi: level must be a token matching {pattern}",
+                )
 
     def test_artifact_bad_path(self):
         plan = self._golden_plan()
@@ -743,14 +756,17 @@ class TestPlanValidator(unittest.TestCase):
         assert problem is not None
         self.assertIn("runtime", problem)
 
-    def test_saved_pi_model_outside_the_runner_grammar_refused(self):
-        """D-14: a saved model id the runner would refuse is refused at plan time."""
+    def test_saved_model_outside_the_floor_refused_and_an_unusual_shape_kept(self):
         plan = self._golden_plan()
-        plan["artifacts"][0]["config"]["models"]["pi"] = "glm"
+        models = plan["artifacts"][0]["config"]["models"]
+        models["pi"] = "placeholder-model-1"
+        self.assertIsNone(plan_io.validate_plan(plan))
+        models["cursor"] = "placeholder-model-1[effort=high]"
+        self.assertIsNone(plan_io.validate_plan(plan))
+        models["pi"] = "-placeholder-model-1"
         problem = plan_io.validate_plan(plan)
-        self.assertIsNotNone(problem)
         assert problem is not None
-        self.assertIn("pi grammar", problem)
+        self.assertIn("must match the runner floor", problem)
 
     def test_trusted_root_abs_without_existing(self):
         plan = self._golden_plan()
@@ -1018,10 +1034,14 @@ class TestScriptPseudoKeys(unittest.TestCase):
             )
             self.assertEqual(cmd.get("status"), "needs_choice")
 
-    def test_model_set_adds_any_installed_runner_and_checks_its_grammar(self):
-        """D-14: a menu entry needs no prefer membership, and the runner grammar applies."""
+    def test_model_set_adds_any_installed_runner_and_checks_the_floor(self):
+        """A menu entry needs no prefer membership, and the runner floor applies."""
         with tempfile.TemporaryDirectory() as tmp:
-            inv_path, plan_path, _inv, _plan = self._setup_partial(tmp)
+            inv_path, plan_path, inv, plan = self._setup_partial(tmp)
+            inv["candidates"].append(cand("placeholder-model-1", runtime="pi", is_host=False))
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                json.dump(inv, handle)
+            _save_plan(plan_path, inv, plan)
             code, _, err = _run_plan_set(
                 plan_path, inv_path, "script:cross-ai.model.opencode", "openai/gpt-5.6-sol"
             )
@@ -1031,12 +1051,16 @@ class TestScriptPseudoKeys(unittest.TestCase):
             art = reloaded["artifacts"][0]
             self.assertEqual(art["config"]["models"]["opencode"], "openai/gpt-5.6-sol")
             self.assertNotIn("opencode", art["choices"])
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "script:cross-ai.model.pi", "placeholder-model-1"
+            )
+            self.assertEqual(code, 0, err)
             raw = _read_bytes(plan_path)
             code, _, err = _run_plan_set(
-                plan_path, inv_path, "script:cross-ai.model.pi", "glm", force=True
+                plan_path, inv_path, "script:cross-ai.model.pi", "-placeholder-model-1", force=True
             )
             self.assertEqual(code, 2)
-            self.assertIn("pi grammar", err)
+            self.assertIn("must match", err)
             self.assertEqual(_read_bytes(plan_path), raw)
 
     def test_old_prefer_key_refused(self):

@@ -20,7 +20,7 @@ Seed rows are labeled seed, unverified. For web discovery, request the fixed que
 - Run: `web-query --runtime <runtime>`
 - Run: `record-web-names --file <web-result.json>`
 
-Only when `HERDR_ENV=1`, first tell the owner that copilot will start in a herdr pane with its permission prompts off and will only receive `/model`; then run:
+Only when `HERDR_ENV=1` and the owner chose copilot as a preferred runtime, first tell the owner that copilot will start in a herdr pane with its permission prompts off and will only receive `/model`, and ask whether to start it, with "skip" first/default. A notice is not consent: on skip, or with no answer, start nothing and ask for an id or `auto`. Only on an explicit yes, run:
 
 - Run: `herdr-names --runtime copilot`
 

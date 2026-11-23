@@ -1,0 +1,193 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=304s out=641245 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_dffca063affeue83O21n5QtR5S applied=model,provider,role ignored=- unknown=- escalate=-",
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"opencode:router-env/my-referee-one\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":18,\"D2\":15,\"D3\":15,\"D4\":14,\"D5\":13,\"D6\":13,\"D7\":12,\"D8\":7},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":107,\"max_total\":125,\"percent\":85.6,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":28,\"evidence\":\"“When a run, a review or an execution step calls an external AI CLI and acts on the result” repeats the frontmatter trigger without adding a decision or constraint.\",\"fix\":\"Keep the trigger in the frontmatter and record that the duplicate body paragraph was consolidated there.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":4,\"evidence\":\"“Use when you run, wait for, read, retry or chain an external AI CLI … through ai-kit's cross-AI runner” covers execution and failures well, but does not name the supported intents of stopping herdr tabs or configuring the runner's retry policy.\",\"fix\":\"Use to launch, inspect, resume, or retry an external AI lane through ai-kit's cross-ai.mjs (pi, OpenCode, Codex, Cursor, Copilot, or Claude). Use when asked to continue the same reviewer, stop lanes from opening herdr tabs, pass effort, context, skills, or MCP settings, explain an ignored setting, or run a CLI with --argv-file. Interpret AIKIT-XAI, exit 75 or 69, 429, and retry_after_s; handle same-lane waits and GSD retry/skip/abort without switching harness, provider, or model. Also use for ai-kit's [runner.retry] policy and error catalog, not for reviewer roster setup or general GSD configuration.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":93,\"evidence\":\"The always-loaded body describes transport internals such as “run.json first, then the env and prompt files (mode 0600 …), and the launcher's out, err, pid and rc”, which a headless launch or saved-result diagnosis does not need.\",\"fix\":\"Keep the host default, opt-out, and verdict rule inline. Move the run-directory layout, cleanup, and transport limits to a Herdr section in references/launch-and-wait.md, and direct callers there only when selecting or diagnosing herdr hosting.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":83,\"evidence\":\"The shared launch example hardcodes “--role execute”, even though the same workflow handles reviews. Copying it for a review selects the write-capable contract.\",\"fix\":\"Use an explicitly selected role in the main and per-host launch examples. Require review requests to use --role review and reserve --role execute for authorized changes; stop before launching if the role is unresolved.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/evals.json\",\"line\":6,\"evidence\":\"“Run plan-review.md … with the model fake/ok” supplies no input files or fake-runtime setup. The suite has a fixture-backed auth stop but no output case for a hard-tier wait, a central branch of the skill.\",\"fix\":\"Supply the prompt and a hermetic runtime setup for the launch case, or make the expected output a command rather than a live run. Add a hard-tier stderr fixture and assert that the caller uses retry_after_s, preserves the lane, and prints a handoff without scheduling when no scheduler is available.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/evals/trigger-queries.json\",\"line\":31,\"evidence\":\"The 8 positive and 8 negative queries include useful near-misses, but most positives name the runner or its terminology directly, as in “Stop cross-ai lanes from opening herdr tabs when I run reviews”.\",\"fix\":\"Add a context-rich positive that asks to keep a second review in the same external session without naming cross-ai, and a paired negative for resuming a native session without the runner.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":43,\"evidence\":\"“The runner … never checks a value against a list of levels or models” contradicts cross-ai.mjs:15024–15038: when live model listing succeeds, an unlisted model is refused as bad_model before dispatch.\",\"fix\":\"Distinguish owner choice from validation: the runner does not choose a fallback, but it refuses an unlisted model when live preflight succeeds; if listing is unavailable, it reports that the model was not preflighted.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":153,\"evidence\":\"“A bare exit 75 comes from that dirty-tree gate or from an unwritable state file” omits off-router quota. The template's plain-quota-no-retry case at cross-ai.mjs:9367–9378 exits 75 after one call and writes no state.\",\"fix\":\"Keep the stop rule for every bare 75. Explain that off-router quota can end with stopped=class and no state file, so diagnose from the report rather than assuming a tree or state-write failure.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":219,\"evidence\":\"“Print the cross-ai: report, the cross-ai: upstream lines and the AIKIT-XAI line verbatim” assumes upstream lines exist. A later call refused by a persisted stop has no upstream body; cross-ai.mjs:1268–1283 prints those lines only when one exists.\",\"fix\":\"Print the report and final status line, and quote upstream lines verbatim only when present. Treat upstream=- as no upstream evidence; do not invent lines or retry to obtain them. Apply the same wording in the quota reference.\"},{\"id\":\"D8-4\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":230,\"evidence\":\"“Pick the first whole minute at or after retry_after_s (never earlier)” can schedule an early wake: Anthropic's scheduled-tasks documentation says one-shot tasks on :00 or :30 may fire up to 90 seconds early.\",\"fix\":\"Schedule the first local minute at or after the due time that is not :00 or :30. Confirm the effective fire time before telling the owner it is scheduled; if it cannot be verified, use the existing manual handoff. Cite https://code.claude.com/docs/en/scheduled-tasks#when-a-one-shot-task-runs-early with the date checked.\"}]}"
+  }
+ ],
+ "digest": "5233eed1b54d171470986b1b8aa6eb3ffa3c83f04edfdeb4bec77085591d895d",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "fbdac1e55606d6cb4bd680b275bf3eac300c4fc545c6a093e3e0b0c6b1e5ec85"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-one",
+ "loop": "37",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_settings_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_staged_mapper.py"
+ ],
+ "prompt_sha256": "9a5a59607178baec610bd54ca1a8698673ec474a815db2c54b4403e0531d2e73",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "“When a run, a review or an execution step calls an external AI CLI and acts on the result” repeats the frontmatter trigger without adding a decision or constraint.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Keep the trigger in the frontmatter and record that the duplicate body paragraph was consolidated there.",
+    "id": "D1-1",
+    "line": 28,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "“Use when you run, wait for, read, retry or chain an external AI CLI … through ai-kit's cross-AI runner” covers execution and failures well, but does not name the supported intents of stopping herdr tabs or configuring the runner's retry policy.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use to launch, inspect, resume, or retry an external AI lane through ai-kit's cross-ai.mjs (pi, OpenCode, Codex, Cursor, Copilot, or Claude). Use when asked to continue the same reviewer, stop lanes from opening herdr tabs, pass effort, context, skills, or MCP settings, explain an ignored setting, or run a CLI with --argv-file. Interpret AIKIT-XAI, exit 75 or 69, 429, and retry_after_s; handle same-lane waits and GSD retry/skip/abort without switching harness, provider, or model. Also use for ai-kit's [runner.retry] policy and error catalog, not for reviewer roster setup or general GSD configuration.",
+    "id": "D4-1",
+    "line": 4,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "The always-loaded body describes transport internals such as “run.json first, then the env and prompt files (mode 0600 …), and the launcher's out, err, pid and rc”, which a headless launch or saved-result diagnosis does not need.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Keep the host default, opt-out, and verdict rule inline. Move the run-directory layout, cleanup, and transport limits to a Herdr section in references/launch-and-wait.md, and direct callers there only when selecting or diagnosing herdr hosting.",
+    "id": "D5-1",
+    "line": 93,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "The shared launch example hardcodes “--role execute”, even though the same workflow handles reviews. Copying it for a review selects the write-capable contract.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use an explicitly selected role in the main and per-host launch examples. Require review requests to use --role review and reserve --role execute for authorized changes; stop before launching if the role is unresolved.",
+    "id": "D6-1",
+    "line": 83,
+    "severity": "high"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“Run plan-review.md … with the model fake/ok” supplies no input files or fake-runtime setup. The suite has a fixture-backed auth stop but no output case for a hard-tier wait, a central branch of the skill.",
+    "file": "skills/ai-kit-cross-ai/evals/evals.json",
+    "fix": "Supply the prompt and a hermetic runtime setup for the launch case, or make the expected output a command rather than a live run. Add a hard-tier stderr fixture and assert that the caller uses retry_after_s, preserves the lane, and prints a handoff without scheduling when no scheduler is available.",
+    "id": "D7-1",
+    "line": 6,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The 8 positive and 8 negative queries include useful near-misses, but most positives name the runner or its terminology directly, as in “Stop cross-ai lanes from opening herdr tabs when I run reviews”.",
+    "file": "skills/ai-kit-cross-ai/evals/trigger-queries.json",
+    "fix": "Add a context-rich positive that asks to keep a second review in the same external session without naming cross-ai, and a paired negative for resuming a native session without the runner.",
+    "id": "D7-2",
+    "line": 31,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“The runner … never checks a value against a list of levels or models” contradicts cross-ai.mjs:15024–15038: when live model listing succeeds, an unlisted model is refused as bad_model before dispatch.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Distinguish owner choice from validation: the runner does not choose a fallback, but it refuses an unlisted model when live preflight succeeds; if listing is unavailable, it reports that the model was not preflighted.",
+    "id": "D8-1",
+    "line": 43,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“A bare exit 75 comes from that dirty-tree gate or from an unwritable state file” omits off-router quota. The template's plain-quota-no-retry case at cross-ai.mjs:9367–9378 exits 75 after one call and writes no state.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Keep the stop rule for every bare 75. Explain that off-router quota can end with stopped=class and no state file, so diagnose from the report rather than assuming a tree or state-write failure.",
+    "id": "D8-2",
+    "line": 153,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“Print the cross-ai: report, the cross-ai: upstream lines and the AIKIT-XAI line verbatim” assumes upstream lines exist. A later call refused by a persisted stop has no upstream body; cross-ai.mjs:1268–1283 prints those lines only when one exists.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Print the report and final status line, and quote upstream lines verbatim only when present. Treat upstream=- as no upstream evidence; do not invent lines or retry to obtain them. Apply the same wording in the quota reference.",
+    "id": "D8-3",
+    "line": 219,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“Pick the first whole minute at or after retry_after_s (never earlier)” can schedule an early wake: Anthropic's scheduled-tasks documentation says one-shot tasks on :00 or :30 may fire up to 90 seconds early.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Schedule the first local minute at or after the due time that is not :00 or :30. Confirm the effective fire time before telling the owner it is scheduled; if it cannot be verified, use the existing manual handoff. Cite https://code.claude.com/docs/en/scheduled-tasks#when-a-one-shot-task-runs-early with the date checked.",
+    "id": "D8-4",
+    "line": 230,
+    "severity": "high"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-one",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 85.6,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 18,
+   "D2": 15,
+   "D3": 15,
+   "D4": 14,
+   "D5": 13,
+   "D6": 13,
+   "D7": 12,
+   "D8": 7
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 107
+ }
+}

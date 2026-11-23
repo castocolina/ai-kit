@@ -17,6 +17,7 @@ from . import (
     claude_md_detect,
     config_backup,
     critical_agents,
+    cross_ai,
     cross_ai_build,
     cross_ai_script,
     frontend_detect,
@@ -226,8 +227,8 @@ def _cmd_ensure_runner(args, which_fn, run_fn, env_fn):
 
 def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
     # D-15 (Phase 16.1): validate `--cli` BEFORE the first config-set, workflow.cross_ai_execution
-    # included -- a rejected executor (claude/grok, or any unsupported name) must leave the GSD
-    # config completely untouched, on every run.
+    # included, so a rejected executor leaves the GSD config untouched. 37 R9: only a recorded
+    # runner fact refuses (none is passed here); the runner refuses an unusable runtime itself.
     if args.cli:
         rejection = cross_ai_build.reject_execute_cli(args.cli)
         if rejection:
@@ -274,11 +275,10 @@ def _model_refusal(cli_name, model) -> tuple[str, str] | None:
         return "unsafe_hook_token", (
             f"--model {model!r} is not a safe hook token "
             "(GSD splits and globs the hook unquoted)")
-    runtime = cross_ai_build.runtime_id(cli_name) if cross_ai_build.runtime_id else cli_name
-    grammar = cross_ai_build.runner_model_problem("--model", runtime, model)
-    if grammar:
+    floor = cross_ai.runner_floor_problem("--model", model)
+    if floor:
         # The runner exits 2 on every call with this id (25.1 CR-01).
-        return "unsupported_model_id", grammar
+        return "unsupported_model_id", floor
     return None
 
 

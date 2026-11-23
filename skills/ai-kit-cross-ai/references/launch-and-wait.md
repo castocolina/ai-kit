@@ -2,7 +2,8 @@
 
 Per-host patterns for section 2 and section 3 of [`../SKILL.md`](../SKILL.md). Each section below
 is named for the host the caller runs in, never for the target runtime: every example passes the
-owner's `$RUNTIME` and `$MODEL` unchanged. Pick the pattern by what the host can do: a host whose
+owner's `$RUNTIME` and `$MODEL` unchanged, the runner path `$RUNNER` section 2 resolved, and `$ROLE` as section 2 settles it (`review` for a
+review, `execute` only for an authorized change; unresolved means stop before launching). Pick the pattern by what the host can do: a host whose
 background primitive posts a completion notice uses it; any other host uses the foreground wait.
 
 Every lane writes into its own scratch directory, per section 2 of [`../SKILL.md`](../SKILL.md)
@@ -14,8 +15,8 @@ Every lane writes into its own scratch directory, per section 2 of [`../SKILL.md
 The exit code is also the `exit=` field of that last line. Stop a lane only through its own
 launch: its background task, or the foreground command you started.
 
-The report line below is copied from a hermetic runner run against a fake CLI; the ok line shows
-the shape of a finished exec lane, with illustrative values.
+Both lines below are copied from hermetic runner runs against the runner's test fake opencode
+(review role, models `fake/ok` and `fake/auth`).
 
 ## Claude Code
 
@@ -25,7 +26,7 @@ notice fires while the lane still runs. Read the lane's files only after the not
 
 ```bash
 L="$(mktemp -d)"; printf 'lane dir: %s\n' "$L"
-node .planning/scripts/cross-ai.mjs --runtime "$RUNTIME" --model "$MODEL" --mode exec \
+node "$RUNNER" --runtime "$RUNTIME" --model "$MODEL" --role "$ROLE" \
   < prompt.md > "$L/lane.out" 2> "$L/lane.err"; echo $? > "$L/lane.rc"
 ```
 
@@ -33,13 +34,13 @@ The background task identifies the lane; stop a lane by stopping its task. When 
 arrives, read `lane.rc`, then the last line of `lane.err`, for example:
 
 ```
-AIKIT-XAI status=ok cli=pi model=fake/ok exit=0 cli_rc=0 elapsed=1s out=12 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0
+AIKIT-XAI status=ok cli=opencode model=fake/ok exit=0 cli_rc=0 elapsed=0s out=296 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_1 applied=model,provider,role ignored=- unknown=- escalate=-
 ```
 
 A stop carries the report line before it:
 
 ```
-cross-ai: report status=auth lane=pi/fake/auth route=unknown attempts=1 cycles=0 first_failure=2026-10-25T17:26:29.839Z last_failure=2026-10-25T17:26:29.855Z due_at=- stopped=class upstream=present
+cross-ai: report status=auth lane=opencode/fake/auth route=unknown attempts=1 cycles=0 first_failure=2026-11-21T20:40:12.988Z last_failure=2026-11-21T20:40:13.004Z due_at=- stopped=class upstream=present
 ```
 
 On an exit 75 with `retry_after_s=`, schedule one one-shot `CronCreate` at `retry_after_s` and
@@ -81,6 +82,6 @@ command instead of scheduling a wake.
 
 ```bash
 L="$(mktemp -d)"; printf 'lane dir: %s\n' "$L"
-node .planning/scripts/cross-ai.mjs --runtime "$RUNTIME" --model "$MODEL" --mode exec \
+node "$RUNNER" --runtime "$RUNTIME" --model "$MODEL" --role "$ROLE" \
   < prompt.md > "$L/lane.out" 2> "$L/lane.err"; echo $? > "$L/lane.rc"
 ```

@@ -106,7 +106,7 @@ class QuotaExhaustedError(RuntimeError):
       - "timeout": the probe itself hung/timed out -- a broken invocation, not a rate limit.
       - "configuration": a missing/malformed command template -- a config problem.
       - "dispatch_unavailable": the CLI binary itself could not be invoked (OSError).
-      - a route name (bad_model, no_formula, not_installed, no_inventory, unknown_runtime,
+      - a route name (bad_model, no_formula, not_installed, unknown_runtime,
         no_model): the per-call route walk skipped this candidate. Permanent, like every reason
         below except "quota" -- waiting never changes which host this process runs on or which
         model a runtime lists.

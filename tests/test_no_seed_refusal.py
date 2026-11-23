@@ -1,4 +1,5 @@
-"""36 SPEC R7: no refusal path reads a runtime-table seed flag, and every refusal names a fact.
+"""36 SPEC R7 / 37 R9: no refusal path reads a runtime-table seed flag or a mirror of the
+runner's formulas, and every refusal names a fact.
 This module scans Python sources; plan 36-28 adds the Markdown scan."""
 
 import os
@@ -11,13 +12,24 @@ from pathlib import Path
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import detection, routing
+from ai_kit_spec import detection, routing, runner_facts
 from ai_kit_spec.config_io import validate_reviewer_fields
 from ai_kit_spec.execute_selection import screen_execute_clis
+from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
 REPO = Path(__file__).resolve().parents[1]
 SOURCE_ROOTS = ("skills", "tools")
 OLD_FLAG_RX = re.compile(r"\breview_only\b")
+# 37 R9: Python reads the runner's --describe fact; no Python copy of its formulas or execute set.
+MIRROR_RX = re.compile(
+    r"\b(?:exec_formula|ExecFormula|has_exec_formula|exec_formula_source|"
+    r"NO_RUNNER_ENTRY|SUPPORTED_EXECUTE_CLIS)\b"
+)
+# 37 D-06: the runner keeps the only model id floor; Python names no per-runtime grammar.
+GRAMMAR_MIRROR_RX = re.compile(
+    r"\b(?:\w*MODEL_ID_SRC|model_id_ok|model_id_src|runner_model_problem|"
+    r"PI_MODEL_ID|OPENCODE_MODEL_ID|CURSOR_MODEL_ID)\b"
+)
 _MD_SCAN_ROOT = Path(__file__).resolve().parents[1]
 SEED_FLAG_TOKEN = "review_only"
 MD_EXTRA = ("AGENTS.md", "README.md", "docs/config/design.md")
@@ -31,6 +43,40 @@ def python_sources(root: Path) -> list[str]:
 
 def flag_lines(text: str) -> list[int]:
     return [n for n, line in enumerate(text.splitlines(), 1) if OLD_FLAG_RX.search(line)]
+
+
+def mirror_lines(text: str) -> list[int]:
+    return [n for n, line in enumerate(text.splitlines(), 1) if MIRROR_RX.search(line)]
+
+
+class TestNoRunnerFormulaMirror(unittest.TestCase):
+    def test_no_python_source_mirrors_a_runner_formula(self):
+        self.assertEqual([], [f"{path}:{n}" for path in python_sources(REPO)
+                              for n in mirror_lines((REPO / path).read_text(
+                                  encoding="utf-8", errors="replace"))])
+
+    def test_scan_catches_a_planted_mirror(self):
+        self.assertEqual(mirror_lines('row.exec_formula.head\nx = 1\n'), [1])
+        self.assertEqual(mirror_lines('from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS\n'
+                                      'NO_RUNNER_ENTRY = "x"\nhas_exec_formula(row)\n'), [1, 2, 3])
+        self.assertEqual(mirror_lines('runner_facts.runner_has_exec(fact, rid)\n'), [])
+
+
+def grammar_lines(text: str) -> list[int]:
+    return [n for n, line in enumerate(text.splitlines(), 1) if GRAMMAR_MIRROR_RX.search(line)]
+
+
+class TestNoGrammarMirror(unittest.TestCase):
+    def test_no_python_source_names_a_runtime_grammar(self):
+        self.assertEqual([], [f"{path}:{n}" for path in python_sources(REPO)
+                              for n in grammar_lines((REPO / path).read_text(
+                                  encoding="utf-8", errors="replace"))])
+
+    def test_scan_catches_a_planted_grammar(self):
+        self.assertEqual(grammar_lines('x = 1\nok = model_id_ok("pi", m)\n'), [2])
+        self.assertEqual(grammar_lines('PI_MODEL_ID_SRC = "/x/"\nrunner_model_problem(a, b, c)\n'),
+                         [1, 2])
+        self.assertEqual(grammar_lines('model_id_problem(label, value)\n'), [])
 
 
 def seed_flag_markdown_hits(root: Path) -> list[str]:
@@ -77,7 +123,7 @@ class TestNoSeedFlagReader(unittest.TestCase):
 
 
 class TestClaudeExecuteLane(unittest.TestCase):
-    def test_accepted_by_config_and_selection_then_routed_no_formula(self):
+    def test_accepted_by_config_and_selection_then_routed_by_the_fact(self):
         lane = {"key": "c1", "runtime": "claude", "model": "placeholder-model-1",
                 "purpose": "execute"}
         self.assertIsNone(validate_reviewer_fields(dict(lane)))
@@ -86,11 +132,16 @@ class TestClaudeExecuteLane(unittest.TestCase):
         inventory = routing.Inventory(frozenset({"claude"}),
                                       {"claude": ("placeholder-model-1",)})
         for _ in range(2):
+            self.assertEqual(routing.route(request, "codex", "exec", inventory), "subprocess")
+        fact = {"template_sha256": runner_facts.template_sha256(resolve_cross_ai_template_path()),
+                "describe": {"runtimes": {"claude": {"formulas": {"exec": False}}}}}
+        inventory = inventory._replace(runner=fact)
+        for _ in range(2):
             self.assertEqual(routing.route(request, "codex", "exec", inventory), "no_formula")
         self.assertEqual(routing.skip_note("c1 for execution", "no_formula", "claude"),
                          "ai-kit-spec: skipping c1 for execution: route no_formula: "
                          "the runner has no exec formula for claude "
-                         "(cross-ai.mjs RUNTIMES.claude.exec is null, read 2026-11-20)")
+                         "(cross-ai.mjs --describe, recorded in the runtimes snapshot)")
 
 
 class TestOutOfTableRuntime(unittest.TestCase):

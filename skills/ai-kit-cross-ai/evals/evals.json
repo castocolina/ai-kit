@@ -1,0 +1,69 @@
+{
+ "skill_name": "ai-kit-cross-ai",
+ "evals": [
+  {
+   "id": "casual-run-review-lane",
+   "prompt": "Run plan-review.md as a review on opencode with the model fake/ok through the cross-AI runner and tell me what came back.",
+   "expected_output": "Launches the runner with --runtime opencode --model fake/ok --role review, the prompt on stdin and its own lane directory, waits for the launch to exit, then reads lane.rc and the last AIKIT-XAI line of lane.err.",
+   "files": [],
+   "assertions": [
+    "Passes --runtime opencode, --model fake/ok and --role review (or --mode review) with the prompt on stdin",
+    "Reads lane.rc and the last AIKIT-XAI line of lane.err before it reports the answer"
+   ]
+  },
+  {
+   "id": "casual-host-off",
+   "prompt": "Stop the cross-AI runner from opening herdr tabs for my lanes on this machine.",
+   "expected_output": "Sets AIKIT_HOST=none in the shell profile, or passes --host none per call, and says no config key exists; the lane then runs headless with the same argv, settings report and exit code.",
+   "files": [],
+   "assertions": [
+    "Uses AIKIT_HOST=none or --host none and names no config.toml key for hosting",
+    "Says a headless run gives the same argv, settings report and exit code as a hosted one"
+   ]
+  },
+  {
+   "id": "precise-second-round-same-session",
+   "prompt": "The first review round wrote evals/files/session-ok/lane.err. Run the second round so it continues that session.",
+   "expected_output": "Reads session=ses_1 from the status line and re-runs the same runtime, model and role with --session-id ses_1 and the second round's prompt on stdin.",
+   "files": [
+    "evals/files/session-ok/lane.err"
+   ],
+   "assertions": [
+    "Passes --session-id ses_1, the exact session= value of the first round's status line",
+    "Keeps runtime opencode, model fake/ok and role review and starts no other lane"
+   ]
+  },
+  {
+   "id": "precise-effort-id-carries",
+   "prompt": "My lane ran with `--model fake/ok#high --effort low` and printed `cross-ai: setting effort=low ignored reason=id_carries`. Why was my effort not used?",
+   "expected_output": "Explains that the model id already carries an effort (the #high suffix), which wins, so --effort low was not fed; the owner changes the lane's model id or effort to get low.",
+   "files": [],
+   "assertions": [
+    "Explains that id_carries means the model id already holds an effort value that wins over --effort",
+    "Leaves the change to the owner and never moves the lane to another runtime, provider or model"
+   ]
+  },
+  {
+   "id": "edge-auth-stop-never-switch",
+   "prompt": "Here is lane.err from a review lane: evals/files/auth-stop/lane.err. Retry it on another CLI so the review finishes.",
+   "expected_output": "Treats exit 69 with status=auth as an owner stop: prints the report, upstream and AIKIT-XAI lines verbatim, notifies the owner and refuses to move the review to another CLI or model.",
+   "files": [
+    "evals/files/auth-stop/lane.err"
+   ],
+   "assertions": [
+    "Reads status=auth exit=69 as an owner stop and prints the report, upstream and AIKIT-XAI lines verbatim",
+    "Refuses to re-run the lane on another CLI, model or harness, and says only the owner changes the lane"
+   ]
+  },
+  {
+   "id": "edge-unknown-runtime-needs-argv-file",
+   "prompt": "I ran a review on placeholder-cli-1 and got exit 2 with `cross-ai: no formula for placeholder-cli-1 in the runner; pass --argv-file, or use a runtime it has a formula for`. Make it work.",
+   "expected_output": "Explains the runner has no formula for placeholder-cli-1 and offers --argv-file: a JSON array of argv strings inside the working tree with {model}, {effort} or {session} placeholders and the prompt on stdin, without switching to a runtime the runner knows.",
+   "files": [],
+   "assertions": [
+    "Explains exit 2 as a refused call and names the missing runner formula for placeholder-cli-1",
+    "Offers --argv-file with a JSON array of argv strings, placeholders limited to {model}, {effort} and {session}, and the prompt on stdin"
+   ]
+  }
+ ]
+}

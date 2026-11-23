@@ -29,6 +29,7 @@ STALE_TEMPLATE7 = re.compile(
 sys.path.insert(0, str(REPO / "skills/ai-kit-spec-review"))
 sys.path.insert(0, str(REPO / "skills/ai-kit-gsd-curated-config"))
 
+from ai_kit_gsd_curated_config import cross_ai
 from ai_kit_gsd_curated_config.cross_ai_script import template_config
 from ai_kit_spec.runner_dispatch import parse_status_line
 
@@ -187,20 +188,20 @@ class SkillShape(unittest.TestCase):
 
 
 class CuratedConfigPins(unittest.TestCase):
-    def test_curated_docs_point_to_cross_ai_and_pin_template_eight(self):
+    def test_curated_docs_point_to_cross_ai_and_name_the_shipped_template(self):
         skill = CURATED_SKILL.read_text(encoding="utf-8")
         runner = CURATED_RUNNER.read_text(encoding="utf-8")
         for text in (skill, runner):
             self.assertIn("../ai-kit-cross-ai/SKILL.md", text)
             self.assertIsNone(STALE_TEMPLATE7.search(text))
             self.assertNotIn("--prefer <id>", text)
-        self.assertRegex(skill, r"template[- ]8")
+        self.assertRegex(skill, rf"template[- ]{cross_ai.TEMPLATE_VERSION}\b")
         self.assertIn("script:cross-ai.runtime", skill)
         failure = _section(runner, "## Failure ladder")
         self.assertIn("[runner.retry]", failure)
         self.assertIn("migrates", failure)
         upgrade = _section(runner, "## Runner upgrade")
-        self.assertIn("template 8", upgrade)
+        self.assertIn(f"template {cross_ai.TEMPLATE_VERSION}", upgrade)
         self.assertIn("ensure-runner", upgrade)
         opt_in = _section(runner, "**Opt-in skills and MCP servers:**")
         self.assertIn("review allowlist", opt_in)
@@ -233,13 +234,13 @@ class CuratedConfigPins(unittest.TestCase):
 
 
 class ReadmeRows(unittest.TestCase):
-    def test_readme_lists_the_skill_and_the_template_8_runner(self):
+    def test_readme_lists_the_skill_and_the_shipped_template_runner(self):
         text = README.read_text(encoding="utf-8")
         row = "| [`ai-kit-cross-ai`](skills/ai-kit-cross-ai/SKILL.md) | skill |"
         self.assertIn(row, text)
         curated = next(line for line in text.splitlines()
                        if "ai-kit-gsd-curated-config" in line and line.startswith("|"))
-        self.assertIn("template-8", curated)
+        self.assertIn(f"template-{cross_ai.TEMPLATE_VERSION}", curated)
         self.assertIn("no automatic fallback", curated)
 
 

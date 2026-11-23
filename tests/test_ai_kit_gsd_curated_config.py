@@ -743,7 +743,7 @@ class TestBuildExecutionCommandRunner(unittest.TestCase):
         self.assertEqual(
             command,
             "node .planning/scripts/cross-ai.mjs --runtime cursor "
-            "--model auto --mode exec",
+            "--model auto --role execute --host auto",
         )
 
     def test_codex_ends_with_the_sandbox_flag(self):
@@ -752,9 +752,11 @@ class TestBuildExecutionCommandRunner(unittest.TestCase):
         assert command is not None
         self.assertTrue(command.endswith("--codex-sandbox workspace-write"))
 
-    def test_claude_returns_none(self):
+    def test_claude_maps_to_the_runner_command(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertIsNone(cross_ai_build.build_execution_command("claude", "opus", tmp))
+            command = cross_ai_build.build_execution_command("claude", "placeholder-model-1", tmp)
+        self.assertEqual(command, "node .planning/scripts/cross-ai.mjs --runtime claude "
+                         "--model placeholder-model-1 --role execute --host auto")
 
 
 class TestReviewerSlug(unittest.TestCase):
@@ -979,40 +981,15 @@ class TestApplyExecutionCli(unittest.TestCase):
         self.assertIn(COPILOT_EXEC_NOTE, summary["notes"])
         self.assertIn(COPILOT_EXEC_NOTE, err.getvalue())
 
-    def test_rejected_executor_cli_exits_2_before_any_config_write(self):
-        # D-15 (Phase 16.1): an explicit claude/grok (or case-variant) executor choice fails
-        # BEFORE the first config-set -- workflow.cross_ai_execution included -- so the GSD
-        # config is left completely untouched on every run.
-        for cli_name in ("claude", "grok", "Claude"):
-            with self.subTest(cli=cli_name):
-                run = make_fake_run([])
-                stderr = io.StringIO()
-                with contextlib.redirect_stderr(stderr):
-                    exit_code = cli.main(
-                        ["apply-execution", "--project-dir", "/fake/project",
-                         "--cli", cli_name, "--model", "m"],
-                        which_fn=_which_stub(),
-                        run_fn=run,
-                        env_fn=self.env_fn,
-                    )
-                self.assertEqual(exit_code, 2)
-                self.assertIn(f"ai-kit-gsd-curated-config: {cli_name!r} ", stderr.getvalue())
-                config_set_calls = [call for call in run.calls if "config-set" in call]
-                self.assertEqual(config_set_calls, [])
-                # A rerun fails identically: nothing was written before the check.
-                rerun_run = make_fake_run([])
-                rerun_stderr = io.StringIO()
-                with contextlib.redirect_stderr(rerun_stderr):
-                    rerun_code = cli.main(
-                        ["apply-execution", "--project-dir", "/fake/project",
-                         "--cli", cli_name, "--model", "m"],
-                        which_fn=_which_stub(),
-                        run_fn=rerun_run,
-                        env_fn=self.env_fn,
-                    )
-                self.assertEqual(rerun_code, 2)
-                self.assertEqual(rerun_stderr.getvalue(), stderr.getvalue())
-                self.assertEqual([c for c in rerun_run.calls if "config-set" in c], [])
+    def test_executor_without_fact_is_not_rejected(self):
+        run = make_fake_run([])
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            exit_code = cli.main(
+                ["apply-execution", "--project-dir", "/fake/project",
+                 "--cli", "claude", "--model", "placeholder-model-1"],
+                which_fn=_which_stub(), run_fn=run, env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 0)
 
 
 class TestApplyReviewCli(unittest.TestCase):

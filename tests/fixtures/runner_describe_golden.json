@@ -1,0 +1,580 @@
+{
+  "host": {
+    "available": false
+  },
+  "reasons": [
+    "no_form",
+    "id_carries",
+    "unverified_form",
+    "mode_forbids",
+    "no_slot",
+    "recorded_only",
+    "no_provider_form",
+    "bad_value",
+    "no_herdr",
+    "host_failed"
+  ],
+  "runtimes": {
+    "claude": {
+      "context": {
+        "kind": "id-suffix",
+        "label": {
+          "source": "claude 2.1.330 --help 2026-11-21: no model-context flag; the [1m] model suffix is not in the help",
+          "state": "unverified"
+        },
+        "valueKind": null
+      },
+      "effort": {
+        "flag": "--effort",
+        "kind": "flag",
+        "label": {
+          "source": "claude 2.1.330 --help 2026-11-21: \"--effort <level> Effort level for the current session (low, medium, high, xhigh, max)\"",
+          "state": "verified"
+        }
+      },
+      "formula_labels": {
+        "exec": {
+          "source": "verified: claude 2.1.330 help recorded 2026-11-21 (tests/fixtures/cli_help/claude/)",
+          "state": "verified"
+        },
+        "resume": {
+          "source": "verified: claude 2.1.330 help recorded 2026-11-21 (tests/fixtures/cli_help/claude/)",
+          "state": "verified"
+        },
+        "review": {
+          "source": "verified: claude 2.1.330 help recorded 2026-11-21 (tests/fixtures/cli_help/claude/)",
+          "state": "verified"
+        }
+      },
+      "formulas": {
+        "exec": true,
+        "resume": true,
+        "review": true
+      },
+      "listing": null,
+      "listing_label": {
+        "source": "no listing in the runner",
+        "state": "unknown"
+      },
+      "mcp": {
+        "after": [
+          "--strict-mcp-config"
+        ],
+        "flag": "--mcp-config",
+        "label": {
+          "source": "claude 2.1.330 help 2026-11-21: \"--mcp-config <configs...> Load MCP servers from JSON files or strings\" and \"--strict-mcp-config Only use MCP servers from --mcp-config\"",
+          "state": "verified"
+        },
+        "prefix": ""
+      },
+      "provider": {
+        "kind": "none",
+        "label": {
+          "source": "no provider part in the model id form",
+          "state": "unknown"
+        }
+      },
+      "session": {
+        "label": {
+          "source": "claude 2.1.330 --help 2026-11-21: \"-r, --resume [value] Resume a conversation by session ID or name\"; resume not live-probed",
+          "state": "unverified"
+        },
+        "resumeFlag": "--resume",
+        "style": "minted"
+      },
+      "skills": {
+        "name": {
+          "form": "/<name>",
+          "label": {
+            "source": "claude 2.1.330 help 2026-11-21: \"Skills still resolve via /skill-name\" appears only in the bare-mode text",
+            "state": "unverified"
+          }
+        },
+        "path": {
+          "flag": "--add-dir",
+          "label": {
+            "source": "claude 2.1.330 help 2026-11-21: \"--add-dir <directories...> More directories Claude can access\" names no skill loading",
+            "state": "unverified"
+          }
+        },
+        "prose": {
+          "label": {
+            "source": "runner: the SKILL.md text inlined before the prompt (stdin, or the copilot -p argument)",
+            "state": "verified"
+          }
+        }
+      },
+      "source": "unverified"
+    },
+    "codex": {
+      "context": {
+        "key": "model_context_window",
+        "kind": "config",
+        "label": {
+          "source": "codex 0.170.0 exec --help 2026-11-21: \"-c, --config <key=value>\"; a zero-token config parse rejected a non-integer model_context_window as \"expected i64\" (2026-11-16); its effect on a model window is unverified",
+          "state": "verified"
+        },
+        "valueKind": "tokens"
+      },
+      "effort": {
+        "key": "model_reasoning_effort",
+        "kind": "config",
+        "label": {
+          "source": "codex 0.170.0 exec --help 2026-11-21: \"-c, --config <key=value>\"; model_reasoning_effort is the runner's existing codex effort key",
+          "state": "verified"
+        }
+      },
+      "formula_labels": {
+        "exec": {
+          "source": "verified: codex 0.170.0 help recorded 2026-11-21 (tests/fixtures/cli_help/codex/)",
+          "state": "verified"
+        },
+        "resume": {
+          "source": "verified: codex 0.170.0 help recorded 2026-11-21 (tests/fixtures/cli_help/codex/)",
+          "state": "verified"
+        },
+        "review": {
+          "source": "verified: codex 0.170.0 help recorded 2026-11-21 (tests/fixtures/cli_help/codex/)",
+          "state": "verified"
+        }
+      },
+      "formulas": {
+        "exec": true,
+        "resume": true,
+        "review": true
+      },
+      "listing": [
+        "debug",
+        "models"
+      ],
+      "listing_label": {
+        "source": "verified: codex 0.170.0 help recorded 2026-11-21 (tests/fixtures/cli_help/codex/)",
+        "state": "verified"
+      },
+      "mcp": {
+        "after": [],
+        "flag": null,
+        "label": {
+          "source": "codex 0.170.0 help 2026-11-21: a generic -c key=value override whose help names no MCP key; it would put server values on argv",
+          "state": "unverified"
+        },
+        "prefix": ""
+      },
+      "provider": {
+        "kind": "none",
+        "label": {
+          "source": "no provider part in the model id form",
+          "state": "unknown"
+        }
+      },
+      "session": {
+        "label": {
+          "source": "codex 0.170.0 exec --help 2026-11-21: \"resume Resume a previous session by id\"; exec resume has no read-only sandbox form; resume not live-probed",
+          "state": "unverified"
+        },
+        "noResume": [
+          "review",
+          "sandbox"
+        ],
+        "resumeFlag": null,
+        "style": "minted"
+      },
+      "skills": {
+        "name": {
+          "form": null,
+          "label": {
+            "source": "codex 0.170.0 help 2026-11-21: no skill form",
+            "state": "unknown"
+          }
+        },
+        "path": {
+          "flag": null,
+          "label": {
+            "source": "codex 0.170.0 help 2026-11-21: no skill form",
+            "state": "unknown"
+          }
+        },
+        "prose": {
+          "label": {
+            "source": "runner: the SKILL.md text inlined before the prompt (stdin, or the copilot -p argument)",
+            "state": "verified"
+          }
+        }
+      },
+      "source": "unverified"
+    },
+    "copilot": {
+      "context": {
+        "flag": "--context",
+        "kind": "flag",
+        "label": {
+          "source": "copilot 1.0.112 --help 2026-11-21: \"--context <tier> Set the context window tier (overrides persisted setting) [possible values: default, long_context]\"",
+          "state": "verified"
+        },
+        "valueKind": "enum",
+        "values": [
+          "default",
+          "long_context"
+        ]
+      },
+      "effort": {
+        "flag": "--reasoning-effort",
+        "kind": "flag",
+        "label": {
+          "source": "copilot 1.0.112 --help 2026-11-21: \"--reasoning-effort <level> Set the reasoning effort level; supported levels depend on the model\"",
+          "state": "verified"
+        }
+      },
+      "formula_labels": {
+        "exec": {
+          "source": "verified: copilot 1.0.112 help recorded 2026-11-21 (tests/fixtures/cli_help/copilot/)",
+          "state": "verified"
+        },
+        "resume": {
+          "source": "no formula in the runner",
+          "state": "unknown"
+        },
+        "review": {
+          "source": "verified: copilot 1.0.112 help recorded 2026-11-21 (tests/fixtures/cli_help/copilot/)",
+          "state": "verified"
+        }
+      },
+      "formulas": {
+        "exec": true,
+        "resume": false,
+        "review": true
+      },
+      "listing": null,
+      "listing_label": {
+        "source": "no listing in the runner",
+        "state": "unknown"
+      },
+      "mcp": {
+        "after": [],
+        "flag": "--additional-mcp-config",
+        "label": {
+          "source": "copilot 1.0.112 help 2026-11-21: \"--additional-mcp-config <json> Additional MCP servers configuration as JSON string or file path (prefix with @)\"; augments the user servers, no strict form",
+          "state": "verified"
+        },
+        "prefix": "@"
+      },
+      "provider": {
+        "kind": "none",
+        "label": {
+          "source": "no provider part in the model id form",
+          "state": "unknown"
+        }
+      },
+      "session": {
+        "flag": "--session-id",
+        "label": {
+          "source": "copilot 1.0.112 --help 2026-11-21: \"--session-id <id> Resume an existing session or task by ID, or set the UUID for a new session\"; resume not live-probed",
+          "state": "unverified"
+        },
+        "style": "chosen"
+      },
+      "skills": {
+        "name": {
+          "form": null,
+          "label": {
+            "source": "copilot 1.0.112 skill help 2026-11-21: discovery roots only, no load-by-name form",
+            "state": "unverified"
+          }
+        },
+        "path": {
+          "flag": "--add-dir",
+          "label": {
+            "source": "copilot 1.0.112 help 2026-11-21: \"--add-dir <directory> Allow file access to a directory and load its .github/skills\" as trusted configuration; layout effect untested",
+            "state": "unverified"
+          },
+          "root": ".github/skills"
+        },
+        "prose": {
+          "label": {
+            "source": "runner: the SKILL.md text inlined before the prompt (stdin, or the copilot -p argument)",
+            "state": "verified"
+          }
+        }
+      },
+      "source": "unverified"
+    },
+    "cursor": {
+      "context": {
+        "key": "context",
+        "kind": "bracket",
+        "label": {
+          "source": "cursor-agent 2026.11.13 --help 2026-11-21: \"--model <model>\" with the bracket example \"[context=1m,effort=high,fast=false]\"; meaning per model unverified",
+          "state": "verified"
+        },
+        "valueKind": "label"
+      },
+      "effort": {
+        "key": "effort",
+        "kind": "id-bracket",
+        "label": {
+          "source": "cursor-agent 2026.11.13 --help 2026-11-21: \"--model <model>\" with the bracket example \"[context=1m,effort=high,fast=false]\"",
+          "state": "verified"
+        }
+      },
+      "formula_labels": {
+        "exec": {
+          "source": "verified: cursor 2026.11.13 help recorded 2026-11-21 (tests/fixtures/cli_help/cursor/)",
+          "state": "verified"
+        },
+        "resume": {
+          "source": "verified: cursor 2026.11.13 help recorded 2026-11-21 (tests/fixtures/cli_help/cursor/)",
+          "state": "verified"
+        },
+        "review": {
+          "source": "verified: cursor 2026.11.13 help recorded 2026-11-21 (tests/fixtures/cli_help/cursor/)",
+          "state": "verified"
+        }
+      },
+      "formulas": {
+        "exec": true,
+        "resume": true,
+        "review": true
+      },
+      "listing": [
+        "models"
+      ],
+      "listing_label": {
+        "source": "verified: cursor 2026.11.13 help recorded 2026-11-21 (tests/fixtures/cli_help/cursor/)",
+        "state": "verified"
+      },
+      "mcp": null,
+      "provider": {
+        "kind": "none",
+        "label": {
+          "source": "no provider part in the model id form",
+          "state": "unknown"
+        }
+      },
+      "session": {
+        "label": {
+          "source": "cursor-agent 2026.11.13 --help 2026-11-21: \"--resume [chatId] Select a session to resume\"; resume not live-probed",
+          "state": "unverified"
+        },
+        "resumeFlag": "--resume",
+        "style": "minted"
+      },
+      "skills": {
+        "name": {
+          "form": null,
+          "label": {
+            "source": "cursor-agent 2026.11.13 help 2026-11-21: no skill form",
+            "state": "unknown"
+          }
+        },
+        "path": {
+          "flag": null,
+          "label": {
+            "source": "cursor-agent 2026.11.13 help 2026-11-21: no skill form",
+            "state": "unknown"
+          }
+        },
+        "prose": {
+          "label": {
+            "source": "runner: the SKILL.md text inlined before the prompt (stdin, or the copilot -p argument)",
+            "state": "verified"
+          }
+        }
+      },
+      "source": "unverified"
+    },
+    "opencode": {
+      "context": {
+        "kind": "none",
+        "label": {
+          "source": "opencode 2.3.2 run --help 2026-11-21: no context form",
+          "state": "unknown"
+        },
+        "valueKind": null
+      },
+      "effort": {
+        "key": "#",
+        "kind": "id-suffix",
+        "label": {
+          "source": "opencode 2.3.2 run --help 2026-11-21: \"Model to use in the format provider/model#variant\"",
+          "state": "verified"
+        }
+      },
+      "formula_labels": {
+        "exec": {
+          "source": "verified: opencode 2.3.2 help recorded 2026-11-20 (tests/fixtures/cli_help/opencode/)",
+          "state": "verified"
+        },
+        "resume": {
+          "source": "verified: opencode 2.3.2 help recorded 2026-11-20 (tests/fixtures/cli_help/opencode/)",
+          "state": "verified"
+        },
+        "review": {
+          "source": "verified: opencode 2.3.2 help recorded 2026-11-20 (tests/fixtures/cli_help/opencode/)",
+          "state": "verified"
+        }
+      },
+      "formulas": {
+        "exec": true,
+        "resume": true,
+        "review": true
+      },
+      "listing": [
+        "models"
+      ],
+      "listing_label": {
+        "source": "verified: opencode 2.3.2 help recorded 2026-11-20 (tests/fixtures/cli_help/opencode/)",
+        "state": "verified"
+      },
+      "mcp": null,
+      "provider": {
+        "kind": "id-prefix",
+        "label": {
+          "source": "opencode 2.3.2 run --help 2026-11-21: \"Model to use in the format provider/model#variant\"",
+          "state": "verified"
+        }
+      },
+      "session": {
+        "label": {
+          "source": "opencode 2.3.2 run --help 2026-11-21: \"Session ID to continue, or to create if it does not exist\"; caller-chosen id shapes unverified (a ses_ id was accepted live on 2026-11-16)",
+          "state": "unverified"
+        },
+        "resumeFlag": "--session",
+        "style": "minted"
+      },
+      "skills": {
+        "name": {
+          "form": null,
+          "label": {
+            "source": "opencode 2.3.2 help 2026-11-21: no skill form",
+            "state": "unknown"
+          }
+        },
+        "path": {
+          "flag": null,
+          "label": {
+            "source": "opencode 2.3.2 help 2026-11-21: no skill form",
+            "state": "unknown"
+          }
+        },
+        "prose": {
+          "label": {
+            "source": "runner: the SKILL.md text inlined before the prompt (stdin, or the copilot -p argument)",
+            "state": "verified"
+          }
+        }
+      },
+      "source": "unverified"
+    },
+    "pi": {
+      "context": {
+        "kind": "none",
+        "label": {
+          "source": "pi 1.5.2 --help 2026-11-21: no context form",
+          "state": "unknown"
+        },
+        "valueKind": null
+      },
+      "effort": {
+        "flag": "--thinking",
+        "kind": "flag",
+        "label": {
+          "source": "pi 1.5.2 --help 2026-11-21: \"--thinking <level> Set thinking level: off, minimal, low, medium, high, xhigh, max\"",
+          "state": "verified"
+        }
+      },
+      "formula_labels": {
+        "exec": {
+          "source": "verified: pi 1.5.2 help recorded 2026-11-21 (tests/fixtures/cli_help/pi/)",
+          "state": "verified"
+        },
+        "resume": {
+          "source": "verified: pi 1.5.2 help recorded 2026-11-21 (tests/fixtures/cli_help/pi/)",
+          "state": "verified"
+        },
+        "review": {
+          "source": "verified: pi 1.5.2 help recorded 2026-11-21 (tests/fixtures/cli_help/pi/)",
+          "state": "verified"
+        }
+      },
+      "formulas": {
+        "exec": true,
+        "resume": true,
+        "review": true
+      },
+      "listing": [
+        "--mode",
+        "rpc",
+        "--offline",
+        "--no-session",
+        "--no-extensions",
+        "--no-skills",
+        "--no-context-files",
+        "--no-mcp"
+      ],
+      "listing_label": {
+        "source": "verified: pi 1.5.2 help recorded 2026-11-21 (tests/fixtures/cli_help/pi/)",
+        "state": "verified"
+      },
+      "mcp": null,
+      "provider": {
+        "kind": "id-prefix",
+        "label": {
+          "source": "pi 1.5.2 --help 2026-11-21: \"--model <pattern> Model pattern or ID (supports provider/id and optional :<thinking>)\"",
+          "state": "verified"
+        }
+      },
+      "session": {
+        "flag": "--session-id",
+        "label": {
+          "source": "pi 1.5.2 --help 2026-11-21: \"--session-id <id> Use the current directory existing session with the ID, creating it otherwise\"; resume not live-probed",
+          "state": "unverified"
+        },
+        "style": "chosen"
+      },
+      "skills": {
+        "name": {
+          "form": null,
+          "label": {
+            "source": "pi 1.5.2 help 2026-11-21: no load-by-name form; the formulas pass --no-skills",
+            "state": "unknown"
+          },
+          "reason": "mode_forbids"
+        },
+        "path": {
+          "flag": "--skill",
+          "label": {
+            "source": "pi 1.5.2 help 2026-11-21: \"--skill <path> Load a skill file or directory (can be used multiple times)\"",
+            "state": "verified"
+          }
+        },
+        "prose": {
+          "label": {
+            "source": "runner: the SKILL.md text inlined before the prompt (stdin, or the copilot -p argument)",
+            "state": "verified"
+          }
+        }
+      },
+      "source": "unverified"
+    }
+  },
+  "schema": 1,
+  "settings": [
+    "model",
+    "provider",
+    "role",
+    "effort",
+    "context",
+    "session",
+    "escalate_runtime",
+    "escalate_model",
+    "host",
+    "skill",
+    "mcp"
+  ],
+  "states": [
+    "applied",
+    "ignored",
+    "unknown"
+  ],
+  "template_version": 9
+}

@@ -1,0 +1,9 @@
+# Loop 37 round 2 fixes: ai-kit-spec-config
+
+Round 2 met the bar (lowest 82.4 against the loop 36 base 88.8, delta -6.4) but left 5 high findings (referee-one), so the skill goes to round 3, the last (decide.py row `next-round`); the orchestrator fixes them in the skill's own files before that round. Code behaviour is documented as it is; no code changes.
+
+- D6-1 (referee-one, high): the copilot herdr discovery runs only for an owner-chosen copilot runtime and only after an explicit yes ("skip" first/default; a notice is not consent); otherwise nothing starts and the owner gives an id or `auto`. File: `skills/ai-kit-spec-config/references/catalog.md`.
+- D8-1 (referee-one, high): `fetch-model-catalog` migrates every pending old roster it reads; it runs only when every pending roster belongs to the target approved for replacement, and otherwise it is not run and the owner gives each listing-less runtime's model id or `auto`. File: `skills/ai-kit-spec-config/SKILL.md` (Step 1.5).
+- D8-2 (referee-one, high): the `trust-local --show` preview is described as the review invocation over the flattened view (an execute entry sharing a key can be missing, a table-runtime execute entry shows its review argv); every command-bearing entry of both roles is shown, from the file when the preview lacks it, before trust is asked. File: `skills/ai-kit-spec-config/SKILL.md` (Step 4 trust).
+- D8-3 (referee-one, high): `detect-current-runtime` returns the first marker in a fixed precedence and does not verify the immediate parent; a disputed host gets the explanation and a session-default entry without a host-specific alias. File: `skills/ai-kit-spec-config/SKILL.md` (Step 2.7).
+- D8-4 (referee-one, high): the data-use read uses the vendor's current page for the exact model; a provider-wide page that does not name it gives `unknown` with source `none`, and a third-party source can only give `reported`. File: `skills/ai-kit-spec-config/references/free-lanes.md`.
