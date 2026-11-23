@@ -10,8 +10,255 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 FIXTURE = REPO / "tests" / "fixtures" / "prompt_control_chars.json"
+TEMPLATE = REPO / "skills" / "ai-kit-spec-review" / "references" / "cross-ai.mjs"
+sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "skills" / "ai-kit-spec-review"))
-from ai_kit_spec import prompt_guard
+from ai_kit_spec import config_io, prompt_guard
+from ai_kit_spec.model_catalog import CATALOG_SCHEMA_VERSION
+from ai_kit_spec.runner_facts import read_runner_describe
+
+from tests.cross_ai_selftest import _real_node_executable
+
+NODE = _real_node_executable()
+
+PI_ROW = {
+    "fake/placeholder-model-1": {
+        "runtimes": {"pi": {
+            "model_id": "fake/placeholder-model-1",
+            "context": {
+                "value": 4000, "label": "measured", "source": "pi listing",
+                "fetched_at": "2026-01-01T00:00:00Z",
+            },
+        }},
+    },
+}
+
+
+def _write_catalog(cache_home: str, entries: dict) -> None:
+    directory = os.path.join(cache_home, "ai-kit", "spec")
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, "model-catalog.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump({"_meta": {"schema_version": CATALOG_SCHEMA_VERSION}, **entries}, handle)
+
+
+def _window_env(root: str) -> tuple[dict, str]:
+    home, cache, project = (os.path.join(root, name) for name in ("home", "cache", "proj"))
+    for path in (home, cache, project):
+        os.makedirs(path)
+    return {"HOME": home, "XDG_CACHE_HOME": cache}, project
+
+
+def _user_config(env: dict, text: str) -> None:
+    path = os.path.join(env["HOME"], ".config", "ai-kit", "config.toml")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    Path(path).write_text(text, encoding="utf-8")
+
+
+class TestWindowCheck(unittest.TestCase):
+    def test_estimate_tokens(self):
+        with tempfile.TemporaryDirectory():
+            for text, expected in (("", 0), ("abcd", 1), ("abcde", 2),
+                                   (chr(0xE9) * 2, 1), (chr(0x1F600) * 3, 3)):
+                self.assertEqual(prompt_guard.estimate_tokens(text), expected)
+
+    def test_catalog_window_refuses_over_and_passes_equal(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, cwd = _window_env(root)
+            _write_catalog(env["XDG_CACHE_HOME"], PI_ROW)
+            window = prompt_guard.window_for("pi", "fake/placeholder-model-1:high", env, cwd, False)
+            self.assertEqual(window, {
+                "value": 4000, "label": "measured", "source": "pi listing", "note": None,
+            })
+            self.assertIsNone(prompt_guard.check_window(4000, window))
+            self.assertEqual(prompt_guard.check_window(4001, window), {
+                "status": "refused", "reason": "prompt_over_window", "detail": {
+                    "estimate": 4001, "window": 4000, "label": "measured", "source": "pi listing",
+                    "bytes_per_token": 4, "estimate_label": "estimated, judged",
+                },
+            })
+
+    def test_live_override_beats_catalog(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, cwd = _window_env(root)
+            _write_catalog(env["XDG_CACHE_HOME"], PI_ROW)
+            _user_config(env, '[[models.context]]\nruntime = "pi"\n'
+                         'model = "fake/placeholder-model-1"\ntokens = 9000\n')
+            window = prompt_guard.window_for("pi", "fake/placeholder-model-1", env, cwd, False)
+            self.assertEqual(window, {
+                "value": 9000, "label": "user-stated", "source": "[[models.context]]", "note": None,
+            })
+
+    def test_no_entry_is_unknown_and_never_capped(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, cwd = _window_env(root)
+            window = prompt_guard.window_for("pi", "fake/placeholder-model-2", env, cwd, False)
+            self.assertEqual(window, {
+                "value": None, "label": "unknown", "source": None, "note": None,
+            })
+            self.assertIsNone(prompt_guard.check_window(10**9, window))
+
+
+    def test_context_form_applied(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, cwd = _window_env(root)
+            cache = env["XDG_CACHE_HOME"]
+            _write_catalog(cache, PI_ROW)
+            unknown = {"value": None, "label": "unknown", "source": None,
+                       "note": "context_form_applied"}
+            window = prompt_guard.window_for("pi", "fake/placeholder-model-1", env, cwd, True)
+            self.assertEqual(window, unknown)
+            self.assertIsNone(prompt_guard.check_window(10**9, window))
+            _user_config(env, '[[models.context]]\nruntime = "pi"\n'
+                         'model = "fake/placeholder-model-1"\ntokens = 9000\n')
+            self.assertEqual(prompt_guard.window_for(
+                "pi", "fake/placeholder-model-1", env, cwd, True), {
+                    "value": 9000, "label": "user-stated", "source": "[[models.context]]",
+                    "note": None,
+                })
+            _user_config(env, "")
+            row = {"fake/placeholder-model-1": {"runtimes": {"pi": {
+                "model_id": "fake/placeholder-model-1", "context": {
+                    "value": 5000, "label": "user-stated", "source": "[[models.context]]",
+                },
+            }}}}
+            _write_catalog(cache, row)
+            self.assertEqual(prompt_guard.window_for(
+                "pi", "fake/placeholder-model-1", env, cwd, True), unknown)
+            self.assertEqual(prompt_guard.window_for(
+                "pi", "fake/placeholder-model-1", env, cwd, False), {
+                    "value": 5000, "label": "user-stated", "source": "[[models.context]]",
+                    "note": None,
+                })
+
+    def test_invalid_catalog_values_are_unknown(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, cwd = _window_env(root)
+            for bad in (0, -5, "4000", True, 4000.0, None):
+                with self.subTest(bad=bad):
+                    row = {"fake/placeholder-model-1": {"runtimes": {"pi": {
+                        "model_id": "fake/placeholder-model-1",
+                        "context": {"value": bad, "label": "measured", "source": "models.dev"},
+                    }}}}
+                    _write_catalog(env["XDG_CACHE_HOME"], row)
+                    self.assertEqual(prompt_guard.window_for(
+                        "pi", "fake/placeholder-model-1", env, cwd, False), {
+                            "value": None, "label": "unknown", "source": None,
+                            "note": None if bad is None else "catalog_value_invalid",
+                        })
+            _write_catalog(env["XDG_CACHE_HOME"], {"fake/placeholder-model-1": {
+                "runtimes": {"pi": {"model_id": "fake/placeholder-model-1"}},
+            }})
+            self.assertEqual(prompt_guard.window_for(
+                "pi", "fake/placeholder-model-1", env, cwd, False), {
+                    "value": None, "label": "unknown", "source": None, "note": None,
+                })
+
+    def test_unlabeled_catalog_value_still_refuses(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, cwd = _window_env(root)
+            _write_catalog(env["XDG_CACHE_HOME"], {"fake/placeholder-model-1": {
+                "runtimes": {"pi": {"model_id": "fake/placeholder-model-1",
+                                    "context": {"value": 100}}},
+            }})
+            window = prompt_guard.window_for("pi", "fake/placeholder-model-1", env, cwd, False)
+            self.assertEqual(window, {
+                "value": 100, "label": "unknown", "source": None, "note": None,
+            })
+            result = prompt_guard.check_window(101, window)
+            assert result is not None
+            self.assertEqual(result["reason"], "prompt_over_window")
+            self.assertEqual(result["detail"]["label"], "unknown")
+
+    def test_catalog_provenance_checked(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, cwd = _window_env(root)
+            secret = "ghp_" + "a" * 20
+            _write_catalog(env["XDG_CACHE_HOME"], {"fake/placeholder-model-1": {
+                "runtimes": {"pi": {"model_id": "fake/placeholder-model-1", "context": {
+                    "value": 700, "label": "made-up", "source": "listing " + secret,
+                }}},
+            }})
+            window = prompt_guard.window_for("pi", "fake/placeholder-model-1", env, cwd, False)
+            self.assertEqual((window["value"], window["label"], window["note"]),
+                             (700, "unknown", None))
+            self.assertIn("[redacted]", window["source"])
+            self.assertNotIn(secret, window["source"])
+            result = prompt_guard.check_window(701, window)
+            assert result is not None
+            self.assertNotIn(secret, result["detail"]["source"])
+
+    def test_id_carried_bracket_is_unknown(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, cwd = _window_env(root)
+            row = {"fake-model-9": {"runtimes": {"cursor": {
+                "model_id": "fake-model-9", "context": {
+                    "value": 4000, "label": "measured", "source": "fixture",
+                },
+            }}}}
+            _write_catalog(env["XDG_CACHE_HOME"], {**PI_ROW, **row})
+            bracket = "fake-model-9[context=long]"
+            self.assertEqual(prompt_guard.window_for("cursor", bracket, env, cwd, False), {
+                "value": None, "label": "unknown", "source": None, "note": "context_form_applied",
+            })
+            self.assertEqual(prompt_guard.window_for("cursor", "fake-model-9", env, cwd, False)
+                             ["value"], 4000)
+            self.assertEqual(prompt_guard.window_for(
+                "pi", "fake/placeholder-model-1:high", env, cwd, False)["value"], 4000)
+            _user_config(env, '[[models.context]]\nruntime = "cursor"\n'
+                         'model = "fake-model-9"\ntokens = 9000\n')
+            window = prompt_guard.window_for("cursor", bracket, env, cwd, False)
+            self.assertEqual((window["value"], window["label"]), (9000, "user-stated"))
+
+    def test_malformed_config_raises(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, cwd = _window_env(root)
+            _user_config(env, '[[models.context]]\nruntime = "pi"\n')
+            with self.assertRaises(config_io.ConfigError):
+                prompt_guard.window_for("pi", "fake/placeholder-model-1", env, cwd, False)
+
+    def test_two_lanes_independent(self):
+        with tempfile.TemporaryDirectory() as root:
+            env, cwd = _window_env(root)
+            row = {"fake/placeholder-model-3": {"runtimes": {"opencode": {
+                "model_id": "fake/placeholder-model-3", "context": {
+                    "value": 8000, "label": "measured", "source": "models.dev",
+                },
+            }}}}
+            _write_catalog(env["XDG_CACHE_HOME"], {**PI_ROW, **row})
+            result = prompt_guard.check_window(5000, prompt_guard.window_for(
+                "pi", "fake/placeholder-model-1", env, cwd, False))
+            assert result is not None
+            self.assertEqual(result["reason"], "prompt_over_window")
+            self.assertIsNone(prompt_guard.check_window(5000, prompt_guard.window_for(
+                "opencode", "fake/placeholder-model-3", env, cwd, False)))
+            with self.assertRaises(ValueError):
+                prompt_guard.refusal_record("made_up", {})
+
+
+class TestRefusalDisjoint(unittest.TestCase):
+    def setUp(self):
+        if NODE is None:
+            self.fail("node not on PATH: the disjointness checks need the real node")
+
+    def test_reasons_disjoint_from_runner_lists(self):
+        obj = read_runner_describe(NODE, str(TEMPLATE))["describe"]
+        assert isinstance(obj, dict)
+        # The lens-note half is added by 39-11.
+        for name, values in (("reasons", set(obj["reasons"])),
+                             ("classes", set(obj["classes"])),
+                             ("findings", {item["code"] for item in obj["findings"]})):
+            with self.subTest(name=name):
+                self.assertTrue(values)
+                self.assertEqual(set(prompt_guard.REFUSAL_REASONS) & values, set())
+
+    def test_refused_exit_is_free(self):
+        obj = read_runner_describe(NODE, str(TEMPLATE))["describe"]
+        assert isinstance(obj, dict)
+        statuses = set(obj["statuses"].values())
+        self.assertTrue(statuses)
+        self.assertEqual(prompt_guard.REFUSED_EXIT, 65)
+        self.assertNotIn(65, statuses)
 
 
 def _touch(path: str) -> None:

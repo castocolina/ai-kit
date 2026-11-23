@@ -9,7 +9,15 @@ import os
 import subprocess
 import unicodedata
 
-from ai_kit_spec import gsd_tools, secret_shapes
+from ai_kit_spec import catalog_context, catalog_labels, gsd_tools, models_config, secret_shapes
+from ai_kit_spec.cache import cache_read_json
+from ai_kit_spec.detection import RUNTIMES
+from ai_kit_spec.model_catalog import cache_catalog_path, split_catalog_meta
+from ai_kit_spec.routing import strip_model_suffix
+from ai_kit_spec.usability import find_runtime_key
+
+# An escaped bracket suffix is the id-bracket form, which can carry a context setting.
+BRACKET_SUFFIX = r"\["
 
 REFUSAL_REASONS = (
     "prompt_over_window",
@@ -17,6 +25,12 @@ REFUSAL_REASONS = (
     "path_outside_roots",
     "path_unresolvable",
 )
+# 39 D-12: the estimated, judged divisor under-counts code and dense scripts.
+BYTES_PER_TOKEN = 4
+ESTIMATE_LABEL = "estimated, judged"
+# SPEC R7 amendment: unused in the runner's STATUS_TABLE.
+REFUSED_EXIT = 65
+
 _CONTROL_CATEGORIES = frozenset({"Cc", "Zl", "Zp"})
 _FORMAT_RANGES = (
     (0x200B, 0x200F),
@@ -105,3 +119,72 @@ def validate_values(
         if reason is not None:
             rejections.append({"position": position, "reason": reason, "shown": _shown(value)})
     return rejections
+
+
+def estimate_tokens(text: str) -> int:
+    """Ceil UTF-8 bytes / divisor; runner preamble and host system prompt are not counted."""
+    return (len(text.encode("utf-8")) + BYTES_PER_TOKEN - 1) // BYTES_PER_TOKEN
+
+
+def _window(value, label: str, source, note) -> dict:
+    return {"value": value, "label": label, "source": source, "note": note}
+
+
+def _catalog_fact(runtime: str, bare: str, env: dict) -> dict | None:
+    """Return the first matching catalog row's context dict, or None; never write."""
+    entries, _meta = split_catalog_meta(cache_read_json(cache_catalog_path(env)))
+    key = find_runtime_key(entries, runtime, bare)
+    if key is None:
+        return None
+    fact = entries[key]["runtimes"][runtime].get("context")
+    return fact if isinstance(fact, dict) else None
+
+
+def window_for(runtime: str, model: str, env: dict, cwd: str, context_form_applied: bool) -> dict:
+    """Resolve the override, unverified context form, or catalog window, in that order.
+
+    Invalid catalog values are unknown; malformed configuration raises ConfigError.
+    """
+    bare = strip_model_suffix(runtime, model)
+    user = catalog_context.valid_tokens(
+        catalog_context.override_for(models_config.read_models_settings(cwd, env), runtime, bare)
+    )
+    if user is not None:
+        return _window(user, "user-stated", "[[models.context]]", None)
+    if context_form_applied or (
+        bare != model
+        and (getattr(RUNTIMES.get(runtime), "model_suffix", None) or "").startswith(BRACKET_SUFFIX)
+    ):
+        return _window(None, "unknown", None, "context_form_applied")
+    fact = _catalog_fact(runtime, bare, env)
+    if fact is None:
+        return _window(None, "unknown", None, None)
+    value = catalog_context.valid_tokens(fact.get("value"))
+    if value is None:
+        note = None if fact.get("value") is None else "catalog_value_invalid"
+        return _window(None, "unknown", None, note)
+    label, source = fact.get("label"), fact.get("source")
+    shown_label = label if label in catalog_labels.LABELS else catalog_labels.UNKNOWN
+    shown_source = (
+        secret_shapes.redact(source, "[redacted]") if isinstance(source, str) and source else None
+    )
+    return _window(value, shown_label, shown_source, None)
+
+
+def refusal_record(reason: str, detail: dict) -> dict:
+    """Return a refused result; reason must be in REFUSAL_REASONS."""
+    if reason not in REFUSAL_REASONS:
+        raise ValueError(f"unknown refusal reason: {reason}")
+    return {"status": "refused", "reason": reason, "detail": detail}
+
+
+def check_window(estimate: int, window: dict) -> dict | None:
+    """Refuse estimates above a known window; equal and unknown pass, without seeing the prompt."""
+    value = window.get("value")
+    if value is None or estimate <= value:
+        return None
+    return refusal_record("prompt_over_window", {
+        "estimate": estimate, "window": value, "label": window.get("label"),
+        "source": window.get("source"), "bytes_per_token": BYTES_PER_TOKEN,
+        "estimate_label": ESTIMATE_LABEL,
+    })
