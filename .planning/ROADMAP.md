@@ -126,7 +126,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [ ] **Phase 37: Shared runner options and session ids** - One runner for GSD cross-AI and ai-kit lanes, with per-call settings and resumable sessions
 - [x] **Phase 38: Runner hardening and run safety** - Idle watchdog, the Phase 25 cleanup, a run lock with a tree baseline, and a plan-versus-commits check before done (completed 2026-11-22)
 - [ ] **Phase 38.1: Runner error classification and retry policy (INSERTED)** - Wider error catalogue, stdout limit matching, router cooldowns and the owner's retry policy
-- [ ] **Phase 39: Lane capability blocks and lens skills** - Each lane is told only the tools it really has; lens skills reach reviewers
+- [x] **Phase 39: Lane capability blocks and lens skills** - Each lane is told only the tools it really has; lens skills reach reviewers (completed 2026-11-23)
 - [ ] **Phase 39.1: Remove the grok runtime (INSERTED)** - The grok CLI runtime leaves detection, command building, the runner table, profiles, docs and tests; its models stay reachable through opencode, pi and cursor-agent *(inserted 2026-11-19, owner decision)*
 - [ ] **Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)** - The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks *(inserted 2026-11-23, owner decision)*
 - [ ] **Phase 40: Resilient review sized by jev** - A failing lane no longer ends a review; jev sizes and classifies
@@ -978,7 +978,7 @@ Plans:
   4. A prompt larger than a lane's known context window (the lane's own runtime's value from the Phase 35 catalog, or a per-(runtime, model) override in `[models]`; *amended 2026-11-16, 35 D-09*) is refused for that lane with a named reason and never trimmed; an unknown window is not capped and shows as unknown; a value embedded in a prompt (file list, lens path) with a control character, or a path outside the repository or skill roots, is rejected, each covered by a fixture. *(added 2026-11-16, GSD lane-handling study)*
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation. *(amended 2026-11-07, 32.1 D-01: `ai-kit-spec-review`, below the bar at the Phase 32 baseline (75.2 C), was deferred here from batch 32.2; it reaches the bar, with its Markdown scenarios converted to new-shape evals and with tests, in whichever of Phases 39-40 first changes its SKILL.md, and no later than Phase 40's close)* *(amended 2026-11-20, 36 plan time: Phase 36 changes `ai-kit-spec-review`'s SKILL.md first and brings it to the bar in loop 36; this phase keeps that bar with no regression beyond judge variation, and brings it there only if Phase 36 recorded it below the bar after three rounds)*
 
-**Plans**: 19/19 plans executed in 13 waves *(planned 2026-11-23; the two runner plans 39-02 and 39-05 run one after the other; the live runner copy is re-rendered only by 39-17; 39-18, the judge loop, and 39-19, the closing gate with the final `make test`, are orchestrator actions)*
+**Plans**: 19/19 plans complete in 13 waves *(planned 2026-11-23; the two runner plans 39-02 and 39-05 run one after the other; the live runner copy is re-rendered only by 39-17; 39-18, the judge loop, and 39-19, the closing gate with the final `make test`, are orchestrator actions)*
 
 Plans:
 - [x] 39-01-PLAN.md (wave 1): shared skill table module, roles, seed file `references/skill-roles.json`, `[skills.roles]` reader
@@ -1358,7 +1358,7 @@ Plans:
 | 37. Shared runner options and session ids | 26/26 | In Progress | - |
 | 38. Runner hardening and run safety | 27/27 | Complete    | 2026-11-22 |
 | 38.1. Runner error classification and retry policy | 14/14 | In Progress | - |
-| 39. Lane capability blocks and lens skills | 19/19 | In Progress | - |
+| 39. Lane capability blocks and lens skills | 19/19 | Complete    | 2026-11-23 |
 | 40. Resilient review sized by jev | 0/TBD | Not started | - |
 | 41. Superpowers adapter refactor with spec-config handoff | 0/TBD | Not started | - |
 | 42. Code review after execution and jev-picked executors | 0/TBD | Not started | - |
