@@ -1,0 +1,12 @@
+{
+  "host": "router",
+  "version": "router-log-shape",
+  "date": "2026-11-16",
+  "cli": "pi",
+  "route": "router",
+  "stderr": "router-env/fake-model: usage balance exhausted (reset after 52s)",
+  "stdout": "",
+  "expect_class": "quota",
+  "expect_rule": "router-usage-balance-exhausted",
+  "source": "reconstructed"
+}

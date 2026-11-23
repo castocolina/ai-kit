@@ -85,6 +85,27 @@
     "Resumes the same session once with the original prompt (objective and task blocks) plus the missing-task paragraph, not the missing task alone",
     "Treats session=-, GSD's retry prompt and a second partial as owner stops"
    ]
+  },
+  {
+   "id": "edge-crash-with-jev-advisory",
+   "prompt": "A review lane ended with status=crash and an upstream body line nobody has seen before. jev is installed here. What do you do?",
+   "expected_output": "Shows the redacted first line and the upstream lines; may ask jev for a suggested class and overlay row, shows it labelled advisory with its confidence, changes no status, retry or wait from it, and writes an overlay row only after the owner confirms.",
+   "files": [],
+   "assertions": [
+    "Labels any jev suggestion advisory and shows its confidence",
+    "Never changes a status, a retry or a wait from the jev suggestion",
+    "Writes an overlay row only after the owner confirms it"
+   ]
+  },
+  {
+   "id": "precise-stated-reset-one-check",
+   "prompt": "The lane exited 75 with retry_after_s=300 and check=first, and its upstream fields say reset_at in 3 minutes. Should I wait for that reset time instead?",
+   "expected_output": "Waits once for exactly retry_after_s as one one-shot wait and schedules nothing on the upstream time; labels that time inferred from upstream and says the runner itself uses a stated time for at most one bounded check (that time plus 120 s, inside the cap).",
+   "files": [],
+   "assertions": [
+    "Waits exactly retry_after_s once and schedules no wait from the upstream reset time",
+    "Says the runner uses a stated time for at most one bounded check and treats it as data"
+   ]
   }
  ]
 }

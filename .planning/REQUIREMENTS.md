@@ -396,7 +396,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   before and after in the plan entry; only the unused `watchChunk` parameters, a redundant term and one redundant
   assignment are dead, and `clampCapS` and `clampAttemptTimeout` are live and stay; the router rule counts an owner
   statement or an alias assumed by the naming rule; the quota class is `quota_cycle`)*
-- [ ] **RUN-05**: The error catalogue classifies the real-run bodies it misses today (provider not configured,
+- [x] **RUN-05**: The error catalogue classifies the real-run bodies it misses today (provider not configured,
   policy budget 429, data inspection 400, context length 400, a plan-not-open code, 502/503 capacity, copilot's
   "model not available") and promotes the rows that now have evidence; the model-cooldown row's class is set from
   its observed durations (2 minutes to over 2 hours) rather than assumed transient. *(amended 2026-11-16, 38.1 D-01 to D-06: the
@@ -420,19 +420,19 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   2026-11-16, 38 D-11 to D-15: `partial` (new, exit 1) for an uncovered task, no commit or an admission phrase,
   `contract_violation` for a forbidden path, each with a finding from a closed list; the check reads the prompt's task
   blocks and says `coverage=n/a` when there are none)*
-- [ ] **RUN-09**: The runner's Claude matcher reads a usage-limit message from stdout as well as stderr, so a limit
+- [x] **RUN-09**: The runner's Claude matcher reads a usage-limit message from stdout as well as stderr, so a limit
   printed on stdout gets its quota class instead of an unclassified crash; a test covers both channels. *(amended 2026-11-16,
   38.1 D-07, D-08, live-verified: a limit in claude's JSON result on stdout (the runner's own `--output-format json`) is already
   classed quota; only the same sentence as plain text on stdout is a crash. The fix is a catalogue row that opts in with
   `input: stdout`, read only after a failed attempt and never as a live kill, plus claude's `api_error_status` and
   `api_error_type` fields read beside the text)*
-- [ ] **RUN-10** *(amended 2026-11-16: the logged wording is server-side only; the client sees JSON codes `model_cooldown`, `ALL_TARGETS_SKIPPED` and `all_targets_cooling_down` with `Retry-After`, so the catalogue matches those too: see 38.1 SPEC R4 and CONTEXT D-22)*: The error catalogue matches the router's logged cooldown wording ('all N active accounts cooling
+- [x] **RUN-10** *(amended 2026-11-16: the logged wording is server-side only; the client sees JSON codes `model_cooldown`, `ALL_TARGETS_SKIPPED` and `all_targets_cooling_down` with `Retry-After`, so the catalogue matches those too: see 38.1 SPEC R4 and CONTEXT D-22)*: The error catalogue matches the router's logged cooldown wording ('all N active accounts cooling
   down for model X (reset after ...)') as a quota-cycle class with its reset time, tested on a captured log line,
   unless an owner decision recorded in Phase 38.1 says why it does not. *(amended 2026-11-16, 38.1 D-09: the wording was captured
   from the router's own log (level warning), not from a client body, so the rows are scoped to confirmed router lanes with class
   `quota`, keep the reset as a display field `reset_after_s`, and are labeled unverified until a client body is captured; the
   wildcard rows stay transient)*
-- [ ] **RUN-11**: The owner decides the runner's retry policy: soft retries for transient faults, periodic retries
+- [x] **RUN-11**: The owner decides the runner's retry policy: soft retries for transient faults, periodic retries
   for 5xx and quota errors with checks for an early reset, and the 10-minute and 4-hour ladder against the shipped
   single wait. The evidence is the retry outcomes in the runner logs since Phase 25.1, the error catalogue's classes
   and the observed recovery times by route (router combos versus direct providers). The decision is recorded in
@@ -459,7 +459,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   liveness or verdict signal, and an automatic sweep never calls herdr when hosting is switched off. What cannot be guaranteed (a
   kill before the launcher ran, a detached `setsid` grandchild, unlinked disk blocks) is stated in the skill. *(added 2026-11-16,
   re-run 2, 38 D-25 to D-33, owner directive "herdr hosting")*
-- [ ] **RUN-14**: A quota stop of a usage-limited lane writes a secret-free "blocked until" record in the runner's state
+- [x] **RUN-14**: A quota stop of a usage-limited lane writes a secret-free "blocked until" record in the runner's state
   directory (never in config), keyed by the lane's pool (provider plus tier, so lanes that share a pool block together), so a
   later run does not spend a call on a lane that is still limited. The time is now plus the stated reset (the typed
   `retryAfterMs` of an opencode free-pool error, taken from the HTTP `Retry-After` header) plus the 120 s margin of the stated
@@ -1123,16 +1123,16 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-02 | Phase 37 | Complete |
 | RUN-03 | Phase 38 | Complete |
 | RUN-04 | Phase 38 | Complete |
-| RUN-05 | Phase 38.1 | Pending |
+| RUN-05 | Phase 38.1 | Complete |
 | RUN-06 | Phase 37 | Complete |
 | RUN-07 | Phase 38 | Complete |
 | RUN-08 | Phase 38 | Complete |
-| RUN-09 | Phase 38.1 | Pending |
-| RUN-10 | Phase 38.1 | Pending |
-| RUN-11 | Phase 38.1 | Pending |
+| RUN-09 | Phase 38.1 | Complete |
+| RUN-10 | Phase 38.1 | Complete |
+| RUN-11 | Phase 38.1 | Complete |
 | RUN-12 | Phase 37 | Complete |
 | RUN-13 | Phase 38 | Complete |
-| RUN-14 | Phase 38.1 | Pending |
+| RUN-14 | Phase 38.1 | Complete |
 | RUN-15 | Phase 39.1 | Pending |
 | RULE-01 | Phase 45 | Pending |
 | RULE-02 | Phase 45 | Pending |

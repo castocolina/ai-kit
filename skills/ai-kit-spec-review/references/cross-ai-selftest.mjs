@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   ADMISSION_PHRASES_SEED,
   ARGV_PROMPT_MAX,
+  BLOCKED_POOL_RE,
   CLAUDE_EXEC_FORMULA_RECORD,
   CLI_NAME_RE,
   CONFIG,
@@ -34,6 +35,7 @@ import {
   PLAN_ID_RE,
   RESUME_MSG,
   RETRY_DEFAULTS,
+  ROW_CLASSES,
   RUNNER_FILE,
   RUNTIMES,
   RUNTIME_ID_RE,
@@ -43,6 +45,7 @@ import {
   SETTING_STATES,
   SKILL_NAME_RE,
   SKILL_PROSE,
+  STATUS_TABLE,
   TABLE,
   addFinding,
   admissionHits,
@@ -52,6 +55,16 @@ import {
   argvPromptProblem,
   baselinePath,
   baselineVerdict,
+  blockedAfterStop,
+  blockedClearAfterOk,
+  blockedClear,
+  blockedStatusLine,
+  blockedFilePath,
+  blockedNext,
+  blockedPoolKey,
+  blockedPoolRow,
+  blockedStatedS,
+  blockedWithLock,
   capCodePoints,
   captureMaxBytes,
   checkGroup,
@@ -73,6 +86,10 @@ import {
   forbiddenHits,
   groupMembers,
   hardWaitFor,
+  statedResetS,
+  resetCheckS,
+  readBlocked,
+  shortHardWait,
   idleBudgetNote,
   killGroup,
   ladderNext,
@@ -98,6 +115,7 @@ import {
   parseTasks,
   parseTomlSubset,
   pathCovers,
+  patternFor,
   pidAlive,
   planArgvFile,
   planFindings,
@@ -120,6 +138,7 @@ import {
   removeRetryBlock,
   replaceCopies,
   reportLines,
+  resetAfterSeconds,
   resolveRetry,
   reviewArgvProblem,
   routeAdmits,
@@ -151,6 +170,18 @@ function codexPair(message) {
 
 function ocError(error) {
   return JSON.stringify({ type: 'error', sessionID: 'ses_1', error });
+}
+
+function checkFreeLimitRecord(r, ctx) {
+  if (ctx.calls.filter((line) => line === 'opencode fake/ok').length !== 1) return 'unexpected attempts';
+  if (/^cross-ai: ladder /m.test(r.stderr)) return 'direct lane entered ladder';
+  const file = path.join(ctx.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'blocked', 'fake%3Afree.json');
+  try {
+    const rec = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (rec.rule !== 'opencode-free-limit' || rec.basis !== 'retry_after_ms' || rec.failures !== 1 ||
+        (Date.parse(rec.blocked_until) - Date.parse(rec.written_at)) / 1000 !== 24360) return `invalid record: ${JSON.stringify(rec)}`;
+  } catch { return 'missing record'; }
+  return null;
 }
 
 const CLASSIFY_CASES = [
@@ -248,6 +279,11 @@ const CLASSIFY_CASES = [
     expect: { status: 'quota', pattern: 'verified' },
   },
   {
+    name: 'blocked-free-limit-event', cli: 'opencode',
+    stdout: ocError({ type: 'provider.free-limit', message: 'Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.', status: 429, retryAfterMs: 24240000 }),
+    expect: { status: 'quota', pattern: 'unverified', rule: 'opencode-free-limit' },
+  },
+  {
     name: 'opencode-requires-key', cli: 'opencode',
     stdout: ocError({
       type: 'provider.quota', status: 402, message: 'requires an opencode API key',
@@ -268,7 +304,7 @@ const CLASSIFY_CASES = [
       message: 'Your workspace has reached its monthly spending limit',
       response: { body: JSON.stringify({ type: 'MonthlyLimitError' }) },
     }),
-    expect: { status: 'billing', pattern: 'unverified' },
+    expect: { status: 'billing', pattern: 'verified' },
   },
   {
     name: 'opencode-monthly-limit-router', cli: 'opencode', route: 'router',
@@ -277,7 +313,7 @@ const CLASSIFY_CASES = [
       message: 'Your workspace has reached its monthly spending limit',
       response: { body: JSON.stringify({ type: 'MonthlyLimitError' }) },
     }),
-    expect: { status: 'quota', pattern: 'unverified' },
+    expect: { status: 'quota', pattern: 'verified' },
   },
   {
     name: 'opencode-spend-403', cli: 'opencode',
@@ -293,14 +329,14 @@ const CLASSIFY_CASES = [
       type: 'provider.auth', status: 403, message: 'Model access is disabled',
       response: { body: JSON.stringify({ type: 'ModelDisabledError' }) },
     }),
-    expect: { status: 'billing', pattern: 'unverified' },
+    expect: { status: 'billing', pattern: 'verified' },
   },
   {
     name: 'opencode-model-disabled-router', cli: 'opencode', route: 'router',
     stdout: ocError({
       type: 'provider.auth', status: 403, message: 'Model access is disabled',
     }),
-    expect: { status: 'quota', pattern: 'unverified' },
+    expect: { status: 'quota', pattern: 'verified' },
   },
   {
     name: 'opencode-bad-key', cli: 'opencode',
@@ -478,7 +514,7 @@ const CLASSIFY_CASES = [
   {
     name: 'evidence-all-targets-cooling-down', cli: 'pi', route: 'router',
     stderr: 'all_targets_cooling_down: provider/model: circuit_open (45s)',
-    expect: { status: 'transient', pattern: 'unverified', rule: 'omniroute-all-targets-cooling-down' },
+    expect: { status: 'quota', pattern: 'unverified', rule: 'router-all-targets-cooling-down' },
   },
   {
     name: 'evidence-circuit-open', cli: 'pi', route: 'router',
@@ -488,7 +524,55 @@ const CLASSIFY_CASES = [
   {
     name: 'evidence-model-cooldown', cli: 'pi', route: 'router',
     stderr: '{"code":"model_cooldown","retry_after":"2026-10-25T08:42:03.640Z"}',
-    expect: { status: 'transient', pattern: 'unverified', rule: 'omniroute-model-cooldown' },
+    expect: { status: 'quota', pattern: 'unverified', rule: 'router-model-cooldown' },
+  },
+  ...['router', 'unknown', 'router-inferred'].map((route) => ({
+    name: `router-accounts-cooling-down${route === 'router' ? '' : route === 'unknown' ? '-unknown' : '-inferred'}`,
+    cli: 'pi', route,
+    stderr: '[WARN] [AUTH] all 3 active accounts cooling down for model fake/model (reset after 2h 4m)',
+    expect: route === 'router'
+      ? { status: 'quota', pattern: 'unverified', rule: 'router-accounts-cooling-down' }
+      : { status: 'transient', pattern: 'verified', rule: 'text-cooling-down' },
+  })),
+  {
+    name: 'router-model-cooldown-unknown', cli: 'pi', route: 'unknown',
+    stderr: '429: {"error":{"message":"model in cooldown","code":"model_cooldown","reset_seconds":30}}',
+    expect: { status: 'transient', pattern: 'verified', rule: 'omniroute-model-cooldown' },
+  },
+  {
+    name: 'router-all-models-failed', cli: 'pi', route: 'router',
+    stderr: 'All models failed | fake/model: upstream error (HTTP 402) (reset after 2m)',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'router-all-models-failed' },
+  },
+  {
+    name: 'router-all-models-failed-no-cooldown', cli: 'pi', route: 'router',
+    stderr: 'All models failed | fake/model: upstream error (HTTP 401)',
+    expect: { status: 'auth', pattern: 'verified', rule: 'code-401-403' },
+  },
+  {
+    name: 'router-accounts-cooling-down-no-reset', cli: 'pi', route: 'router',
+    stderr: '[WARN] [AUTH] all 3 active accounts cooling down for model fake/model',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'router-accounts-cooling-down' },
+  },
+  {
+    name: 'router-persisted-cooldown', cli: 'pi', route: 'router',
+    stderr: 'connection has persisted cooldown until <time>',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'router-persisted-cooldown' },
+  },
+  {
+    name: 'router-usage-balance-exhausted', cli: 'pi', route: 'router',
+    stderr: 'fake/model: usage balance exhausted (reset after 52s)',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'router-usage-balance-exhausted' },
+  },
+  {
+    name: 'router-usage-balance-exhausted-unknown', cli: 'pi', route: 'unknown',
+    stderr: 'fake/model: usage balance exhausted (reset after 52s)',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'router-usage-balance-exhausted-auth', cli: 'pi', route: 'router',
+    stderr: '401: fake/model: usage balance exhausted',
+    expect: { status: 'auth', pattern: 'verified', rule: 'code-401-403' },
   },
   {
     name: 'evidence-endpoint-unavailable', cli: 'pi', route: 'router',
@@ -540,6 +624,21 @@ const CLASSIFY_CASES = [
     name: 'pi-free-tier', cli: 'pi',
     stderr: '403: {"type":"FreeTierError"}',
     expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-free-tier-error', cli: 'opencode',
+    stderr: '403: {"type":"FreeTierError"}',
+    expect: { status: 'bad_request', pattern: 'unverified', rule: 'opencode-free-tier-error' },
+  },
+  {
+    name: 'opencode-missing-session-id', cli: 'opencode',
+    stderr: '400: {"type":"MissingSessionID"}',
+    expect: { status: 'bad_request', pattern: 'unverified', rule: 'opencode-missing-session-id' },
+  },
+  {
+    name: 'opencode-free-tier-version-gate', cli: 'opencode',
+    stderr: 'Error: version 9.9.9 or newer is required to use the free tier',
+    expect: { status: 'bad_request', pattern: 'unverified', rule: 'opencode-free-tier-version-gate' },
   },
   {
     name: 'pi-event-400', cli: 'pi',
@@ -607,6 +706,11 @@ const CLASSIFY_CASES = [
     expect: { status: 'quota', pattern: 'unverified' },
   },
   {
+    name: 'stdout-claude-plain-model', cli: 'claude',
+    stdout: "There's an issue with the selected model (fake-model-404). It may not exist or you may not have access to it.",
+    expect: { status: 'bad_model', pattern: 'unverified', rule: 'claude-selected-model-stdout' },
+  },
+  {
     name: 'edge-4021-tokens', cli: 'pi',
     stderr: 'used 4021 tokens',
     expect: { status: 'crash', pattern: 'none', rule: '-' },
@@ -648,6 +752,85 @@ const CLASSIFY_CASES = [
     }),
     expect: { status: 'quota', pattern: 'verified', rule: 'vendor-usage-limit-reached' },
   },
+  {
+    name: 'catalog-provider-not-configured', cli: 'pi',
+    stderr: '{"error":{"code":"provider_not_configured"}}',
+    expect: { status: 'bad_model', pattern: 'unverified', rule: 'provider-not-configured' },
+  },
+  {
+    name: 'catalog-policy-budget', cli: 'pi', stderr: '429 Policy budget exceeded',
+    expect: { status: 'billing', pattern: 'unverified', rule: 'text-policy-budget-exceeded' },
+  },
+  {
+    name: 'catalog-policy-budget-router', cli: 'pi', route: 'router',
+    stderr: '429 Policy budget exceeded',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'text-policy-budget-exceeded' },
+  },
+  {
+    name: 'catalog-account-budget', cli: 'pi', stderr: '429 Account budget exceeded',
+    expect: { status: 'billing', pattern: 'unverified', rule: 'text-account-budget-exceeded' },
+  },
+  {
+    name: 'catalog-data-inspection', cli: 'pi',
+    stderr: '400 {"error":{"code":"data_inspection_failed"}}',
+    expect: { status: 'bad_request', pattern: 'unverified', rule: 'vendor-data-inspection-failed' },
+  },
+  {
+    name: 'catalog-context-length', cli: 'pi',
+    stderr: '400 {"error":{"code":"context_length_exceeded"}}',
+    expect: { status: 'bad_request', pattern: 'unverified', rule: 'vendor-context-length-exceeded' },
+  },
+  {
+    name: 'catalog-code-1311', cli: 'pi', stderr: '429: {"code":"1311","message":"plan not open"}',
+    expect: { status: 'billing', pattern: 'unverified', rule: 'vendor-code-1311' },
+  },
+  {
+    name: 'catalog-code-1311-router', cli: 'pi', route: 'router',
+    stderr: '429: {"code":"1311","message":"plan not open"}',
+    expect: { status: 'quota', pattern: 'unverified', rule: 'vendor-code-1311' },
+  },
+  {
+    name: 'catalog-connection-capacity', cli: 'pi',
+    stderr: 'Connection capacity reached for placeholder-model-1',
+    expect: { status: 'transient', pattern: 'unverified', rule: 'text-connection-capacity' },
+  },
+  {
+    name: 'catalog-connection-capacity-503', cli: 'pi',
+    stderr: '503 Connection capacity reached for placeholder-model-1',
+    expect: { status: 'transient', pattern: 'unverified', rule: 'text-connection-capacity' },
+  },
+  {
+    name: 'catalog-bare-503', cli: 'pi', stderr: '503 upstream error',
+    expect: { status: 'transient', pattern: 'verified', rule: 'code-5xx' },
+  },
+  {
+    name: 'catalog-near-miss', cli: 'pi',
+    stderr: 'note: provider_not_configuredx and context_length_exceeded_soon in the log',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'catalog-insufficient-funds', cli: 'pi', stderr: 'insufficient funds on this account',
+    expect: { status: 'billing', pattern: 'verified', rule: 'text-insufficient-funds' },
+  },
+  {
+    name: 'host-opencode-outage', cli: 'opencode',
+    stdout: ocError({ type: 'provider.unavailable', status: 503, message: 'Model unavailable: placeholder-model-1' }),
+    expect: { status: 'transient', pattern: 'verified' },
+  },
+  {
+    name: 'host-opencode-suffix-type', cli: 'opencode',
+    stdout: ocError({ type: 'provider.no-route-x', message: 'fake-neutral-text' }),
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'host-opencode-stderr-mention', cli: 'opencode', stderr: 'opencode-type:provider.no-route',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'host-copilot-one-word-off', cli: 'copilot',
+    stderr: 'Execution failed: Model "placeholder-model-1" is not  available.',
+    expect: { status: 'crash', pattern: 'none', rule: '-', cliPattern: 'unverified' },
+  },
 ];
 
 function classifyOne(entry, table) {
@@ -657,6 +840,7 @@ function classifyOne(entry, table) {
     model: entry.model || '',
     stderr: entry.stderr || '',
     events: extractEvents(entry.cli, entry.stdout || ''),
+    stdout: entry.stdout || '',
   }, table);
 }
 
@@ -669,6 +853,26 @@ function pureClassify(entry) {
     return `rule ${got.rule} expected ${want.rule}`;
   }
   return null;
+}
+
+function narrowViolations(rows) {
+  const generic = ['unavailable', 'not found', '503 Service Unavailable', '404 Not Found',
+    'service temporarily unavailable'];
+  return rows.filter((row) => row.class === 'bad_model' &&
+    generic.some((text) => new RegExp(row.match, 'i').test(text))).map((row) => row.id);
+}
+
+const LOCKREC = (pid) => JSON.stringify({ version: 1, run_id: 'placeholder-run-1', pid,
+  pid_start: '-', host_name: os.hostname(), started_ms: 1700000000000, child_pgid: null, child_start: null });
+const blockedResult = (ms) => ({ status: 'quota', route: 'unknown', rule: 'vendor-free-usage',
+  upstream: { fields: { retryAfterMs: ms } } });
+const blockedEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const REC = (c) => path.join(c.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'blocked', 'fake%3Afree.json');
+const PLANTED = JSON.stringify({ pool: 'fake:free', blocked_until: '2023-11-15T04:59:20Z', failures: 1, basis: 'retry_after_ms', rule: 'vendor-free-usage', written_at: '2023-11-14T22:13:20Z' });
+const PLANT = (c) => { fs.mkdirSync(path.dirname(REC(c)), { recursive: true }); fs.writeFileSync(REC(c), PLANTED); return null; };
+function blockedHome(fn) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-blocked-'));
+  try { return fn(home); } finally { fs.rmSync(home, { recursive: true, force: true }); }
 }
 
 function classifyCases() {
@@ -702,6 +906,23 @@ function classifyCases() {
       },
     },
     {
+      name: 'pure-class-disjoint',
+      kind: 'logic',
+      pure: () => {
+        const seen = new Set();
+        for (const name of ROW_CLASSES) {
+          if (seen.has(name)) return `duplicate ${name}`;
+          seen.add(name);
+        }
+        if (!seen.has('bad_request')) return 'missing bad_request';
+        for (const name of [...ROW_CLASSES, 'crash']) {
+          if (SETTING_REASONS.includes(name) || FINDING_CODES.includes(name) || ['partial', 'locked'].includes(name)) return `overlap ${name}`;
+          if (!STATUS_TABLE[name]) return `no exit ${name}`;
+        }
+        return null;
+      },
+    },
+    {
       // Without the tier-0 reason rows the same body matches a later provider row, so the
       // reason-code row is what decides it.
       name: 'pure-catalog-reason-code-wins',
@@ -723,6 +944,57 @@ function classifyCases() {
         for (const row of TABLE) {
           if (row.tier < prev) return `${row.id} tier ${row.tier} after ${prev}`;
           prev = row.tier;
+        }
+        return null;
+      },
+    },
+    {
+      name: 'pure-catalog-narrow',
+      kind: 'logic',
+      pure: () => {
+        const shipped = narrowViolations(PATTERNS);
+        if (shipped.length) return `shipped rows too broad: ${shipped.join(', ')}`;
+        const planted = (id, match) => ({
+          id, match, tier: 4, cli: '*', route: '*', provider: '*', input: 'any',
+          class: 'bad_model', terminal: true, label: 'unverified', evidence: 'test',
+        });
+        const got = narrowViolations([...PATTERNS, planted('planted-unavailable', 'unavailable'),
+          planted('planted-not-found', 'not found')]);
+        const want = ['planted-unavailable', 'planted-not-found'];
+        return JSON.stringify(got) === JSON.stringify(want) ? null : `violations ${JSON.stringify(got)}`;
+      },
+    },
+    {
+      name: 'pure-catalog-budget-order',
+      kind: 'logic',
+      pure: () => {
+        const budget = TABLE.findIndex((row) => row.id === 'text-policy-budget-exceeded');
+        const code = TABLE.findIndex((row) => row.id === 'code-429');
+        if (budget < 0 || code < 0 || budget >= code) return 'budget row must precede code-429';
+        const got = classifyOne({ cli: 'pi', stderr: '429 Policy budget exceeded' },
+          TABLE.filter((row) => !row.id.endsWith('budget-exceeded')));
+        return got.rule === 'code-429' ? null : `rule ${got.rule} expected code-429`;
+      },
+    },
+    {
+      name: 'pure-catalog-demotion-sides', kind: 'logic',
+      pure: () => {
+        const flagged = { errorsUnverified: true };
+        const exec = { execLabel: { state: 'unverified' } };
+        const cases = [
+          [flagged, 'copilot', 'exec', 'copilot-model-not-available', 'verified', 'verified'],
+          [flagged, 'copilot', 'exec', 'text-payment-required', 'verified', 'unverified'],
+          [flagged, 'claude', 'exec', 'copilot-model-not-available', 'verified', 'unverified'],
+          [exec, 'claude', 'exec', 'claude-selected-model', 'verified', 'verified'],
+          [exec, 'claude', 'exec', 'code-429', 'verified', 'unverified'],
+          [exec, 'claude', 'review', 'code-429', 'verified', 'verified'],
+          [flagged, 'opencode', 'exec', 'opencode-type-quota', 'verified', 'unverified'],
+          [undefined, 'placeholder-cli-1', null, 'code-429', 'verified', 'unverified'],
+          [{}, 'pi', 'exec', '-', 'none', 'none'],
+        ];
+        for (const [rt, cli, mode, rule, label, expected] of cases) {
+          const got = patternFor(rt, cli, mode, { rule, label });
+          if (got !== expected) return `${cli}/${rule}: ${got} expected ${expected}`;
         }
         return null;
       },
@@ -759,6 +1031,9 @@ function classifyCases() {
           [{ ...base, match: 'a'.repeat(201) }, 'match'],
           [{ ...base, match: '(' }, 'match'],
           [{ ...base, cli: 'nosuch' }, 'cli'],
+          [{ ...base, pool: 'Free' }, 'pool'],
+          [{ ...base, pool: 'tier-1' }, 'pool'],
+          [{ ...base, pool: 'a'.repeat(17) }, 'pool'],
         ];
         for (const [row, field] of cases) {
           const reason = validateRow(row, RUNTIMES);
@@ -783,6 +1058,145 @@ function classifyCases() {
         if (!providerAdmits(row, 'router', 'placeholder-model-1')) return 'router lane refused';
         return null;
       },
+    },
+    {
+      name: 'blocked-time-stated', kind: 'logic', pure: () => {
+        if (blockedStatedS({ retryAfterMs: 24240000 }) !== 24240 || blockedStatedS({ retryAfterMs: 1999 }) !== 1) return 'stated seconds';
+        return blockedEqual(blockedNext(null, 1700000000, 24240), { untilS: 1700024360, failures: 1, basis: 'retry_after_ms' }) ? null : 'stated deadline';
+      },
+    },
+    {
+      name: 'blocked-time-default', kind: 'logic', pure: () => {
+        for (const fields of [undefined, null, {}, { retryAfterMs: 0 }, { retryAfterMs: -5 }, { retryAfterMs: 1.5 }, { retryAfterMs: '24240000' }]) {
+          if (blockedStatedS(fields) !== null) return 'invalid stated time';
+        }
+        if (!blockedEqual(blockedNext(null, 1700000000, null), { untilS: 1700086400, failures: 1, basis: 'default_24h' })) return 'default deadline';
+        return blockedStatedS({ retryAfterMs: 1 }) === 0 && blockedNext(null, 1700000000, 0).untilS === 1700000120 ? null : 'subsecond deadline';
+      },
+    },
+    {
+      name: 'blocked-time-cap', kind: 'logic', pure: () =>
+        blockedStatedS({ retryAfterMs: 86400000 }) === 86400 && blockedStatedS({ retryAfterMs: 86401000 }) === 86400 ? null : 'cap',
+    },
+    {
+      name: 'blocked-second-failure', kind: 'logic', pure: () => {
+        const prev = { untilS: 1700000000, failures: 1, basis: 'retry_after_ms' };
+        const inside = { untilS: 1700000500, failures: 1, basis: 'default_24h' };
+        const pairs = [
+          [blockedNext(prev, 1700000010, 24240), { untilS: 1700086410, failures: 2, basis: 'floor_24h' }],
+          [blockedNext({ ...prev, failures: 2 }, 1700000010, 86400), { untilS: 1700086530, failures: 3, basis: 'retry_after_ms' }],
+          [blockedNext(inside, 1700000010, 60), inside],
+          [blockedNext(inside, 1700000010, 24240), { untilS: 1700024370, failures: 1, basis: 'retry_after_ms' }],
+        ];
+        return pairs.every(([a, b]) => blockedEqual(a, b)) ? null : 'failure deadline';
+      },
+    },
+    {
+      name: 'blocked-key', kind: 'logic', pure: () => {
+        const row = { pool: 'free' };
+        if (blockedPoolKey(null, row, 'fake/placeholder-model-1') !== 'fake:free' || blockedPoolKey('fake-go:free', row, 'fake/placeholder-model-1') !== 'fake-go:free') return 'pool key';
+        for (const model of ['placeholder-model-1', 'faké/placeholder-model-1', 'fa\u0001ke/placeholder-model-1']) if (blockedPoolKey(null, row, model) !== null) return 'invalid provider';
+        if (blockedPoolKey(null, {}, 'fake/placeholder-model-1') !== null || BLOCKED_POOL_RE.test('fake/free') || BLOCKED_POOL_RE.test(':free')) return 'invalid pool';
+        const a = blockedFilePath('x:free', '/h');
+        const b = blockedFilePath('x-go:free', '/h');
+        return a !== b && a.endsWith('x%3Afree.json') && b.endsWith('x-go%3Afree.json') ? null : 'file key';
+      },
+    },
+    {
+      name: 'blocked-read-options', kind: 'logic', pure: () => blockedHome((home) => {
+        blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(24240000), 1700000000000, home);
+        const file = blockedFilePath('fake:free', home);
+        const bytes = fs.readFileSync(file, 'utf8');
+        if (blockedStatusLine('fake:free', home) !== 'blocked_until=2023-11-15T04:59:20Z failures=1' || fs.readFileSync(file, 'utf8') !== bytes) return 'status changed record';
+        for (const text of ['{}', '', 'not json']) {
+          fs.writeFileSync(file, text);
+          if (blockedStatusLine('fake:free', home) !== 'blocked_until=- failures=0') return 'malformed status';
+        }
+        blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(24240000), 1700000000000, home);
+        if (blockedClear('fake:free', home) !== 'cleared' || fs.existsSync(file) || blockedClear('fake:free', home) !== 'absent') return 'clear';
+        return null;
+      }),
+    },
+    {
+      name: 'blocked-file', kind: 'logic', pure: () => blockedHome((home) => {
+        blockedAfterStop('fake-go:free', 'fake/placeholder-model-1', { status: 'quota', route: 'unknown', rule: 'code-429', upstream: null }, 1700000000000, home);
+        const named = JSON.parse(fs.readFileSync(blockedFilePath('fake-go:free', home), 'utf8'));
+        if (named.basis !== 'default_24h' || named.blocked_until !== '2023-11-15T22:13:20Z') return 'named pool';
+        blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(24240000), 1700000000000, home);
+        const file = blockedFilePath('fake:free', home);
+        const bytes = fs.readFileSync(file, 'utf8');
+        const rec = JSON.parse(bytes);
+        if ((fs.statSync(file).mode & 0o777) !== 0o600 || !blockedEqual(Object.keys(rec).sort(), ['basis', 'blocked_until', 'failures', 'pool', 'rule', 'written_at']) || rec.blocked_until !== '2023-11-15T04:59:20Z' || rec.failures !== 1 || rec.basis !== 'retry_after_ms' || bytes.includes('placeholder-model') || bytes.includes('/')) return 'record contents';
+        if (!readBlocked('fake:free', home) || fs.readFileSync(file, 'utf8') !== bytes) return 'read changed record';
+        blockedAfterStop(null, 'fake/placeholder-model-2', blockedResult(24240000), 1700000000000, home);
+        if (!blockedEqual(fs.readdirSync(path.dirname(file)).sort(), ['fake%3Afree.json', 'fake-go%3Afree.json'])) return 'temporary files';
+        blockedClearAfterOk(null, home);
+        if (!fs.existsSync(file)) return 'unnamed clear';
+        blockedClearAfterOk('fake:free', home);
+        if (fs.existsSync(file)) return 'named clear';
+        return blockedHome((fresh) => {
+          for (const r of [{ ...blockedResult(1), route: 'router' }, { ...blockedResult(1), rule: 'code-429' }, { ...blockedResult(1), status: 'bad_model' }]) {
+            if (blockedAfterStop(null, 'fake/placeholder-model-1', r, 1700000000000, fresh) !== null) return 'unexpected write';
+          }
+          return fs.existsSync(path.dirname(blockedFilePath('fake:free', fresh))) ? 'unexpected folder' : null;
+        });
+      }),
+    },
+    {
+      name: 'blocked-malformed', kind: 'logic', pure: () => blockedHome((home) => {
+        const file = blockedFilePath('fake:free', home);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        for (const text of ['', '{}', 'not json', '[]', '{"pool":"fake:free","blocked_until":"x","failures":1}', '{"pool":"other:free","blocked_until":"2023-11-15T06:39:20Z","failures":1}', '{"pool":"fake:free","blocked_until":"2023-11-15T06:39:20Z","failures":0}']) {
+          fs.writeFileSync(file, text);
+          if (readBlocked('fake:free', home) !== null) return `accepted malformed ${text}`;
+        }
+        blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(60000), 1700000000000, home);
+        return JSON.parse(fs.readFileSync(file, 'utf8')).failures === 1 ? null : 'malformed not replaced';
+      }),
+    },
+    {
+      name: 'blocked-later-wins', kind: 'logic', pure: () => blockedHome((home) => {
+        blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(86400000), 1700000000000, home);
+        blockedAfterStop(null, 'fake/placeholder-model-2', blockedResult(60000), 1700000000000, home);
+        const rec = JSON.parse(fs.readFileSync(blockedFilePath('fake:free', home), 'utf8'));
+        if (rec.blocked_until !== '2023-11-15T22:15:20Z' || rec.failures !== 1) return 'later deadline lost';
+        return blockedHome((fresh) => {
+          const file = blockedFilePath('fake:free', fresh);
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          fs.writeFileSync(`${file}.lock`, LOCKREC(2147483646));
+          blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(60000), 1700000000000, fresh);
+          return blockedEqual(fs.readdirSync(path.dirname(file)), ['fake%3Afree.json']) ? null : 'stale lock';
+        });
+      }),
+    },
+    {
+      name: 'blocked-lock-held-skips', kind: 'logic', pure: () => blockedHome((home) => {
+        blockedAfterStop(null, 'fake/placeholder-model-1', blockedResult(60000), 1700000000000, home);
+        const file = blockedFilePath('fake:free', home);
+        const bytes = fs.readFileSync(file, 'utf8');
+        const lock = `${file}.lock`;
+        const lockBytes = LOCKREC(process.pid);
+        fs.writeFileSync(lock, lockBytes);
+        if (blockedWithLock(file, () => 'unexpected', 1).done || blockedAfterStop(null, 'fake/placeholder-model-2', blockedResult(86400000), 1700000000000, home, 1) !== null || fs.readFileSync(file, 'utf8') !== bytes || fs.readFileSync(lock, 'utf8') !== lockBytes) return 'held lock changed';
+        fs.unlinkSync(lock);
+        blockedAfterStop(null, 'fake/placeholder-model-2', blockedResult(86400000), 1700000000000, home);
+        return JSON.parse(fs.readFileSync(file, 'utf8')).blocked_until === '2023-11-15T22:15:20Z' ? null : 'unlocked write';
+      }),
+    },
+    {
+      name: 'blocked-pool-row-fallback', kind: 'logic', pure: () => blockedHome((home) => {
+        const raw = JSON.stringify({ type: 'error', sessionID: 'ses_fake', error: { type: 'provider.free-limit', message: 'Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.', status: 429, retryAfterMs: 24240000 } });
+        const rr = { status: 'quota', route: 'unknown', rule: 'text-usage-limit', cli: 'opencode', upstream: { raw, fields: { retryAfterMs: 24240000 } } };
+        if (blockedPoolRow(rr, 'fake/placeholder-model-1')?.id !== 'opencode-free-limit') return 'opencode row';
+        blockedAfterStop(null, 'fake/placeholder-model-1', rr, 1700000000000, home);
+        const rec = JSON.parse(fs.readFileSync(blockedFilePath('fake:free', home), 'utf8'));
+        if (rec.rule !== 'opencode-free-limit' || rec.basis !== 'retry_after_ms') return 'fallback record';
+        return blockedHome((fresh) => {
+          const other = { ...rr, cli: 'pi' };
+          if (blockedPoolRow(other, 'fake/placeholder-model-1')?.id !== 'text-usage-limit' || blockedAfterStop(null, 'fake/placeholder-model-1', other, 1700000000000, fresh) !== null) return 'other cli row';
+          return fs.existsSync(path.dirname(blockedFilePath('fake:free', fresh))) ? 'other cli folder' : null;
+        });
+      }),
     },
     {
       name: 'pure-overlay-regex-timeout',
@@ -1169,6 +1583,95 @@ function classifyCases() {
         return null;
       },
     },
+    {
+      name: 'router-pure-reset-after', kind: 'logic',
+      pure: () => {
+        const cases = [
+          ['x (reset after 52s)', 52], ['(reset after 1m 5s)', 65],
+          ['(reset after 2h 20m)', 8400], ['(reset after 3h 43m 58s)', 13438],
+          ['(reset after 2h 4m)', 7440], ['(reset after 5s 1m)', 65],
+          ['(Reset After 0s)', 0], ['(reset after 1m 2m)', null],
+          ['(reset after 1.5h)', null], ['(reset after 2h4m)', null],
+          ['(reset after 5d)', null], ['(reset after )', null],
+          ['reset after 94h 42m 34s', null], ['', null],
+        ];
+        for (const [input, expected] of cases) if (resetAfterSeconds(input) !== expected) return input;
+        return null;
+      },
+    },
+    {
+      name: 'router-pure-upstream-fields', kind: 'logic',
+      pure: () => {
+        const line = '[WARN] [AUTH] all 3 active accounts cooling down for model fake/model (reset after 2h 4m)';
+        const cases = [
+          [line, '{"reset_after_s":7440}'],
+          ['429: {"error":{"code":"model_cooldown","reset_seconds":30}}', '{"reset_seconds":30}'],
+          ['[WARN] [AUTH] all 3 active accounts cooling down for model fake/model', 'null'],
+          ['503: {"error":{"message":"all targets cooling down","code":"all_targets_cooling_down"},"recovery_hint":{"action":"wait","retry_after_seconds":45}}', '{"retry_after_seconds":45}'],
+          ['429: {"error":{"message":"All credentials for model fake/model are cooling down","type":"rate_limit_error","code":"model_cooldown","model":"fake/model","reset_seconds":30,"retry_after":"2000-01-01T00:00:30.000Z"}}', '{"retry_after":"2000-01-01T00:00:30.000Z","reset_seconds":30}'],
+          ['Retry-After: 45', 'null'],
+        ];
+        for (const [input, expected] of cases) if (JSON.stringify(upstreamFields(input)) !== expected) return input;
+        if (JSON.stringify(upstreamFields(line)) !== JSON.stringify(upstreamFields(line))) return 'idempotency';
+        if (upstreamOf({ raw: line }, { stderr: line }, 'pi').fields.reset_after_s !== 7440) return 'display';
+        const a = classifyStop({ cli: 'pi', route: 'router', stderr: line });
+        const b = classifyStop({ cli: 'pi', route: 'router', stderr: line });
+        return a.status === b.status && a.rule === b.rule ? null : 'classification idempotency';
+      },
+    },
+    {
+      name: 'stdout-pure-claude-fields', kind: 'logic',
+      pure: () => {
+        const ev = (extra) => JSON.stringify({ type: 'result', is_error: true, result: 'Request failed', ...extra });
+        const cases = [
+          [{ api_error_status: 429, api_error_type: 'fake_error_type' }, ['Request failed', 'status 429', 'fake_error_type']],
+          [{}, ['Request failed']],
+          ...['429', 429.5, 99, 600].map((code) => [{ api_error_status: code }, ['Request failed']]),
+          ...[100, 599].map((code) => [{ api_error_status: code }, ['Request failed', `status ${code}`]]),
+          [{ api_error_status: 404, api_error_type: 'not_found_error' }, ['Request failed', 'status 404', 'not_found_error']],
+        ];
+        for (const [extra, expected] of cases) {
+          if (JSON.stringify(extractEvents('claude', ev(extra))) !== JSON.stringify(expected)) return JSON.stringify(extra);
+        }
+        if (JSON.stringify(extractEvents('cursor', ev({ api_error_status: 429 }))) !== JSON.stringify(['Request failed'])) return 'cursor';
+        const result = classifyStop({ cli: 'claude', route: 'unknown', stderr: '', events: extractEvents('claude', ev({ api_error_status: 429, api_error_type: 'fake_error_type' })) });
+        return result.status === 'quota' && result.rule === 'code-429' ? null : 'classification';
+      },
+    },
+    {
+      name: 'stdout-pure-sources', kind: 'logic',
+      pure: () => {
+        const S = "You've hit your limit, resets 9:30pm";
+        const classify = (cli, stderr, stdout) => classifyStop({ cli, route: 'unknown', stderr, stdout });
+        let result = classify('claude', S, S);
+        if (result.status !== 'quota' || result.rule !== 'claude-hit-your-limit' || result.source !== 'stderr') return 'stderr first';
+        result = classify('claude', '', 'working\n\u001b[31m' + S + '\u001b[0m\nbye');
+        if (result.rule !== 'claude-hit-your-limit-stdout' || result.source !== 'stdout' || result.line !== S) return 'plain line';
+        if (classify('claude', '', JSON.stringify({ type: 'result', is_error: false, result: S })).status !== 'crash') return 'JSON';
+        if (classify('pi', '', S + "\nYou've hit your usage limit").status !== 'crash') return 'pi';
+        if (classify('claude', '', '').status !== 'crash') return 'empty';
+        if (liveMatch('claude', 'stdout', S) !== null || liveMatch('claude', 'stderr', S) === null) return 'live';
+        if (validateRow({ ...TABLE.find((row) => row.id === 'claude-hit-your-limit-stdout'), input: 'stdin' }, RUNTIMES) !== 'input is not stderr, event, stdout or any') return 'validation';
+        result = classify('claude', 'HTTP 429', S);
+        if (result.rule !== 'claude-hit-your-limit-stdout' || result.source !== 'stdout') return 'row order';
+        if (classify('claude', '', '\u001b[32m' + JSON.stringify({ type: 'result', is_error: false, result: S }) + '\u001b[0m').status !== 'crash') return 'colored JSON';
+        return null;
+      },
+    },
+    {
+      name: 'stdout-pure-cap', kind: 'logic',
+      pure: () => {
+        const S = "You've hit your limit, resets 9:30pm";
+        const classify = (stdout) => classifyStop({ cli: 'claude', route: 'unknown', stderr: '', stdout });
+        if (classify(JSON.stringify({ type: 'result', is_error: false, result: 'x'.repeat(70000) + ' ' + S })).status !== 'crash') return 'large JSON';
+        if (classify(JSON.stringify(S)).status !== 'crash') return 'JSON string';
+        const result = classify('y'.repeat(70000) + '\n' + S);
+        if (result.rule !== 'claude-hit-your-limit-stdout' || result.source !== 'stdout' || result.line !== S) return 'plain tail';
+        if (classify('z'.repeat(70000) + ' ' + S).status !== 'crash') return 'cut line';
+        if (classify(JSON.stringify({ type: 'system', pad: 'p'.repeat(70000) }) + '\n' + S).rule !== 'claude-hit-your-limit-stdout') return 'JSON excluded from cap';
+        return null;
+      },
+    },
   ];
 }
 
@@ -1214,7 +1717,7 @@ function writeCopy(tmp, name, override) {
     runtime: 'pi', routerBacked: {},
     scrubEnv: [...CONFIG.scrubEnv],
     ...rest,
-    retry: { base_s: 0, factor: 1.5, max_retries: 5, session_resets: 1, hard_waits_s: [0, 0, 0] },
+    retry: { base_s: 0, factor: 1.5, max_retries: 5, session_resets: 1, hard_waits_s: [60, 60, 60], hard_every_s: 0 },
   };
   if (Object.hasOwn(rest, 'prefer') && !Object.hasOwn(rest, 'runtime')) cfg.runtime = null;
   // Null normally removes an override; runtime null models prefer-only copies.
@@ -1438,7 +1941,7 @@ const FAKE_MODES = {
   },
   'router402-nofields': () => {
     const key = process.env.AIKIT_XAI_SENTINEL || 'sentinel';
-    process.stderr.write('402: {"message":"[acme-cli/acme-4.7] [402]: Acme Build usage balance exhausted (reset after 2m)","api_key":"' + key + '","connection":"conn:ab12cd34"}\n');
+    process.stderr.write('402: {"message":"[acme-cli/acme-4.7] [402]: Acme Build usage balance exhausted","api_key":"' + key + '","connection":"conn:ab12cd34"}\n');
     process.exit(1);
   },
   'auth-then-noise': () => {
@@ -1451,9 +1954,11 @@ const FAKE_MODES = {
     process.exit(1);
   },
   billing: () => { process.stderr.write('402 payment required\n'); process.exit(1); },
+  'bad-request': () => { process.stderr.write('acme request refused\n'); process.exit(1); },
   'router-env-billing': () => { process.stderr.write('402 payment required\n'); process.exit(1); },
   spend403: () => { process.stderr.write('Error 403: spending limit reached for this team\n'); process.exit(1); },
   freetier: () => { process.stderr.write('403: {"type":"FreeTierError"}\n'); process.exit(1); },
+  freelimit: () => { process.stderr.write('429: {"type":"error","error":{"type":"FreeUsageLimitError","status":429,"retryAfterMs":24240000}}\n'); process.exit(1); },
   auth: () => { process.stderr.write('401 unauthorized\n'); process.exit(1); },
   perm: () => { process.stderr.write('permission denied\n'); process.exit(1); },
   quota: () => { process.stderr.write('quota exceeded\n'); process.exit(1); },
@@ -1500,6 +2005,9 @@ const FAKE_MODES = {
     process.stderr.write('quota exceeded\n');
     process.exit(1);
   },
+  // 38.1 review: a free-pool limit after an edit, and one whose post-run git read fails.
+  dirtyfreelimit: () => { fs.appendFileSync('a.txt', 'df\n'); process.stderr.write('429: {"type":"error","error":{"type":"FreeUsageLimitError","status":429,"retryAfterMs":24240000}}\n'); process.exit(1); },
+  gitfailfreelimit: () => { fs.writeFileSync((process.env.HOME || '') + '/.fake-git-fail', '1'); process.stderr.write('429: {"type":"error","error":{"type":"FreeUsageLimitError","status":429,"retryAfterMs":24240000}}\n'); process.exit(1); },
   reedit: () => { fs.appendFileSync('dirty.txt', 'more\n'); process.stdout.write('# Summary\nok'); },
   subedit: () => { fs.appendFileSync('sub/f.txt', 'edit\n'); process.stdout.write('# Summary\nok'); },
   ignorededit: () => { fs.appendFileSync('x.local', 'edit\n'); process.stdout.write('# Summary\nok'); },
@@ -1527,6 +2035,14 @@ const FAKE_MODES = {
   'answer-only-limit': () => {
     fs.appendFileSync('a.txt', 'a\n');
     process.stdout.write('# Summary\n' + "You've hit your usage limit, quoted from the task");
+  },
+  'stdout-limit-answer': () => {
+    fs.appendFileSync('a.txt', 'a\n');
+    process.stdout.write("# Summary\nYou've hit your limit, resets 9:30pm");
+  },
+  'stdout-limit-fail': () => {
+    process.stdout.write("You've hit your limit, resets 9:30pm\nYou've hit your usage limit, quoted from the task\n");
+    process.exit(7);
   },
   'retry-notice': () => {
     process.stderr.write('Retrying in 1s: 503 Service Unavailable\n');
@@ -1851,6 +2367,13 @@ let input = '';
 process.stdin.on('data', (d) => { input += d; }).on('end', () => {
   const given = argOf('--session');
   recordSession('opencode', given, input);
+  if (model === 'fake/ok' && ['free-limit', 'free-limit-exit0'].includes(process.env.FAKE_OPENCODE_MODE)) {
+    console.log(JSON.stringify({ type: 'error', sessionID: 'ses_fake', error: { type: 'provider.free-limit', message: 'Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.', status: 429, retryAfterMs: 24240000 } }));
+    process.exit(process.env.FAKE_OPENCODE_MODE === 'free-limit' ? 1 : 0);
+  }
+  const clientRule = { freetier: '403: {"type":"FreeTierError"}', 'missing-session': '400: {"type":"MissingSessionID"}', 'version-gate': 'Error: version 9.9.9 or newer is required to use the free tier' }[process.env.FAKE_OPENCODE_MODE];
+  if (model === 'fake/ok' && clientRule) { process.stderr.write(clientRule + '\n'); process.exit(1); }
+  if (model === 'fake/ok' && process.env.FAKE_OPENCODE_MODE === 'removed-model') { console.log(JSON.stringify({ type: 'error', sessionID: 'ses_fake', error: { type: 'provider.no-route', message: 'Model unavailable: fake/ok' } })); process.exit(1); }
   if (model === 'fake/ok' && ['upstream-event', 'two-events'].includes(process.env.FAKE_OPENCODE_MODE)) {
     const acct = 'acct-' + process.pid;
     const token = process.env.AIKIT_XAI_SENTINEL || 'sentinel';
@@ -1945,6 +2468,10 @@ if (mode === 'event400') {
   process.stderr.write('[400]: event: error\n');
   process.exit(1);
 }
+if (mode === 'missing') {
+  process.stderr.write('Execution failed: Model "fake-missing" is not available.\n');
+  process.exit(1);
+}
 if (mode !== 'readonly') fs.appendFileSync('a.txt', 'ok-line\n');
 process.stderr.write('copilot: using token ' + process.env[tokens[0]] + '\n');
 process.stdout.write('# Summary\nok');
@@ -1960,9 +2487,27 @@ process.stdin.on('data', (d) => { input += d; }).on('end', () => {
   if (process.env.FAKE_CLAUDE_SEEN) fs.writeFileSync(process.env.FAKE_CLAUDE_SEEN, JSON.stringify({ argv: process.argv.slice(2), stdin: input, mcpCount: argOf('--mcp-config') ? mcpCount(argOf('--mcp-config')) : null }));
   const given = argOf('--resume');
   recordSession('claude', given, input);
+  const LIMIT = "You've hit your limit, resets 9:30pm";
+  if (argOf('--model') === 'fake-limit-plain') { process.stdout.write(LIMIT + '\n'); process.exit(1); }
+  if (argOf('--model') === 'fake-model-404') {
+    console.log(JSON.stringify({ type: 'result', is_error: true, api_error_status: 404, api_error_type: 'not_found_error', terminal_reason: 'error', result: "There's an issue with the selected model (fake-model-404). It may not exist or you may not have access to it." }));
+    process.exit(1);
+  }
+  if (argOf('--model') === 'fake-limit-json') { console.log(JSON.stringify({ type: 'result', is_error: true, result: LIMIT })); process.exit(1); }
+  if (argOf('--model') === 'fake-limit-stderr') { process.stderr.write(LIMIT + '\n'); process.exit(1); }
+  if (argOf('--model') === 'fake-limit-pretty') { console.log(JSON.stringify({ type: 'result', is_error: false, result: '', note: LIMIT }, null, 1)); process.exit(0); }
   if (argOf('--model') === 'fake-auth') {
     process.stderr.write('401 unauthorized\n');
     console.log(JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized' }));
+    process.exit(1);
+  }
+  if (argOf('--model') === 'fake-model-missing') {
+    console.log(JSON.stringify({ type: 'result', is_error: true, result: "There's an issue with the selected model (fake-model-missing). It may not exist or you may not have access to it." }));
+    process.exit(1);
+  }
+  // 38.1 review: only the structured status field can classify this result (its text matches no row).
+  if (argOf('--model') === 'fake-status-429') {
+    console.log(JSON.stringify({ type: 'result', is_error: true, api_error_status: 429, api_error_type: 'fake_error_type', result: 'Request failed' }));
     process.exit(1);
   }
   const execute = argOf('--permission-mode') !== 'plan';
@@ -2415,9 +2960,16 @@ function writePriorRecord(c, cli, model, kind, cls, cycle, extra = {}) {
   return file;
 }
 
-// The shared hard_waits list of the 25.1-03 hard-tier cases: real waits, never slept.
+// Simulate the caller waiting until the recorded hint is due.
+function ageDue(file) {
+  const rec = readCycleState(file);
+  if (rec && typeof rec.due_at === 'number') writeCycleState(file, { ...rec, due_at: Date.now() - 1000 });
+  return null;
+}
+
+// The shared hard_waits list of the 25.1-03 hard-tier cases, the shipped pattern (list end stops, SPEC R5): real waits, never slept.
 const HARD_TIER_RETRY = Object.freeze({
-  max_retries: 0, session_resets: 0, hard_waits_s: [600, 900, 1800],
+  max_retries: 0, session_resets: 0, hard_waits_s: [600, 900, 1800], hard_every_s: 0,
 });
 
 // Scratch folders for the migration pure cases: a work folder and a home folder under one root that
@@ -2758,6 +3310,30 @@ async function blackBoxSelfTest(listOnly = false) {
     const defaults = (overrides) => ({ tasks: [], commits: [], changed: [], uncommitted: [], answer: 'done', answered: true, phrases: ADMISSION_PHRASES_SEED, forbidden: FORBIDDEN_PATHS_SEED, named: new Set(), planId: null, ...overrides });
     const refusal = "--forbid must be a repo-relative path with no empty, '.' or '..' segment and no control character";
     const cases = [
+      {
+        name: 'blocked-status-none', kind: 'logic', args: ['--blocked-status', 'fake:free'], exit: 0, status: /^AIKIT-XAI status=ok /,
+        check: (r, ctx) => r.stdout === 'blocked_until=- failures=0\n' && ctx.calls.length === 0 ? null : 'status or spawn',
+      },
+      {
+        name: 'blocked-status-cli', kind: 'logic', setup: PLANT, args: ['--blocked-status', 'fake:free'], exit: 0, status: /^AIKIT-XAI status=ok /,
+        check: (r, ctx) => r.stdout === 'blocked_until=2023-11-15T04:59:20Z failures=1\n' && ctx.calls.length === 0 && fs.readFileSync(REC(ctx), 'utf8') === PLANTED ? null : 'status, spawn or changed record',
+      },
+      {
+        name: 'blocked-clear-cli', kind: 'logic', setup: PLANT, args: ['--blocked-clear', 'fake:free'], exit: 0, status: /^AIKIT-XAI status=ok /,
+        check: (r, ctx) => !fs.existsSync(REC(ctx)) && r.stderr.includes('cross-ai: blocked-until cleared pool=fake:free') && r.stdout === '' && ctx.calls.length === 0 ? null : 'clear or spawn',
+      },
+      {
+        name: 'blocked-clear-none', kind: 'logic', args: ['--blocked-clear', 'fake:free'], exit: 0, status: /^AIKIT-XAI status=ok /,
+        check: (r, ctx) => r.stdout === '' && !r.stderr.includes('cross-ai: blocked-until') && ctx.calls.length === 0 ? null : 'absent clear or spawn',
+      },
+      {
+        name: 'blocked-clear-conflict', kind: 'logic', setup: PLANT, args: ['--blocked-clear', 'fake:free', '--print-argv', '--runtime', 'pi'], exit: 2, status: /^AIKIT-XAI status=usage /,
+        check: (r, ctx) => r.stderr.includes('cross-ai: --blocked-status and --blocked-clear cannot be combined') && fs.existsSync(REC(ctx)) ? null : 'conflict or deleted record',
+      },
+      {
+        name: 'blocked-status-bad-pool', kind: 'logic', args: ['--blocked-status', 'fake/free'], exit: 2, status: /^AIKIT-XAI status=usage /,
+        check: (r) => r.stderr.includes('cross-ai: --blocked-status must look like <provider>:free') ? null : 'missing pool error',
+      },
       {
         name: 'ok',
         kind: 'logic',
@@ -3692,6 +4268,111 @@ async function blackBoxSelfTest(listOnly = false) {
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/spend403 exit=75 cli_rc=1 .* tree=clean action=stop$/,
       },
       {
+        name: 'blocked-pool-bad-value', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok', '--pool', 'fake/free'],
+        exit: 2, status: /^AIKIT-XAI status=usage /,
+        check: (r) => (r.stderr.includes('cross-ai: --pool must look like <provider>:free') &&
+          !/^cross-ai: attempt n=/m.test(r.stderr) ? null : 'invalid pool was not rejected before attempt'),
+      },
+      {
+        name: 'blocked-router-lane-cycles', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/freelimit'],
+        config: { routerBacked: { pi: true } }, exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/freelimit exit=75 cli_rc=1 .* tree=clean action=stop$/,
+        check: (r, ctx) => (/^cross-ai: ladder pi next=/m.test(r.stderr) &&
+          !r.stderr.includes('blocked-until') &&
+          !fs.existsSync(path.join(ctx.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'blocked'))
+          ? null : 'router lane did not cycle without a blocked record'),
+      },
+      {
+        name: 'blocked-opencode-free-limit', kind: 'logic', fakeOpencodeMode: 'free-limit',
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=opencode model=fake\/ok exit=75 .* action=stop$/,
+        check: checkFreeLimitRecord,
+      },
+      {
+        name: 'blocked-opencode-free-limit-exit0', kind: 'logic', fakeOpencodeMode: 'free-limit-exit0',
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=opencode model=fake\/ok exit=75 .* action=stop$/,
+        check: checkFreeLimitRecord,
+      },
+      {
+        name: 'blocked-fake-lane-write', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/freelimit'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/freelimit exit=75 cli_rc=1 .* tree=clean action=stop$/,
+        second: { args: ['--prefer', 'pi', '--model-pi', 'fake/ok', '--pool', 'fake:free'], exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 / },
+        check: (both) => {
+          const err = statusLineOk(both.first.stderr || '', /^AIKIT-XAI status=quota cli=pi model=fake\/freelimit exit=75 cli_rc=1 .* tree=clean action=stop$/);
+          if (err) return err;
+          if (!/^cross-ai: blocked-until pool=fake:free until=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z failures=1 basis=retry_after_ms$/m.test(both.first.stderr)) return 'missing blocked record';
+          if (both.calls1.filter((line) => line === 'pi freelimit').length !== 1 || (both.first.stderr.match(/^cross-ai: attempt n=/gm) || []).length !== 1) return 'unexpected attempts';
+          if (!both.again.stderr.includes('cross-ai: blocked-until cleared pool=fake:free')) return 'missing clear';
+          if ([...both.first.stderr.split('\n'), ...both.again.stderr.split('\n')].some((line) => line.includes('blocked-until') && (line.includes('freelimit') || line.includes('fake/')))) return 'model leaked';
+          return null;
+        },
+      },
+      {
+        name: 'blocked-paid-ok-keeps', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/freelimit'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/freelimit exit=75 cli_rc=1 .* tree=clean action=stop$/,
+        second: { args: ['--prefer', 'pi', '--model-pi', 'fake/ok'], exit: 0, status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 / },
+        check: (both) => {
+          if (!/^cross-ai: blocked-until pool=fake:free until=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z failures=1 basis=retry_after_ms$/m.test(both.first.stderr) || both.again.stderr.includes('blocked-until')) return 'unexpected blocked log';
+          const dir = path.join(both.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'blocked');
+          const file = path.join(dir, 'fake%3Afree.json');
+          try {
+            const rec = JSON.parse(fs.readFileSync(file, 'utf8'));
+            if (rec.failures !== 1 || rec.basis !== 'retry_after_ms' || (fs.statSync(file).mode & 0o777) !== 0o600 || fs.readdirSync(dir).length !== 1) return 'invalid record';
+          } catch { return 'missing record'; }
+          return null;
+        },
+      },
+      {
+        // 38.1 review: a quota stop over a dirty review tree still writes the record (the run reports contract_violation).
+        name: 'blocked-review-dirty-writes', kind: 'logic',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/dirtyfreelimit'], exit: 1,
+        status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/dirtyfreelimit exit=1 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.filter((line) => line === 'pi dirtyfreelimit').length !== 1) return 'unexpected attempts';
+          if (!/^cross-ai: blocked-until pool=fake:free until=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z failures=1 basis=retry_after_ms$/m.test(r.stderr || '')) return 'missing blocked notice';
+          return fs.existsSync(REC(ctx)) ? null : 'missing record';
+        },
+      },
+      {
+        // 38.1 review: a quota stop whose post-run git read fails still writes the record (the run reports git_error).
+        name: 'blocked-git-fail-writes', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/gitfailfreelimit'], exit: 1,
+        status: /^AIKIT-XAI status=git_error cli=pi model=fake\/gitfailfreelimit exit=1 .* tree=unknown action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.filter((line) => line === 'pi gitfailfreelimit').length !== 1) return 'unexpected attempts';
+          if (!/^cross-ai: blocked-until pool=fake:free until=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z failures=1 basis=retry_after_ms$/m.test(r.stderr || '')) return 'missing blocked notice';
+          return fs.existsSync(REC(ctx)) ? null : 'missing record';
+        },
+      },
+      {
+        // 38.1 review: an ok attempt clears the named pool even when the review tree is dirty (the run reports contract_violation).
+        name: 'blocked-review-dirty-ok-clears', kind: 'logic', setup: PLANT,
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-edit', '--pool', 'fake:free'], exit: 1,
+        status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/review-edit exit=1 .* action=stop$/,
+        check: (r, ctx) => ((r.stderr || '').includes('cross-ai: blocked-until cleared pool=fake:free') && !fs.existsSync(REC(ctx))
+          ? null : 'record not cleared'),
+      },
+      ...[
+        ['blocked-client-rule-no-record', 'freetier', 'bad_request'],
+        ['blocked-client-missing-session', 'missing-session', 'bad_request'],
+        ['blocked-client-version-gate', 'version-gate', 'bad_request'],
+        ['blocked-removed-model-no-record', 'removed-model', 'bad_model'],
+      ].map(([name, fakeOpencodeMode, classification]) => ({
+        name, kind: 'logic', fakeOpencodeMode,
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok', '--pool', 'fake:free'], exit: 69,
+        status: new RegExp(`^AIKIT-XAI status=${classification} cli=opencode model=fake/ok exit=69 .* action=stop$`),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((line) => line === 'opencode fake/ok').length !== 1) return 'unexpected inference call count';
+          if ((r.stderr || '').split('\n').some((line) => line.includes('cross-ai: blocked-until'))) return 'unexpected blocked notice';
+          return fs.existsSync(path.join(ctx.env.XDG_STATE_HOME, 'ai-kit', 'spec', 'blocked')) ? 'unexpected blocked record' : null;
+        },
+      })),
+      {
         name: 'billing-free-tier',
         kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/freetier'],
@@ -3740,7 +4421,7 @@ async function blackBoxSelfTest(listOnly = false) {
           const n = ctx.calls.filter((l) => l === 'pi quota-until-8').length;
           if (n !== 6) return `calls=${n}`;
           const tail = statusTail(r.stderr || '');
-          if (!tail || tail.retry_after_s !== '0' || tail.cycle !== '0') {
+          if (!tail || tail.retry_after_s !== '60' || tail.cycle !== '0') {
             return `tail=${JSON.stringify(tail)}`;
           }
           if (tail.attempts !== '6' || tail.cycles !== '0') {
@@ -3755,6 +4436,7 @@ async function blackBoxSelfTest(listOnly = false) {
         // The second invocation resumes the same session and the fake answers on call 8.
         name: 'router-quota-second-cycle',
         kind: 'logic',
+        between: (c) => ageDue(caseCycleFile(c, 'pi', 'fake/quota-until-8')),
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8'],
         config: {
           routerBacked: { pi: true }, capS: 3600,
@@ -3792,6 +4474,7 @@ async function blackBoxSelfTest(listOnly = false) {
         // A different prompt never joins the previous task's session.
         name: 'router-quota-second-cycle-new-task',
         kind: 'logic',
+        between: (c) => ageDue(caseCycleFile(c, 'pi', 'fake/quota-until-8')),
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8', '--no-preamble'],
         config: {
           routerBacked: { pi: true }, capS: 3600,
@@ -4265,6 +4948,265 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
+        name: 'retry-every-first',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '60' || tail.cycle !== '0') return `tail=${JSON.stringify(tail)}`;
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'));
+          if (!saved || saved.retry_after_s !== 60) return `record=${JSON.stringify(saved)}`;
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        name: 'retry-every-second',
+        kind: 'logic',
+        setup: (c) => { writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0); return null; },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '300' || tail.cycle !== '1') return `tail=${JSON.stringify(tail)}`;
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        name: 'retry-every-periodic',
+        kind: 'logic',
+        setup: (c) => { writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 1); return null; },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '600' || tail.cycle !== '2') return `tail=${JSON.stringify(tail)}`;
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'));
+          if (!saved || saved.cycle !== 2 || saved.retry_after_s !== 600) return `record=${JSON.stringify(saved)}`;
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        name: 'retry-every-cap-stop',
+        kind: 'logic',
+        setup: (c) => {
+          writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 3, { first_seen: Date.now() - (14400 - 599) * 1000 });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: 69,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 exit=69 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const report = (r.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: report '));
+          if (!report || !report.includes('stopped=cap')) return `report=${report}`;
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== undefined) return `tail=${JSON.stringify(tail)}`;
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'));
+          if (!saved || saved.stopped !== 'cap') return `record=${JSON.stringify(saved)}`;
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        name: 'pure-hard-wait-short', kind: 'logic',
+        pure: () => {
+          const cases = [
+            [hardWaitFor(0, [59], 14400, 0), { retryAfterS: 59, cycle: 0 }],
+            [shortHardWait(59, 0, 119000), { waitS: 59, inCall: true }],
+            [shortHardWait(59, 0, 118999), { waitS: 60, inCall: false }],
+            [shortHardWait(60, 0, 1e9), { waitS: 60, inCall: false }],
+            [shortHardWait(0, 0, 60000), { waitS: 0, inCall: true }],
+            [shortHardWait(0, 0, 59999), { waitS: 60, inCall: false }],
+            [shortHardWait(1, 0, 0), { waitS: 60, inCall: false }],
+          ];
+          const bad = cases.find(([got, want]) => JSON.stringify(got) !== JSON.stringify(want));
+          return bad ? `result=${JSON.stringify(bad)}` : null;
+        },
+      },
+      ...[
+        { name: 'retry-hard-zero-in-call', model: 'fake/event400', retries: 1, calls: 3, rung: 'same', wait: 0 },
+        { name: 'retry-hard-zero-fresh-clean', cli: 'cursor', model: 'fake-event400-cursor', retries: 0, calls: 2, rung: 'new', wait: 0 },
+        { name: 'retry-hard-short-in-call', model: 'fake/event400', retries: 0, calls: 2, rung: 'same', wait: 1 },
+      ].map(({ name, cli = 'pi', model, retries, calls, rung, wait }) => ({
+        name, kind: wait ? 'runtime' : 'logic',
+        args: ['--prefer', cli, `--model-${cli}`, model],
+        config: { retry: { max_retries: retries, session_resets: 0, hard_waits_s: [wait], hard_every_s: 0 } },
+        exit: 69,
+        status: new RegExp(`^AIKIT-XAI status=transient cli=${cli} model=${model} exit=69 .* action=stop$`),
+        check: (r, ctx) => {
+          const label = cli === 'pi' ? 'pi event400' : 'cursor-agent fake-event400-cursor';
+          if (ctx.calls.filter((l) => l === label).length !== calls) return 'call count';
+          const lines = (r.stderr || '').split('\n');
+          if (lines.filter((l) => l === `cross-ai: hard wait in call s=${wait} cycle=0`).length !== 1) return 'in-call line';
+          if (!lines.some((l) => l.startsWith(`cross-ai: attempt n=${calls} `) && l.includes(` rung=${rung} cycle=1 `))) return 'rung line';
+          if (wait && (!lines.some((l) => l.startsWith('cross-ai: wait ms=1000 next=same')) || ctx.elapsedMs < 1000 || ctx.elapsedMs >= scaledMs(20000))) return 'wait';
+          if (!lines.some((l) => l.startsWith('cross-ai: report ') && l.includes('stopped=hard-waits'))) return 'report';
+          const saved = readCycleState(caseCycleFile(ctx, cli, model, 'other'));
+          if (!saved || saved.stopped !== 'hard-waits' || saved.cycle !== 1) return `record=${JSON.stringify(saved)}`;
+          return null;
+        },
+      })),
+      {
+        name: 'retry-hard-zero-fresh-dirty', kind: 'logic', stdin: 'prompt\n',
+        args: ['--runtime', 'cursor', '--model', 'fake-dirty400-cursor', '--no-preamble'],
+        config: { retry: { max_retries: 0, session_resets: 0, base_s: 0, hard_waits_s: [0], hard_every_s: 0 } },
+        exit: 75, status: /^AIKIT-XAI status=transient cli=cursor model=fake-dirty400-cursor exit=75 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'cursor-agent fake-dirty400-cursor').length !== 1) return 'call count';
+          if (!(r.stderr || '').includes('why=dirty-tree') || (r.stderr || '').includes('cross-ai: hard wait in call')) return 'in-call line';
+          return fs.existsSync(caseCycleFile(ctx, 'cursor', 'fake-dirty400-cursor', 'other')) ? 'record written' : null;
+        },
+      },
+      {
+        name: 'retry-hard-zero-review-dirty', kind: 'logic',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-flaky-edit'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [0], hard_every_s: 0 } },
+        exit: 1, status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/review-flaky-edit exit=1 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi review-flaky-edit').length !== 1) return 'call count';
+          if ((r.stderr || '').includes('cross-ai: hard wait in call')) return 'in-call line';
+          return fs.existsSync(caseCycleFile(ctx, 'pi', 'fake/review-flaky-edit', 'other')) ? 'record written' : null;
+        },
+      },
+      {
+        name: 'retry-hard-zero-unwritable', kind: 'logic',
+        setup: (c) => { const blocker = path.join(c.home, 'state-is-a-file'); fs.writeFileSync(blocker, 'x'); c.env.XDG_STATE_HOME = blocker; return null; },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [0], hard_every_s: 0 } },
+        exit: 75, status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 (?!.*retry_after_s=).* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          if (!(r.stderr || '').includes('cycle state unwritable') || (r.stderr || '').includes('cross-ai: hard wait in call')) return 'in-call line';
+          return null;
+        },
+      },
+      ...[1, 0].map((wait) => ({
+        name: wait ? 'retry-hard-short-hint' : 'retry-hard-zero-hint', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400', '--timeout', '3'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [wait], hard_every_s: 0 } },
+        exit: 75, status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '60' || tail.cycle !== '0') return `tail=${JSON.stringify(tail)}`;
+          return (r.stderr || '').includes('cross-ai: hard wait in call') ? 'in-call line' : null;
+        },
+      })),
+      {
+        name: 'pure-reset-stated', kind: 'logic',
+        pure: () => {
+          const now = Date.parse('2026-11-22T12:00:00Z');
+          const examples = [
+            [{ retry_after: 120 }, 120], [{ retry_after: '90.9' }, 90],
+            [{ reset_after_s: 3600, retry_after_seconds: 400 }, 400], [{ reset_seconds: 52 }, 52],
+            [{ reset_at: '2026-11-22T12:10:00.000Z' }, 600], [{ resetsAt: Math.trunc(now / 1000) + 300 }, 300],
+            [{ resetsAt: now + 45000 }, 45], [{ reset_at: '2026-10-23T04:01:04.472Z' }, null],
+            ...[{ retry_after: '<redacted>' }, { retry_after: true }, { retry_after: -5 }, { retry_after: -0.5 },
+              { resetsAt: now - 1 }, { reset_at: '2026-02-30T00:00:00Z' },
+              { reset_at: 'Sun, 22 Nov 2026 12:10:00 GMT' }, { retryAfterMs: 60000 }, { resetsAt: 12345 }, {}, null].map((v) => [v, null]),
+            [{ resetsAt: now }, 0], [{ retry_after: '2026-11-22T12:05:00Z' }, 300],
+            ...['2026-11-22T11:59:59Z', '2026-02-30T00:00:00Z', 'Sun, 22 Nov 2026 12:10:00 GMT'].map((v) => [{ retry_after: v }, null]),
+            [upstreamFields('[WARN] [AUTH] all 3 active accounts cooling down for model fake/model (reset after 2m)'), 120],
+            [upstreamFields('429: {"error":{"code":"model_cooldown","reset_seconds":30}}'), 30],
+            [upstreamFields('429: {"error":{"message":"cooling down"},"recovery_hint":{"retry_after_seconds":45}}'), 45],
+          ];
+          for (const [input, expected] of examples) {
+            const got = statedResetS(input, now);
+            if (got !== expected) return `${JSON.stringify(input)}=${got}`;
+          }
+          return null;
+        },
+      },
+      {
+        name: 'pure-reset-check', kind: 'logic',
+        pure: () => {
+          for (const [stated, next, cap, expected] of [[120, 300, 14400, 240], [180, 300, 14400, null], [179, 300, 14400, 299], [120, 600, 240, null], [120, 600, 241, 240], [100000, 600, 14400, null], [0, 600, 14400, 120], [-1, 600, 14400, null], [null, 600, 14400, null]]) {
+            const got = resetCheckS(stated, next, cap);
+            if (got !== expected) return `${JSON.stringify([stated, next, cap])}=${got}`;
+          }
+          return null;
+        },
+      },
+      {
+        name: 'retry-reset-check', kind: 'logic',
+        setup: (c) => { writePriorRecord(c, 'pi', 'fake/router402', 'router', 'quota', 0); return null; },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router402', '--route-pi', 'router'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: 75, status: /^AIKIT-XAI status=quota cli=pi model=fake\/router402 exit=75 .* action=stop$/,
+        check: (r, ctx) => {
+          const tail = statusTail(r.stderr || '');
+          if (tail?.retry_after_s !== '240' || tail.cycle !== '1') return `tail=${JSON.stringify(tail)}`;
+          const report = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: report '));
+          if (!report?.endsWith(' check=reset')) return `report=${report}`;
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/router402', 'router'));
+          if (saved?.check !== 'reset' || saved.retry_after_s !== 240 || saved.cycle !== 1 || typeof saved.reset_check !== 'number' || saved.reset_check - saved.last_attempt_at !== 240000 || Object.hasOwn(saved, 'pending_normal')) return `record=${JSON.stringify(saved)}`;
+          return null;
+        },
+      },
+      ...['retry-reset-first-wins', 'retry-reset-once', 'retry-reset-no-lift', 'retry-check-early-reentry', 'retry-reset-lifecycle'].map((name) => ({
+        name, kind: 'logic',
+        setup: (c) => {
+          if (name === 'retry-reset-once') {
+            c.plantedReset = Date.now() - 1000;
+            writePriorRecord(c, 'pi', 'fake/router402', 'router', 'quota', 1, { reset_check: c.plantedReset });
+          } else if (name === 'retry-reset-no-lift') {
+            writePriorRecord(c, 'pi', 'fake/router402', 'router', 'quota', 2, { first_seen: Date.now() - (14400 - 300) * 1000 });
+          } else if (name === 'retry-check-early-reentry') {
+            const file = writePriorRecord(c, 'pi', 'fake/router402', 'router', 'quota', 1, { due_at: Date.now() + 120000, retry_after_s: 240, check: 'reset' });
+            c.pendingBytes = fs.readFileSync(file, 'utf8');
+          } else if (name === 'retry-reset-lifecycle') writePriorRecord(c, 'pi', 'fake/router402', 'router', 'quota', 0);
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router402', '--route-pi', 'router'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: name === 'retry-reset-no-lift' ? 69 : 75,
+        status: name === 'retry-reset-no-lift' ? /^AIKIT-XAI status=quota cli=pi model=fake\/router402 exit=69 .* action=stop$/ : /^AIKIT-XAI status=quota cli=pi model=fake\/router402 exit=75 .* action=stop$/,
+        ...(name === 'retry-reset-lifecycle' ? {
+          second: { exit: 75, status: /^AIKIT-XAI status=quota cli=pi model=fake\/router402 exit=75 .* action=stop$/ },
+          between: (c) => { const file = caseCycleFile(c, 'pi', 'fake/router402', 'router'); c.firstReset = readCycleState(file).reset_check; return ageDue(file); },
+        } : {}),
+        check: (result, ctx) => {
+          const r = name === 'retry-reset-lifecycle' ? result.again : result;
+          const tail = statusTail(r.stderr || '');
+          const report = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: report '));
+          const file = caseCycleFile(ctx, 'pi', 'fake/router402', 'router');
+          const saved = readCycleState(file);
+          if (name === 'retry-check-early-reentry') {
+            if (ctx.calls.some((line) => line.startsWith('pi ') && line !== 'pi rpc') || /cross-ai: attempt n=/.test(r.stderr || '')) return 'lane called';
+            if (!tail || !/^\d+$/.test(tail.retry_after_s) || Number(tail.retry_after_s) < 1 || Number(tail.retry_after_s) > 120) return `tail=${JSON.stringify(tail)}`;
+            if (fs.readFileSync(file, 'utf8') !== ctx.pendingBytes) return 'record rewritten';
+            return report?.endsWith(' check=reset') ? null : `report=${report}`;
+          }
+          if (name === 'retry-reset-no-lift') {
+            if (tail?.retry_after_s !== undefined) return `tail=${JSON.stringify(tail)}`;
+            if (!report?.includes('stopped=cap') || !report.endsWith(' check=-')) return `report=${report}`;
+            return saved?.stopped === 'cap' ? null : `record=${JSON.stringify(saved)}`;
+          }
+          const first = name === 'retry-reset-first-wins';
+          if (tail?.retry_after_s !== (first ? '60' : '600') || tail.cycle !== (first ? '0' : '2')) return `tail=${JSON.stringify(tail)}`;
+          if (!report?.endsWith(first ? ' check=first' : ' check=periodic')) return `report=${report}`;
+          if (saved?.check !== (first ? 'first' : 'periodic') || (first && Object.hasOwn(saved, 'reset_check')) || (name === 'retry-reset-once' && saved.reset_check !== ctx.plantedReset)) return `record=${JSON.stringify(saved)}`;
+          if (name === 'retry-reset-lifecycle') {
+            const firstTail = statusTail(result.first.stderr);
+            const firstReport = result.first.stderr.split('\n').find((line) => line.startsWith('cross-ai: report '));
+            if (firstTail?.retry_after_s !== '240' || firstTail.cycle !== '1') return `tail=${JSON.stringify(firstTail)}`;
+            if (!firstReport?.endsWith(' check=reset')) return `report=${firstReport}`;
+            if (saved.cycle !== 2 || saved.retry_after_s !== 600 || saved.reset_check !== ctx.firstReset || Object.hasOwn(saved, 'pending_normal')) return `record=${JSON.stringify(saved)}`;
+          }
+          return null;
+        },
+      })),
+      {
         // A stopped record refuses every call on the lane without a model call, logs the state
         // path and the owner reset line, and holds its bytes until stale or deleted (D-08).
         name: 'hard-tier-stopped-refused',
@@ -4688,7 +5630,8 @@ async function blackBoxSelfTest(listOnly = false) {
             if (Math.abs(a[i] - expected) > expected * 0.1 || Math.abs(b[i] - expected) > expected * 0.1) return `wait outside configured series: ${a[i]} vs ${b[i]}`;
           }
           const tails = [statusTail(both.first.stderr), statusTail(both.again.stderr)];
-          return tails.every((tail) => tail?.retry_after_s === '600' && tail.cycle === '0') ? null : 'hard hint changed';
+          // The first lane states retry_after 120, so its hint is the reset check 120 + 120 s (SPEC R5, D-11); the second states nothing and keeps the 600 s list wait.
+          return tails[0]?.retry_after_s === '240' && tails[1]?.retry_after_s === '600' && tails.every((tail) => tail?.cycle === '0') ? null : 'hard hint changed';
         },
       },
       {
@@ -4817,6 +5760,25 @@ async function blackBoxSelfTest(listOnly = false) {
           const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
           return runs.length === 1 ? null : `pi calls ${ctx.calls.join('|')}`;
 
+        },
+      },
+      {
+        name: 'stdout-pi-answer-ok', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/stdout-limit-answer'], exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/stdout-limit-answer exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
+          return runs.length === 1 ? null : `pi calls ${ctx.calls.join('|')}`;
+        },
+      },
+      {
+        name: 'stdout-pi-failed-crash', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/stdout-limit-fail'], exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/stdout-limit-fail exit=1 cli_rc=7 .* action=stop$/,
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi stdout-limit-fail').length;
+          if (n !== 1) return `calls ${n}`;
+          return (r.stderr || '').includes('cross-ai: wait ') ? 'a crash waited' : null;
         },
       },
       {
@@ -5007,6 +5969,28 @@ async function blackBoxSelfTest(listOnly = false) {
             if (!line || !line.includes(ctx.overlayFile)) return `missing refusal ${id}`;
           }
           return err.includes('cross-ai: overlay 1 rows') ? null : 'good row dropped';
+        },
+      },
+      {
+        name: 'pure-class-bad-request-exit',
+        kind: 'logic',
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai-errors.json'), JSON.stringify([{
+            id: 'user-bad-request', tier: 2, cli: '*', route: '*', provider: '*', input: 'any',
+            match: 'acme request refused', class: 'bad_request', terminal: true, label: 'unverified', evidence: 'probe',
+          }]));
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/bad-request'],
+        exit: 69,
+        status: /^AIKIT-XAI status=bad_request cli=pi model=fake\/bad-request exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          if (tail?.rule !== 'user-bad-request') return `rule=${tail?.rule}`;
+          if (tail?.attempts !== '1') return `attempts=${tail?.attempts}`;
+          return null;
         },
       },
       {
@@ -5592,7 +6576,7 @@ async function blackBoxSelfTest(listOnly = false) {
           if (n !== 1) return `calls=${n}`;
           // 25.1-03: a deadline-cut transient series carries the caller's hint, not a bare 75.
           const tail = statusTail(r.stderr || '');
-          return tail && tail.retry_after_s === '0' && tail.cycle === '0'
+          return tail && tail.retry_after_s === '60' && tail.cycle === '0'
             ? null : `tail=${JSON.stringify(tail)}`;
         },
       },
@@ -5646,9 +6630,9 @@ async function blackBoxSelfTest(listOnly = false) {
           if (kinds[0] !== 'prompt' || kinds[6] !== 'resume-plus') return `inputs ${kinds.join(',')}`;
           if (kinds.slice(1, 6).some((k) => k !== 'resume')) return `series 1 ${kinds.join(',')}`;
           if (kinds.slice(7).some((k) => k !== 'resume-plus')) return `series 2 ${kinds.join(',')}`;
-          // 25.1-03: the spent transient series hands the caller its (zeroed) hard wait.
+          // The spent transient series hands the caller its hard wait.
           const tail = statusTail(r.stderr || '');
-          return tail && tail.retry_after_s === '0' && tail.cycle === '0'
+          return tail && tail.retry_after_s === '60' && tail.cycle === '0'
             ? null : `tail=${JSON.stringify(tail)}`;
         },
       },
@@ -5976,7 +6960,7 @@ async function blackBoxSelfTest(listOnly = false) {
         name: 'soft-ladder-transient-cap',
         kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
-        config: { capS: 2, retry: { base_s: 0.5 } },
+        config: { capS: 2, retry: { base_s: 0.5, hard_waits_s: [0, 0, 0] } },
         exit: 69,
         status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
           'exit=69 .* action=stop$'),
@@ -6143,7 +7127,14 @@ async function blackBoxSelfTest(listOnly = false) {
           const spent = hardWaitFor(3, waits, 14400);
           if (!spent || spent.stop !== 'hard-waits') return `spent=${JSON.stringify(spent)}`;
           const short = hardWaitFor(1, [60], 1e9);
-          return short && short.stop === 'hard-waits' ? null : `short=${JSON.stringify(short)}`;
+          if (!short || short.stop !== 'hard-waits') return `short=${JSON.stringify(short)}`;
+          for (const cycle of [2, 9, 30]) {
+            const got = hardWaitFor(cycle, [60, 300], cycle === 30 ? 600 : 14400, 600);
+            if (JSON.stringify(got) !== JSON.stringify({ retryAfterS: 600, cycle })) return `periodic=${JSON.stringify(got)}`;
+          }
+          if (hardWaitFor(30, [60, 300], 599, 600).stop !== 'cap') return 'periodic cap';
+          if (hardWaitFor(2, [60, 300], 14400, 0).stop !== 'hard-waits') return 'periodic disabled';
+          return null;
         },
       },
       {
@@ -6469,9 +7460,10 @@ async function blackBoxSelfTest(listOnly = false) {
           for (const [k, v] of Object.entries(want)) {
             if (RETRY_DEFAULTS[k] !== v) return `${k}=${RETRY_DEFAULTS[k]}`;
           }
-          if (JSON.stringify([...RETRY_DEFAULTS.hard_waits_s]) !== JSON.stringify([600, 900, 1800])) {
+          if (JSON.stringify([...RETRY_DEFAULTS.hard_waits_s]) !== JSON.stringify([60, 300])) {
             return `hard_waits_s=${RETRY_DEFAULTS.hard_waits_s}`;
           }
+          if (RETRY_DEFAULTS.hard_every_s !== 600) return `hard_every_s=${RETRY_DEFAULTS.hard_every_s}`;
           const secs = [1, 2, 3, 4, 5].map((k) => softWaitMs(RETRY_DEFAULTS, k, () => 0.5) / 1000);
           // 1, 1.5 and 2.25 are exact; one decimal only after 2.25 (SPEC R7 precision).
           const shown = secs.map((s) => (s === 1 || s === 1.5 || s === 2.25 ? s : Math.round(s * 10) / 10));
@@ -6493,6 +7485,7 @@ async function blackBoxSelfTest(listOnly = false) {
             ['base_s', 0], ['base_s', 60], ['factor', 1], ['factor', 3],
             ['max_retries', 0], ['max_retries', 10], ['session_resets', 0], ['session_resets', 3],
             ['hard_waits_s', [0]], ['hard_waits_s', [0, 1, 2, 3, 4, cap]],
+            ['hard_every_s', 0], ['hard_every_s', 60], ['hard_every_s', cap],
           ];
           for (const [key, value] of ok) {
             const reason = validateRetryKey(key, value, cap);
@@ -6503,6 +7496,8 @@ async function blackBoxSelfTest(listOnly = false) {
             ['max_retries', -1], ['max_retries', 1.5], ['max_retries', 11], ['session_resets', 4],
             ['hard_waits_s', []], ['hard_waits_s', [0, 1, 2, 3, 4, 5, 6]],
             ['hard_waits_s', [cap + 1]], ['hard_waits_s', [1.5]],
+            ['hard_every_s', 59], ['hard_every_s', cap + 1], ['hard_every_s', 600.5],
+            ['hard_every_s', '600'], ['hard_every_s', -1],
             ['base_s', true], ['factor', '1'], ['max_retries', NaN], ['cap_s', 1],
           ];
           for (const [key, value] of bad) {
@@ -6510,6 +7505,8 @@ async function blackBoxSelfTest(listOnly = false) {
               return `${key} ${JSON.stringify(value)} accepted`;
             }
           }
+          const every59 = validateRetryKey('hard_every_s', 59, cap);
+          if (every59 !== 'out of bounds (0 or 60..14400)') return `every59=${every59}`;
           if (validateRetryKey('hard_waits_s', [0], 0) !== null) return '[0] refused at capS 0';
           if (validateRetryKey('hard_waits_s', [1], 0) === null) return '[1] accepted at capS 0';
           return null;
@@ -6532,7 +7529,7 @@ async function blackBoxSelfTest(listOnly = false) {
           const lines = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: retry '));
           if (lines.length !== 1) return `retry lines=${lines.length}`;
           const want = 'cross-ai: retry base_s=0 factor=1.5 max_retries=1 session_resets=0 ' +
-            'hard_waits_s=0,0,0 cap_s=14400';
+            'hard_waits_s=60,60,60 hard_every_s=0 cap_s=14400';
           return lines[0] === want ? null : lines[0];
         },
       },
@@ -6580,6 +7577,88 @@ async function blackBoxSelfTest(listOnly = false) {
           return null;
         },
         check: (r) => retryLine(r, 'max_retries=1'),
+      },
+      {
+        name: 'retry-every-project',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => { writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nhard_every_s = 900\n'); return null; },
+        check: (r) => retryLine(r, 'hard_waits_s=60,60,60 hard_every_s=900 cap_s=14400'),
+      },
+      {
+        name: 'retry-every-user',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => { writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'config.toml'), '[runner.retry]\nhard_every_s = 1200\n'); return null; },
+        check: (r) => retryLine(r, 'hard_every_s=1200 cap_s=14400'),
+      },
+      {
+        name: 'retry-every-per-key',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nhard_every_s = 900\n');
+          writeCaseFile(path.join(c.home, '.config', 'ai-kit', 'config.toml'), '[runner.retry]\nhard_every_s = 1200\nmax_retries = 2\n');
+          return null;
+        },
+        check: (r) => retryLine(r, 'max_retries=2 session_resets=1 hard_waits_s=60,60,60 hard_every_s=900 cap_s=14400'),
+      },
+      {
+        name: 'retry-every-scope',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        env: { GSD_WORKSTREAM: 'ws1' },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nhard_every_s = 900\n\n[runner.retry.scopes."workstreams/ws1"]\nhard_every_s = 1800\n');
+          return null;
+        },
+        check: (r) => retryLine(r, 'hard_every_s=1800 cap_s=14400'),
+      },
+      {
+        name: 'retry-every-refused',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => { writeCaseFile(path.join(c.repo, '.aikit', 'config.toml'), '[runner.retry]\nhard_every_s = 59\n'); return null; },
+        check: (r) => ((r.stderr || '').includes('cross-ai: config runner.retry.hard_every_s refused (.aikit/config.toml [runner.retry]): out of bounds (0 or 60..14400)') ? retryLine(r, 'hard_every_s=0 cap_s=14400') : 'missing refusal'),
+      },
+      {
+        name: 'retry-every-default',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        config: { retry: { hard_every_s: undefined } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => retryLine(r, 'hard_waits_s=60,60,60 hard_every_s=600 cap_s=14400'),
+      },
+      {
+        name: 'retry-every-soft-then-first',
+        kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 1, session_resets: 0, hard_waits_s: [60, 300], hard_every_s: 600 } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 2) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '60' || tail.cycle !== '0') return `tail=${JSON.stringify(tail)}`;
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
       },
       {
         // A scoped file without the key falls through to the root config.
@@ -6651,7 +7730,7 @@ async function blackBoxSelfTest(listOnly = false) {
           const notice = 'cross-ai: config .aikit/config.toml line 2: unsupported value; ' +
             'retry keys from the next source';
           if (!(r.stderr || '').includes(notice)) return 'missing malformed notice';
-          return retryLine(r, 'base_s=0 factor=1.5 max_retries=5 session_resets=1 hard_waits_s=0,0,0 cap_s=14400');
+          return retryLine(r, 'base_s=0 factor=1.5 max_retries=5 session_resets=1 hard_waits_s=60,60,60 hard_every_s=0 cap_s=14400');
         },
       },
       {
@@ -6751,7 +7830,7 @@ async function blackBoxSelfTest(listOnly = false) {
         check: (r) => {
           const notice = 'cross-ai: config retry.hard_waits_s refused (CONFIG):';
           if (!(r.stderr || '').includes(notice)) return 'missing hard_waits_s refusal';
-          return retryLine(r, 'hard_waits_s=600,900,1800 cap_s=300');
+          return retryLine(r, 'hard_waits_s=60,300 hard_every_s=0 cap_s=300');
         },
       },
       {
@@ -8839,8 +9918,10 @@ async function blackBoxSelfTest(listOnly = false) {
             if (got.status !== want.expect.status) {
               return `${want.name} status ${got.status} expected ${want.expect.status}`;
             }
-            if (got.pattern !== want.expect.pattern) {
-              return `${want.name} pattern ${got.pattern} expected ${want.expect.pattern}`;
+            // A fixed value, never patternFor's own answer: cliPattern is the --classify-only pattern where a runtime-level flag demotes it.
+            const expectedPattern = want.expect.cliPattern ?? want.expect.pattern;
+            if (got.pattern !== expectedPattern) {
+              return `${want.name} pattern ${got.pattern} expected ${expectedPattern}`;
             }
             if (want.expect.rule !== undefined && got.rule !== want.expect.rule) {
               return `${want.name} rule ${got.rule} expected ${want.expect.rule}`;
@@ -8941,7 +10022,7 @@ async function blackBoxSelfTest(listOnly = false) {
           const bodyLine = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: upstream body='));
           const fieldsLine = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: upstream fields='));
           if (!JSON.parse(bodyLine.slice(bodyLine.indexOf('=') + 1)).includes('Acme Build')) return 'body missing upstream text';
-          if (fieldsLine !== 'cross-ai: upstream fields={"retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z"}') return 'fields mismatch';
+          if (fieldsLine !== 'cross-ai: upstream fields={"retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z","reset_after_s":120}') return 'fields mismatch';
           const state = fs.existsSync(ctx.env.XDG_STATE_HOME)
             ? fs.readdirSync(ctx.env.XDG_STATE_HOME, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => fs.readFileSync(path.join(ctx.env.XDG_STATE_HOME, entry.name), 'utf8')).join('\n')
             : '';
@@ -9063,6 +10144,33 @@ async function blackBoxSelfTest(listOnly = false) {
           if (!report) return 'missing report line';
           if ((r.stderr || '').includes('pattern=verified')) return 'a copilot pattern read verified';
           return ctx.calls.length === 1 ? null : `calls=${ctx.calls.length}`;
+        },
+      },
+      {
+        name: 'pure-catalog-demotion-classify-only', kind: 'logic',
+        setup: (c) => {
+          fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify([
+            { name: 'h', cli: 'copilot', stderr: 'Execution failed: Model "placeholder-model-1" is not available.' },
+            { name: 'w', cli: 'copilot', stderr: '402 payment required' },
+          ]));
+          return null;
+        },
+        args: ['--classify-only', 'fixtures.json'], exit: 0,
+        status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: (r) => {
+          const lines = (r.stdout || '').trim().split('\n').map((line) => JSON.parse(line));
+          if (lines.length !== 2 || lines[0].status !== 'bad_model' || lines[0].rule !== 'copilot-model-not-available' || lines[0].pattern !== 'verified') return 'host row';
+          return lines[1].status === 'billing' && lines[1].pattern === 'unverified' ? null : 'wildcard row';
+        },
+      },
+      {
+        name: 'pure-catalog-demotion-live-host-row', kind: 'logic',
+        env: { COPILOT_GITHUB_TOKEN: 'fake-token' }, config: { retry: { max_retries: 1 } },
+        args: ['--runtime', 'copilot', '--model', 'fake-missing'], exit: 69,
+        status: /^AIKIT-XAI status=bad_model cli=copilot model=fake-missing exit=69 .* action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail?.rule === 'copilot-model-not-available' && tail.pattern === 'verified' ? null : 'host row evidence';
         },
       },
       {
@@ -9628,9 +10736,71 @@ async function blackBoxSelfTest(listOnly = false) {
         },
       },
       {
+        name: 'pure-catalog-demotion-live-claude-exec', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-model-missing'], exit: 69,
+        status: /^AIKIT-XAI status=bad_model cli=claude model=fake-model-missing exit=69 .* action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail?.rule === 'claude-selected-model' && tail.pattern === 'verified' ? null : 'host row evidence';
+        },
+      },
+      {
         name: 'claude-exec-no-model', kind: 'logic',
         args: ['--runtime', 'claude', '--role', 'execute'], exit: 2,
         status: /^AIKIT-XAI status=no_model cli=claude .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'stdout-claude-plain-quota', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-limit-plain'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=claude model=fake-limit-plain exit=75 .* action=stop$/,
+        check: (r, ctx) => {
+          const rule = statusTail(r.stderr || '')?.rule;
+          if (rule !== 'claude-hit-your-limit-stdout') return `rule ${rule}`;
+          const calls = ctx.calls.filter((line) => line === 'claude fake-limit-plain').length;
+          return calls === 1 ? null : `calls ${calls}`;
+        },
+      },
+      {
+        name: 'stdout-claude-model-404', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-model-404'], exit: 69,
+        status: /^AIKIT-XAI status=bad_model cli=claude model=fake-model-404 exit=69 .* action=stop$/,
+        check: (r) => {
+          const rule = statusTail(r.stderr || '')?.rule;
+          return rule === 'claude-selected-model' ? null : `rule ${rule}`;
+        },
+      },
+      {
+        // 38.1 review: claude's api_error_status reaches the status-code row through a real lane (R3), not only through the pure case.
+        name: 'stdout-claude-status-field', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-status-429'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=claude model=fake-status-429 exit=75 .* action=stop$/,
+        check: (r, ctx) => {
+          const rule = statusTail(r.stderr || '')?.rule;
+          if (rule !== 'code-429') return `rule ${rule}`;
+          const calls = ctx.calls.filter((line) => line === 'claude fake-status-429').length;
+          return calls === 1 ? null : `calls ${calls}`;
+        },
+      },
+      {
+        name: 'stdout-claude-json-quota', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-limit-json'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=claude model=fake-limit-json exit=75 .* action=stop$/,
+        check: (r) => statusTail(r.stderr || '')?.rule === 'claude-hit-your-limit' ? null : 'rule',
+      },
+      {
+        name: 'stdout-claude-stderr-quota', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'execute', '--model', 'fake-limit-stderr'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=claude model=fake-limit-stderr exit=75 .* action=stop$/,
+        check: (r) => statusTail(r.stderr || '')?.rule === 'claude-hit-your-limit' ? null : 'rule',
+      },
+      {
+        name: 'stdout-claude-empty-gated', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-limit-pretty'], exit: 1,
+        status: /^AIKIT-XAI status=empty_answer cli=claude model=fake-limit-pretty exit=1 .* action=stop$/,
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'claude fake-limit-pretty').length;
+          return n === 1 ? null : `calls ${n}`;
+        },
       },
       {
         name: 'argv-nul-refused', kind: 'logic',

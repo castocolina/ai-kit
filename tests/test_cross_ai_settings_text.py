@@ -219,7 +219,8 @@ class SettingsReportDocs(unittest.TestCase):
         self.assertEqual(self.describe["states"], ["applied", "ignored", "unknown"])
 
     def test_lock_catches_a_swapped_or_extra_row(self):
-        rows = [line for line in self.text.splitlines() if re.match(r"^\| `[a-z_]+` \|", line)]
+        rows = [line for line in _section(self.text, REASONS_HEADING).splitlines()
+                if re.match(r"^\| `[a-z_]+` \|", line)]
         swapped = self.text.replace(rows[0] + "\n" + rows[1], rows[1] + "\n" + rows[0])
         extra = self.text.replace(rows[-1], rows[-1] + "\n| `made_up` | x |")
         for text in (swapped, extra):
@@ -268,7 +269,7 @@ class SupervisionDocs(unittest.TestCase):
     def test_flag_rows_match_runner_and_describe(self):
         rows = flag_rows(self.text)
         self.assertEqual(rows, runner_flags())
-        self.assertEqual(len(rows), 5)
+        self.assertEqual(len(rows), 8)
         if self.describe is None:
             self.skipTest("node not on PATH: the --describe leg is skipped")
         self.assertEqual(rows, self.describe["supervision_flags"])

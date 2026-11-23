@@ -1,0 +1,230 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=287s out=718534 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_dfa278e00ffezu5PsNcwEAhMuj applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"opencode:router-env/my-referee-one\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":19,\"D2\":14,\"D3\":15,\"D4\":14,\"D5\":11,\"D6\":13,\"D7\":12,\"D8\":6},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":104,\"max_total\":125,\"percent\":83.2,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":28,\"evidence\":\"The standalone “When a run, a review or an execution step calls an external AI CLI and acts on the result” section repeats the activation decision without adding runner-specific knowledge.\",\"fix\":\"Record the removal of this body-only restatement; keep the trigger in frontmatter and the runner-specific decisions in the workflow.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":30,\"evidence\":\"“Choose the runtime and model” starts a sound phased process, but the caller has no short checklist distinguishing what must be settled before launch, what proves completion, and what authorizes a follow-up.\",\"fix\":\"Add a four-item caller checklist near the top: confirm owner-selected lane and role; resolve the runner and prepare capture; await the original launch and verify its result; take only the follow-up authorized by the exit and status. Link each item to its existing procedure.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":4,\"evidence\":\"“Use when you run, wait for, read, retry or chain an external AI CLI” is specific, but the description omits the distinct herdr/headless intent covered by the body and the trigger set.\",\"fix\":\"Use when asked to run an external review or execute a plan through ai-kit's cross-AI runner (cross-ai.mjs), wait for a lane, read AIKIT-XAI or per-setting results, continue a session, or stop a lane opening herdr tabs. Handles pi, OpenCode, Codex, Cursor, Copilot and Claude; passes role, model, effort, context, skills and MCP settings, and uses --argv-file for unsupported runtimes. Also use when a lane hits quota, 429 or a rate limit, exits 75 or 69, is locked or partial, or reports ignored settings, findings or retry_after_s. Interpret the result, apply the hard-tier wait or owner handoff, and answer GSD retry/skip/abort without switching harness, provider or model. Not for setting up reviewers or configuring GSD presets.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":124,\"evidence\":\"“A hosted lane's run safety” puts the run-record schema, polling and truncation internals, sweep matching rules, and crash-remnant details inline. The 382-line body is about 7,200 words despite already having targeted references.\",\"fix\":\"Keep the launch choice, the verdict signal, and the ambiguous-start and cleanup warnings inline. Move the full hosted safety and sweep detail to a hosted-troubleshooting section in references/launch-and-wait.md, linked from the host-failure and unconfirmed-close branches; a normal headless launch should not load that section.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":355,\"evidence\":\"“running without a lock” is noted, but the caller still has to invent a concurrency policy when supervising a write-capable lane in an unwritable or full state home.\",\"fix\":\"Make lock availability a precondition for launches that rely on checkout serialization. If the runner reports that it proceeded unlocked, do not start any overlapping lane; report the loss of serialization and require the owner to restore locking or provide an isolated checkout before further execute launches.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/evals.json\",\"line\":8,\"evidence\":\"The main launch case names plan-review.md and fake/ok but has “files”: []; the resume case supplies only prior stderr, not the next prompt or a fake CLI. The reset case also requires an exact wait without specifying a host or scheduler outcome.\",\"fix\":\"Supply the named prompts and a hermetic fake-runtime setup for the launch and resume cases. Split the reset case into confirmed one-shot and no-scheduler handoff fixtures, asserting either a single eligible scheduled job or no job plus a complete handoff.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/evals/trigger-queries.json\",\"line\":55,\"evidence\":\"“Arm a session wake so this run resumes after the usage limit” is labeled negative but does not identify what “this run” is; a cross-AI lane with retry_after_s would make it a positive.\",\"fix\":\"Specify a native-session wake with no cross-AI runner in the negative, and add a paired positive using a runner-issued retry hint without naming the skill.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":100,\"evidence\":\"“$ROLE is review for a review lane” omits a write before dispatch: the runner invokes migrateRetrySources for real calls regardless of role (cross-ai.mjs:7018), and that migration can rewrite the project's retry configuration and remove the legacy block (cross-ai.mjs:3631–3708). The quota reference describes migration, but the normal launch path says it need not be read.\",\"fix\":\"Before launching a review that must not change files, check for pending legacy retry migration. If one is pending, stop for owner-approved migration in a separate step or use a prepared isolated checkout. Distinguish child review restrictions from runner-owned writes at the launch gate.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":145,\"evidence\":\"“Both are already on disk” fails if prompt.md cannot be opened or the host kills the wrapper before it writes lane.rc; the workflow defines no safe outcome for a missing trailer or disagreement between the two exit codes.\",\"fix\":\"Require both artifacts and matching exit codes before chaining or scheduling. If either is absent or they disagree, report an incomplete launch with the available shell or host evidence; verify whether the original process is still running and do not relaunch automatically.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/references/subprocess-quota-policy.md\",\"line\":55,\"evidence\":\"“It then resets the session session_resets times” omits the explicit-session branch. The runner pins an applied --session-id, sets sessionResets to zero for that run, and refuses fresh-session branches (cross-ai.mjs:5686–5690, 6053–6069).\",\"fix\":\"Qualify the reset ladder: an explicitly applied --session-id pins the session and disables fresh resets. Point the resume workflow to that exception so the caller does not expect a new session after a pinned resume fails.\"},{\"id\":\"D8-4\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":181,\"evidence\":\"“128+n | signal | the child died on signal n” attributes the status to the wrong process. The runner emits this status for a signal it catches (cross-ai.mjs:5388–5406); a child-only signal is logged as a child failure and goes through classification (cross-ai.mjs:6031–6045).\",\"fix\":\"Describe 128+n as the runner's handled interruption, not proof of a child-only signal. For a child-only signal, report the final classified outcome and use the attempt diagnostic for the child signal.\"},{\"id\":\"D8-5\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/references/launch-and-wait.md\",\"line\":58,\"evidence\":\"“opencode's help shows no notification or one-shot scheduling feature, so an opencode host uses the foreground wait” misses OpenCode's documented Shell background mode, which notifies the session at exit. This contradicts the reference's own capability-based branch.\",\"fix\":\"Separate completion notification from delayed scheduling. When the current OpenCode Shell tool advertises background execution and completion notices, use that primitive for long launches; otherwise use foreground. Keep the delayed-retry handoff unless the current session actually exposes a verified one-shot scheduler.\"},{\"id\":\"D8-6\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":133,\"evidence\":\"“gsd-core's 300 s default” is a version-sensitive upstream default without a dated official citation or an instruction to read it live. The runner separately has a 300 s built-in fallback.\",\"fix\":\"Call 300 s the template's built-in fallback and tell callers to read the runner's effective deadline diagnostic. If retaining the claim about upstream GSD, cite the official source with the version and date checked.\"},{\"id\":\"D8-7\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":321,\"evidence\":\"“When it cannot be confirmed, use the print-and-stop handoff” covers a missing or unclear scheduler response but not a job that was created without a usable confirmation. A manual retry could then overlap a scheduled one.\",\"fix\":\"If creation is ambiguous, check the scheduled-task list for that lane. Confirm a single eligible job or cancel it and verify cancellation before giving the manual re-invoke handoff. If neither can be verified, report the uncertainty and instruct the owner not to re-invoke until the pending job is resolved.\"}]}"
+  }
+ ],
+ "digest": "a21e21bf22a137801c5ece9bdb1d8e6ee15b589025990163e8e15f15e6332d71",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "fbdac1e55606d6cb4bd680b275bf3eac300c4fc545c6a093e3e0b0c6b1e5ec85"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-one",
+ "loop": "38.1",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_settings_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_staged_mapper.py"
+ ],
+ "prompt_sha256": "b84552943b324db85f229a2ecc1483e70095bda7dc06eb644e8499046df9a37c",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "The standalone “When a run, a review or an execution step calls an external AI CLI and acts on the result” section repeats the activation decision without adding runner-specific knowledge.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Record the removal of this body-only restatement; keep the trigger in frontmatter and the runner-specific decisions in the workflow.",
+    "id": "D1-1",
+    "line": 28,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "“Choose the runtime and model” starts a sound phased process, but the caller has no short checklist distinguishing what must be settled before launch, what proves completion, and what authorizes a follow-up.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Add a four-item caller checklist near the top: confirm owner-selected lane and role; resolve the runner and prepare capture; await the original launch and verify its result; take only the follow-up authorized by the exit and status. Link each item to its existing procedure.",
+    "id": "D2-1",
+    "line": 30,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "“Use when you run, wait for, read, retry or chain an external AI CLI” is specific, but the description omits the distinct herdr/headless intent covered by the body and the trigger set.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use when asked to run an external review or execute a plan through ai-kit's cross-AI runner (cross-ai.mjs), wait for a lane, read AIKIT-XAI or per-setting results, continue a session, or stop a lane opening herdr tabs. Handles pi, OpenCode, Codex, Cursor, Copilot and Claude; passes role, model, effort, context, skills and MCP settings, and uses --argv-file for unsupported runtimes. Also use when a lane hits quota, 429 or a rate limit, exits 75 or 69, is locked or partial, or reports ignored settings, findings or retry_after_s. Interpret the result, apply the hard-tier wait or owner handoff, and answer GSD retry/skip/abort without switching harness, provider or model. Not for setting up reviewers or configuring GSD presets.",
+    "id": "D4-1",
+    "line": 4,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "“A hosted lane's run safety” puts the run-record schema, polling and truncation internals, sweep matching rules, and crash-remnant details inline. The 382-line body is about 7,200 words despite already having targeted references.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Keep the launch choice, the verdict signal, and the ambiguous-start and cleanup warnings inline. Move the full hosted safety and sweep detail to a hosted-troubleshooting section in references/launch-and-wait.md, linked from the host-failure and unconfirmed-close branches; a normal headless launch should not load that section.",
+    "id": "D5-1",
+    "line": 124,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "“running without a lock” is noted, but the caller still has to invent a concurrency policy when supervising a write-capable lane in an unwritable or full state home.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Make lock availability a precondition for launches that rely on checkout serialization. If the runner reports that it proceeded unlocked, do not start any overlapping lane; report the loss of serialization and require the owner to restore locking or provide an isolated checkout before further execute launches.",
+    "id": "D6-1",
+    "line": 355,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The main launch case names plan-review.md and fake/ok but has “files”: []; the resume case supplies only prior stderr, not the next prompt or a fake CLI. The reset case also requires an exact wait without specifying a host or scheduler outcome.",
+    "file": "skills/ai-kit-cross-ai/evals/evals.json",
+    "fix": "Supply the named prompts and a hermetic fake-runtime setup for the launch and resume cases. Split the reset case into confirmed one-shot and no-scheduler handoff fixtures, asserting either a single eligible scheduled job or no job plus a complete handoff.",
+    "id": "D7-1",
+    "line": 8,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“Arm a session wake so this run resumes after the usage limit” is labeled negative but does not identify what “this run” is; a cross-AI lane with retry_after_s would make it a positive.",
+    "file": "skills/ai-kit-cross-ai/evals/trigger-queries.json",
+    "fix": "Specify a native-session wake with no cross-AI runner in the negative, and add a paired positive using a runner-issued retry hint without naming the skill.",
+    "id": "D7-2",
+    "line": 55,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“$ROLE is review for a review lane” omits a write before dispatch: the runner invokes migrateRetrySources for real calls regardless of role (cross-ai.mjs:7018), and that migration can rewrite the project's retry configuration and remove the legacy block (cross-ai.mjs:3631–3708). The quota reference describes migration, but the normal launch path says it need not be read.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Before launching a review that must not change files, check for pending legacy retry migration. If one is pending, stop for owner-approved migration in a separate step or use a prepared isolated checkout. Distinguish child review restrictions from runner-owned writes at the launch gate.",
+    "id": "D8-1",
+    "line": 100,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“Both are already on disk” fails if prompt.md cannot be opened or the host kills the wrapper before it writes lane.rc; the workflow defines no safe outcome for a missing trailer or disagreement between the two exit codes.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Require both artifacts and matching exit codes before chaining or scheduling. If either is absent or they disagree, report an incomplete launch with the available shell or host evidence; verify whether the original process is still running and do not relaunch automatically.",
+    "id": "D8-2",
+    "line": 145,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“It then resets the session session_resets times” omits the explicit-session branch. The runner pins an applied --session-id, sets sessionResets to zero for that run, and refuses fresh-session branches (cross-ai.mjs:5686–5690, 6053–6069).",
+    "file": "skills/ai-kit-cross-ai/references/subprocess-quota-policy.md",
+    "fix": "Qualify the reset ladder: an explicitly applied --session-id pins the session and disables fresh resets. Point the resume workflow to that exception so the caller does not expect a new session after a pinned resume fails.",
+    "id": "D8-3",
+    "line": 55,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“128+n | signal | the child died on signal n” attributes the status to the wrong process. The runner emits this status for a signal it catches (cross-ai.mjs:5388–5406); a child-only signal is logged as a child failure and goes through classification (cross-ai.mjs:6031–6045).",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Describe 128+n as the runner's handled interruption, not proof of a child-only signal. For a child-only signal, report the final classified outcome and use the attempt diagnostic for the child signal.",
+    "id": "D8-4",
+    "line": 181,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“opencode's help shows no notification or one-shot scheduling feature, so an opencode host uses the foreground wait” misses OpenCode's documented Shell background mode, which notifies the session at exit. This contradicts the reference's own capability-based branch.",
+    "file": "skills/ai-kit-cross-ai/references/launch-and-wait.md",
+    "fix": "Separate completion notification from delayed scheduling. When the current OpenCode Shell tool advertises background execution and completion notices, use that primitive for long launches; otherwise use foreground. Keep the delayed-retry handoff unless the current session actually exposes a verified one-shot scheduler.",
+    "id": "D8-5",
+    "line": 58,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“gsd-core's 300 s default” is a version-sensitive upstream default without a dated official citation or an instruction to read it live. The runner separately has a 300 s built-in fallback.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Call 300 s the template's built-in fallback and tell callers to read the runner's effective deadline diagnostic. If retaining the claim about upstream GSD, cite the official source with the version and date checked.",
+    "id": "D8-6",
+    "line": 133,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“When it cannot be confirmed, use the print-and-stop handoff” covers a missing or unclear scheduler response but not a job that was created without a usable confirmation. A manual retry could then overlap a scheduled one.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "If creation is ambiguous, check the scheduled-task list for that lane. Confirm a single eligible job or cancel it and verify cancellation before giving the manual re-invoke handoff. If neither can be verified, report the uncertainty and instruct the owner not to re-invoke until the pending job is resolved.",
+    "id": "D8-7",
+    "line": 321,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-one",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 83.2,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 19,
+   "D2": 14,
+   "D3": 15,
+   "D4": 14,
+   "D5": 11,
+   "D6": 13,
+   "D7": 12,
+   "D8": 6
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 104
+ }
+}

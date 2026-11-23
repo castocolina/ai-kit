@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=10 sha256=1940a7b9792dba6b2e30e77013cdbb3def36e0117d88c9fd2515588967ee40a9
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=11 sha256=255da19265d0c52a58c268ef04d366a54830a89f994ec2ed58821969706dfdee
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v10).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v11).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
@@ -186,6 +186,32 @@ const ROUTER_HINTS = ["router", "-env", "local-llm"];
 // <patterns>
 const PATTERNS = [
   {
+    "id": "router-model-cooldown",
+    "tier": 0,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "model_cooldown",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-22 (074cbcc): router client body 429 code model_cooldown with Retry-After and reset_seconds, read from the router source 2026-11-16; no body captured"
+  },
+  {
+    "id": "router-all-targets-cooling-down",
+    "tier": 0,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "all_targets_cooling_down",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-22 (074cbcc): router client body 503 all_targets_cooling_down with Retry-After, read from the router source 2026-11-16; no body captured"
+  },
+  {
     "id": "omniroute-all-targets-skipped",
     "tier": 0,
     "cli": "*",
@@ -234,8 +260,8 @@ const PATTERNS = [
     "match": "model_cooldown",
     "class": "transient",
     "terminal": false,
-    "label": "unverified",
-    "evidence": "CHANGELOG 0a1265ea8"
+    "label": "verified",
+    "evidence": "CHANGELOG 0a1265ea8; body seen in 45 cases from an older router image, logs read 2026-11-02 (v1.3-OWNER-FOLLOWUP.md section 1 and Evidence sources)"
   },
   {
     "id": "omniroute-endpoint-unavailable",
@@ -290,6 +316,19 @@ const PATTERNS = [
     "evidence": "CHANGELOG 0a1265ea8"
   },
   {
+    "id": "provider-not-configured",
+    "tier": 0,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\\bprovider_not_configured\\b",
+    "class": "bad_model",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "code name recorded in real runs (38.1 SPEC R2); body not captured"
+  },
+  {
     "id": "vendor-usage-limit-reached",
     "tier": 1,
     "cli": "*",
@@ -327,7 +366,151 @@ const PATTERNS = [
     "class": "quota",
     "terminal": true,
     "label": "verified",
-    "evidence": "the Zhipu GLM capture"
+    "evidence": "the Zhipu GLM capture; weekly limit wording found in past runs (v1.3-OWNER-FOLLOWUP.md section 1)"
+  },
+  {
+    "id": "vendor-data-inspection-failed",
+    "tier": 1,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\\bdata_inspection_failed\\b",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "code name recorded in real runs (38.1 SPEC Live facts 2026-11-16); body not captured"
+  },
+  {
+    "id": "vendor-context-length-exceeded",
+    "tier": 1,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\\bcontext_length_exceeded\\b",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "code name recorded in real runs (38.1 SPEC Live facts 2026-11-16); body not captured"
+  },
+  {
+    "id": "vendor-code-1311",
+    "tier": 1,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\"code\"\\s*:\\s*\"1311\"",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "vendor plan-not-open code recorded in real runs (38.1 SPEC Live facts 2026-11-16); body not captured"
+  },
+  {
+    "id": "copilot-model-not-available",
+    "tier": 1,
+    "cli": "copilot",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "Model \"[^\"]+\" is not available",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, copilot 1.0.112; fixture tests/fixtures/cross_ai_errors/copilot-bad-model.json"
+  },
+  {
+    "id": "pi-model-not-found",
+    "tier": 1,
+    "cli": "pi",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "Model \"[^\"]+\" not found",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, pi 1.5.2; fixture tests/fixtures/cross_ai_errors/pi-bad-model.json"
+  },
+  {
+    "id": "opencode-model-unavailable",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "event",
+    "match": "^opencode-type:provider\\.no-route$",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, opencode 2.3.0 provider.no-route event (message Model unavailable); fixture tests/fixtures/cross_ai_errors/opencode-bad-model.json"
+  },
+  {
+    "id": "claude-selected-model",
+    "tier": 1,
+    "cli": "claude",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "issue with the selected model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, claude 2.1.325; fixture tests/fixtures/cross_ai_errors/claude-bad-model.json"
+  },
+  {
+    "id": "codex-model-not-supported",
+    "tier": 1,
+    "cli": "codex",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "model is not supported when using",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, codex 0.169.0; fixture tests/fixtures/cross_ai_errors/codex-bad-model.json"
+  },
+  {
+    "id": "opencode-free-tier-error",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "FreeTierError",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "client rule reported in a pinned opencode maintainer post and issues; no body captured on this machine (38.1 D-27)"
+  },
+  {
+    "id": "opencode-missing-session-id",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "MissingSessionID",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "client rule reported in a pinned opencode maintainer post and issues; no body captured on this machine (38.1 D-27)"
+  },
+  {
+    "id": "opencode-free-tier-version-gate",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "or newer is required to use the free tier",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "client rule reported in a pinned opencode maintainer post and issues; no body captured on this machine (38.1 D-27)"
   },
   {
     "id": "text-billing",
@@ -354,8 +537,8 @@ const PATTERNS = [
     "class": "billing",
     "routerClass": "quota",
     "terminal": true,
-    "label": "unverified",
-    "evidence": "25-RESEARCH 2.2 CONTEXT, wrapper reproduced"
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 CONTEXT; seen through direct calls in past runs (v1.3-OWNER-FOLLOWUP.md section 1, router limit texts)"
   },
   {
     "id": "text-spending-limit",
@@ -410,8 +593,8 @@ const PATTERNS = [
     "class": "billing",
     "routerClass": "quota",
     "terminal": true,
-    "label": "unverified",
-    "evidence": "25-RESEARCH 2.2 Go wording"
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 Go wording; seen through direct calls in past runs (v1.3-OWNER-FOLLOWUP.md section 1, router limit texts)"
   },
   {
     "id": "text-run-out-credits",
@@ -438,8 +621,36 @@ const PATTERNS = [
     "class": "billing",
     "routerClass": "quota",
     "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 Zen wording; seen through direct calls in past runs (v1.3-OWNER-FOLLOWUP.md section 1, router limit texts)"
+  },
+  {
+    "id": "text-policy-budget-exceeded",
+    "tier": 2,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "policy budget exceeded",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
     "label": "unverified",
-    "evidence": "25-RESEARCH 2.2 Zen wording"
+    "evidence": "name recorded in the 21.1 research and the 2026-10-11 todo; body not re-observed"
+  },
+  {
+    "id": "text-account-budget-exceeded",
+    "tier": 2,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "account budget exceeded",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "name recorded in the 21.1 research and the 2026-10-11 todo; body not re-observed"
   },
   {
     "id": "text-named-models",
@@ -480,7 +691,22 @@ const PATTERNS = [
     "class": "quota",
     "terminal": true,
     "label": "verified",
-    "evidence": "25-RESEARCH 2.2 probe"
+    "evidence": "25-RESEARCH 2.2 probe",
+    "pool": "free"
+  },
+  {
+    "id": "opencode-free-limit",
+    "tier": 3,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "event",
+    "match": "^opencode-type:provider\\.free-limit$",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "typed event shape from the opencode pull request text and a live probe on 2026-11-16 (429 with retryAfterMs); full body not stored (38.1 D-24)",
+    "pool": "free"
   },
   {
     "id": "vendor-go-usage",
@@ -533,6 +759,32 @@ const PATTERNS = [
     "terminal": true,
     "label": "unverified",
     "evidence": "25-RESEARCH 2.5 cited binary"
+  },
+  {
+    "id": "claude-hit-your-limit-stdout",
+    "tier": 3,
+    "cli": "claude",
+    "route": "*",
+    "provider": "*",
+    "input": "stdout",
+    "match": "hit your (?:weekly )?limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "38.1 R3 D-07: claude limit sentence as plain stdout (run live, crash before this row); weekly form as the harness case evidence-claude-weekly"
+  },
+  {
+    "id": "claude-selected-model-stdout",
+    "tier": 3,
+    "cli": "claude",
+    "route": "*",
+    "provider": "*",
+    "input": "stdout",
+    "match": "issue with the selected model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "38.1 R3 D-04: claude model-missing sentence as plain stdout; the 2026-11-16 capture printed it inside the JSON result, the plain form is not captured"
   },
   {
     "id": "text-usage-limit",
@@ -979,6 +1231,45 @@ const PATTERNS = [
     "evidence": "25-RESEARCH 2.2 recorded"
   },
   {
+    "id": "router-accounts-cooling-down",
+    "tier": 5,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "active accounts cooling down for model",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router log line (warning, tag AUTH), 34 episodes in the router's own log; never seen by the runner"
+  },
+  {
+    "id": "router-all-models-failed",
+    "tier": 5,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "All models failed \\|.*\\(reset after ",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router log wording with its reset text (the heading alone also prints for non-cooldown failures); never seen by the runner"
+  },
+  {
+    "id": "router-persisted-cooldown",
+    "tier": 5,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "has persisted cooldown until",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router log wording; never seen by the runner"
+  },
+  {
     "id": "text-cooling-down",
     "tier": 5,
     "cli": "*",
@@ -990,6 +1281,19 @@ const PATTERNS = [
     "terminal": false,
     "label": "verified",
     "evidence": "prior table"
+  },
+  {
+    "id": "text-connection-capacity",
+    "tier": 5,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "connection capacity reached",
+    "class": "transient",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "text recorded in real runs without a status code (38.1 SPEC Live facts 2026-11-16); body not captured"
   },
   {
     "id": "text-is-locked",
@@ -1110,6 +1414,19 @@ const PATTERNS = [
     "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
   },
   {
+    "id": "router-usage-balance-exhausted",
+    "tier": 6,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "usage balance exhausted",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router wording; a 402 body carrying it classifies by code-402 and a 401/403 by code-401-403 first, this row covers the form without a status code"
+  },
+  {
     "id": "code-429",
     "tier": 6,
     "cli": "*",
@@ -1159,7 +1476,7 @@ function setTable(value) { TABLE = value; }
 
 const OVERLAY_MATCH_MS = 50;
 const OVERLAY_CALL_BUDGET_MS = 200;
-const ROW_CLASSES = ['quota', 'billing', 'auth', 'permission_blocked', 'bad_model', 'transient'];
+const ROW_CLASSES = ['quota', 'billing', 'auth', 'permission_blocked', 'bad_model', 'bad_request', 'transient'];
 const ROW_ID_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const PROVIDER_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 let OVERLAY_IDS = new Set();
@@ -1191,13 +1508,14 @@ function validateRow(row, known) {
   if (row.provider !== '*' && (typeof row.provider !== 'string' || !PROVIDER_RE.test(row.provider))) {
     return 'provider is not * or a lowercase prefix';
   }
-  if (!['stderr', 'event', 'any'].includes(row.input)) return 'input is not stderr, event or any';
+  if (!['stderr', 'event', 'stdout', 'any'].includes(row.input)) return 'input is not stderr, event, stdout or any';
   if (typeof row.match !== 'string' || row.match.length > 200) {
     return 'match is not a string of at most 200 characters';
   }
   try { new RegExp(row.match, 'i'); } catch { return 'match is not a regex'; }
   if (!ROW_CLASSES.includes(row.class)) return 'class is not a known class';
   if (row.routerClass !== undefined && row.routerClass !== 'quota') return 'routerClass is not quota';
+  if (row.pool !== undefined && (typeof row.pool !== 'string' || !ROW_POOL_RE.test(row.pool))) return 'pool is not a pool tier';
   if (typeof row.terminal !== 'boolean') return 'terminal is not a boolean';
   if (row.label !== 'verified' && row.label !== 'unverified') return 'label is not verified or unverified';
   if (typeof row.evidence !== 'string' || !row.evidence) return 'evidence is empty';
@@ -1216,6 +1534,7 @@ const STATUS_TABLE = {
   empty_stdin: { exit: 2 },
   permission_blocked: { exit: 69 },
   bad_model: { exit: 69 },
+  bad_request: { exit: 69 }, // 38.1 D-01: the provider refused the request itself; retrying the same input never helps.
   auth: { exit: 69 },
   billing: { exit: 69 },
   quota: { exit: 75 },
@@ -1310,7 +1629,7 @@ function reportAndFinish(status, fields, stopped) {
   if (status !== 'ok' && !fields.reportDone) {
     logReport(status, fields.cli ?? '-', fields.model ?? '-', fields.route, fields.attempts || 0,
       fields.cycles || 0, fields.firstFailureMs || 0, fields.lastFailureMs || 0, why,
-      fields.dueAtMs || 0, fields.upstream || null);
+      fields.dueAtMs || 0, fields.upstream || null, fields.check || '-');
     if (fields.upstream?.body) {
       const raw = fields.upstream.raw || '';
       const extra = redactedValues(normalizeInput(raw));
@@ -1990,8 +2309,10 @@ function decodeUtf8(text) {
   return Buffer.from(text, 'utf8').toString('utf8');
 }
 
+function cleanInput(text) { return decodeUtf8(text).replace(ANSI_RE, '').replace(/\u2019/g, "'"); }
+
 function normalizeInput(text) {
-  const decoded = decodeUtf8(text).replace(ANSI_RE, '').replace(/\u2019/g, "'");
+  const decoded = cleanInput(text);
   return decoded.length > INPUT_CAP ? decoded.slice(-INPUT_CAP) : decoded;
 }
 
@@ -2080,8 +2401,9 @@ function rowRegex(row) {
   return re;
 }
 
+// SPEC R3 (D-07): plain stdout is read only by rows that opt in with input: stdout; any keeps stderr and events.
 function rowAdmits(row, source) {
-  if (row.input === 'any') return true;
+  if (row.input === 'any') return source !== 'stdout';
   return row.input === source;
 }
 
@@ -2139,7 +2461,17 @@ function overlayHits(text) {
   return new Set(Array.isArray(found) ? found : []);
 }
 
-function classifyStop({ cli, routerLane, route, model, stderr, events, eventRaw }, table = TABLE) {
+// SPEC R3: the plain lines of a failed attempt's stdout. JSON is decided per complete, uncapped line (any JSON value is dropped), then the INPUT_CAP tail is taken and the partial line the cap cut is dropped, so a clipped JSON answer never becomes plain text.
+function plainStdoutText(stdout) {
+  const kept = cleanInput(stdout || '').split('\n').filter((line) => line.trim() !== '' && parseJson(line.trim()) === null);
+  const text = kept.join('\n');
+  if (text.length <= INPUT_CAP) return text;
+  const tail = text.slice(-INPUT_CAP);
+  const cut = tail.indexOf('\n');
+  return cut < 0 ? '' : tail.slice(cut + 1);
+}
+
+function classifyStop({ cli, routerLane, route, model, stderr, events, eventRaw, stdout }, table = TABLE) {
   const callRoute = route ?? (routerLane ? 'router' : 'unknown');
   const lane = routerLane ?? (callRoute === 'router');
   const callModel = model || '';
@@ -2148,6 +2480,7 @@ function classifyStop({ cli, routerLane, route, model, stderr, events, eventRaw 
   for (let i = 0; i < (events || []).length; i += 1) {
     sources.push(['event', normalizeInput(events[i] || ''), eventRaw?.[i] ?? null]);
   }
+  const plain = plainStdoutText(stdout); if (plain) sources.push(['stdout', plain, null]);
   const overlayByText = new Map();
   for (const row of table) {
     if (row.cli !== '*' && row.cli !== cli) continue;
@@ -2172,7 +2505,7 @@ function classifyStop({ cli, routerLane, route, model, stderr, events, eventRaw 
       }
       const start = text.lastIndexOf('\n', match.index) + 1;
       const end = text.indexOf('\n', match.index);
-      const line = source === 'stderr' ? text.slice(start, end < 0 ? undefined : end) : text;
+      const line = source === 'stderr' || source === 'stdout' ? text.slice(start, end < 0 ? undefined : end) : text;
       const status = lane && row.routerClass === 'quota' ? 'quota' : row.class;
       return { status, rule: row.id, label: row.label, source, line, raw: raw || line };
     }
@@ -2230,10 +2563,17 @@ function codexEventStrings(ev) {
   return out;
 }
 
-function resultEventString(out) {
+// 38.1 D-08: claude's structured fields feed the bare status-code rows, as opencode's error status does; cursor has no such capture, so only claude asks for them.
+function resultEventString(out, withFields = false) {
   const ev = lastJson(out, (j) => j.type === 'result');
   if (!ev || !ev.is_error) return [];
-  return typeof ev.result === 'string' && ev.result ? [ev.result] : [];
+  const found = typeof ev.result === 'string' && ev.result ? [ev.result] : [];
+  if (withFields) {
+    const code = ev.api_error_status;
+    if (Number.isInteger(code) && code >= 100 && code <= 599) found.push(`status ${code}`);
+    if (typeof ev.api_error_type === 'string' && ev.api_error_type) found.push(ev.api_error_type);
+  }
+  return found;
 }
 
 function eventIsTerminal(cli, ev) {
@@ -2264,7 +2604,7 @@ function extractEvents(cli, stdout, terminalOnly = false) {
       const ev = lastJson(text, (j) => j.type === 'result');
       if (ev && eventIsTerminal(cli, ev)) out.push(...resultEventString(text));
     } else {
-      out.push(...resultEventString(text));
+      out.push(...resultEventString(text, cli === 'claude'));
     }
   }
   return out;
@@ -2283,29 +2623,46 @@ function eventsWithRaw(cli, stdout, terminalOnly = false) {
   return { events, eventRaw };
 }
 
+// SPEC R4 (D-09): whole seconds from the router's "(reset after <n>h <n>m <n>s)"; parts add up in any order, a repeated unit or any other form is absent (null). Shown as an upstream field; statedResetS reads it once for the reset check (R5), never as a wait by itself.
+function resetAfterSeconds(text) {
+  const m = /\(reset after ([^)]*)\)/i.exec(String(text || ''));
+  if (!m) return null;
+  const seen = new Set();
+  let total = 0;
+  for (const part of m[1].trim().split(/\s+/)) {
+    const p = /^(\d{1,6})([hms])$/.exec(part);
+    if (!p || seen.has(p[2])) return null;
+    seen.add(p[2]);
+    total += Number(p[1]) * { h: 3600, m: 60, s: 1 }[p[2]];
+  }
+  return total;
+}
+
 function upstreamFields(raw) {
   const text = String(raw || '');
   const start = text.indexOf('{');
-  if (start < 0) return null;
   // shortcut: one parse from the first object opener; captures with a prose brace prefix
   // require a dedicated fixture before broadening this bounded parser.
-  const outer = parseJson(text.slice(start));
-  if (!outer || typeof outer !== 'object' || Array.isArray(outer)) return null;
-  const body = outer.error?.response?.body;
-  const nested = typeof body === 'string' ? parseJson(body) : null;
-  const objects = [outer, outer.error, nested, nested?.error];
-  const keys = ['retry_after', 'reset_at', 'retry_after_seconds', 'resetsAt'];
+  const outer = start < 0 ? null : parseJson(text.slice(start));
   const result = {};
-  for (const key of keys) {
-    for (const object of objects) {
-      if (!object || typeof object !== 'object' || !Object.hasOwn(object, key)) continue;
-      const value = object[key];
-      if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) {
-        result[key] = value;
-        break;
+  if (outer && typeof outer === 'object' && !Array.isArray(outer)) {
+    const body = outer.error?.response?.body;
+    const nested = typeof body === 'string' ? parseJson(body) : null;
+    const objects = [outer, outer.error, nested, nested?.error, outer.recovery_hint];
+    const keys = ['retry_after', 'reset_at', 'retry_after_seconds', 'resetsAt', 'reset_seconds', 'retryAfterMs'];
+    for (const key of keys) {
+      for (const object of objects) {
+        if (!object || typeof object !== 'object' || !Object.hasOwn(object, key)) continue;
+        const value = object[key];
+        if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) {
+          result[key] = value;
+          break;
+        }
       }
     }
   }
+  const reset = resetAfterSeconds(text);
+  if (reset !== null) result.reset_after_s = reset;
   return Object.keys(result).length ? result : null;
 }
 
@@ -2867,9 +3224,9 @@ function planIdle(call, config, role) {
 // hard wait stops the hard tier first (25.1-03 hardWaitFor), it does not drop a key.
 const RETRY_DEFAULTS = Object.freeze({
   base_s: 1, factor: 1.5, max_retries: 5, session_resets: 1,
-  hard_waits_s: Object.freeze([600, 900, 1800]),
+  hard_waits_s: Object.freeze([60, 300]), hard_every_s: 600,
 });
-const RETRY_KEYS = ['base_s', 'factor', 'max_retries', 'session_resets', 'hard_waits_s'];
+const RETRY_KEYS = ['base_s', 'factor', 'max_retries', 'session_resets', 'hard_waits_s', 'hard_every_s'];
 
 function validateRetryKey(key, value, capS) {
   if (!RETRY_KEYS.includes(key)) return 'unknown key';
@@ -2888,6 +3245,11 @@ function validateRetryKey(key, value, capS) {
     const hi = key === 'max_retries' ? 10 : 3;
     if (!Number.isInteger(value)) return typeof value === 'number' ? 'not an integer' : 'wrong type';
     if (value < 0 || value > hi) return `out of bounds (0..${hi})`;
+    return null;
+  }
+  if (key === 'hard_every_s') {
+    if (!Number.isInteger(value)) return typeof value === 'number' ? 'not an integer' : 'wrong type';
+    if (value !== 0 && (value < 60 || value > capS)) return `out of bounds (0 or 60..${capS})`;
     return null;
   }
   if (!Array.isArray(value)) return 'wrong type';
@@ -2975,7 +3337,7 @@ function resolveRetry(cwd, env) {
   }
   const waits = retry.hard_waits_s.join(',');
   log(`cross-ai: retry base_s=${retry.base_s} factor=${retry.factor} max_retries=${retry.max_retries} ` +
-    `session_resets=${retry.session_resets} hard_waits_s=${waits} cap_s=${capS}`);
+    `session_resets=${retry.session_resets} hard_waits_s=${waits} hard_every_s=${retry.hard_every_s} cap_s=${capS}`);
   return { retry, capS };
 }
 
@@ -3443,7 +3805,7 @@ function softWaitMs(retry, k, rand = Math.random, prevMs = 0) {
 // resets, canResume, firstMs, cycle}`, `lim = {maxRetries, sessionResets, deadlineMs, waitMs,
 // capMs}`. A CLI that cannot resume still walks the same-session retries, each as a new
 // session (D-10). Once the series and its resets are spent both soft classes hand the call to
-// the one hard handler; the call never sleeps a hard wait. The admission checks apply to both
+// the one hard handler, which can admit a short in-call wait. The admission checks apply to both
 // soft classes: one shared episode cap (D-07).
 function ladderNext(st, cls, nowMs, lim) {
   if (cls !== 'transient' && cls !== 'quota') return { next: 'stop', why: 'class' };
@@ -3466,13 +3828,64 @@ function ladderNext(st, cls, nowMs, lim) {
   return { next, why };
 }
 
-// The caller's hard tier (SPEC R3, D-08): cycle n waits hard_waits_s[n] as one exit-75 hint,
-// the list's end or a wait that would pass the episode cap is a terminal stop, and the call
-// itself never sleeps the wait. capLeftS is the seconds the episode cap still allows.
-function hardWaitFor(cycle, waits, capLeftS) {
-  if (cycle >= waits.length) return { stop: 'hard-waits' };
-  if (waits[cycle] > capLeftS) return { stop: 'cap' };
-  return { retryAfterS: Math.trunc(waits[cycle]), cycle };
+// The caller's hard tier (SPEC R5, D-10): cycle n waits hard_waits_s[n], then hard_every_s
+// after the list; 0 ends at the list's end (stopped=hard-waits),
+// and a wait past the episode cap left is the cap stop. capLeftS is the seconds still allowed.
+function hardWaitFor(cycle, waits, capLeftS, everyS = 0) {
+  if (cycle >= waits.length && !everyS) return { stop: 'hard-waits' };
+  const wait = cycle < waits.length ? waits[cycle] : everyS;
+  if (wait > capLeftS) return { stop: 'cap' };
+  return { retryAfterS: Math.trunc(wait), cycle };
+}
+
+// SPEC R5, D-11: a stated reset is untrusted data; it can only add one check, 60 s ahead at the earliest and before the cap's end.
+const RESET_RELATIVE_KEYS = ['retry_after', 'retry_after_seconds', 'reset_seconds', 'reset_after_s'];
+const RESET_ABSOLUTE_KEYS = ['reset_at', 'resetsAt'];
+// A window clears about 2 minutes after its stated reset (v1.3 recovery notes).
+const RESET_MARGIN_S = 120;
+
+// Whole seconds until the earliest stated reset that is not in the past, else null; relative fields are seconds, absolute ones epoch seconds, epoch ms or an ISO time.
+function statedResetS(fields, nowMs) {
+  if (!fields || typeof fields !== 'object') return null;
+  const num = (v) => {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    return typeof v === 'string' && /^\d+(\.\d+)?$/.test(v) ? Number(v) : null;
+  };
+  const iso = (v) => {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(v)) return null;
+    const t = Date.parse(v);
+    return Number.isFinite(t) && new Date(t).toISOString().slice(0, 19) === v.slice(0, 19) ? t : null;
+  };
+  const found = [];
+  const ahead = (ms) => { if (ms !== null && ms - nowMs >= 0) found.push(Math.trunc((ms - nowMs) / 1000)); };
+  for (const key of RESET_RELATIVE_KEYS) {
+    const v = fields[key];
+    const n = num(v);
+    if (n !== null) { if (n >= 0) found.push(Math.trunc(n)); }
+    else if (key === 'retry_after' && typeof v === 'string') ahead(iso(v));
+  }
+  for (const key of RESET_ABSOLUTE_KEYS) {
+    const v = fields[key];
+    const n = num(v);
+    let ms = null;
+    if (n !== null) ms = n >= 1e12 ? n : (n >= 1e9 ? n * 1000 : null);
+    else if (typeof v === 'string') ms = iso(v);
+    ahead(ms);
+  }
+  return found.length ? Math.min(...found) : null;
+}
+
+// The extra check's wait: stated + 120 s, only when at least 60 s, before the cap's end and earlier than the next check.
+function resetCheckS(statedS, nextWaitS, capLeftS) {
+  if (!Number.isInteger(statedS) || statedS < 0) return null;
+  const at = statedS + RESET_MARGIN_S;
+  return at >= 60 && at < capLeftS && at < nextWaitS ? at : null;
+}
+
+// A short hard wait, including zero, runs in the call only with a 60 second reserve.
+function shortHardWait(waitS, atMs, deadlineMs) {
+  if (!(waitS >= 0 && waitS < 60)) return { waitS, inCall: false };
+  return atMs + waitS * 1000 + 60000 <= deadlineMs ? { waitS, inCall: true } : { waitS: 60, inCall: false };
 }
 
 // Rung 1 continues the captured session. Null when no session can be continued: no id,
@@ -3583,6 +3996,116 @@ function writeCycleState(file, data) {
   }
   fs.renameSync(tmp, file);
   try { fs.chmodSync(file, 0o600); } catch { /* the create mode already is 0600 */ }
+}
+
+// 38.1 R11 (D-23..D-25): a usage-limited pool's blocked-until record; the runner never acts on it.
+// Mirrors Phase 36's POOL_RX (lane_settings.py) so a caller's --pool equals the recorded string.
+const BLOCKED_POOL_RE = /^[A-Za-z0-9._-]{1,64}:[a-z]{1,16}$/;
+// The tier part of BLOCKED_POOL_RE, so a row tier that validates always forms a pool key.
+const ROW_POOL_RE = /^[a-z]{1,16}$/;
+const BLOCKED_DAY_S = 86400;
+const BLOCKED_MARGIN_S = 120;
+function blockedIso(s) { return new Date(s * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'); }
+function blockedStatedS(fields) {
+  const ms = fields ? fields.retryAfterMs : undefined;
+  return typeof ms === 'number' && Number.isInteger(ms) && ms > 0 ? Math.min(Math.trunc(ms / 1000), BLOCKED_DAY_S) : null;
+}
+function blockedNext(prev, nowS, statedS) {
+  const base = statedS === null ? BLOCKED_DAY_S : statedS + BLOCKED_MARGIN_S;
+  const basis = statedS === null ? 'default_24h' : 'retry_after_ms';
+  if (!prev) return { untilS: nowS + base, failures: 1, basis };
+  if (nowS < prev.untilS) return { untilS: Math.max(prev.untilS, nowS + base), failures: prev.failures, basis: nowS + base > prev.untilS ? basis : prev.basis };
+  const failures = prev.failures + 1;
+  return { untilS: nowS + Math.max(base, BLOCKED_DAY_S), failures, basis: base >= BLOCKED_DAY_S ? basis : 'floor_24h' };
+}
+function blockedPoolKey(poolOpt, row, model) {
+  if (poolOpt) return poolOpt;
+  if (!row || !row.pool) return null;
+  const cut = String(model || '').indexOf('/');
+  if (cut <= 0) return null;
+  const key = `${model.slice(0, cut)}:${row.pool}`;
+  return BLOCKED_POOL_RE.test(key) ? key : null;
+}
+function blockedFilePath(pool, home = stateHome()) { return path.join(home, 'ai-kit', 'spec', 'blocked', `${encodeURIComponent(pool)}.json`); }
+const BLOCKED_BASES = new Set(['retry_after_ms', 'default_24h', 'floor_24h']);
+const BLOCKED_MAX_BYTES = 4096;
+function readBlocked(pool, home = stateHome()) {
+  let rec;
+  try {
+    const file = blockedFilePath(pool, home);
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.size > BLOCKED_MAX_BYTES) return null;
+    rec = parseJson(fs.readFileSync(file, 'utf8'));
+  } catch { return null; }
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec) || rec.pool !== pool || typeof rec.blocked_until !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(rec.blocked_until) || !Number.isFinite(Date.parse(rec.blocked_until)) || !Number.isInteger(rec.failures) || rec.failures < 1 || !BLOCKED_BASES.has(rec.basis) || typeof rec.rule !== 'string' || (rec.rule !== '-' && !ROW_ID_RE.test(rec.rule))) return null;
+  return { pool, untilS: Date.parse(rec.blocked_until) / 1000, failures: rec.failures, basis: rec.basis, rule: rec.rule };
+}
+const BLOCKED_WAIT = new Int32Array(new SharedArrayBuffer(4));
+const BLOCKED_LOCK_ROUNDS = 40;
+// A writer publishes only while it holds the pool lock; a busy lock skips the write (R11: the later blocked_until wins).
+function blockedWithLock(file, fn, rounds = BLOCKED_LOCK_ROUNDS) {
+  const lock = `${file}.lock`;
+  const record = { version: LOCK_RECORD_VERSION, run_id: crypto.randomUUID(), pid: process.pid, pid_start: lockStartTime(process.pid), host_name: os.hostname(), started_ms: Date.now(), child_pgid: null, child_start: null };
+  for (let round = 0; round < rounds; round += 1) {
+    if (createLockFile(lock, record)) {
+      try { return { done: true, value: fn() }; } finally {
+        const mine = readLockOnce(lock);
+        if (mine.rec && mine.rec.run_id === record.run_id) fs.rmSync(lock, { force: true });
+      }
+    }
+    const seen = readLockOnce(lock);
+    if (seen.gone) continue;
+    if (!seen.bad && lockVerdict(seen.rec, lockProbe()) === 'stale') { clearStaleLock(lock, seen); continue; }
+    if (round + 1 < rounds) Atomics.wait(BLOCKED_WAIT, 0, 0, 25);
+  }
+  return { done: false };
+}
+// The live watcher keeps the first terminal string (an opencode message comes before its type), so a pool row may match a later string of the same raw text.
+function blockedPoolRow(r, model) {
+  const hit = TABLE.find((item) => item.id === r.rule) || null;
+  if (hit && hit.pool) return hit;
+  const raw = String(r.upstream?.raw || '');
+  const { events, eventRaw } = eventsWithRaw(r.cli, raw, true);
+  const cls = classifyStop({ cli: r.cli, route: r.route || 'unknown', model, stderr: raw, events, eventRaw }, TABLE.filter((item) => item.pool));
+  return cls.status !== 'crash' ? TABLE.find((item) => item.id === cls.rule) || hit : hit;
+}
+function blockedAfterStop(poolOpt, model, r, nowMs = Date.now(), home = stateHome(), rounds = BLOCKED_LOCK_ROUNDS) {
+  if (!r || r.status !== 'quota' || confirmedRoute(r.route || 'unknown')) return null;
+  const row = blockedPoolRow(r, model);
+  const key = blockedPoolKey(poolOpt, row, model);
+  if (!key) return null;
+  try {
+    const nowS = Math.floor(nowMs / 1000);
+    const file = blockedFilePath(key, home);
+    const res = blockedWithLock(file, () => {
+      const prev = readBlocked(key, home);
+      const next = blockedNext(prev, nowS, blockedStatedS(r.upstream?.fields));
+      if (prev && prev.untilS > next.untilS) next.untilS = prev.untilS;
+      writeCycleState(file, { pool: key, blocked_until: blockedIso(next.untilS), failures: next.failures, basis: next.basis, rule: row && ROW_ID_RE.test(row.id) ? row.id : '-', written_at: blockedIso(nowS) });
+      return next;
+    }, rounds);
+    if (!res.done) { log('cross-ai: blocked-until write skipped (pool lock busy)'); return null; }
+    const next = res.value;
+    log(`cross-ai: blocked-until pool=${key} until=${blockedIso(next.untilS)} failures=${next.failures} basis=${next.basis}`);
+    return next;
+  } catch (e) { log(`cross-ai: blocked-until write failed (${e && e.code || 'error'})`); return null; }
+}
+// An ok attempt clears only a pool the caller named: a paid lane of the same provider is not in the pool.
+function blockedClearAfterOk(poolOpt, home = stateHome()) {
+  if (!poolOpt) return;
+  const done = blockedClear(poolOpt, home);
+  if (done !== 'cleared' && done !== 'absent') log(`cross-ai: blocked-until clear failed (${done})`);
+}
+
+function blockedStatusLine(pool, home = stateHome()) {
+  const rec = readBlocked(pool, home);
+  return `blocked_until=${rec ? blockedIso(rec.untilS) : '-'} failures=${rec ? rec.failures : 0}`;
+}
+
+function blockedClear(pool, home = stateHome()) {
+  try { fs.unlinkSync(blockedFilePath(pool, home)); } catch (e) { return e && e.code === 'ENOENT' ? 'absent' : String(e && e.code || 'error'); }
+  log(`cross-ai: blocked-until cleared pool=${pool}`);
+  return 'cleared';
 }
 
 function deleteCycleState(file) {
@@ -5145,13 +5668,13 @@ function logAttempt(n, rung, cycle, sid, status, rule, pattern, startedMs) {
 
 // One report line before the status line of every run that does not end ok. due_at is the
 // ISO-8601 UTC time (seconds) of a hint exit's wait end, `-` on every other stop.
-function logReport(status, cli, model, route, attempts, cycles, firstMs, lastMs, stopped, dueMs = 0, upstream = null) {
+function logReport(status, cli, model, route, attempts, cycles, firstMs, lastMs, stopped, dueMs = 0, upstream = null, check = '-') {
   const iso = (ms) => (ms ? new Date(ms).toISOString() : '-');
   const dueIso = (ms) => (ms ? new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z') : '-');
   log(`cross-ai: report status=${status} lane=${cli}/${model} route=${route || 'unknown'} ` +
     `attempts=${attempts} cycles=${cycles} first_failure=${iso(firstMs)} ` +
     `last_failure=${iso(lastMs)} due_at=${dueIso(dueMs)} stopped=${stopped} ` +
-    `upstream=${upstream?.body ? 'present' : '-'}`);
+    `upstream=${upstream?.body ? 'present' : '-'} check=${check}`);
 }
 
 function stoppedWhy(step, dirty) {
@@ -5300,6 +5823,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         attempts: loaded.attempts || 0, cycles: loaded.cycle || 0,
         retryAfterS: left, cycle: loaded.cycle || 0, stopped: 'rungs',
         dueAtMs: loaded.due_at,
+        check: ['first', 'periodic', 'reset'].includes(loaded.check) ? loaded.check : '-',
       };
     } else {
       cycleCount = (loaded.cycle || 0) + 1;
@@ -5310,6 +5834,8 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     }
   }
   let firstFailureMs = persisted ? persisted.first_seen : 0;
+  // One reset check per episode (D-11); every save carries it, because saveCycle rebuilds the record.
+  let resetCheck = persisted && Number.isFinite(persisted.reset_check) ? persisted.reset_check : null;
   let lastFailureMs = 0;
   let attempts = priorAttempts;
   // The label of the step that produced the attempt about to run: a reset starts a fresh
@@ -5336,7 +5862,8 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     try {
       writeCycleState(stateFile, {
         first_seen: ladder.firstMs, last_attempt_at: at, cycle: ladder.cycle,
-        attempts, last_sid: sid || null, task_digest: digest, ...record,
+        attempts, last_sid: sid || null, task_digest: digest,
+        ...(resetCheck === null ? {} : { reset_check: resetCheck }), ...record,
       });
       logState();
     } catch (e) {
@@ -5344,17 +5871,18 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       log(`cross-ai: cycle state unwritable: ${stateFile} (${e.code || e.message})`);
     }
   };
-  // One hard handler for both soft classes (D-07). The call never sleeps the hard wait: the
-  // next wait hard_waits_s[cycle] is one exit-75 hint the caller owns, and once the list is
-  // spent or the cap would pass it, the call exits 69 with the stop persisted on disk (D-08,
-  // D-09). A soft step refused for `cap` is already past the episode end, so it stops at once.
+  // One hard handler for both soft classes (D-07). A short wait may run in the call;
+  // otherwise the next list or periodic wait is an exit-75 hint. When the list is spent
+  // with no periodic wait, or the cap would pass the wait, the call persists a stop (D-09).
+  // A soft step refused for `cap` is already past the episode end, so it stops at once.
   const hardHandler = (r, evidence, why, sid, cls) => {
     const at = Date.now();
     const stopped = why === 'deadline' ? 'deadline' : 'rungs';
     const step = why === 'cap'
       ? { stop: 'cap' }
       : hardWaitFor(ladder.cycle, retryCfg.hard_waits_s,
-          ladder.firstMs ? (ladder.firstMs + capMs - at) / 1000 : -1);
+          ladder.firstMs ? (ladder.firstMs + capMs - at) / 1000 : -1,
+          retryCfg.hard_every_s ?? RETRY_DEFAULTS.hard_every_s);
     if (step.stop) {
       saveCycle(sid, at, {
         class: cls, stopped: step.stop, stopped_at: at, retry_after_s: null, due_at: null,
@@ -5362,19 +5890,32 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       return {
         ok: false, status: cls, timedOut: false,
         outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(),
-        cycle: ladder.cycle, exit: 69, stopped: step.stop,
+        cycle: ladder.cycle, exit: 69, stopped: step.stop, check: '-',
       };
     }
-    const dueAtMs = at + step.retryAfterS * 1000;
-    saveCycle(sid, at, {
-      class: cls, retry_after_s: step.retryAfterS, due_at: dueAtMs,
-    });
+    const plan = shortHardWait(step.retryAfterS, at, why === 'soft-spent' ? runDeadline : 0);
+    let waitS = plan.waitS;
+    const capLeftS = ladder.firstMs ? (ladder.firstMs + capMs - at) / 1000 : -1;
+    if (waitS > capLeftS) {
+      saveCycle(sid, at, { class: cls, stopped: 'cap', stopped_at: at, retry_after_s: null, due_at: null });
+      return { ok: false, status: cls, timedOut: false, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(), cycle: ladder.cycle, exit: 69, stopped: 'cap', check: '-' };
+    }
+    let check = step.cycle < retryCfg.hard_waits_s.length ? 'first' : 'periodic';
+    if (resetCheck === null && !plan.inCall) {
+      const extra = resetCheckS(statedResetS(evidence.upstream?.fields, at), waitS, capLeftS);
+      if (extra !== null) { waitS = extra; check = 'reset'; resetCheck = at + extra * 1000; }
+    }
+    const dueAtMs = at + waitS * 1000;
+    const record = { class: cls, retry_after_s: waitS, due_at: dueAtMs, check };
+    // The loop writes this only after its tree checks pass.
+    if (plan.inCall) return { inCallS: waitS, cycle: step.cycle, at, record };
+    saveCycle(sid, at, record);
     return {
       ok: false, status: cls, timedOut: false,
       outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(),
-      retryAfterS: stateWritable ? step.retryAfterS : undefined,
+      retryAfterS: stateWritable ? waitS : undefined,
       dueAtMs: stateWritable ? dueAtMs : undefined,
-      cycle: step.cycle, exit: 75, stopped,
+      cycle: step.cycle, exit: 75, stopped, check: stateWritable ? check : '-',
     };
   };
   try {
@@ -5424,9 +5965,8 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const lane = confirmedRoute(route);
       const evidenceOf = (cls) => {
         const rule = cls && cls.rule ? cls.rule : '-';
-        // A runtime whose error wording is uncaptured, or whose execute formula is unverified on an execute call, reports every pattern unverified.
-        const unverified = rt.errorsUnverified || (mode === 'exec' && rt.execLabel?.state === 'unverified');
-        const pattern = unverified ? 'unverified' : (cls && cls.label ? cls.label : 'none');
+        // 38.1 D-05: see patternFor.
+        const pattern = patternFor(rt, name, mode, cls);
         return { route, rule, pattern, upstream: upstreamOf(cls, r, name) };
       };
       if (r.spawnErr) {
@@ -5478,19 +6018,19 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         // Post-hoc over everything it printed, terminal and non-terminal rows alike.
         const captured = [r.stderr || '', r.partialErr || '', r.partialOut || ''].join('\n');
         const { events, eventRaw } = eventsWithRaw(name, r.stdout);
-        const cls = classifyStop({ cli: name, route, model, stderr: captured, events, eventRaw });
+        const cls = classifyStop({ cli: name, route, model, stderr: captured, events, eventRaw, stdout: r.stdout });
         if (cls.status !== 'crash') {
           hit = cls.status;
           evidence = evidenceOf(cls);
         }
       } else {
+        const failed = (r.code !== 0 && !lateOk) || Boolean(p.error);
         const { events, eventRaw } = eventsWithRaw(name, r.stdout);
-        const cls = classifyStop({ cli: name, route, model, stderr: r.stderr, events, eventRaw });
+        const cls = classifyStop({ cli: name, route, model, stderr: r.stderr, events, eventRaw, stdout: failed ? r.stdout : '' });
         if (cls.status !== 'crash') {
           hit = cls.status;
           evidence = evidenceOf(cls);
         }
-        const failed = (r.code !== 0 && !lateOk) || Boolean(p.error);
         if (!failed && p.text.trim()) {
           if (p.lateError) log(`cross-ai: ${name} failed after the answer (${p.lateError})`);
           attempts += 1;
@@ -5530,18 +6070,24 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const prevMs = k === 1 ? 0 : ladder.prevWaitMs;
       const nominal = softWaitMs(retryCfg, k, Math.random, prevMs);
       const end = episodeEnd();
-      const step = ladderNext(ladder, cls, Date.now(), {
+      let step = ladderNext(ladder, cls, Date.now(), {
         maxRetries: retryCfg.max_retries, sessionResets: pinned ? 0 : retryCfg.session_resets,
         deadlineMs: runDeadline, waitMs: nominal, capMs,
       });
-      const wait = end ? Math.min(nominal, Math.max(0, end - Date.now())) : nominal;
+      let wait = end ? Math.min(nominal, Math.max(0, end - Date.now())) : nominal;
       log(`cross-ai: ladder ${name} next=${step.next} why=${step.why}`);
+      let inCallHard = null;
+      if (step.next === 'hard') {
+        inCallHard = hardHandler(r, evidence, step.why, sid, cls);
+        if (inCallHard.inCallS === undefined) return inCallHard;
+        step = { next: ladder.canResume ? 'same' : 'new', why: 'hard-in-call' };
+        wait = inCallHard.inCallS * 1000;
+      }
       if (pinned && (step.next === 'new' || step.next === 'reset')) {
         log(`cross-ai: --session-id was given; no fresh session is started (next=${step.next} refused)`);
         dropState(hit || 'crash');
         return { ok: false, status: hit || 'crash', outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(), stopped: 'class' };
       }
-      if (step.next === 'hard') return hardHandler(r, evidence, step.why, sid, cls);
       if (step.next === 'stop') {
         // A no-budget timeout, the first attempt stopped before any retry was admitted, stays
         // timeout/124 (ladderStop). Any other soft deadline or cap stop is the hard handler's.
@@ -5606,6 +6152,12 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         seriesInput = `${RESUME_MSG}\n\n${prompt}`;
       }
       const nextInput = seriesInput;
+      if (inCallHard) {
+        saveCycle(sid, inCallHard.at, inCallHard.record);
+        if (!stateWritable) return { ok: false, status: cls, timedOut: false, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(), cycle: inCallHard.cycle, exit: 75, stopped: 'rungs' };
+        log(`cross-ai: hard wait in call s=${inCallHard.inCallS} cycle=${inCallHard.cycle}`);
+        ladder.cycle = inCallHard.cycle + 1;
+      }
       log(`cross-ai: wait ms=${wait} next=${step.next} retry=${k}`);
       await sleep(budgetMs(wait, runDeadline));
       if (aborting) return { ok: false, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...counts() };
@@ -5741,7 +6293,7 @@ function forbiddenHits(changed, forbidden, named) {
   return [...new Set(changed)].filter((p) => forbidden.some((f) => pathCovers(f, p)) && !names.some((n) => pathCovers(n, p))).sort();
 }
 // SPEC R12 / D-24: the runner supervision flags (not lane settings), sorted; --describe lists them.
-const SUPERVISION_FLAGS = Object.freeze(['--baseline', '--forbid', '--idle-timeout', '--plan-id', '--sweep']);
+const SUPERVISION_FLAGS = Object.freeze(['--baseline', '--blocked-clear', '--blocked-status', '--forbid', '--idle-timeout', '--plan-id', '--pool', '--sweep']);
 // SPEC R5: the result of each blocking finding code; every other code of FINDING_CODES is informational.
 const FINDING_RESULTS = Object.freeze({ no_commit: 'partial', task_uncovered: 'partial', admits_skipped: 'partial', forbidden_path: 'contract_violation' });
 
@@ -6091,7 +6643,7 @@ function parseArgs(argv) {
     codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
     role: null, effort: null, context: null, escalateRuntime: false, escalateModel: false,
-    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, sweep: false, baseline: null, idleTimeout: null, forbid: [], planId: null,
+    sessionId: null, host: null, skillPaths: [], skillNames: [], skillArgs: [], mcpConfig: null, argvFile: null, describe: false, sweep: false, baseline: null, idleTimeout: null, forbid: [], planId: null, pool: null, blockedStatus: null, blockedClear: null,
   };
   let modeFlag = null;
   for (let i = 0; i < argv.length; i++) {
@@ -6124,6 +6676,8 @@ function parseArgs(argv) {
       if (!ROUTE_VALUES.has(route)) throw new Error(`${a} must be router or unknown`);
       o.routes[cli] = route;
     } else if (a === '--classify-only') o.classifyOnly = v();
+    else if (a === '--pool') { o.pool = v(); if (!BLOCKED_POOL_RE.test(o.pool)) throw new Error('--pool must look like <provider>:free'); }
+    else if (a === '--blocked-status' || a === '--blocked-clear') { const pool = v(); if (!BLOCKED_POOL_RE.test(pool)) throw new Error(`${a} must look like <provider>:free`); if (a === '--blocked-status') o.blockedStatus = pool; else o.blockedClear = pool; }
     else if (a === '--mode') { o.mode = v(); if (!['exec', 'review'].includes(o.mode)) throw new Error('--mode must be exec or review'); modeFlag = o.mode; }
     else if (a === '--timeout') { o.timeout = Number(v()); if (!(o.timeout > 0)) throw new Error('--timeout must be > 0'); }
     else if (a === '--outer-timeout') {
@@ -6183,6 +6737,7 @@ function parseArgs(argv) {
     else throw new Error(`unknown argument: ${a}`);
   }
   if (o.sweep && (o.printArgv || o.classifyOnly !== null)) throw new Error('--sweep cannot be combined with --print-argv or --classify-only');
+  if ((o.blockedStatus !== null || o.blockedClear !== null) && ((o.blockedStatus !== null && o.blockedClear !== null) || o.printArgv || o.classifyOnly !== null || o.sweep || o.describe || o.selfTest)) throw new Error('--blocked-status and --blocked-clear cannot be combined with each other or with --print-argv, --classify-only, --sweep, --describe or --self-test');
   if (o.effort !== null && o.codexEffort !== null && o.effort !== o.codexEffort) throw new Error('--effort and --codex-effort disagree');
   if (o.effort === null) o.effort = o.codexEffort;
   if (o.role !== null) {
@@ -6230,6 +6785,17 @@ function resolveRuntime(o) {
   return { error: 'cross-ai: no runtime: pass --runtime <id>' };
 }
 
+const FIXTURE_EVIDENCE_RE = /tests\/fixtures\/cross_ai_errors\/[a-z0-9-]+\.json/;
+// 38.1 D-05: a runtime-level flag demotes every pattern except a row scoped to this host whose evidence names its fixture.
+function patternFor(rt, cli, mode, cls) {
+  const label = cls && cls.label ? cls.label : 'none';
+  if (!rt) return 'unverified';
+  const flagged = rt.errorsUnverified || (mode === 'exec' && rt.execLabel?.state === 'unverified');
+  if (!flagged) return label;
+  const row = cls && cls.rule ? PATTERNS.find((item) => item.id === cls.rule) : undefined;
+  return row && row.cli === cli && row.label === 'verified' && FIXTURE_EVIDENCE_RE.test(row.evidence) ? label : 'unverified';
+}
+
 // Pure: one JSON line per case, then the status line. No spawn, no write, stdin unread.
 function runClassifyOnly(file) {
   let raw;
@@ -6264,9 +6830,10 @@ function runClassifyOnly(file) {
     const cls = classifyStop({
       cli, route, model: entry.model || '', stderr: entry.stderr || '',
       events: extractEvents(cli, entry.stdout || ''),
+      stdout: entry.stdout || '',
     });
-    // Same rule as a live run: an uncaptured runtime, or a cli with no row, reports every pattern unverified.
-    const pattern = !Object.hasOwn(RUNTIMES, cli) || RUNTIMES[cli].errorsUnverified ? 'unverified' : cls.label;
+    // Same rule as a live run (38.1 D-05, patternFor); a cli with no row reports unverified.
+    const pattern = patternFor(Object.hasOwn(RUNTIMES, cli) ? RUNTIMES[cli] : undefined, cli, null, cls);
     lines.push(JSON.stringify({ name: entry.name, status: cls.status, rule: cls.rule, pattern, route }));
   }
   if (lines.length) process.stdout.write(`${lines.join('\n')}\n`);
@@ -6302,7 +6869,7 @@ function describeValue(value) {
   return value;
 }
 
-// SPEC R9 / D-10: what Python reads instead of mirroring the rows. No classes key (0b-10): 38.1 adds it.
+// SPEC R9 / D-10: what Python reads instead of mirroring the rows.
 function describeJson(env) {
   const runtimes = {};
   // 0b-12: forms are copied keyed by setting, so a later row field shows up with no change here.
@@ -6332,6 +6899,7 @@ function describeJson(env) {
     statuses: Object.fromEntries(Object.entries(STATUS_TABLE).map(([name, row]) => [name, row.exit])),
     findings: FINDING_CODES.map((code) => ({ code, result: FINDING_RESULTS[code] ?? 'info' })),
     supervision_flags: [...SUPERVISION_FLAGS],
+    classes: Object.fromEntries([...ROW_CLASSES, 'crash'].map((name) => [name, { exit: STATUS_TABLE[name].exit, router_quota: PATTERNS.some((row) => row.class === name && row.routerClass === 'quota') }])),
   };
 }
 
@@ -6387,6 +6955,8 @@ async function main(argv) {
     await sweepRuns({ explicit: true, hostingOff: false });
     return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
   }
+  if (o.blockedStatus !== null) { process.stdout.write(`${blockedStatusLine(o.blockedStatus)}\n`); return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 }); }
+  if (o.blockedClear !== null) { const done = blockedClear(o.blockedClear); if (done !== 'cleared' && done !== 'absent') { log(`cross-ai: blocked-until clear failed (${done})`); return reportAndFinish('crash', { ...liveFields, tree: 'clean', exit: 1, out: 0 }); } return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 }); }
   TABLE = mergeCatalog(PATTERNS, loadOverlay(process.env));
   if (o.classifyOnly !== null) return runClassifyOnly(o.classifyOnly);
   childPgidFile = o.childPgidFile;
@@ -6681,7 +7251,7 @@ async function main(argv) {
     attempts: r.attempts || 0, cycles: r.cycles || 0,
     retryAfterS: r.retryAfterS, cycle: r.cycle, reportDone: r.reportDone,
     firstFailureMs: r.firstFailureMs, lastFailureMs: r.lastFailureMs,
-    dueAtMs: r.dueAtMs,
+    dueAtMs: r.dueAtMs, check: r.check,
   };
   const why = r.stopped || (r.timedOut ? 'timeout' : 'class');
   // The snapshot reads against the finalize window, not the call deadline: an attempt may
@@ -6697,6 +7267,8 @@ async function main(argv) {
   // SPEC R5: check only spawned runs, including failed runs without replacing their status.
   const checked = o.mode === 'exec' && (r.attempts || 0) > 0 && (noTree || (after && liveBaseline)) ? await executeFindings(raw, r, after, process.cwd(), o, noTree) : null;
   if (aborting) return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal'); // Signal during post-run reads.
+  // 38.1 R11: the record follows the attempt's class, whatever the tree state or a later git read says.
+  if (r.ok) blockedClearAfterOk(o.pool); else blockedAfterStop(o.pool, c.model, { ...r, cli: c.name });
   if (
     r.status === 'contract_violation' || r.status === 'git_error' || r.status === 'git_timeout'
   ) {
@@ -6766,6 +7338,7 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
 export {
   ADMISSION_PHRASES_SEED,
   ARGV_PROMPT_MAX,
+  BLOCKED_POOL_RE,
   CLAUDE_EXEC_FORMULA_RECORD,
   CLI_NAME_RE,
   CONFIG,
@@ -6790,6 +7363,7 @@ export {
   PLAN_ID_RE,
   RESUME_MSG,
   RETRY_DEFAULTS,
+  ROW_CLASSES,
   RUNNER_FILE,
   RUNTIMES,
   RUNTIME_ID_RE,
@@ -6799,6 +7373,7 @@ export {
   SETTING_STATES,
   SKILL_NAME_RE,
   SKILL_PROSE,
+  STATUS_TABLE,
   TABLE,
   addFinding,
   admissionHits,
@@ -6806,6 +7381,16 @@ export {
   argvFileAllowed,
   argvFileRow,
   argvPromptProblem,
+  blockedAfterStop,
+  blockedClearAfterOk,
+  blockedClear,
+  blockedStatusLine,
+  blockedFilePath,
+  blockedNext,
+  blockedPoolKey,
+  blockedPoolRow,
+  blockedStatedS,
+  blockedWithLock,
   baselinePath,
   baselineVerdict,
   capCodePoints,
@@ -6829,6 +7414,9 @@ export {
   forbiddenHits,
   groupMembers,
   hardWaitFor,
+  statedResetS,
+  resetCheckS,
+  shortHardWait,
   idleBudgetNote,
   killGroup,
   ladderNext,
@@ -6856,6 +7444,7 @@ export {
   parseTasks,
   parseTomlSubset,
   pathCovers,
+  patternFor,
   pidAlive,
   planArgvFile,
   planFindings,
@@ -6870,6 +7459,7 @@ export {
   providerAdmits,
   pushCapped,
   readCallFile,
+  readBlocked,
   readCycleState,
   readLockOnce,
   readOr,
@@ -6878,6 +7468,7 @@ export {
   removeRetryBlock,
   replaceCopies,
   reportLines,
+  resetAfterSeconds,
   resolveRetry,
   reviewArgvProblem,
   routeAdmits,

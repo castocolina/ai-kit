@@ -11,3 +11,7 @@ skill's own files with no further round; the skill's digest is stale by design u
 
 - The trusted-roots step (SKILL.md:144) and the "Refusal → action" bullet (SKILL.md:305) no longer say `plan-unset` refuses a declined root: since 38-27 `plan-unset` only prints a note and `apply` / `apply --dry-run` refuse.
 - references/runner.md: `forbiddenPaths` and `admissionPhrases` are optional CONFIG keys absent from the shipped block (the seeds apply; a non-list value keeps the seed with a note).
+
+## Phase 38.1 code review (no judge round, recorded in 38.1-REVIEW.md)
+
+- references/runner.md: a copy whose CONFIG `retry` predates `hard_every_s` keeps its own `hard_waits_s` list (for example 600, 900, 1800 s) and then checks every 600 s until the cap; `hard_waits_s = [60, 300]` in `[runner.retry]` gives the shipped schedule (`plan_runner_upgrade` keeps the old CONFIG `retry`, `resolveRetry` fills the missing key from `RETRY_DEFAULTS`).

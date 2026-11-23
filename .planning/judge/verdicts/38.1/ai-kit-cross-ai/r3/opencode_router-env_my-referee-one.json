@@ -1,0 +1,203 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=430s out=902613 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_dfa163b77ffeatKsm39ZydJROo applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"opencode:router-env/my-referee-one\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":18,\"D2\":15,\"D3\":15,\"D4\":14,\"D5\":11,\"D6\":13,\"D7\":11,\"D8\":7},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":104,\"max_total\":125,\"percent\":83.2,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":373,\"evidence\":\"“Replacing a config or state file by hand can drop it.” The generic file-mode warning adds little beside the repo-specific owner-reset and migration rules. The stand-alone “When to use” section at line 28 also repeats the frontmatter without adding a decision.\",\"fix\":\"Move the mode-preservation note to the config migration and state-file maintenance guidance in references/subprocess-quota-policy.md. Keep the trigger guidance in the frontmatter and record the removal of its duplicate body line.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":8,\"evidence\":\"“Also use when a lane hits quota, a rate limit or a 429” gives strong positive signals, but the description excludes reviewer setup and GSD config without distinguishing the adjacent host-session wake workflow.\",\"fix\":\"Use when launching, waiting for, reading, retrying or chaining an external AI CLI through ai-kit's cross-AI runner (cross-ai.mjs): pi, OpenCode, Codex, Cursor, Copilot or Claude. Set the owner-approved runtime, model and role; pass effort, context, session ID, skills or MCP settings; use --argv-file for an unsupported CLI; and interpret AIKIT-XAI, ignored settings, locked or partial results, quota or 429 errors, exit 69 or 75 and retry_after_s. Use for same-session follow-ups and GSD retry/skip/abort decisions without switching harness, provider or model. Not for reviewer roster setup, curated GSD config or waking the orchestrator's own session after a host usage limit.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":132,\"evidence\":\"“The run record `run.json` … names the run token” starts an unconditional block on record schema, polling, truncation, sweep matching and retention. At 393 lines but roughly 45 KB, the body makes every caller load that detail along with the full watchdog mechanics and result-field catalogues.\",\"fix\":\"Keep the launch, status, resume and wait decision rules inline. Move the hosted record and sweep internals to references/launch-and-wait.md, gated on herdr startup or cleanup diagnosis. Move the complete settings and finding field dictionaries into references/result-fields.md, gated on decoding those fields. Keep the operational distinctions and all attribution intact.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":88,\"evidence\":\"“For copilot the runner itself moves the prompt onto argv, where the process table shows it.” This flags the exposure but gives no default decision when the prompt is sensitive.\",\"fix\":\"Before launching a Copilot lane, stop if the supplied prompt contains secrets or information that must not be visible in the process table. Ask the owner for an approved redacted prompt or a separate configuration decision; never silently switch lanes.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/evals.json\",\"line\":6,\"evidence\":\"“Run plan-review.md … with the model fake/ok” has an empty files list; neither the prompt nor a fake runtime is supplied. The second-round launch at line 26 supplies only the old stderr, not the new prompt or runtime fixture. These cases cannot exercise the claimed launches as shipped. Evals were inspected, not executed; the referenced runner belongs to a sibling skill, so script tests are outside this skill's 8/7 allocation.\",\"fix\":\"Supply both prompt files and a hermetic fake runtime for the launch cases, or ask for a command preview and assert its stdin, role and evidence paths rather than claiming a launch.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/evals.json\",\"line\":106,\"evidence\":\"“Waits exactly retry_after_s once” would reject the correct behavior on hosts without a scheduler and can reject correct minute rounding on Claude Code. The case gives no host context.\",\"fix\":\"Split this into a scheduler case that verifies one confirmed wake no earlier than the due time and a no-scheduler case that verifies the notice and handoff with no scheduled wake. In both, assert that the upstream reset time is not used to schedule a retry.\"},{\"id\":\"D7-3\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/evals/trigger-queries.json\",\"line\":55,\"evidence\":\"“Arm a session wake so this run resumes after the usage limit” is labeled negative but does not specify whether the limit belongs to the orchestrator or an external lane; many positives explicitly name the runner.\",\"fix\":\"Make this negative refer to the calling session itself exiting. Add an implicit positive about a child reviewer hitting a limit and returning a wait hint, plus a contextual negative about changing the project's default reviewer without running it.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":109,\"evidence\":\"“Before a review that must leave the checkout and the config untouched, check that neither exists” presents the migration check as the launch gate. Even without either legacy source, cross-ai.mjs:7160 runs a sweep and :5299–5304 uses git add and write-tree for the snapshot, which can write Git objects in the checkout despite using a temporary index.\",\"fix\":\"Separate a review that must preserve the worktree and config from one that permits no repository or runner-state writes. For the latter, do not launch this runner in place; ask for an approved isolated checkout and state directory, or stop.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":289,\"evidence\":\"“The original objective keeps the same stored baseline” is not guaranteed. cross-ai.mjs:3936–3943 hashes the prompt body when there is no literal <objective> block, so appending the fix paragraph can change the baseline key even when the task blocks are intact. The branch also uses a printed ignored-session result as a stop condition, although an unsupported resume can start a fresh execute session before the caller reads that result.\",\"fix\":\"Before launching a partial fix round, preview the exact call with --print-argv and require an applied session. Preserve the original <objective> block and task blocks. If the prompt has no objective block, or evidence shows that the original baseline cannot be reused, stop for the owner to establish the baseline instead of claiming continuity.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":153,\"evidence\":\"“Both are already on disk” fails if the shell is killed before writing lane.rc or the runner dies before emitting AIKIT-XAI. The result workflow does not say what to do with incomplete or conflicting evidence.\",\"fix\":\"After the launch ends, require a matching lane.rc and terminal AIKIT-XAI line before chaining or scheduling anything. If either is missing or they disagree, report the host's completion evidence and the available stderr as an incomplete result; do not relaunch automatically.\"},{\"id\":\"D8-4\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":140,\"evidence\":\"“GSD's workflow.cross_ai_timeout or gsd-core's 300 s default” attributes a version-sensitive external default without a dated official source. The implementation does establish the ai-kit runner's own 300 s fallback independently.\",\"fix\":\"State the runner's verified behavior as its own fallback when it cannot read a valid GSD timeout. Preserve the gsd-core attribution and attach the official release-specific source and date checked if retaining the external default as a live claim.\"}]}"
+  }
+ ],
+ "digest": "5d115c1e37445036e34b858aa63b6551b90070522c63b66906beb6b31c6283df",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "fbdac1e55606d6cb4bd680b275bf3eac300c4fc545c6a093e3e0b0c6b1e5ec85"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-one",
+ "loop": "38.1",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_settings_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_staged_mapper.py"
+ ],
+ "prompt_sha256": "b84552943b324db85f229a2ecc1483e70095bda7dc06eb644e8499046df9a37c",
+ "round": 3,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "“Replacing a config or state file by hand can drop it.” The generic file-mode warning adds little beside the repo-specific owner-reset and migration rules. The stand-alone “When to use” section at line 28 also repeats the frontmatter without adding a decision.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Move the mode-preservation note to the config migration and state-file maintenance guidance in references/subprocess-quota-policy.md. Keep the trigger guidance in the frontmatter and record the removal of its duplicate body line.",
+    "id": "D1-1",
+    "line": 373,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "“Also use when a lane hits quota, a rate limit or a 429” gives strong positive signals, but the description excludes reviewer setup and GSD config without distinguishing the adjacent host-session wake workflow.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use when launching, waiting for, reading, retrying or chaining an external AI CLI through ai-kit's cross-AI runner (cross-ai.mjs): pi, OpenCode, Codex, Cursor, Copilot or Claude. Set the owner-approved runtime, model and role; pass effort, context, session ID, skills or MCP settings; use --argv-file for an unsupported CLI; and interpret AIKIT-XAI, ignored settings, locked or partial results, quota or 429 errors, exit 69 or 75 and retry_after_s. Use for same-session follow-ups and GSD retry/skip/abort decisions without switching harness, provider or model. Not for reviewer roster setup, curated GSD config or waking the orchestrator's own session after a host usage limit.",
+    "id": "D4-1",
+    "line": 8,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "“The run record `run.json` … names the run token” starts an unconditional block on record schema, polling, truncation, sweep matching and retention. At 393 lines but roughly 45 KB, the body makes every caller load that detail along with the full watchdog mechanics and result-field catalogues.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Keep the launch, status, resume and wait decision rules inline. Move the hosted record and sweep internals to references/launch-and-wait.md, gated on herdr startup or cleanup diagnosis. Move the complete settings and finding field dictionaries into references/result-fields.md, gated on decoding those fields. Keep the operational distinctions and all attribution intact.",
+    "id": "D5-1",
+    "line": 132,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "“For copilot the runner itself moves the prompt onto argv, where the process table shows it.” This flags the exposure but gives no default decision when the prompt is sensitive.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Before launching a Copilot lane, stop if the supplied prompt contains secrets or information that must not be visible in the process table. Ask the owner for an approved redacted prompt or a separate configuration decision; never silently switch lanes.",
+    "id": "D6-1",
+    "line": 88,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“Run plan-review.md … with the model fake/ok” has an empty files list; neither the prompt nor a fake runtime is supplied. The second-round launch at line 26 supplies only the old stderr, not the new prompt or runtime fixture. These cases cannot exercise the claimed launches as shipped. Evals were inspected, not executed; the referenced runner belongs to a sibling skill, so script tests are outside this skill's 8/7 allocation.",
+    "file": "skills/ai-kit-cross-ai/evals/evals.json",
+    "fix": "Supply both prompt files and a hermetic fake runtime for the launch cases, or ask for a command preview and assert its stdin, role and evidence paths rather than claiming a launch.",
+    "id": "D7-1",
+    "line": 6,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“Waits exactly retry_after_s once” would reject the correct behavior on hosts without a scheduler and can reject correct minute rounding on Claude Code. The case gives no host context.",
+    "file": "skills/ai-kit-cross-ai/evals/evals.json",
+    "fix": "Split this into a scheduler case that verifies one confirmed wake no earlier than the due time and a no-scheduler case that verifies the notice and handoff with no scheduled wake. In both, assert that the upstream reset time is not used to schedule a retry.",
+    "id": "D7-2",
+    "line": 106,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“Arm a session wake so this run resumes after the usage limit” is labeled negative but does not specify whether the limit belongs to the orchestrator or an external lane; many positives explicitly name the runner.",
+    "file": "skills/ai-kit-cross-ai/evals/trigger-queries.json",
+    "fix": "Make this negative refer to the calling session itself exiting. Add an implicit positive about a child reviewer hitting a limit and returning a wait hint, plus a contextual negative about changing the project's default reviewer without running it.",
+    "id": "D7-3",
+    "line": 55,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“Before a review that must leave the checkout and the config untouched, check that neither exists” presents the migration check as the launch gate. Even without either legacy source, cross-ai.mjs:7160 runs a sweep and :5299–5304 uses git add and write-tree for the snapshot, which can write Git objects in the checkout despite using a temporary index.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Separate a review that must preserve the worktree and config from one that permits no repository or runner-state writes. For the latter, do not launch this runner in place; ask for an approved isolated checkout and state directory, or stop.",
+    "id": "D8-1",
+    "line": 109,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“The original objective keeps the same stored baseline” is not guaranteed. cross-ai.mjs:3936–3943 hashes the prompt body when there is no literal <objective> block, so appending the fix paragraph can change the baseline key even when the task blocks are intact. The branch also uses a printed ignored-session result as a stop condition, although an unsupported resume can start a fresh execute session before the caller reads that result.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Before launching a partial fix round, preview the exact call with --print-argv and require an applied session. Preserve the original <objective> block and task blocks. If the prompt has no objective block, or evidence shows that the original baseline cannot be reused, stop for the owner to establish the baseline instead of claiming continuity.",
+    "id": "D8-2",
+    "line": 289,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“Both are already on disk” fails if the shell is killed before writing lane.rc or the runner dies before emitting AIKIT-XAI. The result workflow does not say what to do with incomplete or conflicting evidence.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "After the launch ends, require a matching lane.rc and terminal AIKIT-XAI line before chaining or scheduling anything. If either is missing or they disagree, report the host's completion evidence and the available stderr as an incomplete result; do not relaunch automatically.",
+    "id": "D8-3",
+    "line": 153,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“GSD's workflow.cross_ai_timeout or gsd-core's 300 s default” attributes a version-sensitive external default without a dated official source. The implementation does establish the ai-kit runner's own 300 s fallback independently.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "State the runner's verified behavior as its own fallback when it cannot read a valid GSD timeout. Preserve the gsd-core attribution and attach the official release-specific source and date checked if retaining the external default as a live claim.",
+    "id": "D8-4",
+    "line": 140,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-one",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 83.2,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 18,
+   "D2": 15,
+   "D3": 15,
+   "D4": 14,
+   "D5": 11,
+   "D6": 13,
+   "D7": 11,
+   "D8": 7
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 104
+ }
+}

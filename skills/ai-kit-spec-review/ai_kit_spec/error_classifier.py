@@ -42,6 +42,8 @@ STATUS_TO_REASON: dict[str, str | None] = {
     "bad_model": "configuration",
     "bad_prompt": "configuration",
     "permission_blocked": "configuration",
+    # 38.1 D-02: the provider refused the request itself; configuration or waiting cannot fix it.
+    "bad_request": "real_error",
     "usage": "configuration",
     "no_model": "configuration",
     "empty_stdin": "configuration",
@@ -107,7 +109,9 @@ def classify_error(returncode: int | None, stderr: str | bytes, timed_out: bool 
     dispatch_unavailable comes from the exit status alone (126/127), never from transcript
     text. A spawn OSError never reaches here: runner_dispatch returns dispatch_unavailable
     (or configuration for E2BIG) itself, and quota.probe_reviewer_quota maps a template
-    render ValueError to "configuration"."""
+    render ValueError to "configuration". It never reads stdout or the runner's error catalogue
+    (38.1 R6): runner lanes are classified by the runner, and their status maps through
+    STATUS_TO_REASON."""
     if timed_out:
         return "timeout"
     if returncode == 0:

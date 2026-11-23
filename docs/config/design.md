@@ -53,9 +53,10 @@ fills each; the runner reads only `[runner]` and `[runner.retry*]` through its T
   shared between the two roles; the wizard writes only the lanes the owner chose for each role.
 - `[runner]`: `migrated_from`, the list of legacy sources the runner has migrated (written by the
   runner's one-time migration). Phase 33.
-- `[runner.retry]`: `base_s`, `factor`, `max_retries`, `session_resets`, `hard_waits_s`. Phase 38.1
-  sets the default values.
-- `[runner.retry.scopes."<scope>"]`: the same five keys for one GSD scope. The scope is the config
+- `[runner.retry]`: `base_s`, `factor`, `max_retries`, `session_resets`, `hard_waits_s` (default
+  `[60, 300]`), `hard_every_s` (0 or 60..`capS`, default 600: the wait after the list until the
+  4-hour cap; 0 stops at the list's end). Phase 38.1 sets the default values.
+- `[runner.retry.scopes."<scope>"]`: the same six keys for one GSD scope. The scope is the config
   directory's path under `.planning/` with `/` separators, for example `"myproj"` or
   `"myproj/workstreams/ws1"`. The scope table wins over `[runner.retry]` for its own scope only.
 - `[models]` (Phase 35, read by `models_config.read_models_settings`, written by `models-config`): `sources` (any of `models.dev`, `artificial-analysis`, `arena`; default all three), `[models.cache_days]` (`models_dev`, `artificial_analysis`, `arena`, whole days, default 7; host listings keep 30 days), `[[models.context]]` (`runtime`, `model`, `tokens`: a user-stated context window per (runtime, model)). Project over user per key: a project `[[models.context]]` array replaces the user array. The Artificial Analysis key stays in `secrets.env`.

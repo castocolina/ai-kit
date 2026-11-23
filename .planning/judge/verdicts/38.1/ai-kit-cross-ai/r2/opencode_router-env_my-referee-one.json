@@ -1,0 +1,194 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=453s out=899326 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_dfa1f34eeffeTQdhYlqQJvnwAb applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"opencode:router-env/my-referee-one\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":19,\"D2\":15,\"D3\":15,\"D4\":14,\"D5\":11,\"D6\":15,\"D7\":12,\"D8\":6},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":107,\"max_total\":125,\"percent\":85.6,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":28,\"evidence\":\"“When a run, a review or an execution step calls an external AI CLI and acts on the result” repeats the trigger without giving a runner-specific decision.\",\"fix\":\"Use this section to distinguish the external runner from a native review or execution, pointing to section 2 only for an external runner call.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":4,\"evidence\":\"“Use when you run, wait for, read, retry or chain an external AI CLI” covers dispatch and recovery but does not explicitly surface requests to stop the runner opening herdr tabs, a positive trigger in the shipped queries.\",\"fix\":\"Use when running or troubleshooting an external AI CLI lane through ai-kit's cross-AI runner (cross-ai.mjs): launch and wait, pass lane settings or --argv-file, interpret AIKIT-XAI and ignored settings, resume the same session, or control herdr tab hosting. Use when a lane is locked or partial, hits a quota or 429, exits 69 or 75, prints retry_after_s=, or reaches GSD's retry/skip/abort prompt. Handle the wait or report the stop without switching runtime, provider, or model. Not for setting up reviewers, configuring GSD, or scheduling a generic session wake.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":132,\"evidence\":\"The 390-line, 44,970-byte body loads the hosted sweep internals (“it claims the directory by a rename”) and detailed retry-policy mechanics even for a plain headless launch or a result lookup.\",\"fix\":\"Move the sweep implementation and run-record details to a hosted-cleanup section in references/launch-and-wait.md, gated on --sweep or a leftover tab or record. Keep the cleanup warning and what to report inline. Consolidate the detailed schedule in references/subprocess-quota-policy.md under Hard tier and link it when diagnosing or changing the policy; keep the wait-versus-stop decision inline.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/evals.json\",\"line\":6,\"evidence\":\"The launch case asks to run “plan-review.md” on “fake/ok” but declares “files”: []; the resume case supplies the first round's stderr but no second-round prompt. Neither declares the fake runtime needed for a reproducible launch.\",\"fix\":\"Supply both prompt fixtures and a documented hermetic fake runtime for the launch cases, or change them to command-construction evals that explicitly require no spawn. For the launch case, assert scratch isolation and that completion precedes reading lane.rc and lane.err.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/evals/trigger-queries.json\",\"line\":55,\"evidence\":\"“Arm a session wake so this run resumes after the usage limit” is marked negative without saying whether the run emitted AIKIT-XAI or retry_after_s=, which would put it inside the skill's scope.\",\"fix\":\"Pair an explicit native-session usage-limit wake request (negative) with an otherwise similar external-lane request that includes retry_after_s= (positive).\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":52,\"evidence\":\"The session row allows “1 to 128 letters, digits, `.`, `_`, `:` or `-`,” but the runner's SESSION_ID_RE requires the first character to be alphanumeric. An ID such as `_round2` is refused with exit 2.\",\"fix\":\"Document the runner's exact shape: an ASCII letter or digit first, followed by up to 127 ASCII letters, digits, periods, underscores, colons, or hyphens.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/references/subprocess-quota-policy.md\",\"line\":37,\"evidence\":\"“A lane is confirmed by … CONFIG.routerBacked[cli] === true” omits the pinned-model check in cross-ai.mjs's routeOf. With that boolean set, an explicitly selected model different from CONFIG.models[cli] is not confirmed by the boolean alone, so its quota stop does not enter the router retry ladder.\",\"fix\":\"Document the pinned-model condition and the explicit route flag's precedence. Tell callers to read the emitted route before treating a quota refusal as eligible for router retries.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":149,\"evidence\":\"“For an earlier stop, lower max_retries” points at the soft-series count, not the hard-tier stopping rule. Even max_retries = 0 leaves hard-tier checks enabled, as the skill's own wait example shows.\",\"fix\":\"Say that lowering max_retries reduces retries inside a call. To end the episode sooner, use a bounded hard_waits_s list with hard_every_s = 0, or lower the supported cap.\"},{\"id\":\"D8-4\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":328,\"evidence\":\"“When it cannot be confirmed, use the print-and-stop handoff” does not distinguish an unsuccessful CronCreate from a job that was created but whose next-run time is not visible. The owner could manually reinvoke a lane whose wake is still armed.\",\"fix\":\"After an ambiguous create, check CronList for the exact job. Confirm its time or confirm its cancellation before handing off an actionable reinvocation command. If neither can be verified, report that a wake may be armed and tell the owner not to start a second run until it is resolved.\"},{\"id\":\"D8-5\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":153,\"evidence\":\"“Both are already on disk” assumes normal completion. A hard-killed runner or launch wrapper can leave lane.rc missing, or leave lane.err without a complete AIKIT-XAI trailer. The result procedure does not say what to do with that capture or with disagreeing exit codes.\",\"fix\":\"Require both a complete final AIKIT-XAI line and a matching lane.rc before chaining or scheduling a retry. If either is absent or they disagree, report an interrupted or unverified run with the scratch path and available evidence; do not infer success or schedule a retry.\"}]}"
+  }
+ ],
+ "digest": "52ea434e8b651a410b4e20dce7302035991645a6e8b22597650b6da4f6c153bf",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "fbdac1e55606d6cb4bd680b275bf3eac300c4fc545c6a093e3e0b0c6b1e5ec85"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-one",
+ "loop": "38.1",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_settings_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_staged_mapper.py"
+ ],
+ "prompt_sha256": "b84552943b324db85f229a2ecc1483e70095bda7dc06eb644e8499046df9a37c",
+ "round": 2,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "“When a run, a review or an execution step calls an external AI CLI and acts on the result” repeats the trigger without giving a runner-specific decision.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use this section to distinguish the external runner from a native review or execution, pointing to section 2 only for an external runner call.",
+    "id": "D1-1",
+    "line": 28,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "“Use when you run, wait for, read, retry or chain an external AI CLI” covers dispatch and recovery but does not explicitly surface requests to stop the runner opening herdr tabs, a positive trigger in the shipped queries.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use when running or troubleshooting an external AI CLI lane through ai-kit's cross-AI runner (cross-ai.mjs): launch and wait, pass lane settings or --argv-file, interpret AIKIT-XAI and ignored settings, resume the same session, or control herdr tab hosting. Use when a lane is locked or partial, hits a quota or 429, exits 69 or 75, prints retry_after_s=, or reaches GSD's retry/skip/abort prompt. Handle the wait or report the stop without switching runtime, provider, or model. Not for setting up reviewers, configuring GSD, or scheduling a generic session wake.",
+    "id": "D4-1",
+    "line": 4,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "The 390-line, 44,970-byte body loads the hosted sweep internals (“it claims the directory by a rename”) and detailed retry-policy mechanics even for a plain headless launch or a result lookup.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Move the sweep implementation and run-record details to a hosted-cleanup section in references/launch-and-wait.md, gated on --sweep or a leftover tab or record. Keep the cleanup warning and what to report inline. Consolidate the detailed schedule in references/subprocess-quota-policy.md under Hard tier and link it when diagnosing or changing the policy; keep the wait-versus-stop decision inline.",
+    "id": "D5-1",
+    "line": 132,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The launch case asks to run “plan-review.md” on “fake/ok” but declares “files”: []; the resume case supplies the first round's stderr but no second-round prompt. Neither declares the fake runtime needed for a reproducible launch.",
+    "file": "skills/ai-kit-cross-ai/evals/evals.json",
+    "fix": "Supply both prompt fixtures and a documented hermetic fake runtime for the launch cases, or change them to command-construction evals that explicitly require no spawn. For the launch case, assert scratch isolation and that completion precedes reading lane.rc and lane.err.",
+    "id": "D7-1",
+    "line": 6,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“Arm a session wake so this run resumes after the usage limit” is marked negative without saying whether the run emitted AIKIT-XAI or retry_after_s=, which would put it inside the skill's scope.",
+    "file": "skills/ai-kit-cross-ai/evals/trigger-queries.json",
+    "fix": "Pair an explicit native-session usage-limit wake request (negative) with an otherwise similar external-lane request that includes retry_after_s= (positive).",
+    "id": "D7-2",
+    "line": 55,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The session row allows “1 to 128 letters, digits, `.`, `_`, `:` or `-`,” but the runner's SESSION_ID_RE requires the first character to be alphanumeric. An ID such as `_round2` is refused with exit 2.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Document the runner's exact shape: an ASCII letter or digit first, followed by up to 127 ASCII letters, digits, periods, underscores, colons, or hyphens.",
+    "id": "D8-1",
+    "line": 52,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“A lane is confirmed by … CONFIG.routerBacked[cli] === true” omits the pinned-model check in cross-ai.mjs's routeOf. With that boolean set, an explicitly selected model different from CONFIG.models[cli] is not confirmed by the boolean alone, so its quota stop does not enter the router retry ladder.",
+    "file": "skills/ai-kit-cross-ai/references/subprocess-quota-policy.md",
+    "fix": "Document the pinned-model condition and the explicit route flag's precedence. Tell callers to read the emitted route before treating a quota refusal as eligible for router retries.",
+    "id": "D8-2",
+    "line": 37,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“For an earlier stop, lower max_retries” points at the soft-series count, not the hard-tier stopping rule. Even max_retries = 0 leaves hard-tier checks enabled, as the skill's own wait example shows.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Say that lowering max_retries reduces retries inside a call. To end the episode sooner, use a bounded hard_waits_s list with hard_every_s = 0, or lower the supported cap.",
+    "id": "D8-3",
+    "line": 149,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“When it cannot be confirmed, use the print-and-stop handoff” does not distinguish an unsuccessful CronCreate from a job that was created but whose next-run time is not visible. The owner could manually reinvoke a lane whose wake is still armed.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "After an ambiguous create, check CronList for the exact job. Confirm its time or confirm its cancellation before handing off an actionable reinvocation command. If neither can be verified, report that a wake may be armed and tell the owner not to start a second run until it is resolved.",
+    "id": "D8-4",
+    "line": 328,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“Both are already on disk” assumes normal completion. A hard-killed runner or launch wrapper can leave lane.rc missing, or leave lane.err without a complete AIKIT-XAI trailer. The result procedure does not say what to do with that capture or with disagreeing exit codes.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Require both a complete final AIKIT-XAI line and a matching lane.rc before chaining or scheduling a retry. If either is absent or they disagree, report an interrupted or unverified run with the scratch path and available evidence; do not infer success or schedule a retry.",
+    "id": "D8-5",
+    "line": 153,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-one",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 85.6,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 19,
+   "D2": 15,
+   "D3": 15,
+   "D4": 14,
+   "D5": 11,
+   "D6": 15,
+   "D7": 12,
+   "D8": 6
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 107
+ }
+}

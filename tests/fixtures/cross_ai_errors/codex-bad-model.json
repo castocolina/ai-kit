@@ -1,0 +1,11 @@
+{
+  "host": "codex",
+  "version": "0.169.0",
+  "date": "2026-11-16",
+  "cli": "codex",
+  "stderr": "",
+  "stdout": "{\"type\":\"item.completed\",\"item\":{\"type\":\"error\",\"message\":\"Model metadata for placeholder-model-1 not found\"}}\n{\"type\":\"error\",\"message\":\"The 'placeholder-model-1' model is not supported when using Codex with a ChatGPT account.\"}\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"The 'placeholder-model-1' model is not supported when using Codex with a ChatGPT account.\"}}\n",
+  "expect_class": "bad_model",
+  "expect_rule": "codex-model-not-supported",
+  "source": "reconstructed"
+}

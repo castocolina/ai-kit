@@ -1,0 +1,167 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=59s out=239860 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_dfa278e0affeWUx40WblnKZPtH applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":18,\"D2\":15,\"D3\":13,\"D4\":15,\"D5\":13,\"D6\":14,\"D7\":12,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":113,\"max_total\":125,\"percent\":90.4,\"grade\":\"A\",\"findings\":[{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":304,\"evidence\":\"Section 6 restates the hard-tier schedule (hard_waits_s defaults 60 and 300, hard_every_s 600, cap 14400, reset plus 120 s, check= first|periodic|reset) that references/subprocess-quota-policy.md already owns under Hard tier.\",\"fix\":\"Keep in SKILL.md only the caller action (one one-shot wait of retry_after_s, then the same lane; notice and stop on stopped=hard-waits or stopped=cap). Point the schedule numbers at references/subprocess-quota-policy.md, which the skill already gates to retry-table and route= work.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/trigger-queries.json\",\"line\":2,\"evidence\":\"16 queries (8 should-trigger, 8 should-not), not about 20 with 8-10 each side. Negatives miss the near-miss of reading a runner result without acting (a pasted AIKIT-XAI line to explain, or a lane.err to summarize).\",\"fix\":\"Add four queries: two should-trigger with casual phrasing and buried steps (a locked bare 75, a partial task_uncovered resume), and two near-miss negatives that share cross-AI keywords but only ask to explain a saved status line or to set reviewers.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/evals/evals.json\",\"line\":15,\"evidence\":\"casual-host-off, precise-effort-id-carries, edge-unknown-runtime-needs-argv-file, edge-locked-is-a-bare-75, edge-partial-resume-with-missing-list, edge-crash-with-jev-advisory and precise-stated-reset-one-check have \\\"files\\\": [] and assert only on prose, so they are not graded against an input file.\",\"fix\":\"Add evals/files captures for the locked bare-75 line, the partial task_uncovered finding, the id_carries setting line and the crash upstream body, and point those evals' files arrays at them.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":335,\"evidence\":\"Section 7 says every non-zero exit except an exit 75 that carries retry_after_s, 'any 69 including stopped=hard-waits or stopped=cap', gets the section 6 notice and abort. Section 6 prints that notice only on stopped=hard-waits or stopped=cap, and the exit table sends exit 2 to fix the invocation and exit 1 (partial) to section 5.\",\"fix\":\"Split the section 7 sentence: the section 6 verbatim notice applies only to stopped=hard-waits and stopped=cap; exit 2 is fixed and not retried; partial follows section 5; other non-zero exits are reported and aborted, without inventing upstream lines.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":347,\"evidence\":\"Pitfalls is a bullet list, not a Gotchas heading, and two items are generic: 'Two timeouts, not one, and gsd-core's default is 300 s' and 'Atomic rewrites keep the file mode.'\",\"fix\":\"Rename Pitfalls to Gotchas and state the failure: the inner --timeout cannot raise the outer min(CONFIG outerTimeoutS, workflow.cross_ai_timeout or 300 s), and a hand replace of a config or state file drops the mode the runner's atomic write keeps.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":317,\"evidence\":\"The one-shot scheduler is specified only for Claude Code CronCreate, with a :00/:30 shift; every other host is 'unverified' and told to print and stop, including hosts that can background a timed re-invoke.\",\"fix\":\"Keep CronCreate as the only confirmed scheduler and keep the print-and-stop handoff as the default; add one line that a host with a confirmed one-shot primitive uses that same whole-minute rule, and that an unconfirmed primitive still prints and stops.\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":26,\"evidence\":\"## When to use repeats the description: 'When a run, a review or an execution step calls an external AI CLI and acts on the result.'\",\"fix\":\"Delete the When to use section and record the removal; the description already carries the trigger, and the body cannot be seen before the skill loads.\"}]}"
+  }
+ ],
+ "digest": "a21e21bf22a137801c5ece9bdb1d8e6ee15b589025990163e8e15f15e6332d71",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "fbdac1e55606d6cb4bd680b275bf3eac300c4fc545c6a093e3e0b0c6b1e5ec85"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "38.1",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_settings_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_staged_mapper.py"
+ ],
+ "prompt_sha256": "fe2faa639d083f400289db20e872a32b0aa9b2c96175c0e85e39040a23cd3220",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D5",
+    "evidence": "Section 6 restates the hard-tier schedule (hard_waits_s defaults 60 and 300, hard_every_s 600, cap 14400, reset plus 120 s, check= first|periodic|reset) that references/subprocess-quota-policy.md already owns under Hard tier.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Keep in SKILL.md only the caller action (one one-shot wait of retry_after_s, then the same lane; notice and stop on stopped=hard-waits or stopped=cap). Point the schedule numbers at references/subprocess-quota-policy.md, which the skill already gates to retry-table and route= work.",
+    "id": "D5-1",
+    "line": 304,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "16 queries (8 should-trigger, 8 should-not), not about 20 with 8-10 each side. Negatives miss the near-miss of reading a runner result without acting (a pasted AIKIT-XAI line to explain, or a lane.err to summarize).",
+    "file": "skills/ai-kit-cross-ai/evals/trigger-queries.json",
+    "fix": "Add four queries: two should-trigger with casual phrasing and buried steps (a locked bare 75, a partial task_uncovered resume), and two near-miss negatives that share cross-AI keywords but only ask to explain a saved status line or to set reviewers.",
+    "id": "D7-1",
+    "line": 2,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "casual-host-off, precise-effort-id-carries, edge-unknown-runtime-needs-argv-file, edge-locked-is-a-bare-75, edge-partial-resume-with-missing-list, edge-crash-with-jev-advisory and precise-stated-reset-one-check have \"files\": [] and assert only on prose, so they are not graded against an input file.",
+    "file": "skills/ai-kit-cross-ai/evals/evals.json",
+    "fix": "Add evals/files captures for the locked bare-75 line, the partial task_uncovered finding, the id_carries setting line and the crash upstream body, and point those evals' files arrays at them.",
+    "id": "D7-2",
+    "line": 15,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "Section 7 says every non-zero exit except an exit 75 that carries retry_after_s, 'any 69 including stopped=hard-waits or stopped=cap', gets the section 6 notice and abort. Section 6 prints that notice only on stopped=hard-waits or stopped=cap, and the exit table sends exit 2 to fix the invocation and exit 1 (partial) to section 5.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Split the section 7 sentence: the section 6 verbatim notice applies only to stopped=hard-waits and stopped=cap; exit 2 is fixed and not retried; partial follows section 5; other non-zero exits are reported and aborted, without inventing upstream lines.",
+    "id": "D8-1",
+    "line": 335,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "Pitfalls is a bullet list, not a Gotchas heading, and two items are generic: 'Two timeouts, not one, and gsd-core's default is 300 s' and 'Atomic rewrites keep the file mode.'",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Rename Pitfalls to Gotchas and state the failure: the inner --timeout cannot raise the outer min(CONFIG outerTimeoutS, workflow.cross_ai_timeout or 300 s), and a hand replace of a config or state file drops the mode the runner's atomic write keeps.",
+    "id": "D3-1",
+    "line": 347,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "The one-shot scheduler is specified only for Claude Code CronCreate, with a :00/:30 shift; every other host is 'unverified' and told to print and stop, including hosts that can background a timed re-invoke.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Keep CronCreate as the only confirmed scheduler and keep the print-and-stop handoff as the default; add one line that a host with a confirmed one-shot primitive uses that same whole-minute rule, and that an unconfirmed primitive still prints and stops.",
+    "id": "D6-1",
+    "line": 317,
+    "severity": "low"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "## When to use repeats the description: 'When a run, a review or an execution step calls an external AI CLI and acts on the result.'",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Delete the When to use section and record the removal; the description already carries the trigger, and the body cannot be seen before the skill loads.",
+    "id": "D1-1",
+    "line": 26,
+    "severity": "low"
+   }
+  ],
+  "grade": "A",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 90.4,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 18,
+   "D2": 15,
+   "D3": 13,
+   "D4": 15,
+   "D5": 13,
+   "D6": 14,
+   "D7": 12,
+   "D8": 13
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 113
+ }
+}

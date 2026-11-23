@@ -1,0 +1,11 @@
+{
+  "host": "claude",
+  "version": "2.1.325",
+  "date": "2026-11-16",
+  "cli": "claude",
+  "stderr": "[claude-code:unrecognized_model] {}\n",
+  "stdout": "{\"type\":\"result\",\"is_error\":true,\"api_error_status\":404,\"result\":\"There's an issue with the selected model (placeholder-model-1). It may not exist or you may not have access to it.\"}\n",
+  "expect_class": "bad_model",
+  "expect_rule": "claude-selected-model",
+  "source": "reconstructed"
+}

@@ -1,0 +1,12 @@
+{
+  "host": "router",
+  "version": "router-log-shape",
+  "date": "2026-11-16",
+  "cli": "pi",
+  "route": "unknown",
+  "stderr": "[WARN] [AUTH] all 3 active accounts cooling down for model router-env/fake-model (reset after 2h 4m)",
+  "stdout": "",
+  "expect_class": "transient",
+  "expect_rule": "text-cooling-down",
+  "source": "reconstructed"
+}

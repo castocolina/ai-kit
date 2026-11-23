@@ -1,5 +1,31 @@
 [
   {
+    "id": "router-model-cooldown",
+    "tier": 0,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "model_cooldown",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-22 (074cbcc): router client body 429 code model_cooldown with Retry-After and reset_seconds, read from the router source 2026-11-16; no body captured"
+  },
+  {
+    "id": "router-all-targets-cooling-down",
+    "tier": 0,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "all_targets_cooling_down",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-22 (074cbcc): router client body 503 all_targets_cooling_down with Retry-After, read from the router source 2026-11-16; no body captured"
+  },
+  {
     "id": "omniroute-all-targets-skipped",
     "tier": 0,
     "cli": "*",
@@ -48,8 +74,8 @@
     "match": "model_cooldown",
     "class": "transient",
     "terminal": false,
-    "label": "unverified",
-    "evidence": "CHANGELOG 0a1265ea8"
+    "label": "verified",
+    "evidence": "CHANGELOG 0a1265ea8; body seen in 45 cases from an older router image, logs read 2026-11-02 (v1.3-OWNER-FOLLOWUP.md section 1 and Evidence sources)"
   },
   {
     "id": "omniroute-endpoint-unavailable",
@@ -104,6 +130,19 @@
     "evidence": "CHANGELOG 0a1265ea8"
   },
   {
+    "id": "provider-not-configured",
+    "tier": 0,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\\bprovider_not_configured\\b",
+    "class": "bad_model",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "code name recorded in real runs (38.1 SPEC R2); body not captured"
+  },
+  {
     "id": "vendor-usage-limit-reached",
     "tier": 1,
     "cli": "*",
@@ -141,7 +180,151 @@
     "class": "quota",
     "terminal": true,
     "label": "verified",
-    "evidence": "the Zhipu GLM capture"
+    "evidence": "the Zhipu GLM capture; weekly limit wording found in past runs (v1.3-OWNER-FOLLOWUP.md section 1)"
+  },
+  {
+    "id": "vendor-data-inspection-failed",
+    "tier": 1,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\\bdata_inspection_failed\\b",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "code name recorded in real runs (38.1 SPEC Live facts 2026-11-16); body not captured"
+  },
+  {
+    "id": "vendor-context-length-exceeded",
+    "tier": 1,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\\bcontext_length_exceeded\\b",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "code name recorded in real runs (38.1 SPEC Live facts 2026-11-16); body not captured"
+  },
+  {
+    "id": "vendor-code-1311",
+    "tier": 1,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\"code\"\\s*:\\s*\"1311\"",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "vendor plan-not-open code recorded in real runs (38.1 SPEC Live facts 2026-11-16); body not captured"
+  },
+  {
+    "id": "copilot-model-not-available",
+    "tier": 1,
+    "cli": "copilot",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "Model \"[^\"]+\" is not available",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, copilot 1.0.112; fixture tests/fixtures/cross_ai_errors/copilot-bad-model.json"
+  },
+  {
+    "id": "pi-model-not-found",
+    "tier": 1,
+    "cli": "pi",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "Model \"[^\"]+\" not found",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, pi 1.5.2; fixture tests/fixtures/cross_ai_errors/pi-bad-model.json"
+  },
+  {
+    "id": "opencode-model-unavailable",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "event",
+    "match": "^opencode-type:provider\\.no-route$",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, opencode 2.3.0 provider.no-route event (message Model unavailable); fixture tests/fixtures/cross_ai_errors/opencode-bad-model.json"
+  },
+  {
+    "id": "claude-selected-model",
+    "tier": 1,
+    "cli": "claude",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "issue with the selected model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, claude 2.1.325; fixture tests/fixtures/cross_ai_errors/claude-bad-model.json"
+  },
+  {
+    "id": "codex-model-not-supported",
+    "tier": 1,
+    "cli": "codex",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "model is not supported when using",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "captured headless 2026-11-16, codex 0.169.0; fixture tests/fixtures/cross_ai_errors/codex-bad-model.json"
+  },
+  {
+    "id": "opencode-free-tier-error",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "FreeTierError",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "client rule reported in a pinned opencode maintainer post and issues; no body captured on this machine (38.1 D-27)"
+  },
+  {
+    "id": "opencode-missing-session-id",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "MissingSessionID",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "client rule reported in a pinned opencode maintainer post and issues; no body captured on this machine (38.1 D-27)"
+  },
+  {
+    "id": "opencode-free-tier-version-gate",
+    "tier": 1,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "or newer is required to use the free tier",
+    "class": "bad_request",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "client rule reported in a pinned opencode maintainer post and issues; no body captured on this machine (38.1 D-27)"
   },
   {
     "id": "text-billing",
@@ -168,8 +351,8 @@
     "class": "billing",
     "routerClass": "quota",
     "terminal": true,
-    "label": "unverified",
-    "evidence": "25-RESEARCH 2.2 CONTEXT, wrapper reproduced"
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 CONTEXT; seen through direct calls in past runs (v1.3-OWNER-FOLLOWUP.md section 1, router limit texts)"
   },
   {
     "id": "text-spending-limit",
@@ -224,8 +407,8 @@
     "class": "billing",
     "routerClass": "quota",
     "terminal": true,
-    "label": "unverified",
-    "evidence": "25-RESEARCH 2.2 Go wording"
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 Go wording; seen through direct calls in past runs (v1.3-OWNER-FOLLOWUP.md section 1, router limit texts)"
   },
   {
     "id": "text-run-out-credits",
@@ -252,8 +435,36 @@
     "class": "billing",
     "routerClass": "quota",
     "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 Zen wording; seen through direct calls in past runs (v1.3-OWNER-FOLLOWUP.md section 1, router limit texts)"
+  },
+  {
+    "id": "text-policy-budget-exceeded",
+    "tier": 2,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "policy budget exceeded",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
     "label": "unverified",
-    "evidence": "25-RESEARCH 2.2 Zen wording"
+    "evidence": "name recorded in the 21.1 research and the 2026-10-11 todo; body not re-observed"
+  },
+  {
+    "id": "text-account-budget-exceeded",
+    "tier": 2,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "account budget exceeded",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "name recorded in the 21.1 research and the 2026-10-11 todo; body not re-observed"
   },
   {
     "id": "text-named-models",
@@ -294,7 +505,22 @@
     "class": "quota",
     "terminal": true,
     "label": "verified",
-    "evidence": "25-RESEARCH 2.2 probe"
+    "evidence": "25-RESEARCH 2.2 probe",
+    "pool": "free"
+  },
+  {
+    "id": "opencode-free-limit",
+    "tier": 3,
+    "cli": "opencode",
+    "route": "*",
+    "provider": "*",
+    "input": "event",
+    "match": "^opencode-type:provider\\.free-limit$",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "typed event shape from the opencode pull request text and a live probe on 2026-11-16 (429 with retryAfterMs); full body not stored (38.1 D-24)",
+    "pool": "free"
   },
   {
     "id": "vendor-go-usage",
@@ -347,6 +573,32 @@
     "terminal": true,
     "label": "unverified",
     "evidence": "25-RESEARCH 2.5 cited binary"
+  },
+  {
+    "id": "claude-hit-your-limit-stdout",
+    "tier": 3,
+    "cli": "claude",
+    "route": "*",
+    "provider": "*",
+    "input": "stdout",
+    "match": "hit your (?:weekly )?limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "38.1 R3 D-07: claude limit sentence as plain stdout (run live, crash before this row); weekly form as the harness case evidence-claude-weekly"
+  },
+  {
+    "id": "claude-selected-model-stdout",
+    "tier": 3,
+    "cli": "claude",
+    "route": "*",
+    "provider": "*",
+    "input": "stdout",
+    "match": "issue with the selected model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "38.1 R3 D-04: claude model-missing sentence as plain stdout; the 2026-11-16 capture printed it inside the JSON result, the plain form is not captured"
   },
   {
     "id": "text-usage-limit",
@@ -793,6 +1045,45 @@
     "evidence": "25-RESEARCH 2.2 recorded"
   },
   {
+    "id": "router-accounts-cooling-down",
+    "tier": 5,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "active accounts cooling down for model",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router log line (warning, tag AUTH), 34 episodes in the router's own log; never seen by the runner"
+  },
+  {
+    "id": "router-all-models-failed",
+    "tier": 5,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "All models failed \\|.*\\(reset after ",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router log wording with its reset text (the heading alone also prints for non-cooldown failures); never seen by the runner"
+  },
+  {
+    "id": "router-persisted-cooldown",
+    "tier": 5,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "has persisted cooldown until",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router log wording; never seen by the runner"
+  },
+  {
     "id": "text-cooling-down",
     "tier": 5,
     "cli": "*",
@@ -804,6 +1095,19 @@
     "terminal": false,
     "label": "verified",
     "evidence": "prior table"
+  },
+  {
+    "id": "text-connection-capacity",
+    "tier": 5,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "connection capacity reached",
+    "class": "transient",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "text recorded in real runs without a status code (38.1 SPEC Live facts 2026-11-16); body not captured"
   },
   {
     "id": "text-is-locked",
@@ -922,6 +1226,19 @@
     "terminal": false,
     "label": "verified",
     "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
+  },
+  {
+    "id": "router-usage-balance-exhausted",
+    "tier": 6,
+    "cli": "*",
+    "route": "router",
+    "provider": "*",
+    "input": "any",
+    "match": "usage balance exhausted",
+    "class": "quota",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "38.1 R4 D-09: router wording; a 402 body carrying it classifies by code-402 and a 401/403 by code-401-403 first, this row covers the form without a status code"
   },
   {
     "id": "code-429",

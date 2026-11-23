@@ -1,0 +1,11 @@
+{
+  "host": "pi",
+  "version": "1.5.2",
+  "date": "2026-11-16",
+  "cli": "pi",
+  "stderr": "Error: Model \"placeholder-model-1\" not found. Use --list-models to see available models.\n",
+  "stdout": "",
+  "expect_class": "bad_model",
+  "expect_rule": "pi-model-not-found",
+  "source": "captured"
+}

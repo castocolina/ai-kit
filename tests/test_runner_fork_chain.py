@@ -24,6 +24,7 @@ from ai_kit_spec import detection, runner_dispatch, runner_facts
 
 CHAIN_LINKS = 5
 SHORT_TIMEOUT_S = 2
+REAP_WAIT_S = 30
 SHIM = """#!/bin/sh
 dir=${0%/*}
 n=$(cat "$dir/count" 2>/dev/null || echo 0)
@@ -33,15 +34,6 @@ echo "$$" >> "$dir/pids"
 if [ "$n" -lt LINKS ]; then "$0" "$@"; exit $?; fi
 exec sleep 60
 """.replace("LINKS", str(CHAIN_LINKS))
-
-
-def _alive(pid: int) -> bool:
-    """A live, non-zombie process."""
-    try:
-        with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
-            return handle.read().rsplit(")", 1)[1].split()[0] != "Z"
-    except (OSError, IndexError):
-        return False
 
 
 @unittest.skipUnless(os.path.isdir("/proc") and hasattr(os, "killpg"), "needs /proc and killpg")
@@ -71,13 +63,34 @@ class TestSelfRunningNodeShim(unittest.TestCase):
             if str(self.bin).encode() in cmdline or cmdline == b"sleep\x0060\x00":
                 os.kill(pid, signal.SIGKILL)
 
+    def _survivors(self) -> list[str]:
+        """Each live link with its state, parent, group and command: a failure explains itself."""
+        found = []
+        for pid in self._pids():
+            try:
+                fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode()
+            except (OSError, IndexError, UnicodeDecodeError):
+                continue
+            if fields[0] != "Z":
+                found.append(f"pid={pid} state={fields[0]} ppid={fields[1]} "
+                             f"pgid={fields[2]} cmd={cmd.strip()}")
+        return found
+
     def assert_bounded_and_gone(self, started: float):
         self.assertLess(time.monotonic() - started, SHORT_TIMEOUT_S + 10)
-        self.assertEqual((self.bin / "count").read_text().strip(), str(CHAIN_LINKS))
-        deadline = time.monotonic() + 5
-        while any(_alive(pid) for pid in self._pids()) and time.monotonic() < deadline:
+        # The chain reaches its last link in about 10 ms on a quiet host, but a loaded host may cut
+        # it earlier: the proof is that no link survives the group kill, not the chain's length.
+        self.assertTrue(self._pids() or (self.bin / "count").exists(), "the shim never ran")
+        # Killed links can take seconds to exit under a loaded, swapping host: wait, bounded.
+        deadline = time.monotonic() + REAP_WAIT_S
+        while self._survivors() and time.monotonic() < deadline:
             time.sleep(0.05)
-        self.assertEqual([pid for pid in self._pids() if _alive(pid)], [])
+        self.assertEqual(self._survivors(), [])
+        links = len(self._pids())
+        self.assertLessEqual(links, CHAIN_LINKS)
+        time.sleep(0.2)
+        self.assertEqual(len(self._pids()), links, "a link started after the group kill")
 
     def test_describe_read_returns_no_fact_and_leaves_no_process(self):
         snapshot: dict = {}

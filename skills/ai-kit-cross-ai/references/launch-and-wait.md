@@ -40,7 +40,7 @@ AIKIT-XAI status=ok cli=opencode model=fake/ok exit=0 cli_rc=0 elapsed=0s out=29
 A stop carries the report line before it:
 
 ```
-cross-ai: report status=auth lane=opencode/fake/auth route=unknown attempts=1 cycles=0 first_failure=2026-11-21T20:40:12.988Z last_failure=2026-11-21T20:40:13.004Z due_at=- stopped=class upstream=present
+cross-ai: report status=auth lane=opencode/fake/auth route=unknown attempts=1 cycles=0 first_failure=<iso time> last_failure=<iso time> due_at=- stopped=class upstream=present check=-
 ```
 
 On an exit 75 with `retry_after_s=`, schedule one one-shot `CronCreate` at `retry_after_s` and
@@ -55,8 +55,12 @@ schedule anything.
 
 ## opencode
 
-unverified. opencode's help shows no notification or one-shot scheduling feature, so an opencode
-host uses the foreground wait below.
+unverified. opencode's CLI help shows no notification or one-shot scheduling feature. A
+completion notice and a delayed schedule are separate features: when the session's own shell tool
+offers a background run that posts a notice when its command exits, use it as in the Claude Code
+pattern (the runner itself is the command, no trailing `&`); otherwise use the foreground wait
+below. Either way schedule nothing: print `retry_after_s`, the state path and the re-invoke
+command.
 
 ## cursor
 
@@ -75,7 +79,8 @@ foreground wait below.
 
 ## A host without a background primitive
 
-unverified. Any host above but Claude Code, and any host not listed, gets the foreground wait:
+unverified. Any host above but Claude Code (and an opencode session whose shell tool posts a
+completion notice), and any host not listed, gets the foreground wait:
 run the runner as a plain command, which blocks until the lane exits, and record its exit code.
 Then read `lane.rc` and `lane.err`. Print `retry_after_s`, the state path and the re-invoke
 command instead of scheduling a wake.

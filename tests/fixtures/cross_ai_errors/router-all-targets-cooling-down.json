@@ -1,0 +1,12 @@
+{
+  "host": "router",
+  "version": "router-source-shape",
+  "date": "2026-11-16",
+  "cli": "pi",
+  "route": "router",
+  "stderr": "503: {\"error\":{\"message\":\"all targets cooling down\",\"code\":\"all_targets_cooling_down\"},\"recovery_hint\":{\"action\":\"wait\",\"retry_after_seconds\":45}}",
+  "stdout": "",
+  "expect_class": "quota",
+  "expect_rule": "router-all-targets-cooling-down",
+  "source": "reconstructed"
+}

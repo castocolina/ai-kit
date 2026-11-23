@@ -1,0 +1,11 @@
+{
+  "host": "copilot",
+  "version": "1.0.112",
+  "date": "2026-11-16",
+  "cli": "copilot",
+  "stderr": "Execution failed: Model \"placeholder-model-1\" is not available.\n",
+  "stdout": "",
+  "expect_class": "bad_model",
+  "expect_rule": "copilot-model-not-available",
+  "source": "captured"
+}
