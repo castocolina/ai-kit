@@ -121,7 +121,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 32.5: codebase-memory-mcp replaces codegraph** - every live index, check, rule, lane guidance and doc uses codebase-memory-mcp; history unchanged; `.planning/` kept out of the index *(inserted 2026-11-14, owner decision; run with Phases 33-34 through `/gsd-autonomous`)* (completed 2026-11-14)
 - [x] **Phase 33: One config design** - One neutral config.toml per layer with role-keyed lanes; review-spec.toml and the retry block migrate on their own; no foreign keys, runs without GSD *(rewritten 2026-11-14, owner decisions)* (completed 2026-11-15)
 - [x] **Phase 34: jev backends by host and Laya calibration** - jev picks its backend per host from ai-kit's config; Laya measured against its floor (completed 2026-11-16)
-- [ ] **Phase 35: Model discovery and catalog** - spec-config lists every model on every host with honest source, usability and tier labels
+- [x] **Phase 35: Model discovery and catalog** - spec-config lists every model on every host with honest source, usability and tier labels (completed 2026-11-20)
 - [x] **Phase 36: spec-config as the hub** - Every spec skill chains spec-config; reviewers and executors kept apart with opt-in escalation (completed 2026-11-21)
 - [ ] **Phase 37: Shared runner options and session ids** - One runner for GSD cross-AI and ai-kit lanes, with per-call settings and resumable sessions
 - [ ] **Phase 38: Runner hardening and run safety** - Idle watchdog, the Phase 25 cleanup, a run lock with a tree baseline, and a plan-versus-commits check before done
@@ -696,7 +696,7 @@ Plans:
   7. A test fails when code, a default, a rail, a skill, a doc or a test hardcodes a provider or model name other than `router-env/<x>` (tests for pi and opencode only; the bare-id hosts use invented placeholders); the guard has a committed baseline that can only shrink, marked examples pass and decision-making lists fail. *(added 2026-11-16, owner rule, HUB-09)*
   8. A host with no non-interactive model list shows seed, web-search and herdr-extracted candidates, each labeled by how sure it is, and none of them is ever required. *(added 2026-11-16, owner decision, 35 R3)*
 
-**Plans**: 28/28 plans executed
+**Plans**: 28/28 plans complete
 - [x] 35-01-PLAN.md
 - [x] 35-02-PLAN.md
 - [x] 35-03-PLAN.md
@@ -1197,7 +1197,7 @@ Plans:
 | 32.5. codebase-memory-mcp replaces codegraph | 10/10 | Complete    | 2026-11-14 |
 | 33. One config design | 12/12 | Complete    | 2026-11-15 |
 | 34. jev backends by host and Laya calibration | 10/10 | Complete    | 2026-11-16 |
-| 35. Model discovery and catalog | 28/28 | In Progress | - |
+| 35. Model discovery and catalog | 28/28 | Complete    | 2026-11-20 |
 | 36. spec-config as the hub | 29/29 | Complete    | 2026-11-21 |
 | 37. Shared runner options and session ids | 0/TBD | Not started | - |
 | 38. Runner hardening and run safety | 0/TBD | Not started | - |
