@@ -1,10 +1,12 @@
 ---
 phase: "37"
 slug: "shared-runner-options-and-session-ids"
-status: draft
-nyquist_compliant: false
+status: approved
+nyquist_compliant: true
 wave_0_complete: true
 created: "2026-11-21"
+approved: "2026-11-21"
+approved_by: "gsd-verifier (phase 37 verification at 42bad13)"
 ---
 
 # Phase 37 — Validation Strategy
@@ -38,18 +40,18 @@ created: "2026-11-21"
 
 | Requirement | Behavior | Test type | Automated command |
 |-------------|----------|-----------|-------------------|
-| RUN-01 R1 | each flag parses, each conflict is exit 2, golden `runner_flags` per runtime | unit + self-test | `tests.test_runner_vocabulary`, `tests.test_ai_kit_spec_runner_dispatch` |
-| R2 | settings lines per runtime (applied, ignored, unknown, reasons) | unit + self-test | `tests.test_runner_settings_argv` |
+| RUN-01 R1 | each flag parses, each conflict is exit 2, golden `runner_flags` per runtime | unit + self-test | `tests.test_runner_flags`, `tests.test_ai_kit_spec_runner_dispatch`, self-test cases `vocab-*` (the planned `tests.test_runner_vocabulary` module was never created; its checks live in those places) |
+| R2 | settings lines per runtime (applied, ignored, unknown, reasons) | unit + self-test | `tests.test_runner_settings_argv`, self-test cases `settings-*`, `planner-*` |
 | R3 | argv per runtime per level; level is a token; no Python composer | unit | `tests.test_runner_settings_argv`, `tests.test_lane_effort` |
 | R4, R5 | argv-file lane, refusals, unusual model shapes | self-test | `AIKIT_XAI_SELFTEST_CASES=<case> node skills/ai-kit-spec-review/references/cross-ai.mjs --self-test` |
-| R6 | claude execute and resume argv, review argv byte-equal | unit + self-test | `tests.test_runner_settings_argv` |
+| R6 | claude execute and resume argv, review argv byte-equal | unit + self-test | `tests.test_runner_claude_exec`, self-test cases `claude-exec-*` |
 | R7 / RUN-02 | first call prints `session=X`, second resumes it, rejected id fails | self-test (fakes) | self-test cases `session-*` |
 | R8 / RUN-06 | live copy equals the template; mutations fail | unit | `tests.test_cross_ai_render_sync` |
-| R9 | `--describe` golden, routing cases | unit | `tests.test_runner_describe`, `tests.test_ai_kit_spec_routing`, `tests.test_no_seed_refusal` |
+| R9 | `--describe` golden, routing cases | unit | `tests.test_runner_describe`, `tests.test_runner_facts`, `tests.test_ai_kit_spec_routing`, `tests.test_no_seed_refusal` |
 | R10 | escalation flags echoed `recorded_only` | self-test | self-test cases `escalate-*` |
 | R11 | SKILL.md doc contract equals runner and `--describe` | unit + judge | `tests.test_cross_ai_skill_text`, `tests.test_arch_hardcoded_models` |
 | RUN-12 R12 | hosted equals headless; off-switches; tab closed on every path | self-test (fake herdr) + unit | self-test cases `host-*`, `tests.test_runner_host_protocol` |
-| R13, R14 | skill forms, MCP file, usage errors, planted key never printed | unit + self-test | `tests.test_runner_settings_argv` |
+| R13, R14 | skill forms, MCP file, usage errors, planted key never printed | unit + self-test | `tests.test_runner_settings_argv`, `tests.test_runner_skills_argv`, `tests.test_runner_mcp_argv` |
 | 38.1 D-30 | every row flag appears in the recorded help | unit | `tests.test_cli_help_flags` |
 
 ---
@@ -71,8 +73,16 @@ created: "2026-11-21"
 
 ## Validation Sign-Off
 
-- [ ] All tasks have an `<automated>` verify or a Wave 0 dependency
-- [ ] No 3 consecutive tasks without an automated verify
-- [ ] `nyquist_compliant: true` set after the phase gates are green
+- [x] All tasks have an `<automated>` verify or a Wave 0 dependency
+- [x] No 3 consecutive tasks without an automated verify
+- [x] `nyquist_compliant: true` set after the phase gates are green
 
-**Approval:** pending
+Evidence run by the verifier at 42bad13 (2026-11-21): 22 modules through `tools/run_unittest_parallel.py`, two per call
+(every module named in the map above, plus `test_runner_preview`, `test_runner_status_group`, `test_runner_fork_chain`,
+`test_cross_ai_docs_text`, `test_cross_ai_settings_text` and `test_arch`), 463 tests, all ok; 119 runner self-test
+cases selected per requirement (R1 12, R2 10, R3 13, R4 18, R5 10, R6 6, R7 14, R10 5, R12 19, R13 and R14 12), all
+ok; `make check-dogfood` ok. The phase gates (`make test`, lint, validate, the e2e tiers, e2e-docker, wizard PTY)
+passed at 42bad13 per the logs under `tmp/run-2026-11-19/gates-37/`. The two manual-only rows above stay owner items
+(37-VERIFICATION.md, human verification).
+
+**Approval:** approved 2026-11-21 (gsd-verifier)
