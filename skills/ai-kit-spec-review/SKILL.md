@@ -391,11 +391,11 @@ For each entry in `REVIEWER_LIST`:
      `--cwd` runs the reviewer, and the runner's read-only tree check, in the document's
      worktree (for a labeled set, the root of `<DOC_PATHS>`'s first entry).
      **Check the `--files` set before the first subprocess dispatch.** A value outside the
-     repository, every scanned skill root and the worktrees of the same repository is refused
-     before the spawn (exit 65, `path_outside_roots`): a learned profile under `CACHE_DIR`, or a
-     document or grounding file of a second repository. When a required file lies outside, stop
-     before dispatching, name the path and offer a new invocation with `--no-cross-ai` (native
-     reviewers only). Never drop the file from `--files`, and never switch lanes after a refusal.
+     repository, every scanned skill root, `CACHE_DIR` (a learned profile there passes; a link
+     out of it does not) and the worktrees of the same repository is refused before the spawn
+     (exit 65, `path_outside_roots`): for example a document or grounding file of a second
+     repository. When a required file lies outside, stop before dispatching, name the path and
+     offer a new invocation with `--no-cross-ai` (native reviewers only). Never drop the file from `--files`, and never switch lanes after a refusal.
      **Two hard rules, no exceptions:** (1) never render the command yourself — hand
      `dispatch-reviewer` the entry and let it render; (2) run it backgrounded or with a near-cap
      shell timeout, never the tool default (the tiers can reach 60 minutes). The dispatch is

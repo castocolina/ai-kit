@@ -81,14 +81,19 @@ def build_execute_guidance(
 ) -> tuple[ComposeResult, str]:
     """Prefix the reinforcement and task with the lane's capability block.
 
-    Soft confinement rides the block for write full or unknown.
+    Soft confinement rides the block for write full or unknown; without --files (no block, no
+    preview) the write reach is unknown, so the sentence stays, as before phase 39.
     """
     candidate = spec.candidate
-    text = seams.build_reinforcement_fn(
+    reinforcement = seams.build_reinforcement_fn(
         f"{candidate['runtime']}, model {candidate['model']}", spec.format_block
-    ) + "\n\n" + spec.prompt
+    )
+    text = reinforcement + "\n\n" + spec.prompt
     if not spec.prompt.strip():
         return ComposeResult(), spec.prompt
+    if spec.files is None:
+        soft = seams.build_soft_confinement_fn(spec.target_dir)
+        return ComposeResult(), "\n\n".join((reinforcement, soft, spec.prompt))
     composed = seams.compose_fn(
         LaneRequest(candidate["runtime"], candidate["model"], "execute", spec.target_dir,
                     _runner_spec(candidate, spec),

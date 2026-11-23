@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ sys.path.insert(
     0, str(pathlib.Path(__file__).resolve().parents[1] / "skills" / "ai-kit-spec-review")
 )
 
+from ai_kit_spec import capability_block, prompt_guard, skill_table
 from ai_kit_spec.capability_block import (
     ENABLED_INDEX_LINE,
     NO_INDEX_LINE,
@@ -30,7 +32,7 @@ from ai_kit_spec.capability_block import (
     unknown_facts,
 )
 from ai_kit_spec.lens_delivery import mcp_pick
-from ai_kit_spec.tooling_guidance import _code_index_line
+from ai_kit_spec.tooling_guidance import _code_index_line, resolve_shared_tooling_reference_path
 
 
 def fact(value, source="from argv", state="verified"):
@@ -331,3 +333,58 @@ class TestBlockEdges(unittest.TestCase):
         second = first._replace(facts=unknown_facts(NO_PREVIEW_REASON), child_env={})
         expected = [build_block(first), build_block(second)]
         self.assertEqual([build_block(second), build_block(first)], expected[::-1])
+
+
+class TestGuidancePathsUnpatched(unittest.TestCase):
+    """guidance_paths with the real resolvers, a scratch HOME and a scratch project."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR"))
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name)
+        self.home, self.project = self.root / "home", self.root / "project"
+        self.project.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.project)], check=True)
+        self.env = {"HOME": str(self.home), "PATH": ""}
+
+    def guidance(self):
+        roots = skill_table.skill_roots(skill_table.scan(self.env, str(self.project)))
+        return capability_block.guidance_paths(
+            self.env, prompt_guard.repo_root(str(self.project)), roots)
+
+    def test_symlinked_install_keeps_the_shared_path(self):
+        shared = resolve_shared_tooling_reference_path()
+        assert shared is not None
+        outside = self.root / "elsewhere" / "AGENTS-TOOLING.md"
+        outside.parent.mkdir()
+        outside.write_text("fixture")
+        self.env["AGENTS_TOOLING_PATH"] = str(outside)
+        both = (("SHARED_TOOLING_PATH", "path_outside_roots"),
+                ("AGENTS_TOOLING_PATH", "path_outside_roots"))
+        self.assertEqual(self.guidance(), (None, None, both))
+        skills = self.home / ".claude" / "skills"
+        skills.mkdir(parents=True)
+        # The installer links each skill directory into the host root.
+        (skills / "ai-kit-spec-review").symlink_to(os.path.dirname(os.path.dirname(shared)),
+                                                   target_is_directory=True)
+        self.assertEqual(self.guidance(), (shared, None, both[1:]))
+
+    def test_guidance_in_the_profile_cache_is_kept(self):
+        cache = self.home / ".claude" / "cache"
+        for folder in ("framework-profiles", "framework-profiles-x"):
+            (cache / folder).mkdir(parents=True)
+            (cache / folder / "AGENTS-TOOLING.md").write_text("fixture")
+        inside = cache / "framework-profiles" / "AGENTS-TOOLING.md"
+        self.env["AGENTS_TOOLING_PATH"] = str(inside)
+        self.assertEqual(self.guidance()[1], str(inside))
+        self.env["AGENTS_TOOLING_PATH"] = str(cache / "framework-profiles-x" / "AGENTS-TOOLING.md")
+        self.assertIn(("AGENTS_TOOLING_PATH", "path_outside_roots"), self.guidance()[2])
+
+    def test_relative_override_is_checked_and_embedded_absolute(self):
+        notes = self.home / ".claude" / "skills" / "notes"
+        notes.mkdir(parents=True)
+        (notes / "SKILL.md").write_text("fixture")
+        (notes / "AGENTS-TOOLING.md").write_text("fixture")
+        self.env["AGENTS_TOOLING_PATH"] = os.path.relpath(notes / "AGENTS-TOOLING.md")
+        agents = self.guidance()[1]
+        self.assertEqual(agents, str(notes / "AGENTS-TOOLING.md"))

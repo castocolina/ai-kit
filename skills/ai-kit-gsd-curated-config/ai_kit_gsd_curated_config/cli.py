@@ -880,11 +880,8 @@ def _build_parser():
 
 
 def _register_skill_sort_parsers(sub) -> None:
-    """Use the review package's parsers, or register fallback flags for its missing-sibling note."""
-    module = gsd_catalog.load_ai_kit_spec_module("skill_classify")
-    if module is not None:
-        module.register_parsers(sub)
-        return
+    """Register the review package's flags without loading it, so another command never
+    depends on that sibling; the handler loads it and checks the role (SPEC R2, D-09)."""
     sub.add_parser("classify-skills").add_argument("--cwd", default=None)
     confirm = sub.add_parser("confirm-skill-role")
     confirm.add_argument("--name", required=True)

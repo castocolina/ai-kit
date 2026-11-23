@@ -174,7 +174,13 @@ def cmd_confirm_skill_role(args, deps) -> int:
     if (not (skill_table.SKILL_NAME_RE.fullmatch(args.name)
              or skill_table.MCP_NAME_RE.fullmatch(args.name))
             or secret_shapes.redact(args.name, "") != args.name):
-        print(f"confirm-skill-role: invalid skill name {args.name!r}", file=sys.stderr)
+        shown = secret_shapes.redact(args.name, "[redacted]")
+        print(f"confirm-skill-role: invalid skill name {shown!r}", file=sys.stderr)
+        return 2
+    # Checked here too: the GSD config skill registers this flag without the choices list.
+    if args.role not in PROPOSABLE:
+        print(f"confirm-skill-role: invalid role {args.role!r}; choose one of: "
+              f"{', '.join(PROPOSABLE)}", file=sys.stderr)
         return 2
     env = deps.env_fn()
     path = (config_io.cfg_global_path(env) if args.use_global

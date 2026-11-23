@@ -59,6 +59,7 @@ from ai_kit_spec.config_io import (
     DEFAULT_POLICY,
     ConfigError,
     cfg_combine,
+    cfg_folder_lock,
     cfg_lanes_table,
     cfg_lanes_view,
     cfg_local_path,
@@ -1037,6 +1038,14 @@ def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
         print(f"render-toml: {problem}", file=sys.stderr)
     if problems:
         return 1
+    if not args.out:
+        return _render_and_publish(args, config, env)
+    # The read-modify-publish holds the folder lock confirm-skill-role takes for [skills.roles].
+    with cfg_folder_lock(args.out):
+        return _render_and_publish(args, config, env)
+
+
+def _render_and_publish(args: argparse.Namespace, config, env: dict) -> int:
     existing, doc = _checked_target(args.out) if args.out else ("", {})
     if args.out:
         refusal = _render_toml_refusal(args.out, doc, args.replace)

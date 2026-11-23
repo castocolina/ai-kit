@@ -465,6 +465,17 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      block, with one stderr note naming the missing flag (R8's empty edge row, amended); exit 65 stays for a real refusal (a prompt
      over the lane's known window, and a rejected value that is embedded). (c) An invalid guidance path is omitted and also named
      in the summary line (`; note: guidance omitted: <NAME> (<reason>)`).
+   - *Amended 2026-11-23, phase 39 code review (read in the code, `skill_table.skill_roots`; 39-REVIEW.md HIGH-1):* each skill
+     directory the scan finds is a skill root too, so a skill directory linked into a host root (ai-kit's installer links every
+     skill directory) passes, and the installed review skill's checklist, framework-profile and tooling-guidance paths lie inside
+     the roots as the fix-pass note above assumes; a `SKILL.md` linked out of a real in-root directory and a link inside the
+     repository are still outside. Before the review only the host roots counted, which refused every subprocess review outside
+     the ai-kit checkout. The owner confirms this reading (todo `review-notes-left-open-by-phase-39`). In decision (a) the
+     other-worktree allowance applies to review lanes only (an execute lane's file there is still outside).
+   - *Amended 2026-11-23, orchestrator decision (never remove a feature; read in the code, `capability_block.profile_cache_root`):*
+     the review skill's learned framework-profile cache (`~/.claude/cache/framework-profiles`, SKILL.md `CACHE_DIR`) is an
+     allowed root for `--files` and guidance values, so a review that embeds a learned profile runs as before phase 39; a sibling
+     folder and a link out of the cache are still outside.
 
 9. **File-editing lenses run as an optional pass after approval (REV-03)**.
    - Current: no lens runs after a review; the review loop ends at approval.

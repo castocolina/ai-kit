@@ -140,6 +140,18 @@ def _catalog_fact(runtime: str, bare: str, env: dict) -> dict | None:
     return fact if isinstance(fact, dict) else None
 
 
+def _bracket_may_carry_context(suffix: str) -> bool:
+    """False only when every bracket entry is key=value with a key other than context.
+
+    An effort-only bracket keeps the catalog window; any other form stays unknown (never capped).
+    """
+    for entry in suffix.strip()[1:-1].split(","):
+        key, sep, _value = entry.partition("=")
+        if not sep or key.strip() in ("", "context"):
+            return True
+    return False
+
+
 def window_for(runtime: str, model: str, env: dict, cwd: str, context_form_applied: bool) -> dict:
     """Resolve the override, unverified context form, or catalog window, in that order.
 
@@ -152,7 +164,7 @@ def window_for(runtime: str, model: str, env: dict, cwd: str, context_form_appli
     if user is not None:
         return _window(user, "user-stated", "[[models.context]]", None)
     if context_form_applied or (
-        bare != model
+        bare != model and _bracket_may_carry_context(model[len(bare):])
         and (getattr(RUNTIMES.get(runtime), "model_suffix", None) or "").startswith(BRACKET_SUFFIX)
     ):
         return _window(None, "unknown", None, "context_form_applied")

@@ -531,8 +531,10 @@ class TestScanMcp(unittest.TestCase):
         _write(str(target / "SKILL.md"), "fixture")
         claude.mkdir(parents=True)
         (claude / "lens-b").symlink_to(target, target_is_directory=True)
+        # Each skill directory found is a root too, so a linked one (the installer's shape) passes.
         self.assertEqual(skill_table.skill_roots(self.scan()),
-                         sorted({os.path.realpath(agents), os.path.realpath(claude)}))
+                         sorted({os.path.realpath(agents), os.path.realpath(claude),
+                                 os.path.realpath(agents / "lens-a"), os.path.realpath(target)}))
 
 
 def _jev_root(tmp):
@@ -699,6 +701,11 @@ class TestConfirmRole(unittest.TestCase):
         code, _, error = self.confirm("lens a")
         self.assertEqual(code, 2)
         self.assertIn("confirm-skill-role: invalid skill name 'lens a'", error)
+        token = "gh" + "p_" + "a" * 24
+        code, out, error = self.confirm(token)
+        self.assertEqual(code, 2)
+        self.assertNotIn(token, out + error)
+        self.assertIn("invalid skill name '[redacted]'", error)
         with self.assertRaises(SystemExit) as raised:
             self.confirm(role="unsorted")
         self.assertEqual(raised.exception.code, 2)

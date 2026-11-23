@@ -492,7 +492,9 @@ def _doc_worktrees(files, repo: str, cwd: str) -> tuple:
         return ()
     roots = set()
     for value in files:
-        if not isinstance(value, str) or not value.strip():
+        # A control character is the validator's rejection; a NUL would make realpath raise.
+        if (not isinstance(value, str) or not value.strip()
+                or any(prompt_guard.is_control_char(ch) for ch in value)):
             continue
         path = os.path.realpath(os.path.join(cwd, value))
         if os.path.commonpath((path, repo)) == repo:
@@ -524,15 +526,26 @@ class _Lane(NamedTuple):
     tooling_omitted: tuple
 
 
+def profile_cache_root(env: dict) -> str | None:
+    """The review skill's learned framework-profile cache (SKILL.md CACHE_DIR), or None.
+
+    An allowed root for --files and guidance values; a relative HOME gives none (never the cwd).
+    """
+    root = os.path.join(env.get("HOME", ""), ".claude", "cache", "framework-profiles")
+    return root if os.path.isabs(root) else None
+
+
 def guidance_paths(env: dict, repo: str, roots: list) -> tuple[str | None, str | None, tuple]:
     """Resolve guidance paths without embedding rejected values."""
-    values = (resolve_shared_tooling_reference_path(),
-              resolve_agents_tooling_path(child_env(env=env)))
+    # A relative override was found from this process's cwd: check and embed that same file.
+    values = tuple(os.path.abspath(value) if value else None for value in (
+        resolve_shared_tooling_reference_path(), resolve_agents_tooling_path(child_env(env=env))))
     accepted, omitted = [], []
     for name, value in zip(("SHARED_TOOLING_PATH", "AGENTS_TOOLING_PATH"), values, strict=True):
-        bad = (prompt_guard.validate_values([(name.lower(), str(value))], repo, roots)
+        bad = (prompt_guard.validate_values([(name.lower(), value)], repo, roots,
+                                            extra_roots=(profile_cache_root(env),))
                if value else [])
-        accepted.append(str(value) if value and not bad else None)
+        accepted.append(value if value and not bad else None)
         if bad:
             omitted.append((name, bad[0]["reason"]))
     return accepted[0], accepted[1], tuple(omitted)
@@ -541,7 +554,8 @@ def guidance_paths(env: dict, repo: str, roots: list) -> tuple[str | None, str |
 def _lane(spec, env, seams, files) -> _Lane:
     scan = seams.scan_fn(env, spec.cwd)
     repo = prompt_guard.repo_root(spec.cwd)
-    doc_roots = _doc_worktrees(files, repo, spec.cwd)
+    # Orchestrator decision (a): the worktree allowance is for review documents only.
+    doc_roots = _doc_worktrees(files, repo, spec.cwd) if spec.role == "review" else ()
     notes = (f"documents from other worktrees: {len(doc_roots)} "
              f"({', '.join(doc_roots)})",) if doc_roots else ()
     roots = skill_table.skill_roots(scan)
@@ -555,7 +569,8 @@ def _value_refusal(lane: _Lane, files, skill_paths, run_dir, mcp_file) -> dict |
     values.extend((f"skill_path[{i}]", p) for i, p in enumerate(skill_paths))
     docs = [(f"files[{i}]", value) for i, value in enumerate(files)]
     bad = prompt_guard.validate_values(values, lane.repo, lane.roots, base=lane.req.cwd)
-    bad += prompt_guard.validate_values(docs, lane.repo, lane.roots, extra_roots=lane.doc_roots,
+    bad += prompt_guard.validate_values(docs, lane.repo, lane.roots,
+                                        extra_roots=(*lane.doc_roots, profile_cache_root(lane.env)),
                                         base=lane.req.cwd)
     if mcp_file:
         bad += prompt_guard.validate_values([("mcp_config", mcp_file)], lane.repo, lane.roots,

@@ -98,6 +98,18 @@ class TestComposeForLane(unittest.TestCase):
         self.assertEqual(request.soft_confinement,
                          execute_dispatch.build_soft_confinement_guidance(self.cwd))
 
+    def test_execute_without_files_keeps_the_confinement_sentence(self):
+        compose = mock.Mock(side_effect=AssertionError("composed without --files"))
+        runner = mock.Mock(return_value=runner_dispatch.RunnerResult(
+            0, "", {"status": "ok"}, None, False, ["node"], ""))
+        spec = execute_dispatch.ExecuteDispatchSpec(
+            {"runtime": "pi", "model": MODEL}, "TASK", self.cwd, 600, files=None)
+        execute_dispatch.dispatch_execute(spec, execute_dispatch.ExecuteSeams(
+            compose_fn=compose, runner_fn=runner, build_reinforcement_fn=lambda *_a: "REINFORCE",
+            build_soft_confinement_fn=lambda target: f"SOFT {target}", print_fn=lambda _s: None))
+        self.assertEqual(runner.call_args.args[1], f"REINFORCE\n\nSOFT {self.cwd}\n\nTASK")
+        compose.assert_not_called()
+
     def test_execute_spawn_carries_the_lens_flags(self):
         runner = mock.Mock(return_value=runner_dispatch.RunnerResult(
             0, "", {"status": "ok"}, None, False, ["node"], ""))
@@ -182,6 +194,11 @@ class TestComposeForLane(unittest.TestCase):
         assert result.refusal is not None
         self.assertEqual(result.refusal["reason"], "value_control_char")
         self.assertEqual(len(result.refusal["detail"]["rejections"]), 2)
+        # In a git checkout (the worktree lookup runs) a NUL is a refusal, never a ValueError.
+        subprocess.run(["git", "init", "-q", self.cwd], check=True, capture_output=True)
+        result = self.compose(("../outside" + chr(0) + "x",))
+        assert result.refusal is not None
+        self.assertEqual(result.refusal["reason"], "value_control_char")
 
     def test_context_form_applied_makes_window_unknown(self):
         seen = []
@@ -221,7 +238,10 @@ class TestComposeForLane(unittest.TestCase):
         self.lens_scan()
         request = cb.LaneRequest("pi", MODEL, "review", self.cwd, None, native=True)
         result = cb.compose_for_lane(request, "p", (), self.env, self.seams)
-        self.assertIn("lens-a: load the skill", result.block)
+        # Lens lines only: no tool claims, no LANE, ACCESS, TOOLS or SETTINGS section.
+        self.assertEqual(result.block, "SKILLS\nlens-a: load the skill lens-a by name if your "
+                                       "host provides it (unverified)")
+        self.assertIsNone(result.refusal)
         self.fake.assert_not_called()
 
     def test_mcp_file_written_and_cleaned(self):
@@ -246,13 +266,19 @@ class TestComposeForLane(unittest.TestCase):
         draft = cb.build_block(cb.BlockInput(cb.lane_facts(self.fake.return_value),
                                             child_env(env=self.env), host, [], "review", "pi",
                                             MODEL, cwd=self.cwd))
-        lens_bytes = os.path.getsize(os.path.join(path, "SKILL.md"))
+        # The planner's own count (the runner's prose block): the draft admits the lens, and
+        # only the final block, longer by its SKILLS line, pushes it over the window.
+        lens_bytes = cb.lens_delivery.check_lens(
+            {"name": "lens-a", "path": path, "role": "review_lens"},
+            os.path.realpath(self.cwd), [os.path.dirname(path)])["bytes"]
         window = math.ceil((len(cb.with_block(draft, "PROMPT").encode("utf-8")) + lens_bytes) / 4)
         self.seams = self.seams._replace(window_fn=lambda *_: {**UNKNOWN_WINDOW, "value": window})
         result = self.compose()
         self.assertIsNone(result.refusal)
         self.assertEqual(result.skill_names, ())
         self.assertIn("lens-a: skipped (over_window)", result.block)
+        self.assertEqual([call.args[0].skill_names for call in self.fake.call_args_list],
+                         [(), ("lens-a",)])
 
     def test_argv_cap_skips_lens(self):
         self.lens_scan()
@@ -297,9 +323,43 @@ class TestComposeForLane(unittest.TestCase):
         self.assertIsNone(result.refusal)
         self.assertIn(f"note: documents from other worktrees: 1 ({os.path.realpath(second)})",
                       result.block)
+        # The allowance is for review documents: an execute lane's file there is still outside.
+        execute = cb.LaneRequest("pi", MODEL, "execute", self.cwd, self.spec)
+        result = cb.compose_for_lane(execute, "PROMPT", (doc,), self.env, self.seams)
+        assert result.refusal is not None
+        self.assertEqual(result.refusal["reason"], "path_outside_roots")
         other = os.path.join(os.path.dirname(self.cwd), "other")
         git("init", other)
         result = self.compose((os.path.join(other, "doc"),))
+        assert result.refusal is not None
+        self.assertEqual(result.refusal["reason"], "path_outside_roots")
+
+    def test_learned_framework_profile_is_an_allowed_root(self):
+        subprocess.run(["git", "init", "-q", self.cwd], check=True)
+        cache = os.path.join(self.env["HOME"], ".claude", "cache")
+        profiles = os.path.join(cache, "framework-profiles")
+        sibling = os.path.join(cache, "framework-profiles-x")
+        outside = os.path.join(os.path.dirname(self.cwd), "outside.md")
+        for folder in (profiles, sibling):
+            os.makedirs(folder)
+        for path in (os.path.join(profiles, "gsd.md"), os.path.join(sibling, "gsd.md"), outside):
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("profile")
+        link = os.path.join(profiles, "link.md")
+        os.symlink(outside, link)
+        execute = cb.LaneRequest("pi", MODEL, "execute", self.cwd, self.spec)
+        for request in (cb.LaneRequest("pi", MODEL, "review", self.cwd, self.spec), execute):
+            result = cb.compose_for_lane(request, "PROMPT", (os.path.join(profiles, "gsd.md"),),
+                                         self.env, self.seams)
+            self.assertIsNone(result.refusal)
+        for refused in (os.path.join(sibling, "gsd.md"), link):
+            result = self.compose((refused,))
+            assert result.refusal is not None
+            self.assertEqual(result.refusal["reason"], "path_outside_roots")
+        # A relative HOME gives no cache root, never one under the current directory.
+        self.env["HOME"] = "home"
+        self.assertIsNone(cb.profile_cache_root(self.env))
+        result = self.compose((os.path.join(profiles, "gsd.md"),))
         assert result.refusal is not None
         self.assertEqual(result.refusal["reason"], "path_outside_roots")
 

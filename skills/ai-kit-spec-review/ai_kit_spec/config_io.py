@@ -1060,9 +1060,11 @@ def cfg_render_lanes(config: dict, existing_text: str = "") -> str:
 def cfg_folder_lock(path: str):
     """Exclusive folder lock for a config read-modify-write, shared by both writers.
 
-    No lock file is created.
+    No lock file is created; a folder made only for the lock is removed again while it is empty
+    (a refused or failed write leaves nothing behind).
     """
     folder = os.path.dirname(os.path.abspath(path))
+    created = not os.path.isdir(folder)
     os.makedirs(folder, exist_ok=True)
     fd = os.open(folder, os.O_RDONLY)
     try:
@@ -1071,6 +1073,9 @@ def cfg_folder_lock(path: str):
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
+        if created:
+            with contextlib.suppress(OSError):
+                os.rmdir(folder)  # fails, and keeps the folder, once a write put a file in it
 
 
 def cfg_write_toml(path: str, config: dict) -> None:

@@ -218,13 +218,15 @@ reviewer). There is no code-index or tool-map flag to compute: `dispatch-reviewe
 capability block itself from the lane's runner dry run and its child PATH, including the code
 index route, and validates the `--files` values before the spawn: every document, grounding,
 checklist and framework-profile path the prompt embeds, one argument per path (the checklist
-and framework profile lie in the installed skill's directory, a skill root). Without `--files`
+and framework profile lie in the installed skill's directory, a skill root; a learned profile
+lies in the profile cache `~/.claude/cache/framework-profiles`, also an allowed root for
+`--files` and guidance paths, while a link out of it is still refused). Without `--files`
 the prompt is sent with no capability block and stderr carries
 `ai-kit-spec: no capability block built: no --files given (pass --files to get the lane's capability block)`.
 In a labeled multi-worktree review the documents from another worktree are passed too: their
 worktree root counts as an allowed root for those document values only, and the block names them
 in the note `documents from other worktrees: <n> (<root>, ...)`; any other path outside the
-repository and the skill roots is still rejected (`path_outside_roots`). `$SHARED_TOOLING_PATH`
+repository, the skill roots and the profile cache is still rejected (`path_outside_roots`). `$SHARED_TOOLING_PATH`
 and the tool map resolved on the child's PATH appear inside that block as the named
 `SHARED_TOOLING_PATH = …` / `TOOL_AVAILABILITY = …` lines (see [Lane capabilities](#lane-capabilities)).
 

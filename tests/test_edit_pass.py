@@ -161,6 +161,17 @@ class TestEditPass(unittest.TestCase):
         self.assertEqual((self.repo / "a.txt").read_bytes(), b"two\n")
         self.assertEqual(edit_pass.accept(str(self.repo), self.env, self.lines.append), 1)
         self.assertEqual(self.lines[-1], edit_pass.MSG_NONE_WAITING)
+        # Nothing waiting: neither decision creates the record folder for its lock.
+        self.assertEqual(edit_pass.reject(str(self.repo), self.env, self.lines.append), 1)
+        self.assertEqual(self.lines[-1], edit_pass.MSG_NONE_WAITING)
+        self.assertFalse(Path(edit_pass.record_path(str(self.repo), self.env)).parent.exists())
+
+    def test_pending_record_blocks_a_second_run(self):
+        self.assertEqual(self.run_pass(), 0)
+        path = edit_pass.record_path(str(self.repo), self.env)
+        self.assertEqual(edit_pass.run_pass(self.request(), self.seams()), 2)
+        self.assertEqual(self.lines[-1], edit_pass.MSG_PENDING.format(path=path))
+        self.assertEqual(len(self.calls), 1)
 
     def test_reject_keeps_owner_changes(self):
         self.assertEqual(self.run_pass(), 0)

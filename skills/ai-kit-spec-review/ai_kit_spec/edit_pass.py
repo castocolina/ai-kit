@@ -142,13 +142,18 @@ def _state(record) -> str:
 
 @contextmanager
 def _decision_lock(path):
-    directory = os.path.dirname(path)
-    os.makedirs(directory, mode=0o700, exist_ok=True)
-    lock = os.path.join(directory, "decide.lock")
+    """Yield True when locked, False when busy, None when no record folder exists.
+
+    No folder means no pass is waiting, so nothing is created for a lock.
+    """
+    lock = os.path.join(os.path.dirname(path), "decide.lock")
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
         yield False
+        return
+    except FileNotFoundError:
+        yield None
         return
     os.close(fd)
     try:
@@ -426,11 +431,11 @@ def accept(cwd, env, print_fn) -> int:
     """Keep the edits and discard a completed pass record."""
     path = record_path(cwd, env)
     with _decision_lock(path) as locked:
-        if not locked:
+        if locked is False:
             print_fn(MSG_BUSY)
             return 2
-        record = _load(path)
-        if record is None:
+        record = None if locked is None else _load(path)
+        if not record:
             print_fn(MSG_NONE_WAITING)
             return 1
         if _state(record) == "running":
@@ -445,9 +450,12 @@ def reject(cwd, env, print_fn) -> int:
     """Restore recorded bytes unless the owner changed them after the pass."""
     path = record_path(cwd, env)
     with _decision_lock(path) as locked:
-        if not locked:
+        if locked is False:
             print_fn(MSG_BUSY)
             return 2
+        if locked is None:
+            print_fn(MSG_NONE_WAITING)
+            return 1
         return _reject_locked(path, print_fn)
 
 

@@ -1754,9 +1754,23 @@ class TestSkillSortCommands(unittest.TestCase):
         with open(self.path, "rb") as handle:
             self.assertEqual(tomllib.load(handle), {"skills": {"roles": {"lens-a": "review_lens"}}})
         args[4] = "unsorted"
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
-            curated_cli.main(args, env_fn=self.env)
-        self.assertEqual(raised.exception.code, 2)
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            self.assertEqual(curated_cli.main(args, env_fn=self.env), 2)
+        self.assertIn("confirm-skill-role: invalid role 'unsorted'", error.getvalue())
+        with open(self.path, "rb") as handle:
+            self.assertEqual(tomllib.load(handle), {"skills": {"roles": {"lens-a": "review_lens"}}})
+
+    def test_other_commands_never_load_the_sort_module(self):
+        def load(name):
+            if name == "skill_classify":
+                raise SyntaxError("a broken or newer sibling install")
+            return real(name)
+
+        real = gsd_catalog.load_ai_kit_spec_module
+        with mock.patch.object(gsd_catalog, "load_ai_kit_spec_module", side_effect=load):
+            args = curated_cli._build_parser().parse_args(["ensure-project", "--project-dir", "x"])
+        self.assertEqual(args.command, "ensure-project")
 
     def test_missing_module_prints_sibling_note(self):
         real = gsd_catalog.load_ai_kit_spec_module

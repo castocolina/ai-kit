@@ -203,6 +203,13 @@ class TestWindowCheck(unittest.TestCase):
             })
             self.assertEqual(prompt_guard.window_for("cursor", "fake-model-9", env, cwd, False)
                              ["value"], 4000)
+            # A bracket of keys other than context keeps the catalog value; any other form
+            # (a context key, a bare value) stays unknown, never capped.
+            for suffix, value in (("[effort=high]", 4000), ("[effort=high,fast=false]", 4000),
+                                  ("[effort=high,context=1m]", None), ("[1m]", None),
+                                  ("[=x]", None)):
+                self.assertEqual(prompt_guard.window_for(
+                    "cursor", "fake-model-9" + suffix, env, cwd, False)["value"], value, suffix)
             self.assertEqual(prompt_guard.window_for(
                 "pi", "fake/placeholder-model-1:high", env, cwd, False)["value"], 4000)
             _user_config(env, '[[models.context]]\nruntime = "cursor"\n'

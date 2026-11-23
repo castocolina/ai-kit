@@ -462,5 +462,12 @@ def mcp_names(host: str, env) -> tuple:
 
 
 def skill_roots(result: dict) -> list[str]:
-    """The real paths of the scanned roots, for the embedded-value validator (SPEC R8)."""
-    return sorted({root for entry in result.values() for root in entry["roots"]})
+    """The real paths of the scanned roots and of each skill directory found in them (SPEC R8).
+
+    A skill directory linked into a host root (the installer's symlink shape) is a skill root
+    itself; a SKILL.md linked out of a real in-root directory still resolves outside.
+    """
+    roots = {root for entry in result.values() for root in entry["roots"]}
+    roots.update(os.path.realpath(row["path"]) for entry in result.values()
+                 for row in entry.get("skills", []) if row.get("path"))
+    return sorted(roots)

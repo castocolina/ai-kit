@@ -39,3 +39,6 @@ Task 3). Executed through three cross-AI lanes (pi router-env/my-coding), one pe
 - The visibility docstring is shorter than the plan's text (same meaning).
 - Known behaviour change (planned, D-15): a future `ponytail-<x>` skill is listed; the listing now comes from `root_rows`, which does
   not apply the old `scan_root` checks beyond the SKILL.md presence (a review item for 39-18).
+- `test_classify_skills_same_output_as_review_package` pins jev discovery to a synthetic client (`mock.patch` of
+  `ai_kit_spec.jev_names.find_jev`), so the skills installed for the checkout cannot change its result; the plan did not
+  name the pin (added by the 39 code review, 39-REVIEW.md INFO-3).
