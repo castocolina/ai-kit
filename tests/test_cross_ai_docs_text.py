@@ -300,8 +300,8 @@ class LaneCapabilityReferences(unittest.TestCase):
         for text in (skill, prompts):
             self.assertNotIn("--tool-availability-json", text)
         for text in (skill, dispatch):
-            self.assertIn("--files <each DOC_PATHS entry> <each GROUNDING_DOCS entry, if any> "
-                          "<CHECKLIST_SKILL_MD> <FRAMEWORK_PROFILE_PATH, unless none>", text)
+            self.assertIn('--files "<each DOC_PATHS entry>" "<each GROUNDING_DOCS entry, if any>" '
+                          '"<CHECKLIST_SKILL_MD>" "<FRAMEWORK_PROFILE_PATH, unless none>"', text)
             for phrase in ("one worktree at a time", "inside CODEBASE_ROOT", "--files` is refused"):
                 self.assertNotIn(phrase, text)
         self.assertIn("documents from other worktrees: <n> (<root>, ...)", dispatch)

@@ -352,7 +352,8 @@ ladder = ["listed"]
         start = text.rindex(opener, 0, text.index("probe_keys")) + len(opener)
         body = text[start:text.index('\n"\n', start)]
         review_dir = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review")
-        return body.replace('$(dirname "$TOOLS_PY")', review_dir).replace("$(pwd)", self.cwd)
+        return body.replace('$(dirname "$TOOLS_PY")', review_dir).replace("<project root>",
+                                                                          self.cwd)
 
     def test_check_only_snippet_lists_model_and_command_for_both_roles(self):
         self.write_user(PROBE_ROSTER)
@@ -380,7 +381,8 @@ ladder = ["listed"]
                             "check-only.md")
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
-        self.assertIn('probe-quota --cwd "$(pwd)" --role both', text)
+        self.assertIn('probe-quota --cwd "<project root>" --role both', text)
+        self.assertNotIn("$(pwd)", text)
         self.assertIn("List every such entry with the model and command", text)
         self.assertIn("A key that names different lanes", text)
         self.assertIn("every `--check-only` run spends one probe per probed lane", text)

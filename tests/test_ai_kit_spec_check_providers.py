@@ -466,7 +466,8 @@ class TestCheckOnlyProbeSet(_Scratch):
         start = text.rindex(opener, 0, text.index("probe_keys")) + len(opener)
         body = text[start : text.index('\n"\n', start)]
         review_dir = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review")
-        return body.replace('$(dirname "$TOOLS_PY")', review_dir).replace("$(pwd)", self.proj)
+        return body.replace('$(dirname "$TOOLS_PY")', review_dir).replace("<project root>",
+                                                                          self.proj)
 
     def test_snippet_lists_the_merged_probe_set(self):
         # a user-layer key reached only through the merge is listed; an uninstalled one is not

@@ -19,7 +19,7 @@ Dispatch per the route's `invoke`:
 | `slash_command` | **Step 3b-cmd** — invoke it if the command/backing skill is installed this session (e.g. global GSD), else surface |
 | `surface` | **Step 3b-surface** — always hand the user the pre-filled command, then stop |
 
-If findings span a native-owned archetype AND a direct-edit archetype, handle the direct-edit ones via 3a and the native one via the appropriate 3b variant (3b-skill / 3b-cmd / 3b-surface per the route's `invoke`) in the same iteration, then re-review once; note both in the eventual Surface message. Dispatch these **sequentially, never in parallel**: run the Step 3a generic fixer to completion first, then the 3b native revise. Two handlers editing the same document concurrently would corrupt it. If they target entirely separate files you may still keep them sequential for simplicity. After ANY successful native revise (3b-skill / 3b-cmd) whose route declares `validate: agent:<name>`, run **Step 3c** before re-reviewing.
+If findings span a native-owned archetype AND a direct-edit archetype, handle the direct-edit ones via 3a and the native one via the appropriate 3b variant (3b-skill / 3b-cmd / 3b-surface per the route's `invoke`) in the same iteration, then re-review once; note both in the eventual Surface message. Each handler gets only its own findings: bind every finding to its document and archetype by its `Location`, copy the report's `### Status:` line and that handler's findings verbatim into `$RUN_TMP_DIR/iter<N>-<route>.md`, and pass that file as the handler's report (the fixer's `Review report`, a route's `{report_path}` or note) with `<DOC_PATHS>` narrowed to the documents its findings locate. A finding whose document or archetype cannot be told goes to neither handler: surface it. Dispatch these **sequentially, never in parallel**: run the Step 3a generic fixer to completion first, then the 3b native revise. Two handlers editing the same document concurrently would corrupt it. If they target entirely separate files you may still keep them sequential for simplicity. After ANY successful native revise (3b-skill / 3b-cmd) whose route declares `validate: agent:<name>`, run **Step 3c** before re-reviewing.
 
 #### Step 3a — Generic fixer (direct edit)
 
@@ -118,6 +118,12 @@ deciding.
   note. Invoke via the slash command if a slash-command tool exists, else via its backing skill
   through the host's skill tool (e.g. `gsd-plan-phase`). Then if the route has `validate` run **Step 3c**,
   then increment iter once and re-review (Step 1).
+  **A `--reviews` command (the GSD route) reads its findings only from the phase's `REVIEWS.md`.**
+  GSD's planner exits with `No REVIEWS.md found` when the phase folder has none
+  (`plan-phase/steps/reviews-prerequisite.md`), and the trailing note never reaches it. Invoke it
+  only when that file exists and already carries this report's findings (the owner wrote or
+  approved it); never write or overwrite `REVIEWS.md` yourself. Otherwise go to **Step 3b-surface**,
+  and say that the planner needs `REVIEWS.md` (`/gsd-review --phase <N>` writes it).
 - **Not installed this session** (no command and no backing skill) → fall back to **Step 3b-surface**.
 
 #### Step 3b-surface — Surface the native command

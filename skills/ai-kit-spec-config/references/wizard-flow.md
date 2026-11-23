@@ -67,7 +67,7 @@ Ask two questions: the order of the review lanes, then the order of the execute 
 
 ## 10. Escalation
 
-Only for a role that holds two or more lanes, ask per lane, default no: "Escalate from `<key>` when it fails? (1) no, (2) to the next lane of another runtime in this role's order (`escalate_runtime`), (3) to the next lane of the same runtime (`escalate_model`), (4) both." Say in one line that these flags are stored and informational; no run reads them yet. Write a flag only as `true` on that answer; a no or a skip writes nothing, and no ranking, proposal or default ever sets one. A role with one lane has no target, so ask nothing for it.
+Only for a role that holds two or more lanes, ask per lane, default no: "Escalate from `<key>` when it fails? (1) no, (2) to the next lane of another runtime in this role's order (`escalate_runtime`), (3) to the next lane of the same runtime (`escalate_model`), (4) both." Say in one line that these flags are stored and informational; no run reads them yet. Write a flag only as `true` on that answer; a no or a skip writes nothing, and no ranking, proposal or default ever sets one. A role with one lane has no target, so ask nothing for it. A lane kept for both roles carries one set of flags for both, so when its two roles got different answers (or only one role was asked), Step 3 writes it as two entries with the same key, `purpose = "review"` and `purpose = "execute"`, each with only the flags approved for that role.
 
 ## 11. Mode, strategy and timeouts
 

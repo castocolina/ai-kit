@@ -225,7 +225,8 @@ behalf. `--revoke` withdraws trust, even after the file was deleted.
 - **Framework profile cache** (`CACHE_DIR`): `~/.claude/cache/framework-profiles/*.md` (absolute,
   user-global) — learned/refreshed profiles the orchestrator writes for frameworks not covered by a
   seed. Create the dir on first write.
-- **Runner:** subprocess dispatch needs Node 24 (GSD's declared floor); older versions untested.
+- **Runner:** subprocess dispatch needs a `node` executable on PATH (the dispatch checks that it
+  exists, not its version); the runner is tested here on Node 24 (ai-kit's tested floor); older versions untested.
   Without Node, the probe walk marks subprocess entries unavailable before dispatch (the stderr
   line starts `ai-kit-spec: subprocess dispatch needs Node`); a dispatch that hits it is a
   `dispatch_unavailable` Failure, never a session-default run.
@@ -365,7 +366,7 @@ For each entry in `REVIEWER_LIST`:
      own flat `timeout_tiers` key if `$RUN_TMP_DIR/reviewers.json`'s entry at this index has
      one, else the config's own `policy.timeout_tiers`):
      ```bash
-     TIMEOUT_TIERS="$(python3 "$TOOLS_PY" resolve-timeout-tiers --cwd <CODEBASE_ROOT> \
+     TIMEOUT_TIERS="$(python3 "$TOOLS_PY" resolve-timeout-tiers --cwd "<CODEBASE_ROOT>" \
        --reviewers-json "$RUN_TMP_DIR/reviewers.json" --index <this entry's reviewers.json index>)"
      ```
   3. Dispatch via `dispatch-reviewer` — **one** call, no separate render step, instead of a
@@ -373,18 +374,28 @@ For each entry in `REVIEWER_LIST`:
      the entry (a table runtime through the runner, a custom entry through the launcher); never
      assemble that argv in the shell:
      ```bash
-     python3 "$TOOLS_PY" dispatch-reviewer --cwd <CODEBASE_ROOT> \
+     python3 "$TOOLS_PY" dispatch-reviewer --cwd "<CODEBASE_ROOT>" \
        --reviewers-json "$RUN_TMP_DIR/reviewers.json" \
        --index <this entry's reviewers.json index: 0 primary, 1 secondary> \
        --prompt-file "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt" \
        --timeout-tiers "$TIMEOUT_TIERS" \
-       --files <each DOC_PATHS entry> <each GROUNDING_DOCS entry, if any> <CHECKLIST_SKILL_MD> <FRAMEWORK_PROFILE_PATH, unless none> \
+       --files "<each DOC_PATHS entry>" "<each GROUNDING_DOCS entry, if any>" "<CHECKLIST_SKILL_MD>" "<FRAMEWORK_PROFILE_PATH, unless none>" \
        --stdout-only \
        > "$RUN_TMP_DIR/iter<N>-<key>.md" \
        2> "$RUN_TMP_DIR/iter<N>-<key>.err"; echo "$?" > "$RUN_TMP_DIR/iter<N>-<key>.exit"
      ```
+     Substitute each path as its own double-quoted argument, one pair of quotes per path, so a
+     checkout or document path with spaces stays one argument (`--cwd "/work/my repo"`
+     `--files "/work/my repo/docs/plan one.md" ...`); the same holds in every snippet of the
+     references.
      `--cwd` runs the reviewer, and the runner's read-only tree check, in the document's
      worktree (for a labeled set, the root of `<DOC_PATHS>`'s first entry).
+     **Check the `--files` set before the first subprocess dispatch.** A value outside the
+     repository, every scanned skill root and the worktrees of the same repository is refused
+     before the spawn (exit 65, `path_outside_roots`): a learned profile under `CACHE_DIR`, or a
+     document or grounding file of a second repository. When a required file lies outside, stop
+     before dispatching, name the path and offer a new invocation with `--no-cross-ai` (native
+     reviewers only). Never drop the file from `--files`, and never switch lanes after a refusal.
      **Two hard rules, no exceptions:** (1) never render the command yourself — hand
      `dispatch-reviewer` the entry and let it render; (2) run it backgrounded or with a near-cap
      shell timeout, never the tool default (the tiers can reach 60 minutes). The dispatch is
@@ -440,6 +451,8 @@ deleted it after a nonzero exit — treat it as a report with no `### Status:` l
 ### Step 2 — Parse reviewer Status
 
 Read `EFFECTIVE_REPORT_PATH` (Step 1.5) from disk; locate the line beginning `### Status:` in it.
+When it holds more than one, the most severe wins (`Failure`, then `Issues Found` or any other
+text, then `Approved`), the order `merge-reports` applies, in single mode too.
 
 | Status | Action |
 |---|---|

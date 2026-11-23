@@ -316,9 +316,9 @@ router`) treats router billing, access and credential rows as quota.
    ```bash
    python3 -c 'import json,sys; json.dump(sys.argv[2:], open(sys.argv[1], "w"))' \
      "$RUN_TMP_DIR/iter<N>-<key>-argv.json" python3 "$TOOLS_PY" dispatch-reviewer \
-     --cwd <CODEBASE_ROOT> --reviewers-json "$RUN_TMP_DIR/reviewers.json" --index <index> \
+     --cwd "<CODEBASE_ROOT>" --reviewers-json "$RUN_TMP_DIR/reviewers.json" --index <index> \
      --prompt-file "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt" --timeout-tiers "$TIMEOUT_TIERS" \
-     --files <each DOC_PATHS entry> <each GROUNDING_DOCS entry, if any> <CHECKLIST_SKILL_MD> <FRAMEWORK_PROFILE_PATH, unless none> --stdout-only
+     --files "<each DOC_PATHS entry>" "<each GROUNDING_DOCS entry, if any>" "<CHECKLIST_SKILL_MD>" "<FRAMEWORK_PROFILE_PATH, unless none>" --stdout-only
    python3 -c 'import json,sys; a=sys.argv[2:]; json.dump(dict(zip(a[::2], a[1::2])), open(sys.argv[1], "w"), indent=1)' \
      "$RUN_TMP_DIR/resume-<key>.json" iteration "<N>" key "<key>" index "<index>" \
      iteration_cap "<cap>" codebase_root "<CODEBASE_ROOT>" doc_paths "<DOC_PATHS>" \
@@ -327,13 +327,19 @@ router`) treats router billing, access and credential rows as quota.
      checklist_skill_md "$CHECKLIST_SKILL_MD" shared_tooling_path "$SHARED_TOOLING_PATH" \
      unavailable "<the Step 0.7 unavailable lines>" \
      sibling_key "<the sibling's key, or none>" \
+     not_before "<now plus retry_after_s, ISO 8601 with offset>" \
      revisions_authorized "<yes, or no when the request asked only for a review or was unclear>"
    ```
    `REVIEWER_LIST` is the contents of `$RUN_TMP_DIR/reviewers.json`. Each pending lane writes its
    own `iter<N>-<key>-argv.json` and `resume-<key>.json`, so two pending lanes never overwrite
    each other.
-4. **Schedule one one-shot re-invoke** at `retry_after_s` seconds (at least 60 s, rounded up to
-   the next whole minute). On Claude Code, if `CronCreate` is callable (load it if it is
+4. **Schedule one one-shot re-invoke** no earlier than `retry_after_s` seconds (at least 60 s):
+   record the absolute not-before time (now plus `retry_after_s`) as `not_before` in
+   `resume-<key>.json`, and pick the first whole minute at or after it that is not `:00` or `:30`
+   (Claude Code's one-shot jobs at those minutes can fire up to 90 s early; ai-kit-cross-ai
+   section 6 gives the same rule and the confirm-or-delete step for the job). On the re-invoke,
+   when `not_before` is still ahead, schedule once more for it instead of running. On Claude
+   Code, if `CronCreate` is callable (load it if it is
    deferred), that is one one-shot job whose prompt is the fenced text below and nothing more.
    The job lives only as long as the session, so always also print `retry_after_s`, the resume
    pointer and the `-argv.json` path; a host without `CronCreate` prints only that, labelled

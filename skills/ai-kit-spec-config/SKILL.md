@@ -50,6 +50,11 @@ never at a fixed `/tmp/<name>` path another run could share or pre-plant, and St
 `--check-only` stop) removes it. `cache-path` resolves the `${XDG_CACHE_HOME:-$HOME/.cache}`-aware
 runtimes path through `ai-kit-spec.py` itself, so both skills agree on where it lives.
 
+**`<project root>`** is one absolute path, resolved here once: `git rev-parse --show-toplevel`
+run from the current directory, or, outside Git, the directory the owner confirms. Every
+`--cwd`, every raw read and the local target (`<project root>/.aikit/config.toml`, the file this
+skill calls `./.aikit/config.toml`) use that same path, never the shell's `$(pwd)`.
+
 **Resolve this whole block once, in one `Bash` call, and record its four printed lines as
 literal absolute paths — not shell environment variables.** Every `Bash` call starts a fresh
 shell, so every `$TOOLS_PY`/`$CLI_PROFILES_DIR`/`$RUNTIMES_JSON`/`$SCRATCH` below means "the
@@ -119,7 +124,7 @@ have to re-detect next session.)
 
 Then run the stale-provider report (read-only; exits 0 whatever it finds, so it never stops setup):
 ```bash
-python3 "$TOOLS_PY" check-providers --cwd "$(pwd)"
+python3 "$TOOLS_PY" check-providers --cwd "<project root>"
 ```
 Show its lines to the user as they are. A `warning:` line is a finding to relay, not an error,
 and an `(unconfirmed: ...)`, `config file only` or `not checked` line is never upgraded to
@@ -138,7 +143,12 @@ replacement: on "stop", end the run here; on the keep form, run it with
 `review-spec.toml.migrated`. When a pending roster outside that target would be read (for
 example the owner chose a local roster to leave a pending global one alone), do not run
 `fetch-model-catalog`: say that discovery would migrate that roster, and ask the owner for each
-listing-less runtime's model id (or `auto`) instead.
+listing-less runtime's model id (or `auto`) instead. That decision holds for the whole run: no
+later step runs `fetch-model-catalog` (skip `cli-model-selection.md` item 3, and never retry it
+for an empty catalog); add each model id the owner gave (not `auto`) with `confirm-catalog-entry`
+(item 4's form, which reads no roster) to the existing `<catalog>` file. When no catalog file exists yet, there is
+no proposal path that leaves the roster alone: stop before any write and say that discovery waits
+until the owner settles that pending roster.
 
 Run the catalog flow and **MANDATORY read** [`references/catalog.md`](references/catalog.md).
 Show the `catalog-report` output and its attribution lines verbatim, then continue to Step 2.
@@ -412,7 +422,7 @@ such as printing stdout, can leave the target already replaced): show
 confirmed" with what the target now holds, keep `$SCRATCH` for inspection and stop — never
 offer trust after a nonzero exit.
 
-One exception to that stop: when every stderr line is a `render-toml: <key>: effort ...` refusal (a level outside the model's list, or one the runner cannot pass), nothing was written; ask each named lane's effort again from the levels the line names, then re-run Step 3.
+One exception to that stop: when every stderr line is a `render-toml: <key>: effort ...` refusal (a level outside the model's list, or one the runner cannot pass), nothing was written; ask each named lane's effort again, then re-run Step 3. An `is not in the model's list (...)` line names the levels to offer; a `cannot be passed` line names none, so offer the levels Step 2 offered for that model without the refused one. Offer no effort as a choice in both cases. A changed or removed effort drops that lane's `effort_source`, which covered only the tested level.
 
 **On exit 0, check `$SCRATCH/render-toml-stderr.txt` for any `WARNING:`-prefixed
 line.** If one or more are present, the write still succeeded but
@@ -453,7 +463,7 @@ project `[lanes]` table stays inactive for cross-AI review until trusted; with n
 trust and is active at once. Run
 `python3 "$TOOLS_PY" trust-local --cwd <project root> --show`, where `<project root>` is the
 parent of `.aikit/` — never `.aikit/` itself, which looks for `.aikit/.aikit/config.toml`
-and exits 1. `--show` records no new consent, but it is not a pure read: like every `trust-local` call it first migrates a pending old `review-spec.toml`, which can carry that roster's existing trust record into the new store, and its merged preview can migrate a pending old roster in the user config folder too. When an old roster is pending in either place, say so before running it. It prints one JSON line per project entry that runs
+and exits 1. `--show` records no new consent, but it is not a pure read: like every `trust-local` call it first migrates a pending old `review-spec.toml`, which can carry that roster's existing trust record into the new store, and its merged preview can migrate a pending old roster in the user config folder too. When an old roster is pending in either place, say so before running it. When that roster lies outside the target the owner approved at Step 2.1 (a pending global roster after a local write, for example), run neither `trust-local` form: the file stays written but untrusted; say that `--show` would migrate that roster and give the owner the command to run once the owner agrees to that migration. It prints one JSON line per project entry that runs
 as a subprocess (an entry with a `runtime` or a `command`, so more entries than the
 command-bearing ones): `{"key", "argv", "trusted", "path"}`, where `argv` is the argument list
 a review dispatch would run (already merged with the global config per `strategy`) with the prompt
@@ -461,9 +471,14 @@ shown as the literal `<prompt>` placeholder, or `{"key", "error"}` for an entry 
 refused. The preview walks the flattened entry view and renders the review invocation: an execute
 entry that shares a key with a review entry can be missing, and a table-runtime execute entry is
 shown with its review argv. Before asking, compare the lines with the file's command-bearing
-entries in both roles; for any entry without its own line, show its `command` text from the file
-and say the preview does not render it. Ask for trust only once every command-bearing entry has
-been shown that way. Show those lines, ask whether to trust the file, and run
+entries in both roles. A `{"key", "error"}` line, and a line that renders a key's review argv for
+an execute entry of that key, count as no line for that entry. For any entry without its own line,
+show its `command` text from the file
+and say the preview does not render it. An entry with no `command` of its own fills a user-config
+command's placeholders: show that user entry's `command` text beside the project entry's own
+fields, naming its role and key; when no such user entry can be shown, leave the file untrusted
+and name the role and key that could not be shown. Ask for trust only once every command-bearing
+entry has been shown that way. Show those lines, ask whether to trust the file, and run
 `python3 "$TOOLS_PY" trust-local --cwd <project root>` only after an explicit yes. Trust covers the file's command-bearing lane entries: editing another table, comments or spacing keeps it; changing a command-bearing entry needs a new trust; a file with no command-bearing entry needs none (`trust-local` prints `nothing to trust:`). `trust-local --cwd <project root>
 --revoke` withdraws it, and still works after the file was deleted or moved.
 
