@@ -30,19 +30,22 @@ def full(runtime):
     )
 
 
+def golden(runtime):
+    settings = ["--effort", "high", "--context", "1m", "--session-id",
+                "placeholder-session-1", "--escalate-runtime", "--escalate-model",
+                "--host", "auto"]
+    expected = ["--runtime", runtime, "--model", full(runtime).model, "--role", "execute",
+                *settings]
+    if runtime == "codex":
+        expected += ["--codex-sandbox", "workspace-write"]
+    return expected
+
+
 class TestRunnerFlagsGolden(unittest.TestCase):
     def test_full_spec_golden_per_runtime(self):
-        settings = ["--effort", "high", "--context", "1m", "--session-id",
-                    "placeholder-session-1", "--escalate-runtime", "--escalate-model",
-                    "--host", "auto"]
         for runtime in RUNTIMES:
             with self.subTest(runtime=runtime):
-                spec = full(runtime)
-                expected = ["--runtime", runtime, "--model", spec.model, "--role", "execute",
-                            *settings]
-                if runtime == "codex":
-                    expected += ["--codex-sandbox", "workspace-write"]
-                self.assertEqual(runner_dispatch.runner_flags(spec), expected)
+                self.assertEqual(runner_dispatch.runner_flags(full(runtime)), golden(runtime))
 
     def test_unset_settings_emit_nothing(self):
         spec = runner_dispatch.RunnerSpec("opencode", "fake/placeholder-model-1", "review", 0)
@@ -71,6 +74,44 @@ class TestRunnerFlagsGolden(unittest.TestCase):
                     runner_dispatch.runner_flags(spec),
                     ["--runtime", runtime, "--model", spec.model, "--role", "review", *suffix],
                 )
+
+
+class TestSkillFlags(unittest.TestCase):
+    def test_skill_flags_follow_every_existing_flag(self):
+        for base in (full("codex")._replace(service_tier="priority"),
+                     full("cursor")._replace(mode="review", cursor_mode="plan")):
+            with self.subTest(runtime=base.runtime):
+                spec = base._replace(skill_names=("lens-a", "lens-b"),
+                    skill_paths=("/fake/skills/lens-a", "/fake/skills/lens-b"),
+                    mcp_config="/fake/run/mcp.json")
+                self.assertEqual(runner_dispatch.runner_flags(spec),
+                    [*runner_dispatch.runner_flags(base),
+                        "--skill-name", "lens-a", "--skill-path", "/fake/skills/lens-a",
+                        "--skill-name", "lens-b", "--skill-path", "/fake/skills/lens-b",
+                        "--mcp-config", "/fake/run/mcp.json"])
+
+    def test_no_skill_fields_is_byte_equal(self):
+        for runtime in RUNTIMES:
+            with self.subTest(runtime=runtime):
+                self.assertEqual(runner_dispatch.runner_flags(full(runtime)), golden(runtime))
+        self.assertEqual(runner_dispatch.project_runner_command(full("pi")),
+            "node .planning/scripts/cross-ai.mjs --runtime pi --model fake/placeholder-model-1 "
+            "--role execute --effort high --context 1m --session-id placeholder-session-1 "
+            "--escalate-runtime --escalate-model --host auto")
+
+    def test_unequal_skill_tuples_raise(self):
+        spec = full("pi")._replace(skill_names=("lens-a",), skill_paths=())
+        with self.assertRaises(ValueError):
+            runner_dispatch.runner_flags(spec)
+
+    def test_hook_string_refuses_a_path_with_a_space(self):
+        spec = full("pi")._replace(skill_names=("lens-a",),
+                                   skill_paths=("/fake/my skills/lens-a",))
+        self.assertIsNone(runner_dispatch.project_runner_command(spec))
+        command = runner_dispatch.project_runner_command(
+            spec._replace(skill_paths=("/fake/skills/lens-a",)))
+        assert command is not None
+        self.assertTrue(command.endswith(" --skill-name lens-a --skill-path /fake/skills/lens-a"))
 
 
 class TestTemplateAcceptsPythonFlags(unittest.TestCase):

@@ -1,6 +1,8 @@
 """37-14: the runner preview replaces the Python effort composers (D-01, SPEC R3)."""
 
+import hashlib
 import io
+import json
 import os
 import re
 import shutil
@@ -16,15 +18,25 @@ _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
 from ai_kit_spec import cli
+from ai_kit_spec.capability_block import (
+    BAD_LINE_REASON,
+    NO_LINE_REASON,
+    NO_PREVIEW_REASON,
+    context_form_applied,
+    lane_facts,
+)
 from ai_kit_spec.runner_dispatch import (
     PREVIEW_TIMEOUT_S,
     RunnerSeams,
     RunnerSpec,
+    child_env,
     preview_model_id,
     preview_setting,
     print_argv_lines,
     runner_flags,
 )
+
+from tests.cross_ai_selftest import _real_node_executable
 
 REPO = Path(__file__).resolve().parents[1]
 SOURCE_ROOTS = ("skills", "tools")
@@ -43,6 +55,107 @@ def composer_hits(root) -> list[str]:
                    if not {"__pycache__", "node_modules"}.intersection(path.parts))
     return [f"{path.relative_to(root).as_posix()}:{n}" for path in paths
             for n in composer_lines(path.read_text(encoding="utf-8", errors="replace"))]
+
+
+def lab(source, state="verified"):
+    return {"state": state, "source": source}
+
+
+CAPS = {
+    "write": {"value": "none", "label": lab("from argv --tools")},
+    "shell": {"value": "no", "label": lab("from argv --tools")},
+    "skills": {"value": "none", "label": lab("from argv --no-skills")},
+    "mcp": {"value": "none", "label": lab("from argv --no-mcp")},
+    "prompt": {"channel": "stdin", "max_bytes": None},
+}
+
+
+def caps_line(obj):
+    return "cross-ai: capabilities " + json.dumps(obj)
+
+
+class TestLaneFacts(unittest.TestCase):
+    def test_no_preview_is_all_unknown(self):
+        facts = lane_facts(None)
+        self.assertEqual(facts.reason, NO_PREVIEW_REASON)
+        fields = [facts.write, facts.shell, facts.skills, facts.mcp]
+        for field in fields:
+            self.assertEqual(field, {"value": "unknown", "label": {
+                "state": "unknown", "source": NO_PREVIEW_REASON}})
+        self.assertEqual(len({id(field) for field in fields}), 4)
+        self.assertEqual(facts.prompt, {"channel": "unknown", "max_bytes": None})
+        self.assertEqual((facts.skill_settings, facts.mcp_settings, facts.skill_blocks,
+                          facts.settings), ((), (), (), ()))
+
+    def test_missing_line_is_all_unknown(self):
+        facts = lane_facts(["pi\tpi\t[]", "cross-ai: setting skill=lens-a applied form=path"])
+        self.assertEqual(facts.reason, NO_LINE_REASON)
+        self.assertEqual(facts.write["value"], "unknown")
+        self.assertEqual(facts.skill_settings, ({"name": "lens-a", "state": "applied",
+                                                "reason": None, "form": "path"},))
+
+    def test_malformed_line_is_all_unknown(self):
+        cases = [
+            "cross-ai: capabilities {", "cross-ai: capabilities []",
+            caps_line({**CAPS, "write": {"value": "maybe", "label": "x"}}),
+            caps_line({k: v for k, v in CAPS.items() if k != "mcp"}),
+            caps_line({**CAPS, "shell": {"value": "no"}}),
+            caps_line({**CAPS, "shell": {"value": "no", "label": "from argv"}}),
+            caps_line({**CAPS, "shell": {"value": "no", "label": {"state": "verified"}}}),
+            [caps_line(CAPS), caps_line(CAPS)],
+            caps_line({**CAPS, "prompt": {"channel": "pipe", "max_bytes": None}}),
+            caps_line({**CAPS, "prompt": {"channel": "argv", "max_bytes": -1}}),
+            caps_line({**CAPS, "prompt": {"channel": "argv", "max_bytes": True}}),
+            caps_line({**CAPS, "prompt": {"channel": "argv", "max_bytes": None}}),
+            caps_line({**CAPS, "prompt": {"channel": "stdin", "max_bytes": 100}}),
+            caps_line({**CAPS, "shell": {"value": "no", "label": lab("from argv", "probably")}}),
+            caps_line({**CAPS, "shell": {"value": "no", "label": lab("")}}),
+        ]
+        for case in cases:
+            with self.subTest(case=case):
+                facts = lane_facts(case if isinstance(case, list) else [case])
+                self.assertEqual(facts.reason, BAD_LINE_REASON)
+                for field in (facts.write, facts.shell, facts.skills, facts.mcp):
+                    self.assertEqual(field["value"], "unknown")
+
+    def test_well_formed_line(self):
+        facts = lane_facts([caps_line({**CAPS,
+            "shell": {"value": "no", "label": {**lab("from argv --tools"), "extra": 1}},
+            "prompt": {"channel": "argv", "max_bytes": 102000}, "extra": 1})])
+        self.assertIsNone(facts.reason)
+        self.assertEqual(facts.shell, {"value": "no", "label": lab("from argv --tools")})
+        self.assertEqual(facts.prompt, {"channel": "argv", "max_bytes": 102000})
+
+    def test_setting_and_block_lines(self):
+        lines = [
+            "cross-ai: setting model=placeholder-model-1 applied",
+            "cross-ai: setting effort=high ignored reason=no_form",
+            "cross-ai: setting context=1m applied",
+            "cross-ai: setting skill=lens-a applied form=prose",
+            "cross-ai: setting skill=lens-b ignored reason=no_form",
+            "cross-ai: setting mcp=fake-server ignored reason=mode_forbids",
+            "cross-ai: skill-block lens-a bytes=120 sha256=" + "a" * 64,
+            "cross-ai: skill-block lens-a bytes=12x sha256=" + "a" * 64,
+            "cross-ai: setting skill=other-a applied form=bogus",
+            "cross-ai: setting skill=ui-a applied form=path trailing", caps_line(CAPS),
+        ]
+        facts = lane_facts(lines)
+        self.assertEqual(facts.settings, ({"name": "model", "value": "placeholder-model-1"},
+                                          {"name": "context", "value": "1m"}))
+        self.assertEqual(facts.context_setting, {"value": "1m", "state": "applied", "reason": None})
+        self.assertTrue(context_form_applied(facts))
+        for reason, expected in (("id_carries", True), ("no_form", False)):
+            with self.subTest(reason=reason):
+                self.assertEqual(context_form_applied(lane_facts([
+                    f"cross-ai: setting context=1m ignored reason={reason}"])), expected)
+        self.assertFalse(context_form_applied(lane_facts([])))
+        self.assertEqual(facts.skill_settings, (
+            {"name": "lens-a", "state": "applied", "reason": None, "form": "prose"},
+            {"name": "lens-b", "state": "ignored", "reason": "no_form", "form": None}))
+        self.assertEqual(facts.mcp_settings, (
+            {"name": "fake-server", "state": "ignored", "reason": "mode_forbids"},))
+        self.assertEqual(facts.skill_blocks, (
+            {"name": "lens-a", "bytes": 120, "sha256": "a" * 64},))
 
 
 class TestNoPythonEffortComposer(unittest.TestCase):
@@ -65,6 +178,8 @@ class TestPreviewReaders(unittest.TestCase):
         self.assertIsNone(preview_model_id([]))
 
     def test_setting_line(self):
+        self.assertEqual(preview_setting(["cross-ai: setting skill=lens-a applied form=path"],
+                                         "skill"), ("applied", None))
         self.assertEqual(preview_setting(["cross-ai: setting effort=high applied"], "effort"),
                          ("applied", None))
         self.assertEqual(preview_setting(
@@ -96,6 +211,65 @@ class TestPreviewReaders(unittest.TestCase):
             for output in ("", "cross-ai: setting effort=high applied\ncross-ai: model-id m\n"):
                 run = Mock(return_value=subprocess.CompletedProcess([], code, output, ""))
                 self.assertIsNone(print_argv_lines(spec, seams, run))
+
+
+class TestLaneFactsFromTheRunner(unittest.TestCase):
+    def setUp(self):
+        self.node = _real_node_executable()
+        self.assertIsNotNone(self.node, "no real node executable on PATH")
+
+    def _run(self, tmp, spec):
+        node = self.node
+        assert node is not None
+        env = child_env()
+        env.update(HOME=tmp, XDG_STATE_HOME=os.path.join(tmp, "state"),
+                   AI_KIT_REFUSE_REAL_HOME="1")
+        env.pop("HERDR_ENV", None)
+        return lane_facts(print_argv_lines(
+            spec, RunnerSeams(which_fn=lambda _: node, env_fn=lambda: env)))
+
+    def _skill(self, tmp):
+        directory = os.path.join(tmp, "skills", "lens-a")
+        os.makedirs(directory)
+        content = b"---\nname: lens-a\n---\nLens body.\n"
+        with open(os.path.join(directory, "SKILL.md"), "wb") as skill:
+            skill.write(content)
+        return directory, content
+
+    def test_pi_path_form_end_to_end(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory, _ = self._skill(tmp)
+            spec = RunnerSpec("pi", "fake/placeholder-model-1", "review", 30, cwd=tmp,
+                              skill_names=("lens-a",), skill_paths=(directory,))
+            facts = self._run(tmp, spec)
+            self.assertIsNone(facts.reason, msg=str(facts))
+            self.assertEqual(facts.skill_settings, ({"name": "lens-a", "state": "applied",
+                                                     "reason": None, "form": "path"},))
+            self.assertEqual(facts.skills["value"], "path")
+            self.assertEqual(facts.shell["value"], "no")
+            self.assertIn(facts.prompt["channel"], ("argv", "stdin"))
+            self.assertEqual(facts.skill_blocks, ())
+
+    def test_copilot_prose_and_mcp_end_to_end(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory, content = self._skill(tmp)
+            mcp = os.path.join(tmp, "mcp.json")
+            with open(mcp, "w", encoding="utf-8") as output:
+                json.dump({"mcpServers": {"fake-server": {"command": "fake-cmd"}}}, output)
+            os.chmod(mcp, 0o600)
+            spec = RunnerSpec("copilot", "placeholder-model-1", "review", 30, cwd=tmp,
+                              skill_names=("lens-a",), skill_paths=(directory,), mcp_config=mcp)
+            facts = self._run(tmp, spec)
+            self.assertIsNone(facts.reason, msg=str(facts))
+            self.assertEqual(facts.skill_settings[0]["form"], "prose")
+            self.assertEqual(len(facts.skill_blocks), 1)
+            self.assertEqual(facts.skill_blocks[0]["name"], "lens-a")
+            self.assertEqual(facts.skill_blocks[0]["sha256"], hashlib.sha256(content).hexdigest())
+            self.assertGreater(facts.skill_blocks[0]["bytes"], 0)
+            self.assertEqual(facts.mcp_settings, ({"name": "fake-server", "state": "applied",
+                                                   "reason": None},))
+            self.assertEqual(facts.mcp["value"], "call_file")
+            self.assertEqual(facts.settings[0], {"name": "model", "value": "placeholder-model-1"})
 
 
 class TestBuildModelIdReadsTheRunner(unittest.TestCase):
