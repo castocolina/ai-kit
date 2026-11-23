@@ -1418,24 +1418,6 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
-### Phase 999.21: The cross-AI runner removes the temp directories it creates (ABSORBED 2026-11-16)
-
-**Goal:** [Captured for future planning] Every run of the cross-AI runner
-(`skills/ai-kit-spec-review/references/cross-ai.mjs`, `makeTemp`) leaves an empty `cross-ai-*` directory, and
-an indexed run an empty `xai-idx-*` directory, in the system temp folder; Phase 32's review and judge runs left
-about 100 of them in a few hours. The runner removes each temp directory it created when the run ends, on
-success, failure, timeout and signal alike, keeping any file it is told to keep elsewhere, and a runner
-self-test case proves that a run leaves no new entry in its temp folder. The rendered project copy follows
-through the template sync. Likely home: Phase 38 (runner hardening). Found 2026-11-07 at the Phase 32
-close-out; until then the orchestrator moves the leftovers into the repository's `tmp/`.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-**Absorbed by:** Phase 38 criterion 5 (live 2026-11-16: the code was fixed in c535683, 2026-11-14; the proof case is what remains).
-
 ### Phase 999.22: The headless installer links agents, not only skills (BACKLOG)
 
 **Goal:** [Captured for future planning] `tools/setup.py install --headless` links skills only: `--skills`
@@ -1530,25 +1512,6 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 **Absorbed by:** HOOK-04 (Phase 48).
-
-#### Phase 999.5: Idle watchdog for the cross-AI runner (ABSORBED 2026-11-07)
-
-**Goal:** [Captured for future planning] The Phase 18 cross-AI runner
-(`.planning/scripts/cross-ai.mjs`, rendered from the ai-kit-spec-review template) kills the
-child's process group only at the overall deadline (outer `workflow.cross_ai_timeout` minus the
-D-29 margin). A child that hangs without output burns the whole window. Add an opt-in idle
-watchdog: kill the process group after N seconds with no stdout/stderr growth, then exit with the
-existing status vocabulary (a `retry-later` or `fallback` action, never a new exit class). It needs
-a self-test case and a default that is safe for slow, quiet models. Deferred by 18 D-43
-(RUN-46, 2026-10-15): not required by SPEC R5/D-27, and the runner is the largest new code in
-Phase 18.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-**Absorbed by:** RUN-03 (Phase 38).
 
 #### Phase 999.7: Cursor project-level subagent linking (ABSORBED 2026-11-07)
 
@@ -1668,50 +1631,6 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 **Absorbed by:** DEF-04 (Phase 32.4).
-
-#### Phase 999.12: Runner and adapter cleanup after the Phase 25 reviews (ABSORBED 2026-11-07)
-
-**Goal:** [Captured for future planning] Cut what the Phase 25 code and ponytail reviews
-(`25-REVIEW.md`) found unneeded or duplicated, with no behavior change:
-- one "confirmed router" rule shared by Python's catalog `fallback_quota` and curated-config's
-  `is_router`/`router_confirmed`/execute;
-- a `quota_cycle` class from superpowers' `classify_dispatch_failure`, instead of three shell
-  JSON parses in its SKILL;
-- `plan_io.py` calls gsd-core's `buildAgentSkillsBlock` instead of re-implementing its
-  skill-resolution rules;
-- dead `runCli` state, the live-detection plumbing and the clamp helpers (IN-01, IN-03);
-- the runner's embedded self-test harness (about 3,300 lines) moves to a sibling file that
-  rendered copies do not carry;
-- the lower user `cross_ai_timeout` is restored on cleanup (WR-05).
-
-Success criteria when promoted: each change keeps the runner self-test, `make test` and
-`make validate` green, and the template still renders a pristine copy.
-**Requirements:** (none yet)
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-**Absorbed by:** RUN-04 (Phase 38).
-
-#### Phase 999.13: Register workflow.cross_ai_retry with gsd-core so config-set accepts it (ABSORBED 2026-11-07)
-
-**Goal:** [Captured for future planning] Ship a gsd-core capability manifest that registers
-`workflow.cross_ai_retry.*`, so `config-set workflow.cross_ai_retry.<key>` validates and writes the
-key instead of the owner hand-editing `.planning/config.json` (Phase 25.1 D-02). Starting evidence
-(25.1-RESEARCH.md Q2): gsd-core 1.17.0 composes federated capability config keys from
-`capability.json` manifests under `$GSD_HOME/.gsd/capabilities/<id>/` (global) or
-`<project>/.gsd/capabilities/<id>/` (project); a project-scope capability needs a consent record
-keyed to the project's realpath and its bundle hash, or it stays discovered-but-inactive. Open:
-the exact manifest fields, whether a list-typed key such as `hard_waits_s` is accepted, the
-global versus project scope choice and the consent gate.
-**Requirements:** (none yet)
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-**Absorbed by:** superseded by CFG-03 (Phase 33): gsd-core rejects non-GSD keys, so the retry settings move into ai-kit's own config (REQUIREMENTS.md Out of Scope).
 
 #### Phase 999.14: Install ai-kit skills as real copies through the skills CLI, synced across hosts (ABSORBED 2026-11-07)
 
@@ -1866,3 +1785,100 @@ actually run instead of skipping on a gsd-core line outside `GSD_CORE_PREFIXES`.
 `AGENT_TO_PHASE_TYPE` are value-equal to the 1.16.0 fixture; the prefix allowlist became a minimum-version
 rule (`GSD_CORE_MIN_VERSION`, 1.16.0 or newer runs), so a gsd-core upgrade runs the guard and a real
 incompatibility fails it. `check-dogfood` reports `3 attempted, 3 executed, 0 skipped`.
+
+#### Phase 999.21: The cross-AI runner removes the temp directories it creates (DONE 2026-11-23)
+
+**Goal:** [Captured for future planning] Every run of the cross-AI runner
+(`skills/ai-kit-spec-review/references/cross-ai.mjs`, `makeTemp`) leaves an empty `cross-ai-*` directory, and
+an indexed run an empty `xai-idx-*` directory, in the system temp folder; Phase 32's review and judge runs left
+about 100 of them in a few hours. The runner removes each temp directory it created when the run ends, on
+success, failure, timeout and signal alike, keeping any file it is told to keep elsewhere, and a runner
+self-test case proves that a run leaves no new entry in its temp folder. The rendered project copy follows
+through the template sync. Likely home: Phase 38 (runner hardening). Found 2026-11-07 at the Phase 32
+close-out; until then the orchestrator moves the leftovers into the repository's `tmp/`.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+**Delivered by:** Phase 38 criterion 5 (completed 2026-11-22, 38-VERIFICATION.md SC5 and R10): the code was
+fixed in c535683 (2026-11-14); the self-test case `temp-dirs-gone` now proves that an ok run, a failed run and
+a signalled run leave no `cross-ai-*` or `xai-idx-*` entry in the temp folder, and it passes.
+
+#### Phase 999.5: Idle watchdog for the cross-AI runner (DONE 2026-11-23)
+
+**Goal:** [Captured for future planning] The Phase 18 cross-AI runner
+(`.planning/scripts/cross-ai.mjs`, rendered from the ai-kit-spec-review template) kills the
+child's process group only at the overall deadline (outer `workflow.cross_ai_timeout` minus the
+D-29 margin). A child that hangs without output burns the whole window. Add an opt-in idle
+watchdog: kill the process group after N seconds with no stdout/stderr growth, then exit with the
+existing status vocabulary (a `retry-later` or `fallback` action, never a new exit class). It needs
+a self-test case and a default that is safe for slow, quiet models. Deferred by 18 D-43
+(RUN-46, 2026-10-15): not required by SPEC R5/D-27, and the runner is the largest new code in
+Phase 18.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+**Delivered by:** RUN-03 (Phase 38, completed 2026-11-22, 38-VERIFICATION.md R1 and R2): the opt-in
+`--idle-timeout <seconds|default>` watchdog (default 900 s, judged) ends a silent lane's process group as a
+timed-out attempt in the existing retry ladder, an execute lane's idle clock resets when the tree or commits
+change, and the self-test cases idle-silent-ended, idle-slow-quiet-default and poll-* pass.
+
+#### Phase 999.12: Runner and adapter cleanup after the Phase 25 reviews (DONE 2026-11-23)
+
+**Goal:** [Captured for future planning] Cut what the Phase 25 code and ponytail reviews
+(`25-REVIEW.md`) found unneeded or duplicated, with no behavior change:
+- one "confirmed router" rule shared by Python's catalog `fallback_quota` and curated-config's
+  `is_router`/`router_confirmed`/execute;
+- a `quota_cycle` class from superpowers' `classify_dispatch_failure`, instead of three shell
+  JSON parses in its SKILL;
+- `plan_io.py` calls gsd-core's `buildAgentSkillsBlock` instead of re-implementing its
+  skill-resolution rules;
+- dead `runCli` state, the live-detection plumbing and the clamp helpers (IN-01, IN-03);
+- the runner's embedded self-test harness (about 3,300 lines) moves to a sibling file that
+  rendered copies do not carry;
+- the lower user `cross_ai_timeout` is restored on cleanup (WR-05).
+
+Success criteria when promoted: each change keeps the runner self-test, `make test` and
+`make validate` green, and the template still renders a pristine copy.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+**Delivered by:** RUN-04 (Phase 38, completed 2026-11-22, 38-VERIFICATION.md R6 to R10): one confirmed-router
+rule (`model_heuristics.router_statement`), the `quota_cycle` class, the self-test harness moved to
+`cross-ai-selftest.mjs` (rendered copies do not carry it), `plan_io.py` calling gsd-core's
+`buildAgentSkillsBlock`, and the dead `watchChunk` state removed (`clampCapS` and `clampAttemptTimeout` are live
+and stay). The lower-timeout restore became a visible, tested before and after in the plan entry (38 D-17 to
+D-22: its skill was removed in Phase 31).
+
+#### Phase 999.13: Register workflow.cross_ai_retry with gsd-core so config-set accepts it (DONE 2026-11-23)
+
+**Goal:** [Captured for future planning] Ship a gsd-core capability manifest that registers
+`workflow.cross_ai_retry.*`, so `config-set workflow.cross_ai_retry.<key>` validates and writes the
+key instead of the owner hand-editing `.planning/config.json` (Phase 25.1 D-02). Starting evidence
+(25.1-RESEARCH.md Q2): gsd-core 1.17.0 composes federated capability config keys from
+`capability.json` manifests under `$GSD_HOME/.gsd/capabilities/<id>/` (global) or
+`<project>/.gsd/capabilities/<id>/` (project); a project-scope capability needs a consent record
+keyed to the project's realpath and its bundle hash, or it stays discovered-but-inactive. Open:
+the exact manifest fields, whether a list-typed key such as `hard_waits_s` is accepted, the
+global versus project scope choice and the consent gate.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+**Delivered by:** superseded by CFG-03 (Phase 33, 33-VERIFICATION.md truth 7): gsd-core rejects non-GSD keys, so
+no capability manifest was shipped; the runner reads `[runner.retry]` from ai-kit's own config (project over
+user) and migrates the GSD block once, with 60 retry, TOML and migration self-test cases passing.
