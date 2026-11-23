@@ -223,7 +223,7 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
 ## Cross-AI execution
 
 v2 `apply` sets `workflow.cross_ai_command` to `node .planning/scripts/cross-ai.mjs` and renders
-the bundled template 11. Each call uses one runtime (`CONFIG.runtime`, set by the plan) and its
+the bundled template 12. Each call uses one runtime (`CONFIG.runtime`, set by the plan) and its
 model; a missing binary stops as `not_installed` and is never replaced. Only when the owner
 asks, never as an answer to a stop or to `not_installed`, the runtime changes through
 `plan-set script:cross-ai.runtime <id>`, a dry run and an apply. Never hand-edit CONFIG: edits
