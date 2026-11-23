@@ -24,6 +24,7 @@ from ai_kit_spec import (
     routing,
     runner_facts,
     secret_shapes,
+    skill_table,
     toml_splice,
     trust,
     usability,
@@ -488,6 +489,7 @@ def _build_parser() -> argparse.ArgumentParser:
     catalog_cmds.register_parsers(sub)
     propose_cmds.register_parsers(sub)
     config_status.register_parsers(sub)
+    skill_table.register_parsers(sub)
     return parser
 
 def _cmd_cache_path(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -1377,6 +1379,7 @@ _COMMANDS = {
     **catalog_cmds.COMMANDS,
     **propose_cmds.COMMANDS,
     **config_status.COMMANDS,
+    **skill_table.COMMANDS,
 }
 
 def _dispatch(argv: list, deps: CliDeps) -> int:
