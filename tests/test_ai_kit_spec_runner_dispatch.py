@@ -22,6 +22,7 @@ from ai_kit_spec import reviewer_dispatch
 from ai_kit_spec import runner_dispatch as rd
 from ai_kit_spec.cli import main
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
+from ai_kit_spec.model_catalog import CATALOG_SCHEMA_VERSION
 from ai_kit_spec.runner_dispatch import (
     CURSOR_MODEL_ID_SRC,
     MODEL_ID_SRC,
@@ -1021,7 +1022,7 @@ def _write_catalog(cache_home, entries):
     directory = os.path.join(cache_home, "ai-kit", "spec")
     os.makedirs(directory)
     path = os.path.join(directory, "model-catalog.json")
-    raw = {"_meta": {"schema_version": 3}}
+    raw = {"_meta": {"schema_version": CATALOG_SCHEMA_VERSION}}
     raw.update(entries)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(raw, handle)
@@ -1073,10 +1074,10 @@ class TestResolveRoute(unittest.TestCase):
                           handle)
             self.assertIsNone(rd.resolve_route("pi", "router-env/x", env))
             with open(path, "w", encoding="utf-8") as handle:
-                json.dump({"_meta": {"schema_version": 3}}, handle)
+                json.dump({"_meta": {"schema_version": CATALOG_SCHEMA_VERSION}}, handle)
             self.assertIsNone(rd.resolve_route("pi", "router-env/x", env))
             malformed = {
-                "_meta": {"schema_version": 3},
+                "_meta": {"schema_version": CATALOG_SCHEMA_VERSION},
                 "a-list": ["not", "an", "entry"],
                 "b-runtimes": {"runtimes": ["pi"], "fallback_quota": True,
                                "heuristic_confirmed": ["fallback_quota"]},

@@ -16,9 +16,7 @@ runs the pair through the supervised runner, which builds the argv.
 
 Non-interactive: `codex exec`. Model: `-m <model>`. Reasoning effort and the
 service-speed tier are separate knobs (`--codex-effort`, `--codex-service-tier`
-on the runner), never a suffix on the model id. Confirmed live 2026-08-29:
-`codex exec -m gpt-5.6-sol-high` is rejected; the pair is `model = "gpt-5.6-sol"`
-with `effort = "high"`.
+on the runner), never a suffix on the model id. Confirmed live 2026-08-29 with a real model id (shown here with invented placeholders; model-example: invented ids): a suffixed id such as `codex exec -m placeholder-model-1-high` is rejected; the pair is `model = "placeholder-model-1"` with `effort = "high"`.
 
 **Review** runs read-only:
 

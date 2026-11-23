@@ -34,7 +34,7 @@
     },
     {
       "id": "precise-stale-opencode-provider-warning",
-      "prompt": "Run setup. My local config.toml has an opencode reviewer on gone/model-x, and the live opencode listing no longer includes gone.",
+      "prompt": "Run setup. My local config.toml has an opencode reviewer on fake/gone-model-1, and the live opencode listing no longer includes provider fake.",
       "expected_output": "Shows the check-providers warning line naming the provider and the file, and continues setup without stopping on it.",
       "files": [
         "evals/files/stale-opencode/config.toml"
@@ -76,12 +76,53 @@
     },
     {
       "id": "edge-unconfirmed-read-only-asks-before-test",
-      "prompt": "Set up an opencode reviewer on my-provider/my-model for this project and test it.",
+      "prompt": "Set up an opencode reviewer on fake/placeholder-model-1 for this project and test it.",
       "expected_output": "Reads opencode's profile, sees read_only: unconfirmed, and asks whether to run the live test call before running check-reviewer; on a skip it saves the entry as untested and names it in the report.",
       "files": [],
       "assertions": [
         "Asks about the unconfirmed read-only invocation before any check-reviewer call",
         "On a declined test, runs no check-reviewer call and reports the entry as untested"
+      ]
+    },
+    {
+      "id": "edge-catalog-stale-report-and-usability",
+      "prompt": "Set up lanes on a machine whose opencode listing dropped a model.",
+      "expected_output": "Runs the catalog step, shows the catalog-report row as stale with its last-seen time, shows attribution lines, and does not mark a model verified without check-reviewer.",
+      "files": [],
+      "assertions": [
+        "Runs the catalog step and shows the stale catalog-report row with its last-seen time",
+        "Shows attribution lines",
+        "Does not mark a model verified without check-reviewer"
+      ]
+    },
+    {
+      "id": "edge-router-alias-assumed",
+      "prompt": "My config uses router-env/my-coding-lite.",
+      "expected_output": "Shows the alias as assumed router with fallback quota and asks no heuristic question about it.",
+      "files": [],
+      "assertions": [
+        "Labels the alias assumed router with fallback quota",
+        "Asks no heuristic question about the alias"
+      ]
+    },
+    {
+      "id": "edge-declined-runtime-never-presented",
+      "prompt": "Set up lanes. Both opencode and pi are installed, I keep only pi, and an opencode model ranks higher in the catalog.",
+      "expected_output": "Ranks and shows candidates only for the kept runtime pi; the declined opencode runtime and its higher-ranked model are never presented as a candidate.",
+      "files": [],
+      "assertions": [
+        "Narrows the discovered pairs to the kept runtime before ranking",
+        "Does not present the declined opencode model as a candidate"
+      ]
+    },
+    {
+      "id": "edge-migrate-only-runs-no-setup",
+      "prompt": "Migrate my old .aikit/review-spec.toml to the new config format, nothing else.",
+      "expected_output": "Reports migration pending, names the command that migrates it on its next read, and stops without setup writes.",
+      "files": [],
+      "assertions": [
+        "Reports migration pending before any detect-runtimes --save or catalog step",
+        "Runs no detect-runtimes --save, no catalog step and writes no config"
       ]
     }
   ]

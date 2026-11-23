@@ -49,13 +49,15 @@ fills each; the runner reads only `[runner]` and `[runner.retry*]` through its T
 - `[runner.retry.scopes."<scope>"]`: the same five keys for one GSD scope. The scope is the config
   directory's path under `.planning/` with `/` separators, for example `"myproj"` or
   `"myproj/workstreams/ws1"`. The scope table wins over `[runner.retry]` for its own scope only.
-- `[models]`: catalog sources, cache age and classification settings. Phase 35. Not read in Phase 33.
+- `[models]` (Phase 35, read by `models_config.read_models_settings`, written by `models-config`): `sources` (any of `models.dev`, `artificial-analysis`, `arena`; default all three), `[models.cache_days]` (`models_dev`, `artificial_analysis`, `arena`, whole days, default 7; host listings keep 30 days), `[[models.context]]` (`runtime`, `model`, `tokens`: a user-stated context window per (runtime, model)). Project over user per key: a project `[[models.context]]` array replaces the user array. The Artificial Analysis key stays in `secrets.env`.
 - `[jev]`: `laya_url` (string, any address; `""` means no Laya), `laya_version` (string, for a server
   that exposes no version) and `enabled` (bool). Read by jev-fast-decision through its parity-tested
   copy of the layered reader (`jev_table`, `jev_config.py:621`), project over user per key, with
   `JEV_LAYA_URL`/`AI_KIT_LAYA_URL` and `GSD_PATH_JEV` as session overrides; `jev_review.py config set`
   writes the user layer only (`config_set`, `jev_config.py:663`). Phase 34.
 - `[hooks]`: hook switches. Phase 49. Not read in Phase 33.
+
+`model-catalog.json` (schema 4): `facts.<name>` = {value, label, source, fetched_at[, confidence]}, `identity`, `confirmed_fields`, and per runtime `ctx_window` (int), `context` (fact), `usability` {state, at, via, error}, `efforts`, `last_seen`.
 
 The Python reader accepts a table or key it does not know and keeps it through a write. The runner's
 subset reader (D-07) reads only `[runner]` and `[runner.retry*]` and skips every other table as opaque.

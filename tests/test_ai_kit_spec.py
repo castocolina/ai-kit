@@ -106,6 +106,15 @@ from ai_kit_spec.vendor import infer_vendor_from_model
 
 from tests import host_fakes
 
+# 35: no test reaches the Arena network
+_NO_ARENA = lambda **_kw: ({"config": "text", "split": "latest", "categories": {}}, False)
+
+
+def _fresh_meta():
+    sources = ("models_dev", "artificial_analysis", "arena")
+    records = {key: {"last_fetched": time.time(), "ok": True} for key in sources}
+    return {"schema_version": model_catalog.CATALOG_SCHEMA_VERSION, "sources": records}
+
 # Fixture provenance (JSON cannot hold comments, so the record lives here, next to the
 # constant the tests read the fixture through):
 # - Source command: `codex debug models` (CLI version codex-cli 0.147.0, the real binary
@@ -1437,7 +1446,8 @@ class TestListerOutcomes(unittest.TestCase):
                 lambda: detection.detect_codex_models(
                     "/b", run_fn=lambda *_a, **_k: _listing(codex_one)
                 ),
-                [{"id": "m", "reasoning_modes": []}],
+                [{"id": "m", "reasoning_modes": [], "context_window": None,
+                  "max_context_window": None}],
             ),
             "codex-empty": (
                 lambda: detection.detect_codex_models(
@@ -1898,10 +1908,11 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
             raise OSError("codex debug models failed to launch")
 
         snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run_fn)
-        self.assertEqual(
-            snapshot["clis"]["codex"], {"installed": True, "path": "/fake/volta/bin/codex",
-                                           "real_path": "/fake/volta/bin/codex"}
-        )
+        entry = snapshot["clis"]["codex"]
+        self.assertEqual({key: entry[key] for key in ("installed", "path", "real_path")},
+                         {"installed": True, "path": "/fake/volta/bin/codex",
+                          "real_path": "/fake/volta/bin/codex"})
+        self.assertEqual(entry["listing"], "failed")
 
     def test_codex_nonzero_exit_omits_models_key(self):
         # A failing command that still prints stale or partial JSON must not populate
@@ -1915,10 +1926,11 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
             which_fn=fake_which,
             run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=1, stdout=fixture_text),
         )
-        self.assertEqual(
-            snapshot["clis"]["codex"], {"installed": True, "path": "/fake/volta/bin/codex",
-                                           "real_path": "/fake/volta/bin/codex"}
-        )
+        entry = snapshot["clis"]["codex"]
+        self.assertEqual({key: entry[key] for key in ("installed", "path", "real_path")},
+                         {"installed": True, "path": "/fake/volta/bin/codex",
+                          "real_path": "/fake/volta/bin/codex"})
+        self.assertEqual(entry["listing"], "failed")
 
     def test_failed_opencode_listing_omits_models_key(self):
         def fake_which(name, **_kwargs):
@@ -2003,6 +2015,7 @@ class TestCodexEnumerationEndToEnd(unittest.TestCase):
                     "--catalog-path",
                     catalog_path,
                 ],
+                fetch_arena_fn=_NO_ARENA,
                 fetch_models_dev_fn=lambda: (models_dev_data, True),
                 fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                 load_secret_fn=lambda env, key: None,
@@ -2168,7 +2181,9 @@ class TestParseCodexDebugModels(unittest.TestCase):
             }
         )
         self.assertEqual(
-            detection.parse_codex_debug_models(stdout), [{"id": "ok", "reasoning_modes": []}]
+            detection.parse_codex_debug_models(stdout),
+            [{"id": "ok", "reasoning_modes": [], "context_window": None,
+              "max_context_window": None}]
         )
 
     def test_missing_or_malformed_levels_degrade_to_empty_modes(self):
@@ -2192,10 +2207,12 @@ class TestParseCodexDebugModels(unittest.TestCase):
             self.assertEqual(
                 detection.parse_codex_debug_models(stdout),
                 [
-                    {"id": "m", "reasoning_modes": ["low"]}
+                    {"id": "m", "reasoning_modes": ["low"], "context_window": None,
+                     "max_context_window": None}
                     if "supported_reasoning_levels" in item
                     and isinstance(item["supported_reasoning_levels"], list)
-                    else {"id": "m", "reasoning_modes": []}
+                    else {"id": "m", "reasoning_modes": [], "context_window": None,
+                          "max_context_window": None}
                 ],
             )
 
@@ -2221,7 +2238,9 @@ class TestParseCodexDebugModels(unittest.TestCase):
             }
         )
         self.assertEqual(
-            detection.parse_codex_debug_models(stdout), [{"id": "m", "reasoning_modes": ["low"]}]
+            detection.parse_codex_debug_models(stdout),
+            [{"id": "m", "reasoning_modes": ["low"], "context_window": None,
+              "max_context_window": None}]
         )
 
 
@@ -2427,13 +2446,19 @@ class TestPiRpcModels(unittest.TestCase):
             return pi_path if name == "pi" else None
 
         def fake_run(argv, **kwargs):
+            if argv[-1:] == ["--version"]:
+                return subprocess.CompletedProcess(argv, 0, stdout="fake version", stderr="")
             recorded["argv"] = argv
             recorded["kwargs"] = kwargs
             return subprocess.CompletedProcess(argv, 0, stdout=fixture, stderr="")
 
         snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run)
+        entry = snapshot["clis"]["pi"]
+        self.assertEqual(entry["listing"], "ok")
         self.assertEqual(
-            snapshot["clis"]["pi"],
+            {key: entry[key] for key in ("installed", "path", "real_path", "models",
+                                         "reasoning_modes", "context_window", "max_tokens",
+                                         "image_input")},
             {
                 "installed": True,
                 "path": pi_path,
@@ -2540,7 +2565,9 @@ class TestPiRpcModels(unittest.TestCase):
 
         snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=bad_run)
         entry = snapshot["clis"]["pi"]
-        self.assertEqual(entry, {"installed": True, "path": pi_path, "real_path": pi_path})
+        self.assertEqual({key: entry[key] for key in ("installed", "path", "real_path")},
+                         {"installed": True, "path": pi_path, "real_path": pi_path})
+        self.assertEqual(entry["listing"], "failed")
         self.assertNotIn("models", entry)
 
     def test_snapshot_empty_valid_listing(self):
@@ -2556,18 +2583,14 @@ class TestPiRpcModels(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0, stdout=empty, stderr="")
 
         snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run)
+        entry = snapshot["clis"]["pi"]
+        self.assertEqual(entry["listing"], "ok")
         self.assertEqual(
-            snapshot["clis"]["pi"],
-            {
-                "installed": True,
-                "path": pi_path,
-                "real_path": pi_path,
-                "models": [],
-                "reasoning_modes": {},
-                "context_window": {},
-                "max_tokens": {},
-                "image_input": {},
-            },
+            {key: entry[key] for key in ("installed", "path", "real_path", "models",
+                                         "reasoning_modes", "context_window", "max_tokens",
+                                         "image_input")},
+            {"installed": True, "path": pi_path, "real_path": pi_path, "models": [],
+             "reasoning_modes": {}, "context_window": {}, "max_tokens": {}, "image_input": {}},
         )
 
     def test_snapshot_pi_not_installed(self):
@@ -2625,7 +2648,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
         snapshot = build_runtimes_snapshot(
             which_fn=lambda *_a, **_k: None, run_fn=lambda *a, **k: None)
         self.assertEqual(snapshot["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
-        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 7)
+        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 8)
 
     def test_fresh_but_unversioned_cache_redetects_and_stamps(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2697,7 +2720,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             self.assertTrue(recorded)
             cached = cache_read_json(path)
             assert cached is not None
-            self.assertEqual(cached["schema_version"], 7)
+            self.assertEqual(cached["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
 
     def test_fresh_version_2_cache_redetects_and_restamps(self):
         # 17 D-32: version 2 predates the opencode 2.x /api/model source, so even a
@@ -2811,9 +2834,10 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             {"schema_version": 4},
             {"schema_version": 5},
             {"schema_version": 6},
+            {"schema_version": 7},
         ):
             self.assertFalse(f(bad))
-        for good in ({"schema_version": 7}, {"schema_version": 8}):
+        for good in ({"schema_version": 8}, {"schema_version": 9}):
             self.assertTrue(f(good))
 
     def test_cache_is_stale_stays_schema_agnostic(self):
@@ -6633,7 +6657,7 @@ class TestRankerPurposeFloor(unittest.TestCase):
         with open(NULL_INDEX_CATALOG_PATH, encoding="utf-8") as handle:
             raw = json.load(handle)
         entries, meta = model_catalog.split_catalog_meta(raw)
-        self.assertEqual(meta.get("schema_version"), 3)
+        self.assertEqual(meta.get("schema_version"), model_catalog.CATALOG_SCHEMA_VERSION)
         return [{**entry, "key": key} for key, entry in entries.items()]
 
     def test_null_index_catalog_ranks_mechanical_by_price(self):
@@ -7154,6 +7178,7 @@ class TestMatchArtificialAnalysis(unittest.TestCase):
                 "slug": "gpt-5-6-sol",
                 "model_creator": {"name": "OpenAI"},
                 "evaluations": {
+                    # synthetic: Artificial Analysis shapes, invented values
                     "artificial_analysis_intelligence_index": 68.4,
                     "artificial_analysis_coding_index": 74.1,
                     "artificial_analysis_agentic_index": 61.2,
@@ -7183,6 +7208,7 @@ class TestMatchArtificialAnalysis(unittest.TestCase):
                 "name": "GPT-5.6 Sol V2",
                 "slug": "gpt-5-6-sol-v2",
                 "model_creator": {"name": "OpenAI"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_coding_index": 74.1},
             }
         ]
@@ -7200,6 +7226,7 @@ class TestMatchArtificialAnalysis(unittest.TestCase):
                 "name": "Sol",
                 "slug": "sol",
                 "model_creator": {"name": "Xai"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_coding_index": 10.0},
             },
             {
@@ -7207,6 +7234,7 @@ class TestMatchArtificialAnalysis(unittest.TestCase):
                 "name": "Sol",
                 "slug": "sol",
                 "model_creator": {"name": "OpenAI"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_coding_index": 90.0},
             },
         ]
@@ -7311,6 +7339,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "router-env-coding",
                 "name": "Router Env Coding",
                 "model_creator": {"name": "SomeVendor"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_coding_index": 89.0},
             }
         ]
@@ -7517,6 +7546,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "sol",
                 "name": "Sol",
                 "model_creator": {"name": "OpenAI"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 70.0},
             }
         ]
@@ -7564,6 +7594,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-high",
                 "name": "Claude Opus 5 High",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
             }
         ]
@@ -7601,6 +7632,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-high",
                 "name": "Claude Opus 5 High",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
             }
         ]
@@ -7662,6 +7694,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-high",
                 "name": "Claude Opus 5 High",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
             }
         ]
@@ -7689,7 +7722,7 @@ class TestBuildModelCatalog(unittest.TestCase):
             self.assertNotIn("tool_calling", entry)
             self.assertNotIn("structured_output", entry)
             self.assertNotIn("max_output_tokens", entry)
-            self.assertIsNone(entry["runtimes"][cli_name]["ctx_window"])
+            self.assertNotIn("ctx_window", entry["runtimes"][cli_name])
 
     def test_unmatched_new_candidate_is_reported_but_never_persisted(self):
         # CRITICAL: an unmatched, never-before-seen candidate must NOT land in the catalog
@@ -7714,10 +7747,12 @@ class TestBuildModelCatalog(unittest.TestCase):
         _, _, unmatched = cli.build_model_catalog(
             discovered, cli.CatalogSources({}, True, [], True), {}
         )
-        self.assertEqual(len(unmatched), 1)
-        self.assertTrue(unmatched[0]["is_router"])
-        self.assertTrue(unmatched[0]["fallback_quota"])
-        self.assertIn("batch_mode", unmatched[0])
+        self.assertEqual(unmatched, [])
+        entry = cli.build_model_catalog(
+            discovered, cli.CatalogSources({}, True, [], True), {}
+        )[0]["router-env/totally-unknown"]
+        self.assertTrue(entry["is_router"])
+        self.assertTrue(entry["fallback_quota"])
 
     def test_already_confirmed_manual_entry_is_not_re_reported_as_unmatched(self):
         # A candidate already persisted (via confirm-catalog-entry, a previous run) is known --
@@ -7944,6 +7979,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "gpt-5-6-sol",
                 "name": "GPT-5.6 Sol",
                 "model_creator": {"name": "OpenAI"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 91.0},
             }
         ]
@@ -7968,6 +8004,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "confidence": "low",
                 "last_verified": "2026-08-01",
                 "is_router": False,
+                "heuristic_confirmed": ["is_router"],
             }
         }
         # user corrected this away from the heuristic default (True)
@@ -7990,6 +8027,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "gpt-5-6-sol",
                 "name": "GPT-5.6 Sol",
                 "model_creator": {"name": "OpenAI"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 91.0},
             }
         ]
@@ -8135,6 +8173,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "gpt-5-6-sol",
                 "name": "GPT-5.6 Sol",
                 "model_creator": {},  # no "name" at all
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 91.0},
             }
         ]
@@ -8168,6 +8207,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "gpt-5-6-sol",
                 "name": "GPT-5.6 Sol",
                 "model_creator": {"name": "—"},  # non-empty, slugifies to ""
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 91.0},
             }
         ]
@@ -8210,6 +8250,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-thinking-xhigh",
                 "name": "Claude Opus 5 Thinking XHigh",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
             }
         ]
@@ -8260,6 +8301,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-high",
                 "name": "Claude Opus 5 High",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
                 "pricing": {"price_1m_input_tokens": 15.0, "price_1m_output_tokens": 75.0},
             }
@@ -8295,6 +8337,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "gpt-5-high",
                 "name": "GPT-5 High",
                 "model_creator": {"name": "OpenAI"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 70.0},
             }
         ]
@@ -8359,6 +8402,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-high",
                 "name": "Claude Opus 5 High",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
                 "pricing": {"price_1m_input_tokens": 15.0, "price_1m_output_tokens": 75.0},
             },
@@ -8367,6 +8411,7 @@ class TestBuildModelCatalog(unittest.TestCase):
                 "slug": "claude-opus-5-high-fast",
                 "name": "Claude Opus 5 High Fast",
                 "model_creator": {"name": "Anthropic"},
+                # synthetic: Artificial Analysis shapes, invented values
                 "evaluations": {"artificial_analysis_intelligence_index": 61.5},
                 "pricing": {"price_1m_input_tokens": 30.0, "price_1m_output_tokens": 150.0},
             },
@@ -8411,7 +8456,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
         # than the catalog file's own mtime. Every test below that wants to stay network-free
         # under `--if-stale` must seed THIS file fresh, not just the catalog file.
         with open(catalog_path + ".fetch-meta.json", "w", encoding="utf-8") as f:
-            json.dump({"last_fetched": time.time()}, f)
+            json.dump(_fresh_meta(), f)
 
     def _write_current_schema_catalog(self, catalog_path):
         # 16 D-12: a skip-fetch run additionally requires the catalog's `_meta.schema_version`
@@ -8451,6 +8496,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                         catalog_path,
                         "--if-stale",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=self._never_fetch_models_dev,
                     fetch_artificial_analysis_fn=self._never_fetch_aa,
                 )
@@ -8461,20 +8507,12 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             self.assertEqual(result["unmatched"][0]["model_id"], "vendor/brand-new")
 
     def test_if_stale_skip_never_touches_the_fetch_freshness_marker(self):
-        # Important finding (coordinator review): a skip_fetch run must leave the fetch-meta
-        # sidecar file completely untouched (content AND mtime) -- otherwise a subsequent
-        # --if-stale run would (wrongly) see it as freshly re-verified and keep extending the
-        # TTL window forever without ever actually re-fetching. Seed a meta file with an old
-        # `last_fetched` epoch (already outside CATALOG_TTL_SECONDS, so a real fetch WOULD be
-        # warranted by that timestamp) but a very recent mtime (so cache_is_stale's mtime check
-        # alone would call it fresh) -- proving staleness is judged by the file's mtime here
-        # (same cache_is_stale mechanism as everywhere else in this codebase), and that a
-        # skipped run leaves that mtime/content alone rather than refreshing it.
+        # 35 D-02: a skip run leaves the per-source sidecar untouched (content and mtime).
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
             self._write_current_schema_catalog(catalog_path)
             meta_path = catalog_path + ".fetch-meta.json"
-            original_marker = {"last_fetched": 12345.0}
+            original_marker = _fresh_meta()
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(original_marker, f)
             before_mtime = os.stat(meta_path).st_mtime
@@ -8493,6 +8531,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                         catalog_path,
                         "--if-stale",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=self._never_fetch_models_dev,
                     fetch_artificial_analysis_fn=self._never_fetch_aa,
                 )
@@ -8525,6 +8564,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                         "--catalog-path",
                         catalog_path,
                     ],  # no --if-stale -- always fetches
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: ({}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda env, key: None,
@@ -8535,7 +8575,8 @@ class TestFetchModelCatalogCli(unittest.TestCase):
             self.assertTrue(os.path.exists(meta_path))
             meta = cache_read_json(meta_path)
             assert meta is not None
-            self.assertIsInstance(meta["last_fetched"], float)
+            self.assertIsInstance(meta["sources"]["models_dev"]["last_fetched"], float)
+            self.assertTrue(meta["sources"]["models_dev"]["ok"])
 
     def test_no_api_key_is_treated_as_source_skipped_not_a_genuine_no_match(self):
         # CRITICAL finding (#3, coordinator review): this is the line that was never actually
@@ -8558,6 +8599,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                         "--catalog-path",
                         catalog_path,
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: ({}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: (
                         [{"id": "1", "slug": "x"}],
@@ -8594,6 +8636,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                         "--extra-candidate",
                         "codex:vendor/typed-in-model",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=self._never_fetch_models_dev,
                     fetch_artificial_analysis_fn=self._never_fetch_aa,
                 )
@@ -8643,6 +8686,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                         "--if-stale",
                     ],
                     env_fn=lambda: {"HOME": d},
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=self._never_fetch_models_dev,
                     fetch_artificial_analysis_fn=self._never_fetch_aa,
                 )
@@ -8679,6 +8723,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                     ["fetch-model-catalog", "--runtimes-json", runtimes_path,
                      "--catalog-path", catalog_path, "--cwd", d, "--if-stale"],
                     env_fn=lambda: {"HOME": d},
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=self._never_fetch_models_dev,
                     fetch_artificial_analysis_fn=self._never_fetch_aa,
                 )
@@ -8835,7 +8880,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
 
     def _write_fresh_fetch_meta(self, catalog_path):
         with open(catalog_path + ".fetch-meta.json", "w", encoding="utf-8") as f:
-            json.dump({"last_fetched": time.time()}, f)
+            json.dump(_fresh_meta(), f)
 
     @staticmethod
     def _legacy_entry():
@@ -8893,8 +8938,10 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             None,
         ):
             self.assertFalse(f(bad))
-        for good in ({"schema_version": 3}, {"schema_version": 4}):
+        for good in ({"schema_version": model_catalog.CATALOG_SCHEMA_VERSION},
+                     {"schema_version": model_catalog.CATALOG_SCHEMA_VERSION + 1}):
             self.assertTrue(f(good))
+        self.assertFalse(f({"schema_version": 3}))
 
     # ── merge_catalog_entry reserved-key guard ────────────────────────────
 
@@ -8950,6 +8997,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                         catalog_path,
                         "--if-stale",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: fetches.append("md") or ({}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda env, key: None,
@@ -8961,8 +9009,18 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             self.assertEqual(result["entry_count"], 1)  # entries only, `_meta` not counted
             written = cache_read_json(catalog_path)
             assert written is not None
-            self.assertEqual(written["_meta"], {"schema_version": 3})
-            self.assertEqual(written["openai/gpt-5.6-sol"], self._legacy_entry())  # preserved
+            self.assertEqual(written["_meta"], {
+                "schema_version": model_catalog.CATALOG_SCHEMA_VERSION
+            })
+            legacy = self._legacy_entry()
+            entry = written["openai/gpt-5.6-sol"]
+            for field in ("provider", "confidence", "last_verified", "tool_calling", "source"):
+                self.assertEqual(entry[field], legacy[field])
+            self.assertEqual(
+                entry["runtimes"]["opencode"]["model_id"],
+                legacy["runtimes"]["opencode"]["model_id"],
+            )
+            # The legacy fields are preserved; the facts layer only adds facts (35).
 
     def test_meta_with_older_version_is_refetched(self):
         with tempfile.TemporaryDirectory() as d:
@@ -8988,6 +9046,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                         catalog_path,
                         "--if-stale",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: fetches.append("md") or ({}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda env, key: None,
@@ -8999,7 +9058,9 @@ class TestCatalogSchemaVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
             with open(catalog_path, "w", encoding="utf-8") as f:
-                json.dump({"_meta": {"schema_version": 3, "note": "keep"}}, f)
+                json.dump({"_meta": {
+                    "schema_version": model_catalog.CATALOG_SCHEMA_VERSION, "note": "keep"
+                }}, f)
             self._write_fresh_fetch_meta(catalog_path)
             runtimes_path = os.path.join(d, "runtimes.json")
             with open(runtimes_path, "w", encoding="utf-8") as f:
@@ -9018,6 +9079,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                         catalog_path,
                         "--if-stale",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=self.fail,
                     fetch_artificial_analysis_fn=self.fail,
                     load_secret_fn=lambda env, key: None,
@@ -9025,9 +9087,11 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             self.assertEqual(code, 0)
             written = cache_read_json(catalog_path)
             assert written is not None
-            self.assertEqual(written["_meta"], {"schema_version": 3, "note": "keep"})
+            self.assertEqual(written["_meta"], {
+                "schema_version": model_catalog.CATALOG_SCHEMA_VERSION, "note": "keep"
+            })
 
-    def test_models_dev_down_aa_only_never_stamps_meta_so_next_run_refetches(self):
+    def test_models_dev_down_stamps_schema_and_records_failure_so_next_run_refetches(self):
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
             with open(catalog_path, "w", encoding="utf-8") as f:
@@ -9048,6 +9112,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                         "--catalog-path",
                         catalog_path,
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: ({}, False),  # models.dev down
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda env, key: "k",
@@ -9058,10 +9123,12 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             self.assertTrue(result["artificial_analysis_ok"])
             cached = cache_read_json(catalog_path)
             assert cached is not None
-            self.assertNotIn("_meta", cached)  # not stamped
-            # fetch-meta WAS written (existing behavior) but the catalog is still versionless
-            # -- the immediate second --if-stale run must fetch again.
-            self.assertTrue(os.path.exists(catalog_path + ".fetch-meta.json"))
+            self.assertEqual(
+                cached["_meta"], {"schema_version": model_catalog.CATALOG_SCHEMA_VERSION}
+            )
+            meta = cache_read_json(catalog_path + ".fetch-meta.json")
+            assert meta is not None
+            self.assertFalse(meta["sources"]["models_dev"]["ok"])
             fetches = []
             buf2 = io.StringIO()
             with redirect_stdout(buf2):
@@ -9074,6 +9141,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                         catalog_path,
                         "--if-stale",
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: fetches.append("md") or ({}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda env, key: None,
@@ -9209,6 +9277,7 @@ class TestCatalogSchemaVersion(unittest.TestCase):
                         "--catalog-path",
                         catalog_path,
                     ],
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: ({}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda env, key: None,
@@ -9217,7 +9286,9 @@ class TestCatalogSchemaVersion(unittest.TestCase):
             written = cache_read_json(catalog_path)
             assert written is not None
             self.assertIsInstance(written, dict)
-            self.assertEqual(written.get("_meta"), {"schema_version": 3})
+            self.assertEqual(written.get("_meta"), {
+                "schema_version": model_catalog.CATALOG_SCHEMA_VERSION
+            })
 
 
 class TestClaudeEnumerationEndToEnd(unittest.TestCase):
@@ -9321,6 +9392,9 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
                             catalog_path,
                         ],
                         which_fn=self._claude_which,
+                        fetch_arena_fn=lambda **_kw: (
+                            {"config": "text", "split": "latest", "categories": {}}, True
+                        ),
                         fetch_models_dev_fn=md_fake,
                         fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                         load_secret_fn=lambda _env_, key: None,
@@ -9351,7 +9425,7 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
                 meta["anthropic_model_ids"], sorted([*detection.CLAUDE_FALLBACK_MODEL_IDS, new])
             )
             self.assertEqual(meta["anthropic_model_ids_as_of"], time.strftime("%Y-%m-%d"))
-            self.assertEqual(meta["schema_version"], 3)
+            self.assertEqual(meta["schema_version"], model_catalog.CATALOG_SCHEMA_VERSION)
             for mid in [*detection.CLAUDE_FALLBACK_MODEL_IDS, new]:
                 key = f"anthropic/{mid}"
                 self.assertIn(key, entries)
@@ -9376,7 +9450,8 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
             second = cache_read_json(r)
             assert second is not None
             self.assertEqual(
-                second["clis"]["claude"],
+                {key: value for key, value in second["clis"]["claude"].items()
+                 if key != "listing"},
                 {
                     "installed": True,
                     "path": "/fake/bin/claude",
@@ -9444,11 +9519,13 @@ class TestClaudeFallback(unittest.TestCase):
 
     def test_no_catalog_uses_dated_fallback(self):
         claude = self._snapshot(catalog_fn=lambda: None)["clis"]["claude"]
-        self.assertEqual(claude, self._fallback_entry())
+        self.assertEqual({key: value for key, value in claude.items() if key != "listing"},
+                         self._fallback_entry())
 
     def test_missing_catalog_fn_uses_dated_fallback(self):
         claude = self._snapshot()["clis"]["claude"]
-        self.assertEqual(claude, self._fallback_entry())
+        self.assertEqual({key: value for key, value in claude.items() if key != "listing"},
+                         self._fallback_entry())
 
     def test_catalog_without_usable_anthropic_ids_uses_fallback(self):
         for raw in (
@@ -9459,7 +9536,8 @@ class TestClaudeFallback(unittest.TestCase):
         ):
             with self.subTest(raw=raw):
                 claude = self._snapshot(catalog_fn=lambda raw=raw: raw)["clis"]["claude"]
-                self.assertEqual(claude, self._fallback_entry())
+                self.assertEqual({key: value for key, value in claude.items() if key != "listing"},
+                                 self._fallback_entry())
 
     def test_junk_ids_are_filtered_and_labeled_catalog(self):
         raw = {"_meta": {"anthropic_model_ids": ["claude-x", None, 3, "", "claude-x"]}}
@@ -9545,6 +9623,7 @@ class TestClaudeFallback(unittest.TestCase):
                         catalog_path,
                     ],
                     which_fn=lambda name, **_k: None,
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: ({"openai": {"models": {}}}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,
@@ -9635,6 +9714,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (models_dev_data, True),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -9679,7 +9759,9 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 "image_input": True,
                 "image_input_source": "models_dev",
             }
-            cache_write_json(c, {"_meta": {"schema_version": 3}, "vendor/text-only": entry})
+            cache_write_json(c, {"_meta": {
+                "schema_version": model_catalog.CATALOG_SCHEMA_VERSION
+            }, "vendor/text-only": entry})
             cache_write_json(
                 r,
                 {
@@ -9688,7 +9770,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 },
             )
             # Create a fetch-meta sidecar so it's "fresh" enough to skip
-            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(c + ".fetch-meta.json", _fresh_meta())
             fetch_called = []
 
             def never_fetch_models_dev():
@@ -9707,6 +9789,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                         c,
                     ],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=never_fetch_models_dev,
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -9761,6 +9844,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                 code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (models_dev_data, True),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -10077,6 +10161,7 @@ openai/gpt-5.6-sol
                         os.path.join(d, "catalog.json"),
                     ],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: ({}, True),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -10084,13 +10169,12 @@ openai/gpt-5.6-sol
                 )
             self.assertEqual(code, 0)
             result = json.loads(buf.getvalue())
-            unmatched = [
-                u for u in result.get("unmatched", []) if u["model_id"] == "router-env/custom"
-            ]
-            self.assertEqual(len(unmatched), 1)
-            self.assertEqual(unmatched[0]["runtime"], "opencode")
-            self.assertEqual(unmatched[0].get("image_input"), True)
-            self.assertEqual(unmatched[0].get("image_input_source"), "opencode")
+            self.assertEqual(result.get("unmatched", []), [])
+            catalog = cache_read_json(os.path.join(d, "catalog.json"))
+            assert isinstance(catalog, dict)
+            entry = catalog["router-env/custom"]
+            self.assertTrue(entry["is_router"])
+            self.assertTrue(entry["fallback_quota"])
 
     def test_vendor_unknown_router_candidate_carries_image_input(self):
         """Vendor-unknown router carries image_input from runtime metadata."""
@@ -10134,6 +10218,7 @@ openai/gpt-5.6-sol
                 code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (
                         {"vendor": {"models": {"no-modalities": {"id": "no-modalities"}}}},
                         True,
@@ -10148,7 +10233,7 @@ openai/gpt-5.6-sol
             self.assertEqual(entries["vendor/no-modalities"]["image_input"], True)
             self.assertEqual(entries["vendor/no-modalities"]["image_input_source"], "opencode")
             # Run 2: skip fetch, runtime changes to False
-            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(c + ".fetch-meta.json", _fresh_meta())
             cache_write_json(
                 r,
                 {
@@ -10174,6 +10259,7 @@ openai/gpt-5.6-sol
                         c,
                     ],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: self.fail("should skip fetch"),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -10212,6 +10298,7 @@ openai/gpt-5.6-sol
                 code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (
                         {
                             "vendor": {
@@ -10231,7 +10318,7 @@ openai/gpt-5.6-sol
                 )
             self.assertEqual(code, 0)
             # Run 2: skip, runtime now says False
-            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(c + ".fetch-meta.json", _fresh_meta())
             cache_write_json(
                 r,
                 {
@@ -10257,6 +10344,7 @@ openai/gpt-5.6-sol
                         c,
                     ],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: self.fail("should skip"),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -10296,6 +10384,7 @@ openai/gpt-5.6-sol
                 code = main(
                     ["fetch-model-catalog", "--runtimes-json", r, "--catalog-path", c],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (
                         {"vendor": {"models": {"no-modalities": {"id": "no-modalities"}}}},
                         True,
@@ -10305,7 +10394,9 @@ openai/gpt-5.6-sol
                     which_fn=lambda name, **_k: None,
                 )
             # Run 2: skip, no image_input in runtime snapshot
-            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(c + ".fetch-meta.json", _fresh_meta())
+            # No raw cache: the fresh source reaches the build as not answered (35-19).
+            os.remove(os.path.join(d, "sources", "models_dev.json"))
             cache_write_json(
                 r,
                 {
@@ -10325,6 +10416,7 @@ openai/gpt-5.6-sol
                         c,
                     ],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: self.fail("should skip"),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -10349,7 +10441,7 @@ openai/gpt-5.6-sol
             cache_write_json(
                 c,
                 {
-                    "_meta": {"schema_version": 3},
+                    "_meta": {"schema_version": model_catalog.CATALOG_SCHEMA_VERSION},
                     "vendor/no-modalities": {
                         "provider": "vendor",
                         "runtimes": {"opencode": {"model_id": "vendor/no-modalities"}},
@@ -10361,7 +10453,7 @@ openai/gpt-5.6-sol
                 },
             )
             # Skip fetch, but runtime now says False
-            cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
+            cache_write_json(c + ".fetch-meta.json", _fresh_meta())
             cache_write_json(
                 r,
                 {
@@ -10387,6 +10479,7 @@ openai/gpt-5.6-sol
                         c,
                     ],
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: self.fail("should skip"),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
@@ -10881,13 +10974,14 @@ class TestOpencodeApiImageInput(unittest.TestCase):
 
         # 2.x: the probe itself is patched here (popen_fn/urlopen_fn fakes: see above).
         with mock.patch.object(
-                detection, "probe_opencode_api_image_input",
-                return_value={"opencode/exo-free": True}) as probe_mock:
+                detection, "probe_opencode_api",
+                return_value={"image": {"router-env/placeholder-model-1": True},
+                              "records": {}}) as probe_mock:
             snapshot = build_runtimes_snapshot(
                 which_fn=fake_which, run_fn=self._fake_version_run())
         probe_mock.assert_called_once()
         entry = snapshot["clis"]["opencode"]
-        self.assertEqual(entry["image_input"], {"opencode/exo-free": True})
+        self.assertEqual(entry["image_input"], {"router-env/placeholder-model-1": True})
         self.assertEqual(entry["image_input_source"], "opencode-api")
 
         # 1.x: no probe runs.
@@ -10899,7 +10993,7 @@ class TestOpencodeApiImageInput(unittest.TestCase):
                 returncode=0,
                 stdout="1.18.32\n" if argv[1:] == ["--version"] else verbose_text)
 
-        with mock.patch.object(detection, "probe_opencode_api_image_input") as probe_mock:
+        with mock.patch.object(detection, "probe_opencode_api") as probe_mock:
             snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run)
         probe_mock.assert_not_called()
         self.assertEqual(snapshot["clis"]["opencode"]["image_input_source"], "opencode")
@@ -11039,6 +11133,7 @@ class TestClaudeRuntimeFreshness(unittest.TestCase):
                     code = main(
                         argv,
                         which_fn=self._claude_which,
+                        fetch_arena_fn=_NO_ARENA,
                         fetch_models_dev_fn=lambda: (md, True),
                         fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                         load_secret_fn=lambda _env_, key: None,
@@ -11166,6 +11261,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
                         catalog_path,
                     ],
                     which_fn=recording_which,
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (TestClaudeEnumerationEndToEnd.MD, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,
@@ -11216,6 +11312,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
                         catalog_path,
                     ],
                     which_fn=recording_which,
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (no_anthropic, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,
@@ -11262,6 +11359,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
                         catalog_path,
                     ],
                     which_fn=lambda name, **_k: "/fake/bin/claude" if name == "claude" else None,
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (md, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,
@@ -11355,6 +11453,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
                         catalog_path,
                     ],
                     which_fn=lambda name, **_k: "/fake/bin/claude" if name == "claude" else None,
+                    fetch_arena_fn=_NO_ARENA,
                     fetch_models_dev_fn=lambda: (md, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,

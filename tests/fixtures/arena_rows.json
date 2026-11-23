@@ -1,0 +1,294 @@
+{
+  "_note": "synthetic Arena-shaped rows, invented values; not Arena data",
+  "rows": [
+    {
+      "model_name": "placeholder-model-1",
+      "category": "overall",
+      "rating": 1100,
+      "rating_lower": 1095,
+      "rating_upper": 1105,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-2",
+      "category": "overall",
+      "rating": 1200,
+      "rating_lower": 1195,
+      "rating_upper": 1205,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-3",
+      "category": "overall",
+      "rating": 1300,
+      "rating_lower": 1295,
+      "rating_upper": 1305,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-4",
+      "category": "overall",
+      "rating": 1400,
+      "rating_lower": 1395,
+      "rating_upper": 1405,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-5 (thinking)",
+      "category": "overall",
+      "rating": 1450,
+      "rating_lower": 1445,
+      "rating_upper": 1455,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-1",
+      "category": "coding",
+      "rating": 1110,
+      "rating_lower": 1105,
+      "rating_upper": 1115,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-2",
+      "category": "coding",
+      "rating": 1220,
+      "rating_lower": 1215,
+      "rating_upper": 1225,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-3",
+      "category": "coding",
+      "rating": 1290,
+      "rating_lower": 1285,
+      "rating_upper": 1295,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-4",
+      "category": "coding",
+      "rating": 1430,
+      "rating_lower": 1425,
+      "rating_upper": 1435,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-5 (thinking)",
+      "category": "coding",
+      "rating": 1455,
+      "rating_lower": 1450,
+      "rating_upper": 1460,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-1",
+      "category": "math",
+      "rating": 1110,
+      "rating_lower": 1105,
+      "rating_upper": 1115,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-2",
+      "category": "math",
+      "rating": 1220,
+      "rating_lower": 1215,
+      "rating_upper": 1225,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-3",
+      "category": "math",
+      "rating": 1290,
+      "rating_lower": 1285,
+      "rating_upper": 1295,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-4",
+      "category": "math",
+      "rating": 1430,
+      "rating_lower": 1425,
+      "rating_upper": 1435,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-5 (thinking)",
+      "category": "math",
+      "rating": 1455,
+      "rating_lower": 1450,
+      "rating_upper": 1460,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-1",
+      "category": "hard_prompts",
+      "rating": 1110,
+      "rating_lower": 1105,
+      "rating_upper": 1115,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-2",
+      "category": "hard_prompts",
+      "rating": 1220,
+      "rating_lower": 1215,
+      "rating_upper": 1225,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-3",
+      "category": "hard_prompts",
+      "rating": 1290,
+      "rating_lower": 1285,
+      "rating_upper": 1295,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-4",
+      "category": "hard_prompts",
+      "rating": 1430,
+      "rating_lower": 1425,
+      "rating_upper": 1435,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-5 (thinking)",
+      "category": "hard_prompts",
+      "rating": 1455,
+      "rating_lower": 1450,
+      "rating_upper": 1460,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-1",
+      "category": "instruction_following",
+      "rating": 1110,
+      "rating_lower": 1105,
+      "rating_upper": 1115,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-2",
+      "category": "instruction_following",
+      "rating": 1220,
+      "rating_lower": 1215,
+      "rating_upper": 1225,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-3",
+      "category": "instruction_following",
+      "rating": 1290,
+      "rating_lower": 1285,
+      "rating_upper": 1295,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-4",
+      "category": "instruction_following",
+      "rating": 1430,
+      "rating_lower": 1425,
+      "rating_upper": 1435,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-5 (thinking)",
+      "category": "instruction_following",
+      "rating": 1455,
+      "rating_lower": 1450,
+      "rating_upper": 1460,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-1",
+      "category": "creative_writing",
+      "rating": 1110,
+      "rating_lower": 1105,
+      "rating_upper": 1115,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-2",
+      "category": "creative_writing",
+      "rating": 1220,
+      "rating_lower": 1215,
+      "rating_upper": 1225,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-3",
+      "category": "creative_writing",
+      "rating": 1290,
+      "rating_lower": 1285,
+      "rating_upper": 1295,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-4",
+      "category": "creative_writing",
+      "rating": 1430,
+      "rating_lower": 1425,
+      "rating_upper": 1435,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-5 (thinking)",
+      "category": "creative_writing",
+      "rating": 1455,
+      "rating_lower": 1450,
+      "rating_upper": 1460,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-1",
+      "category": "multi_turn",
+      "rating": 1110,
+      "rating_lower": 1105,
+      "rating_upper": 1115,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-2",
+      "category": "multi_turn",
+      "rating": 1220,
+      "rating_lower": 1215,
+      "rating_upper": 1225,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-3",
+      "category": "multi_turn",
+      "rating": 1290,
+      "rating_lower": 1285,
+      "rating_upper": 1295,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-4",
+      "category": "multi_turn",
+      "rating": 1430,
+      "rating_lower": 1425,
+      "rating_upper": 1435,
+      "vote_count": 1000
+    },
+    {
+      "model_name": "placeholder-model-5 (thinking)",
+      "category": "multi_turn",
+      "rating": 1455,
+      "rating_lower": 1450,
+      "rating_upper": 1460,
+      "vote_count": 1000
+    },
+    {
+      "category": "overall",
+      "rating": "n/a",
+      "model_name": "placeholder-model-6"
+    },
+    {
+      "category": "overall",
+      "rating": 1
+    }
+  ]
+}

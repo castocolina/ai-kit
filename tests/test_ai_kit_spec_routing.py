@@ -776,6 +776,8 @@ class TestOpencodePrivateDirUsesTheGivenEnv(unittest.TestCase):
             cwds = []
 
             def fake_run(argv, **kwargs):
+                if argv[-1:] == ["--version"]:
+                    return subprocess.CompletedProcess(argv, 0, stdout="fake version", stderr="")
                 cwds.append(kwargs["cwd"])
                 return subprocess.CompletedProcess(argv, 1, stdout="", stderr="")
 

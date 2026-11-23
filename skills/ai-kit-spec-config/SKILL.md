@@ -64,7 +64,7 @@ installed."
 - **Never hand-write a `command` for a runtime the runner knows** — a table runtime stores `runtime` and `model` (plus its knobs); the runner builds the argv. Only a CLI outside the runner table gets a custom `command`.
 - **Never save a CLI reviewer entry without testing it via `check-reviewer` first** — catch auth/model/entitlement problems before persisting. The one exception: the user declined the test at Step 2.5's write-risk ask; that entry is saved untested and named so at Step 4.
 - **Never silently pre-filter model families based on your own judgment** — always let the user decide, informed by your research (user agency over paternalism).
-- **Never paste a multi-provider CLI's raw model list ungrouped** — always run `group-models` first (raw lists can be hundreds of ids; grouping makes them readable).
+- **Never paste a multi-provider CLI's raw model list** — show the sorted, labeled `catalog-report` rows and the ranked blocks of `references/cli-model-selection.md` instead (raw lists can be hundreds of ids; the report keeps them readable).
 - **Never write the global config without an explicit `--global` or a Step 2.1 "replace" answer, and never treat `--global` or `--local` as consent to replace an existing roster** (global changes affect all projects; default is local).
 - **Never skip asking about session-default reviewer entries** — the only
   zero-external-dependency reviewer option, worth having available as a fallback (placed last
@@ -102,6 +102,8 @@ mention which of these are present on this machine — this is the data
 and follow it: it asks Step 2.5's write-risk question before any live probe, reports availability
 and stale providers, then stops with no writes.
 
+**A migrate-only request is not this wizard's write.** When the user only asks to migrate an old `review-spec.toml`, report `migration pending`, say that the next command that reads the roster (`probe-quota`, `resolve-reviewers` or a review run) migrates it, and stop: run no `detect-runtimes --save`, no catalog step and no write. Run the full setup only if the user also wants the lanes replaced.
+
 **Otherwise**, persist the snapshot before continuing to Step 2:
 ```bash
 python3 "$TOOLS_PY" detect-runtimes --save "$RUNTIMES_JSON"
@@ -117,6 +119,12 @@ python3 "$TOOLS_PY" check-providers --cwd "$(pwd)"
 Show its lines to the user as they are. A `warning:` line is a finding to relay, not an error,
 and an `(unconfirmed: ...)`, `config file only` or `not checked` line is never upgraded to
 "verified" or called "stale".
+
+### Step 1.5 — Catalog
+
+Run the catalog flow and **MANDATORY read** [`references/catalog.md`](references/catalog.md).
+Show the `catalog-report` output and its attribution lines verbatim, then continue to Step 2.
+The coding and review proposal belongs to Phase 36 and is not described here.
 
 ### Step 2 — Ask
 
@@ -149,8 +157,6 @@ at a glance.
 
 **Replacement gate (every flag combination).** `Read` the resolved target itself. If it already holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates into the target on the write) and the user has not already approved replacing that exact file above, use `AskUserQuestion`: "`<resolved absolute path>` already holds a roster. Replace it with the roster built in this run (its current reviewers and policy are lost unless you re-enter them; other tables and comments in the file are kept; an old `review-spec.toml` migrates first and stays recoverable as `review-spec.toml.migrated`), or stop and keep it?" — with "stop" first/default. `--local`/`--global` choose the target, never consent to replace it. On "stop", end the run without writing. Only an explicit "replace" lets Step 3 pass `--replace`; without it `render-toml --out` refuses an existing roster and writes nothing.
 
-**A migrate-only request is not this wizard's write.** When the user only asks to migrate an old `review-spec.toml`, report `migration pending` and say that the next command that reads the roster (`probe-quota`, `resolve-reviewers` or a review run) migrates it; run the full setup only if the user also wants the lanes replaced.
-
 **Once the target is resolved, announce it immediately** — print "Writing to: `<resolved absolute path>`" before asking any of the reviewer questions below, so the user knows where this run's answers are headed from the start (not just in Step 4's closing report, which restates the same path after the write actually happens).
 
 #### Step 2.2 — Pick which CLIs and models to register
@@ -173,15 +179,14 @@ catalog flow.
 or the user declined every installed CLI at the ask above. Session-default entries never go
 through this catalog/ranking flow — continue at Step 2.3/2.7.
 
-**MANDATORY — READ ENTIRE FILE:** when the user kept at least one CLI, before grouping
-models, calling `fetch-model-catalog`, ranking, or presenting candidates, read
+**MANDATORY — READ ENTIRE FILE:** when the user kept at least one CLI, before
+calling `fetch-model-catalog`, ranking, or presenting candidates, read
 [`references/cli-model-selection.md`](references/cli-model-selection.md) completely
 from start to finish. **NEVER set any range limits when reading this file.** It is the
-8-item procedure (group → extra-candidate → fetch → unmatched-confirm → rank → present
-→ code-index-alternative → heuristic-confirm) plus the exact command templates. Skipping
+9-item procedure (snapshot and catalog path → extra-candidate → fetch → unmatched-confirm → catalog-report → rank → present → code-index-alternative → router-alias note) plus the exact command templates. Skipping
 it reproduces live landmines this wizard already hit: guessing a codex id
-(`gpt-5.6-sol-high` instead of `gpt-5.6-sol`), dumping a ~200-id cursor list
-ungrouped, ranking before unmatched confirmation, and silently dropping every
+(`placeholder-model-1-high` instead of `placeholder-model-1`), dumping a ~200-id cursor list
+raw instead of the catalog report, ranking before unmatched confirmation, and silently dropping every
 single-provider-CLI candidate by rebuilding `discovered` from `$RUNTIMES_JSON` alone.
 
 #### Step 2.3 — Resolve vendor attribution
@@ -217,8 +222,7 @@ python3 "$TOOLS_PY" build-command --runtime <id> \
   [--effort <e>] [--service-tier <t>] [--mode plan|ask]
 ```
 **codex's `model` field must be the BARE model id — never suffix an effort/tier tag onto it.**
-`codex exec -m gpt-5.6-sol-high` is REJECTED outright ("The
-'gpt-5.6-sol-high' model is not supported..."); the correct pair is `model = "gpt-5.6-sol"`
+A live check confirmed that codex rejects an effort suffix on the model id; shown here with invented placeholders: `codex exec -m placeholder-model-1-high` is rejected, and the correct pair is `model = "placeholder-model-1"`
 with `effort = "high"` stored on the entry (the runner passes it as `--codex-effort`, not in
 the model string). This is the opposite convention from cursor below, where effort/fast/context
 ARE baked into the model-id string — do not carry that pattern over to codex. codex has no
@@ -266,9 +270,10 @@ nothing confirms a read-only invocation for it.
 the model id works.** Run:
 ```bash
 python3 "$TOOLS_PY" check-reviewer --key <candidate-key> --model <model-id> \
-  --vendor <vendor> --runtime <id> \
+  --vendor <vendor> --runtime <id> --catalog-path <catalog> \
   [--extra-json '<json>']
 ```
+Pass `--catalog-path <catalog>` to `check-reviewer` so the result is recorded as the pair's usability.
 A custom entry (no `runtime`) is tested the same way with `--command '<template>'` instead of
 `--runtime`. This makes one real call through the runner or the custom launcher (the same
 mechanism `probe-quota` uses later) and prints `{"available": bool, "detail": "..."}`. If
@@ -475,5 +480,5 @@ Finally, `rm -rf "$SCRATCH"` (only on a successful write; a failed one keeps it,
 
 ## Evidence
 
-- The bare-model rule for codex was confirmed live on 2026-08-29: `codex exec -m gpt-5.6-sol-high` was rejected ("The 'gpt-5.6-sol-high' model is not supported...").
+- The bare-model rule for codex was confirmed live with a real model id, shown here with invented placeholders: codex rejects an effort suffix on the model id.
 - Until 2026-08-29 an earlier design gave host-run entries an automatic guaranteed-baseline slot in `double` mode regardless of ladder position; a real config hit this and got a silently reordered ladder, so it was removed.

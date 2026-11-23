@@ -20,7 +20,7 @@ from ai_kit_spec import commands, detection, execute_dispatch, model_heuristics
 from ai_kit_spec.cli import main
 from ai_kit_spec.detection import normalize_runtime_keys, runtime_id
 from ai_kit_spec.error_classifier import REASONS, STATUS_TO_REASON, reason_for_status
-from ai_kit_spec.model_catalog import split_catalog_meta
+from ai_kit_spec.model_catalog import CATALOG_SCHEMA_VERSION, split_catalog_meta
 
 from tests import host_fakes
 
@@ -60,7 +60,7 @@ class TestRuntimeTracer(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         snapshot = json.loads(buf.getvalue())
-        self.assertEqual(snapshot["schema_version"], 7)
+        self.assertEqual(snapshot["schema_version"], 8)
         cursor = snapshot["clis"]["cursor"]
         self.assertTrue(cursor["installed"])
         self.assertEqual(cursor["models"], ["auto"])
@@ -170,9 +170,9 @@ class TestCatalogRuntimeMigration(unittest.TestCase):
         entries, _meta = split_catalog_meta(raw)
         self.assertEqual(entries["openai/x"]["runtimes"], {"cursor": {"model_id": "x"}})
 
-    def test_schema_3_is_returned_unrenamed(self):
+    def test_current_schema_is_returned_unrenamed(self):
         raw = {
-            "_meta": {"schema_version": 3},
+            "_meta": {"schema_version": CATALOG_SCHEMA_VERSION},
             "openai/x": {"runtimes": {"cursor-agent": {"model_id": "x"}}},
         }
         entries, _meta = split_catalog_meta(raw)

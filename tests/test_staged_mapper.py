@@ -123,6 +123,24 @@ class CoveringTest(MapperCase):
         self.assertEqual(self.mapper.covering_modules(index, "skills/my-skill/run.py"),
                          frozenset({"tests.test_zeta"}))
 
+    def test_a_staged_skills_file_selects_the_modules_that_walk_the_skills_tree(self) -> None:
+        make_tree(self.root, {"tests/test_walker.py": "ROOT.rglob('*.md')\n",
+                              "tests/test_other.py": "X = 1\n"})
+        index = self.mapper.build_index(self.root)
+        with unittest.mock.patch.object(self.mapper, "SKILLS_TREE_WALKERS",
+                                        frozenset({"tests.test_walker", "tests.test_absent"})):
+            self.assertEqual(self.mapper.covering_modules(index, "skills/other-skill/SKILL.md"),
+                             frozenset({"tests.test_walker"}))
+            self.assertEqual(self.mapper.covering_modules(index, "tools/alpha.py"),
+                             frozenset({"tests.test_alpha"}))
+            self.assertEqual(self.mapper.covering_modules(index, "tests/data/gamma.txt"),
+                             frozenset({"tests.test_beta"}))
+
+    def test_the_real_skills_tree_walker_is_selected_for_a_skills_file(self) -> None:
+        index = self.mapper.build_index(REPO_ROOT)
+        self.assertIn("tests.test_skill_text_history",
+                      self.mapper.covering_modules(index, "skills/ai-kit-cross-ai/SKILL.md"))
+
     def test_a_staged_test_module_covers_itself(self) -> None:
         index = self.mapper.build_index(self.root)
         self.assertIn("tests.test_beta", self.mapper.covering_modules(index, "tests/test_beta.py"))
@@ -382,7 +400,9 @@ class RunnerStagedTest(unittest.TestCase):
     def test_a_covered_file_runs_its_module_and_the_arch_group_once(self) -> None:
         code, out = self.main("--staged", "tools/beta.py", "tools/beta.py")
         self.assertEqual(code, 0, out)
-        self.assertEqual(self.ran, [["tests.test_beta", "tests.test_arch"]])
+        self.assertEqual(
+            self.ran, [["tests.test_beta", "tests.test_arch", "tests.test_arch_hardcoded_models"]]
+        )
         self.assertIn("staged: tests.test_beta", out)
 
     def test_shared_machinery_runs_the_full_unit_and_arch_groups(self) -> None:

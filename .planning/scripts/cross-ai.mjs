@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=392fc07de975d065c46fc22f8e7a4864d09d863a8f5ee7eeaf8998b19dc9a792
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=9120f57b140deb4116919c2ca52675843c53b2043f2728afbb1ba9398a5ef140
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
@@ -1371,11 +1371,10 @@ const RUNTIMES = {
     reviewExtras: [],
     env: {},
   },
-  // opencode 2.0.29 run --help formulas; partial bare profile: opencode still loads
-  // ~/.agents/skills and ~/.config/opencode/skills (opencode docs). --standalone targets
-  // opencode 2.x: a headless run executes on a private server, never inside the user's
-  // long-lived managed service; listModels (`opencode models`) has no such flag and still
-  // reads the shared service, read-only.
+  // opencode 2.3.2 run --help formulas (recorded: tests/fixtures/cli_help/opencode/); partial bare profile: opencode still loads
+  // ~/.agents/skills and ~/.config/opencode/skills (opencode docs). --standalone (a global flag) runs a headless run
+  // on a private server, never inside the user's long-lived managed service. listModels (`opencode models`) also
+  // accepts --standalone and --server; the runner does not pass them, so the listing reads the shared service, read-only.
   opencode: {
     bins: ['opencode'],
     list: { argv: ['models'], parse: parseOpencodeListingIds },
@@ -1383,7 +1382,7 @@ const RUNTIMES = {
     review: (m) => ['run', '--model', m, '--agent', 'plan', '--format', 'json', '--standalone'],
     resume: (m, c, sid, mode) => [...RUNTIMES.opencode[mode](m, c), '--session', sid],
     parse: parseOpencode,
-    modelSuffix: /#[^#/]+$/, // provider/model#variant; the listing has no variants
+    modelSuffix: /#[^#/]+$/, // provider/model#variant; the listing prints no variants, the model API lists them (variants[].id)
     modelId: OPENCODE_MODEL_ID,
     profiles: null,
     reviewExtras: [],

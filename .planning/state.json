@@ -81,7 +81,7 @@
     {
       "number": "35",
       "name": "Model discovery and catalog",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "36",
@@ -159,6 +159,11 @@
       "status": "pending"
     },
     {
+      "number": "47.2",
+      "name": "Goal-prompt learns rails from sessions",
+      "status": "pending"
+    },
+    {
       "number": "48",
       "name": "Host hooks, spikes and status",
       "status": "pending"
@@ -196,8 +201,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (plan phase 35)",
-    "reason": "Phase 16 of 38 — needs a plan"
+    "label": "Advance to the next step (plan phase 36)",
+    "reason": "Phase 17 of 40 — needs a plan"
   },
-  "updated_at": "2026-11-16T03:09:24.998Z"
+  "updated_at": "2026-11-20T23:00:55.130Z"
 }

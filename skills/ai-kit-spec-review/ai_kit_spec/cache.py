@@ -16,7 +16,7 @@ def cache_read_json(path: str) -> dict | None:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):  # JSONDecodeError and UnicodeDecodeError are ValueErrors
         return None
 
 

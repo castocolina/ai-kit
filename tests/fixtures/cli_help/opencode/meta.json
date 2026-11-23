@@ -1,0 +1,10 @@
+{
+ "version": "2.3.2",
+ "recorded": "2026-11-20",
+ "commands": [
+  "opencode --version",
+  "opencode --help",
+  "opencode run --help",
+  "opencode models --help"
+ ]
+}

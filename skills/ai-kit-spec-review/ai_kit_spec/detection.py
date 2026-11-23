@@ -9,12 +9,13 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 
-from ai_kit_spec import jsonc_read
+from ai_kit_spec import jsonc_read, secret_shapes
 from ai_kit_spec.cache import cache_base
 from ai_kit_spec.vendor import _MODEL_TIER_SUFFIXES
 
@@ -37,7 +38,9 @@ RUNTIMES_TTL_SECONDS = 30 * 24 * 3600   # ~30 days: CLI/model presence is near-s
 # the exact RPC integers.
 # Version 7 (25.1) adds clis.copilot.
 # 18.1 D-04/D-13: clis keyed by runtime id, node recorded
-RUNTIMES_SCHEMA_VERSION = 7
+# Version 8 (35) adds clis.<id>.listing (ok, failed, none), listed_from {command, version, at},
+# listing_error, clis.opencode.model_records and clis.codex.context_window / max_context_window.
+RUNTIMES_SCHEMA_VERSION = 8
 
 # ── Runtime/CLI detection ───────────────────────────────────────────────
 
@@ -82,6 +85,8 @@ class Runtime(NamedTuple):
 
 
 # Insertion order is host precedence. grok is a row, never a detected host (D-03).
+# 35 R11: seed data labeled by its _LABEL_* source strings; the claude native selectors and
+# CLAUDE_FALLBACK_MODEL_IDS are deciding lists kept in the guard baseline for Phase 36.
 RUNTIMES: dict[str, Runtime] = {
     "pi": Runtime(
         ("pi",),
@@ -128,16 +133,14 @@ RUNTIMES: dict[str, Runtime] = {
 
 KNOWN_CLIS = tuple(RUNTIMES)
 
-# 16 D-04: what Claude Code's own `--model` flag resolves (real `claude --help`, version
-# 2.1.281, lists fable/opus/sonnet; haiku is the fourth Agent-tool alias documented in
-# ai-kit-spec-config SKILL.md). Hardcoded because Claude Code has no list-models command --
-# these aliases are the only stable short names the CLI itself documents.
+# 16 D-04: the host's own `--model` flag resolves these selectors (from its help and
+# documentation). Hardcoded because the host has no list-models command; these are its
+# documented short aliases.
 CLAUDE_MODEL_ALIASES = RUNTIMES["claude"].native_selectors
 
-# 16 D-04: DATED FALLBACK, not a live list -- these four ids were verified present in
-# models.dev's `anthropic` provider on 2026-09-23 (Phase 16 research), one per current family
-# (Fable 5.1, Opus 5.5, Sonnet 5, Haiku 4.5). Used only when model-catalog.json has no
-# recorded anthropic ids; refresh the ids and the date together when a new generation ships.
+# 16 D-04: DATED FALLBACK, not a live list -- these ids were verified present in the fixed
+# seed provider on 2026-09-23 (Phase 16 research), one per current family. Used only when
+# model-catalog.json has no recorded ids; refresh the ids and date together when needed.
 CLAUDE_FALLBACK_MODEL_IDS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5",
                              "claude-haiku-4-5-20251001")
 CLAUDE_FALLBACK_AS_OF = "2026-09-23"
@@ -286,6 +289,55 @@ def _list_argv(rid: str) -> tuple[str, ...]:
     return argv
 
 
+class _RecordingRun:
+    """Capture the last subprocess result so a failed listing can be described safely."""
+
+    def __init__(self, run_fn):
+        self.run_fn = run_fn
+        self.last = None
+
+    def __call__(self, *args, **kwargs):
+        try:
+            self.last = self.run_fn(*args, **kwargs)
+        except Exception as exc:
+            self.last = exc
+            raise
+        return self.last
+
+    def describe(self) -> str:
+        if isinstance(self.last, BaseException):
+            if isinstance(self.last, subprocess.TimeoutExpired):
+                return "timeout"
+            return type(self.last).__name__
+        rc = getattr(self.last, "returncode", 0)
+        if rc:
+            stderr = getattr(self.last, "stderr", None)
+            first = stderr.splitlines()[0] if isinstance(stderr, str) and stderr.splitlines() \
+                else ""
+            first = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", first)
+            first = secret_shapes.redact(first, "[redacted]")
+            return f"exit {rc}: {first}"[:200]
+        return "unparsable output"
+
+
+def _host_version(binary: str, run_fn) -> str | None:
+    """Read a sanitized version line without allowing a host command to stall detection."""
+    try:
+        result = run_fn([binary, "--version"], capture_output=True, text=True,
+                        check=False, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    stdout = getattr(result, "stdout", None)
+    if getattr(result, "returncode", 1) != 0 or not isinstance(stdout, str):
+        return None
+    for line in stdout.splitlines():
+        line = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", line)
+        line = secret_shapes.redact(line, "[redacted]").strip()
+        if line:
+            return line[:80]
+    return None
+
+
 def _listing_stdout(result) -> str | None:
     """Stdout of an exit-0 listing. A missing or non-zero returncode is a failure."""
     if getattr(result, "returncode", 1) != 0:
@@ -386,7 +438,9 @@ def _parse_one_codex_debug_model(item, seen: set) -> dict | None:
     if slug in seen:
         return None
     seen.add(slug)
-    return {"id": slug, "reasoning_modes": _codex_reasoning_modes(item)}
+    return {"id": slug, "reasoning_modes": _codex_reasoning_modes(item),
+            "context_window": _exact_int(item.get("context_window")),
+            "max_context_window": _exact_int(item.get("max_context_window"))}
 
 
 def parse_codex_debug_models(stdout) -> list | None:
@@ -556,6 +610,11 @@ def _listing_fields(rid, binary, run_fn, env=None) -> dict | None:
     fields = {"models": [item["id"] for item in listed],
               "reasoning_modes": {item["id"]: item["reasoning_modes"]
                                   for item in listed if item["reasoning_modes"]}}
+    if rid == "codex":
+        for key in ("context_window", "max_context_window"):
+            values = {item["id"]: item[key] for item in listed if item[key] is not None}
+            if values:
+                fields[key] = values
     if rid == "pi":
         fields["image_input"] = {item["id"]: item["image_input"] for item in listed}
         fields["context_window"] = {item["id"]: item["context_window"] for item in listed
@@ -613,10 +672,10 @@ def _opencode_verbose_record(obj: dict, header: str) -> bool | None:
 
 
 def parse_opencode_verbose_image_input(stdout) -> dict:
-    """Parses `opencode models --verbose` output into a dict mapping
+    """Parses a models command's verbose output into a dict mapping
     header-line (provider/id format) to a bool (whether image is in the
     input capabilities). The output format is a repeated pattern of:
-    header line (e.g., "openai/gpt-5.6-sol"), newline, 2-space-indented
+    header line (e.g., "fake/placeholder-model-1"), newline, 2-space-indented
     JSON object, newline.
 
     Records `result[header] = image` only when the decoded value has all of:
@@ -671,18 +730,23 @@ def parse_opencode_verbose_image_input(stdout) -> dict:
     return result
 
 
-# 17 D-24: opencode 2.x replaced `models --verbose` with a v2 HTTP API; the image source
-# is version-gated so 1.x installs keep the verbose path.
+# 17 D-24: a runtime 2.x release replaced `models --verbose` with a v2 HTTP API; the image
+# source is version-gated so older installs keep the verbose path.
 OPENCODE_API_MIN_MAJOR = 2
 OPENCODE_API_IMAGE_SOURCE = "opencode-api"
 _OPENCODE_PROBE_DEADLINE_S = 15
+_OPENCODE_503_TRIES = 6
+_OPENCODE_503_PAUSE_S = 2.0
+_OPENCODE_REQUEST_DEADLINE_S = _OPENCODE_PROBE_DEADLINE_S
+_opencode_sleep = time.sleep
+_opencode_clock = time.monotonic
 _OPENCODE_BANNER_MAX_LINES = 50
 # The probe talks to its own loopback server only: never through an http_proxy, which would
 # receive the Basic-auth password (17-REVIEW C-WR-01).
 _LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 # The default `urlopen_fn` for the loopback probe: never routed through http_proxy.
 LOOPBACK_URLOPEN = _LOOPBACK_OPENER.open
-# fullmatch on the stripped stdout, so a model listing (e.g. "openai/gpt-5.6-sol") can
+# fullmatch on stripped stdout, so a model listing (e.g. "fake/placeholder-model-1") can
 # never read as a version string.
 _OPENCODE_VERSION_RE = re.compile(r"(?:opencode\s+)?v?(\d+)\.\d+\.\d+\S*")
 
@@ -735,6 +799,48 @@ def parse_opencode_api_models(payload) -> dict:
             continue
         result[f"{provider_id}/{model_id}"] = "image" in input_caps
     return result
+
+
+def _exact_positive_int(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
+def parse_opencode_api_records(payload) -> dict:
+    """Parse per-model listing facts from a decoded `/api/model` response."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        return {}
+    result = {}
+    for item in payload["data"]:
+        if not isinstance(item, dict):
+            continue
+        provider_id, model_id = item.get("providerID"), item.get("id")
+        if not isinstance(provider_id, str) or not provider_id.strip():
+            continue
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        variants = item.get("variants")
+        efforts = [variant["id"] for variant in variants
+                   if isinstance(variant, dict) and isinstance(variant.get("id"), str)] \
+            if isinstance(variants, list) else []
+        limits = item.get("limit")
+        limit = {key: _exact_positive_int(limits.get(key)) for key in
+                 ("context", "input", "output")} if isinstance(limits, dict) else {
+                     "context": None, "input": None, "output": None}
+        enabled = item.get("enabled")
+        status = item.get("status")
+        cost = item.get("cost")
+        result[f"{provider_id}/{model_id}"] = {
+            "efforts": efforts, "limit": limit,
+            "enabled": enabled if isinstance(enabled, bool) else None,
+            "status": status if isinstance(status, str) else None,
+            "cost": cost if isinstance(cost, list) else [],
+        }
+    return result
+
+
+def parse_opencode_api_payload(payload) -> dict:
+    return {"image": parse_opencode_api_models(payload),
+            "records": parse_opencode_api_records(payload)}
 
 
 def _read_opencode_banner(stream) -> tuple:
@@ -861,15 +967,14 @@ def _stop_server(proc) -> None:
         proc.stdout.close()
 
 
-def probe_opencode_api_image_input(binary: str,
-                                   popen_fn: Callable[..., Any] = subprocess.Popen,
-                                   urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN,
-                                   env=None) -> dict:
+def probe_opencode_api(binary: str,
+                       popen_fn: Callable[..., Any] = subprocess.Popen,
+                       urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN,
+                       env=None) -> dict:
     """Starts a private `opencode serve --hostname 127.0.0.1 --port 0`, reads the
     printed loopback port and one-time password from its stdout, and calls
     `GET http://127.0.0.1:<port>/api/model` with HTTP basic auth `opencode:<password>`
-    (17 D-24/D-32). Returns `{"providerID/id": bool}` via
-    `parse_opencode_api_models`; any failure returns {}.
+    (17 D-24/D-32). Returns image capability and full model records; any failure returns {}.
 
     The server runs in its own session from `_opencode_private_dir()` with
     `_probe_env()`: opencode loads opencode.json from its cwd and every ancestor, and can
@@ -883,10 +988,20 @@ def probe_opencode_api_image_input(binary: str,
     XDG data dir, never config. opencode 1.x must not reach this (see
     opencode_image_input_with_source)."""
     with _opencode_private_dir(env) as probe_dir, _sigterm_unwinds():
-        return _probe_from(binary, probe_dir, popen_fn, urlopen_fn)
+        return _probe_from(
+            binary, probe_dir, popen_fn, urlopen_fn, parse=parse_opencode_api_payload)
 
 
-def _probe_from(binary, probe_dir, popen_fn, urlopen_fn) -> dict:
+def probe_opencode_api_image_input(binary: str,
+                                   popen_fn: Callable[..., Any] = subprocess.Popen,
+                                   urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN,
+                                   env=None) -> dict:
+    """Image-only wrapper for older callers. Thin wrapper of probe_opencode_api (35)."""
+    return probe_opencode_api(binary, popen_fn, urlopen_fn, env).get("image", {})
+
+
+def _probe_from(binary, probe_dir, popen_fn, urlopen_fn,
+                parse=parse_opencode_api_models) -> dict:
     try:
         proc = popen_fn([binary, "serve", "--hostname", "127.0.0.1", "--port", "0"],
                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
@@ -896,6 +1011,7 @@ def _probe_from(binary, probe_dir, popen_fn, urlopen_fn) -> dict:
     timer = threading.Timer(_OPENCODE_PROBE_DEADLINE_S, _signal_server, (proc, _SIGKILL))
     timer.daemon = True
     try:
+        start = _opencode_clock()
         timer.start()
         port, token = _read_opencode_banner(proc.stdout)
         if port is None or token is None:
@@ -904,15 +1020,32 @@ def _probe_from(binary, probe_dir, popen_fn, urlopen_fn) -> dict:
         # Unredirected: a redirect never carries the password to another host.
         request.add_unredirected_header(
             "Authorization", "Basic " + base64.b64encode(f"opencode:{token}".encode()).decode())
-        with urlopen_fn(request, timeout=10) as response:
-            body = response.read()
-        return parse_opencode_api_models(json.loads(body))
+        body = _opencode_request_body(request, urlopen_fn, start)
+        return parse(json.loads(body)) if body is not None else {}
     except (OSError, subprocess.TimeoutExpired, urllib.error.URLError,
             http.client.HTTPException, ValueError):
         return {}
     finally:
         timer.cancel()
         _stop_server(proc)
+
+
+def _opencode_request_body(request, urlopen_fn, start):
+    for attempt in range(_OPENCODE_503_TRIES):
+        remaining = _OPENCODE_REQUEST_DEADLINE_S - (_opencode_clock() - start)
+        if remaining <= 0:
+            return None
+        try:
+            with urlopen_fn(request, timeout=min(10, remaining)) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            if error.code != 503 or attempt == _OPENCODE_503_TRIES - 1:
+                raise
+            remaining = _OPENCODE_REQUEST_DEADLINE_S - (_opencode_clock() - start)
+            if remaining <= _OPENCODE_503_PAUSE_S:
+                return None
+            _opencode_sleep(_OPENCODE_503_PAUSE_S)
+    return None
 
 
 def opencode_image_input_with_source(binary: str, run_fn=subprocess.run,
@@ -954,11 +1087,11 @@ def detect_opencode_verbose_image_input(binary: str, run_fn=subprocess.run, env=
 
 def group_models_by_family(models: list) -> dict:
     """Collapses tier/effort/mode variants of the same base model into one
-    group, e.g. ["claude-opus-5-high", "claude-opus-5-high-fast",
-    "claude-opus-5-low"] -> {"claude-opus-5": [...three ids...]}. Strips
+    group, e.g. ["placeholder-model-5-high", "placeholder-model-5-high-fast",
+    "placeholder-model-5-low"] -> {"placeholder-model-5": [...three ids...]}. Strips
     only a TRAILING run of tokens from `_MODEL_TIER_SUFFIXES` (hyphen-
     joined) off the end of each id — an id with no such trailing run
-    becomes its own family unchanged (e.g. "auto", "composer-2.5"). This
+    becomes its own family unchanged (e.g. "auto", "placeholder-model-25"). This
     is a best-effort heuristic over a live-fetched, presumably-current
     catalog — it does not know which family is "newest" or "best" for
     any purpose; that judgment belongs to whoever (or whatever, e.g. a
@@ -1049,6 +1182,38 @@ class OpencodeSeams(NamedTuple):
 
 
 _DEFAULT_OPENCODE_SEAMS = OpencodeSeams()
+_EXTRA_RUNTIME_RX = re.compile(r"[a-z][a-z0-9-]{0,30}")
+
+
+def detect_unlisted_runtimes(ids, which_fn=shutil.which) -> dict:
+    """Report valid user-named runtime ids outside RUNTIMES without executing them."""
+    result = {}
+    for rid in ids:
+        if not isinstance(rid, str) or not _EXTRA_RUNTIME_RX.fullmatch(rid) or rid in RUNTIMES:
+            continue
+        path = which_fn(rid)
+        result[rid] = ({"installed": True, "path": path, "listing": "none",
+                        "note": "installed, no listing"} if path else {"installed": False})
+    return result
+
+
+def _opencode_fields(binpath, run_fn, opencode) -> dict:
+    major = opencode_major_version(binpath, run_fn=run_fn, env=opencode.env)
+    if major is not None and major >= OPENCODE_API_MIN_MAJOR:
+        facts = probe_opencode_api(binpath, opencode.popen_fn, opencode.urlopen_fn, opencode.env)
+        fields = {}
+        image = facts.get("image")
+        if image:
+            fields["image_input"] = image
+            fields["image_input_source"] = OPENCODE_API_IMAGE_SOURCE
+        else:
+            fields["image_input_probe"] = "failed"
+        records = facts.get("records")
+        if records:
+            fields["model_records"] = records
+        return fields
+    image = detect_opencode_verbose_image_input(binpath, run_fn=run_fn, env=opencode.env)
+    return {"image_input": image, "image_input_source": "opencode"} if image else {}
 
 
 def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalog_fn=None,
@@ -1080,16 +1245,27 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalo
             continue
         # Informational only; consumers rely on schema v6 fields.
         entry = {"installed": True, "path": binpath, "real_path": os.path.realpath(binpath)}
-        entry.update(_listing_fields(cli, binpath, run_fn, opencode.env) or {})
+        if cli in ("opencode", "cursor", "codex", "pi"):
+            rec = _RecordingRun(run_fn)
+            fields = _listing_fields(cli, binpath, rec, opencode.env)
+            command = " ".join([os.path.basename(binpath), *_list_argv(cli)])
+            if cli == "pi":
+                command += " (rpc get_available_models)"
+            entry["listed_from"] = {
+                "command": command,
+                "version": _host_version(binpath, run_fn),
+                "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            if fields is not None:
+                entry.update(fields)
+                entry["listing"] = "ok"
+            else:
+                entry["listing"] = "failed"
+                entry["listing_error"] = rec.describe()
+        else:
+            entry["listing"] = "none"
         if cli == "opencode":
-            image_input_map, image_input_source = opencode_image_input_with_source(
-                binpath, run_fn, opencode.popen_fn, opencode.urlopen_fn, opencode.env)
-            if image_input_map:
-                entry["image_input"] = image_input_map
-                entry["image_input_source"] = image_input_source
-            elif image_input_source == OPENCODE_API_IMAGE_SOURCE:
-                # A failed 2.x probe is a recorded gap, never silently "no data" (D-24).
-                entry["image_input_probe"] = "failed"
+            entry.update(_opencode_fields(binpath, run_fn, opencode))
         elif cli == "claude":
             # 16 D-04: hybrid alias + catalog-id sourcing; never calls run_fn (claude is
             # never executed) and never calls catalog_fn unless claude is installed (the
@@ -1328,8 +1504,8 @@ def find_code_index_alternative(
     substring match suggests the SAME base model is reachable through a multi-provider CLI
     that has codebase-memory-mcp registered (read from its config), return that CLI's name --
     informational only, never a
-    hard filter. Model-id naming conventions differ across CLIs (e.g. "grok-4.6" vs.
-    "cursor-grok-4.6-high") so this is a substring heuristic, not a guarantee; a missed match
+    hard filter. Model-id naming conventions differ across CLIs (e.g. "placeholder-model-46" vs.
+    "placeholder-model-46-high") so this is a substring heuristic, not a guarantee; a missed match
     degrades silently to None, never a false claim."""
     cli = runtime_id(cli)
     clis = normalize_runtime_keys(

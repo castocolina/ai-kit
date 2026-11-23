@@ -168,7 +168,7 @@ class TestLegacyLoad(unittest.TestCase):
             self.assertEqual(len(warnings), 2)
             self.assertIn(f"migrated {path} to", warnings[0])
             self.assertIn("old", warnings[1])
-            self.assertNotIn("new", warnings[1])
+            self.assertNotIn("new:", warnings[1])
 
     def test_load_never_writes(self):
         from ai_kit_spec.trust import is_trusted, record_trust

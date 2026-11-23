@@ -1,0 +1,50 @@
+{
+ "counts": {
+  "ai-kit-spec-config": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": {
+    "critical": 0,
+    "high": 0,
+    "judged_at": null,
+    "percent": 77.6,
+    "source": ".planning/phases/31-removals-and-small-defects/31-VERIFICATION.md:70"
+   },
+   "reasons": [
+    "last percent 77.6 is within 7.0 points of 80"
+   ]
+  }
+ },
+ "loop": "35",
+ "pool": {
+  "judges": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "members": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "native": null,
+  "probes": [
+   {
+    "judge": "opencode:router-env/my-referee-one",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=16s out=2140 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "usable": true
+   },
+   {
+    "judge": "opencode:router-env/my-referee-two",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=15s out=2246 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0",
+    "usable": true
+   }
+  ],
+  "substitutes": []
+ }
+}

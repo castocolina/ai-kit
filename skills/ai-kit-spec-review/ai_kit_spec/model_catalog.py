@@ -2,10 +2,13 @@
 merge, current-snapshot filtering, and heuristic-correction writeback (design spec
 2026-09-02, Sections 4/5/8). One bad entry is rejected and reported; it never aborts the
 whole catalog write."""
+import fcntl
+import json
 import os
 import re
 
-from ai_kit_spec.cache import cache_base
+from ai_kit_spec.cache import cache_base, cache_write_bytes, cache_write_json
+from ai_kit_spec.catalog_labels import fact_problem
 from ai_kit_spec.detection import normalize_runtime_keys
 
 CATALOG_TTL_SECONDS = 30 * 24 * 3600  # ~30 days -- spec Section 8, same order as RUNTIMES_TTL
@@ -14,7 +17,9 @@ CATALOG_TTL_SECONDS = 30 * 24 * 3600  # ~30 days -- spec Section 8, same order a
 # other top-level key is a `provider/model` canonical key (canonical keys always contain `/`,
 # _meta never does); pre-Phase-16 catalogs have no `_meta` and count as version 1.
 # 18.1 D-04: entry runtimes keyed by runtime id.
-CATALOG_SCHEMA_VERSION = 3
+# 35 D-13: schema 4 adds facts, identity, confirmed_fields and per-runtime fields.
+# A v3 cache is stale and rebuilds, keeping confirmed fields and verified records.
+CATALOG_SCHEMA_VERSION = 4
 CATALOG_META_KEY = "_meta"
 
 _MANDATORY_CATALOG_FIELDS = {"provider", "runtimes", "source", "confidence", "last_verified"}
@@ -41,12 +46,17 @@ _FIELD_TYPES = {
     # value unchanged or corrected it -- so the wizard never re-asks about a field already
     # confirmed. Written exclusively by apply_heuristic_corrections below.
     "heuristic_confirmed": list,
+    "facts": dict, "identity": str, "confirmed_fields": dict,
 }
 _NUMERIC_SUBFIELD_TABLES = {
     "scores": {"intelligence_index", "coding_index", "agentic_index"},
     "pricing": {"input_per_1m", "output_per_1m"},
 }
-_RUNTIME_FIELD_TYPES = {"model_id": str, "ctx_window": (int, float)}
+_RUNTIME_FIELD_TYPES = {
+    "model_id": str, "ctx_window": (int, float), "usability": dict, "last_seen": str,
+    "efforts": list, "context": dict, "listed_from": list, "ctx_note": str, "match": dict,
+}
+USABILITY_STATES = ("verified", "rejected", "unverified", "listed disabled by host")
 _VALID_NAME_DECLARED_PURPOSE = {"review", "execute"}
 _VALID_IMAGE_INPUT_SOURCE = {"models_dev", "opencode", "opencode-api"}
 
@@ -115,8 +125,8 @@ def catalog_schema_is_current(meta) -> bool:
 
 def canonical_key(provider: str, bare_model_id: str) -> str:
     """The ONE place catalog identity is computed -- every writer of model-catalog.json goes
-    through this, so two CLIs naming the same real model differently (opencode's
-    "openai/gpt-5.6-sol" vs. codex's bare "gpt-5.6-sol") always collapse to one key."""
+    through this, so two CLIs naming the same model differently (opencode's
+    "fake/placeholder-model-1" vs. codex's bare "placeholder-model-1") collapse to one key."""
     return f"{provider}/{bare_model_id}"
 
 
@@ -195,6 +205,53 @@ def _validate_list_and_numeric_tables(model_id: str, entry: dict) -> str | None:
     return None
 
 
+def _validate_facts(model_id: str, entry: dict) -> str | None:
+    for name, value in entry.get("facts", {}).items():
+        problem = fact_problem(value)
+        if problem is not None:
+            return f"{model_id}: 'facts.{name}' {problem}"
+    for name, record in entry.get("confirmed_fields", {}).items():
+        if not isinstance(record, dict) or not all(
+            isinstance(record.get(key), str) for key in ("by", "at", "note")
+        ):
+            return f"{model_id}: 'confirmed_fields.{name}' needs by, at and note"
+    return None
+
+
+def _usability_problem(row: dict) -> bool:
+    record = row.get("usability")
+    return not (
+        isinstance(record, dict)
+        and record.get("state") in USABILITY_STATES
+        and isinstance(record.get("at"), str)
+        and isinstance(record.get("via"), str)
+        and (record.get("error") is None or isinstance(record.get("error"), str))
+    )
+
+
+def _context_problem(row: dict) -> bool:
+    context = row.get("context")
+    if not isinstance(context, dict) or fact_problem(context) is not None:
+        return True
+    value = context["value"]
+    return value is not None and (
+        not isinstance(value, int) or isinstance(value, bool) or value <= 0
+    )
+
+
+def _validate_runtime_records(model_id: str, entry: dict) -> str | None:
+    for rid, row in entry.get("runtimes", {}).items():
+        if "usability" in row and _usability_problem(row):
+            return f"{model_id}: 'runtimes.{rid}.usability' is invalid"
+        if "context" in row and _context_problem(row):
+            return f"{model_id}: 'runtimes.{rid}.context' is invalid"
+        efforts = row.get("efforts")
+        if "efforts" in row and (not isinstance(efforts, list) or
+                                  not all(isinstance(item, str) for item in efforts)):
+            return f"{model_id}: 'runtimes.{rid}.efforts' must be a list of strings"
+    return None
+
+
 _CATALOG_ENTRY_VALIDATORS = (
     _validate_mandatory_fields,
     _validate_runtimes_shape,
@@ -202,6 +259,8 @@ _CATALOG_ENTRY_VALIDATORS = (
     _validate_typed_fields,
     _validate_declared_purpose_fields,
     _validate_list_and_numeric_tables,
+    _validate_facts,
+    _validate_runtime_records,
 )
 
 
@@ -220,6 +279,115 @@ def validate_catalog_entry(model_id: str, entry: dict) -> str | None:
     return None
 
 
+def _merge_runtimes(existing: dict, incoming: dict) -> dict:
+    """Merge runtime rows independently, with explicit None clearing a row field."""
+    merged = {
+        rid: dict(row) if isinstance(row, dict) else row
+        for rid, row in existing.items()
+    }
+    for rid, row in incoming.items():
+        old_row = existing.get(rid)
+        if isinstance(row, dict) and isinstance(old_row, dict):
+            combined = {**old_row, **row}
+            merged[rid] = {key: value for key, value in combined.items()
+                           if key not in row or row[key] is not None}
+        elif isinstance(row, dict):
+            merged[rid] = {key: value for key, value in row.items() if value is not None}
+        else:
+            merged[rid] = row
+    return merged
+
+
+WRITER_OWNED_RUNTIME_KEYS = ("usability",)
+
+
+def _rebase_runtimes(current: dict, built: dict) -> dict:
+    runtimes = {rid: dict(row) if isinstance(row, dict) else row
+                for rid, row in current.items()}
+    for rid, row in built.items():
+        old_row = current.get(rid)
+        new_row = dict(row) if isinstance(row, dict) else row
+        if isinstance(old_row, dict) and isinstance(new_row, dict):
+            for field in WRITER_OWNED_RUNTIME_KEYS:
+                if field in old_row:
+                    new_row[field] = old_row[field]
+        runtimes[rid] = new_row
+    return runtimes
+
+
+def _rebase_confirmed_fields(current: dict, built: dict) -> dict:
+    rebased = dict(built)
+    if "confirmed_fields" in current:
+        rebased["confirmed_fields"] = current["confirmed_fields"]
+        if "heuristic_confirmed" in current:
+            rebased["heuristic_confirmed"] = current["heuristic_confirmed"]
+    confirmed = current.get("confirmed_fields", {})
+    facts = current.get("facts", {})
+    for field in confirmed if isinstance(confirmed, dict) else ():
+        is_class_fact = field == "class" and isinstance(facts, dict)
+        if is_class_fact and isinstance(facts.get("class"), dict):
+            rebased["facts"] = {**rebased.get("facts", {}), "class": facts["class"]}
+        elif field in current:
+            rebased[field] = current[field]
+    return rebased
+
+
+def rebase_on_current(current: dict, built: dict) -> dict:
+    """Apply a refresh's built entries to the catalog re-read under the lock (35 SPEC R1/R2/R8):
+    fields other writers own (runtime usability, confirmed fields and their values) come from
+    the re-read entry."""
+    result = dict(current)
+    for key, built_entry in built.items():
+        current_entry = current.get(key)
+        if not isinstance(current_entry, dict) or not isinstance(built_entry, dict):
+            result[key] = built_entry
+            continue
+        rebased = _rebase_confirmed_fields(current_entry, built_entry)
+        old_runtimes = current_entry.get("runtimes", {})
+        new_runtimes = built_entry.get("runtimes", {})
+        if isinstance(old_runtimes, dict) and isinstance(new_runtimes, dict):
+            rebased["runtimes"] = _rebase_runtimes(old_runtimes, new_runtimes)
+        result[key] = rebased
+    return result
+
+
+def _current_catalog(path: str, replace_unreadable: bool) -> dict:
+    """The catalog under the lock. Only a corrupt file may be replaced, and its bytes are kept."""
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read()
+    except FileNotFoundError:
+        return {}
+    except OSError as error:
+        raise ValueError(f"catalog unreadable, not overwritten: {path}") from error
+    try:
+        current = json.loads(raw.decode("utf-8"))
+    except ValueError:  # JSONDecodeError and UnicodeDecodeError are both ValueError
+        current = None
+    if isinstance(current, dict):
+        return current
+    if not replace_unreadable:
+        raise ValueError(f"catalog unreadable, not overwritten: {path}")
+    cache_write_bytes(path + ".corrupt", raw)
+    return {}
+
+
+def locked_catalog_update(path: str, update, *, replace_unreadable: bool = False) -> dict:
+    """Read-modify-write of the catalog under an exclusive lock (35 SPEC R1/R6/R8 concurrency
+    backstop): writers of different entries both survive; for one entry the last write wins."""
+    path = os.path.abspath(path)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path + ".lock", "a", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            current = _current_catalog(path, replace_unreadable)
+            new = update(current)
+            cache_write_json(path, new)
+            return new
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def merge_catalog_entry(catalog: dict, model_id: str, entry: dict) -> tuple:
     """Returns (new_catalog, rejection_reason). Never mutates `catalog`. An invalid entry is
     rejected and reported (spec Section 8: "that single entry is rejected and reported; the
@@ -227,7 +395,9 @@ def merge_catalog_entry(catalog: dict, model_id: str, entry: dict) -> tuple:
     rejections across a whole discovery run and reports them together, never aborting.
     `runtimes` is MERGED into any existing entry at this key, never replaced wholesale --
     this is what lets two different CLIs' runtime mappings for the same real model coexist
-    under one canonical key (HIGH finding: catalog identity must not lose runtime mappings)."""
+    under one canonical key (HIGH finding: catalog identity must not lose runtime mappings).
+    Each runtimes[<id>] row is merged per key (35 D-10, D-12, D-09): a key absent from the
+    incoming row is kept, an explicit None removes it."""
     if model_id == CATALOG_META_KEY:
         return catalog, f"{model_id}: reserved catalog key, not a model id"
     reason = validate_catalog_entry(model_id, entry)
@@ -237,7 +407,9 @@ def merge_catalog_entry(catalog: dict, model_id: str, entry: dict) -> tuple:
     existing = updated.get(model_id)
     if existing:
         merged = {**existing, **entry}
-        merged["runtimes"] = {**existing.get("runtimes", {}), **entry.get("runtimes", {})}
+        merged["runtimes"] = _merge_runtimes(
+            existing.get("runtimes", {}), entry.get("runtimes", {})
+        )
         # CRITICAL finding: an explicit None in the INCOMING `entry` means "this field's owning
         # source no longer confirms it -- clear it", not "leave whatever's cached untouched".
         # Plain dict-spread (`{**existing, **entry}`) cannot express that distinction on its
