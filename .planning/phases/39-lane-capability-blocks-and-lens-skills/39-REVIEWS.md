@@ -2,7 +2,7 @@
 phase: 39
 cycle: 1
 reviewers: [referee-one]
-reviewed_at: 2026-11-23T01:44:02-03:00
+reviewed_at: 2026-11-23T01:58:46-03:00
 plans_reviewed: [39-01-PLAN.md, 39-02-PLAN.md, 39-03-PLAN.md, 39-04-PLAN.md, 39-05-PLAN.md, 39-06-PLAN.md, 39-07-PLAN.md, 39-08-PLAN.md, 39-09-PLAN.md, 39-10-PLAN.md, 39-11-PLAN.md, 39-12-PLAN.md, 39-13-PLAN.md, 39-14-PLAN.md, 39-15-PLAN.md, 39-16-PLAN.md, 39-17-PLAN.md, 39-18-PLAN.md, 39-19-PLAN.md]
 models:
   referee-one: "router-env/my-referee-one"
@@ -1505,6 +1505,7 @@ The owner-started, default-off command is the right Phase 39 deliverable; Phase 
 - 39-03-P2 (ponytail Task 2), LOW, verified-fixed: same as 39-03-M1.
 - 39-06-H1, HIGH, verified-fixed: the runner prints no context line when no context setting was requested (`cross-ai.mjs:2027-2029`), so `window_for` now also treats a lane model id whose stripped suffix is the RUNTIMES bracket form (`detection.py:117`, constant `BRACKET_SUFFIX = r"\["`) as `context_form_applied` unless the user stated a window; new test `test_id_carried_bracket_is_unknown` (cursor bracket unknown, bare id capped, override wins, pi level suffix unaffected); LIVE FACT recorded for a SPEC amendment.
 - 39-06-H2, HIGH, fixed in part: 39-06's handoff now requires every caller, including 39-14's edit pass, to run `check_window(estimate_tokens(final_prompt), window)` on the final prompt after the block is added, last before the spawn; the code change is 39-14's (planner E) and stays open there.
+- 39-06-checker, WARNING, verified-fixed: the handoff truth (39-06-PLAN.md:31) no longer says the block prints the window; it now says 39-12's dispatch prints an unknown window to stderr as `ai-kit-spec: window for <runtime>/<model>: unknown (<note or label>); not capped` and keeps it out of the block (D-04's six fixed sections).
 - 39-06-M1, MEDIUM, verified-fixed: `TestRefusalDisjoint.setUp` now fails (`self.fail`) when the real node is missing instead of skipping, so a passing module proves the checks ran (39-07's precedent).
 - 39-06-M2, MEDIUM, verified-fixed by the orchestrator's decision (39-06 moved to wave 4, beside 39-10, no shared file); original finding: 39-05 and 39-06 are both wave 3 (39-05-PLAN.md:5, 39-06-PLAN.md:5); 39-06's gate reads `cross-ai.mjs` through `--describe` while 39-05 edits it, and 39-05 runs `tests.test_prompt_guard` while 39-06 edits it; run the two plans one after the other or move 39-06 to wave 4.
 - 39-06-P1 (ponytail Task 1), MEDIUM, verified-fixed in the handoff: `estimate_tokens` is named as the only estimator for every budget and the final check; 39-11 and 39-12 must call it (planner D, E).
@@ -1587,6 +1588,8 @@ The owner-started, default-off command is the right Phase 39 deliverable; Phase 
 - 39-11-PH1, HIGH (ponytail), verified-fixed: see H2 (no unused `raw`, no delivery claim).
 - 39-11-PM2, MEDIUM (ponytail), verified-fixed: tolerant seed read and the shared PATH resolver.
 - 39-11-PM3, MEDIUM (ponytail), verified-fixed: `lens_set` folds case before matching (the adapter lowercases its input, `task_classification.py:25`); an uppercase-extension case is tested.
+- checker-1, BLOCKER, verified-fixed: `lens_delivery.py` imports nothing from `capability_block` (39-12 imports `lens_delivery` into it; pylint cyclic-import is on, pyproject.toml:83-95); the single signature is `mcp_pick(table_host, child_path, user=None)` where `child_path` is the PATH string the caller resolved with 39-10's `capability_block.child_path(path_value, cwd)`; the `cwd` parameter and relative-PATH logic are gone from 39-11 (objective, Task 2 action, acceptance, threat model, artifacts), and a negative grep pins no `capability_block` name in `lens_delivery.py`. This supersedes 39-11-M1 above.
+- checker-2, WARNING, verified-fixed: 39-07's id-carried bracket truth now reads "closed on the Python side by 39-06's window_for bracket rule (SPEC R7 plan fix-pass note)"; 39-07-H1/PH1 above are closed by that rule, not by a template plan.
 - Cross-plan C1, MEDIUM, open (39-12): R8's missing-list edge at dispatch (CLI `--files` default `[]`).
 - Cross-plan C2, MEDIUM, open (39-17): a scratch-render dry-run comparison of the capabilities line (template versus render).
 
@@ -1647,3 +1650,24 @@ The owner-started, default-off command is the right Phase 39 deliverable; Phase 
 - 39-14-M1, MEDIUM, fixed in part: Task 2 now names every test (18 in total) and wrappers set the scratch HOME; the Task 1 helper split stays as written.
 - Cycle-2 relay, fixed: `validate_values(..., base=<child cwd>)` in 39-12 and `base=repo` in 39-14; an absent file list stays None; the target directory is validated as the `cwd` value; every `BlockInput` passes `cwd=`; `check_lens` rows carry `aliases` (no `raw`); 39-14's edit lenses come from `lens_set(<lane host>, files, role="edit_lens")` through the composer with no native host, and the composer's final `check_window` is the last step before the spawn.
 - Orchestrator decisions c2, fixed: the R7 bracket rule lives only in 39-06's `window_for` (39-12 passes 39-07's `context_form_applied(facts)` alone, no `strip_model_suffix` rule left); the R8 missing-list refusal applies to the CLI `--files` flag (default None, exit 65), while `ExecuteDispatchSpec.files` and `ReviewerDispatchSpec.files` default to `()` (explicitly empty), so the superpowers adapter (`dispatch_injection.py:386-397`, no files field, no separate embedded path) is never refused for the list and its `target_dir` is still validated as the `cwd` value.
+- checker, fixed: (1) 39-12 calls `lens_delivery.mcp_pick(host, child_path(<child PATH>, <lane cwd>), user=table_inputs(...)[1])` with no `cwd=` (no import cycle) and the INTERFACES line says so; (2) Task 3 inlines the ignored-flag note and the unknown-window note; (3) both `tool_availability = (json.loads(...)` anchors are tied to a unique neighbouring line; (4) the objective states the accepted waves 6-8 gap and both handlers print `ai-kit-spec: --files is missing: pass every path the prompt embeds with --files, or --files with no value when it embeds none` before the record when `--files` is missing; (5) 39-13's equality tests pass the same explicit `--files` list to all three entry points.
+
+## Plan check after the cycle 2 fix pass (gsd-plan-checker, full brief)
+
+Result: ISSUES FOUND, 1 blocker and 5 warnings and 1 info, all fixed in the plan text the same pass:
+- BLOCKER (fixed): a top-level import cycle `capability_block` <-> `lens_delivery` (39-11, 39-12) would fail `make pylint`
+  (`cyclic-import` enabled, `pyproject.toml:83-95`). `lens_delivery` no longer imports `capability_block`;
+  `mcp_pick(table_host, child_path, user=None)` takes the PATH 39-12 resolves with `capability_block.child_path`. The
+  function-level import of `execute_dispatch` in 39-12's command carries `# pylint: disable=import-outside-toplevel,cyclic-import`.
+- WARNING (fixed): one `mcp_pick` signature across 39-11 and 39-12.
+- WARNING (fixed): 39-12 Task 3 inlines the ignored-flag note and the unknown-window note instead of pointing to Task 2.
+- WARNING (fixed): stale truths 39-07:32 (bracket context closed by 39-06) and 39-06:31 (the dispatch, not the block, prints an
+  unknown window).
+- WARNING (fixed): the two `tool_availability` anchors in `cli.py` are tied to unique neighbouring lines.
+- WARNING (accepted, stated in 39-12): between waves 6 and 8 a documented `dispatch-reviewer` call without `--files` exits 65 with
+  a line naming the fix, until 39-15 updates the docs; the run uses no `dispatch-reviewer` call in those waves.
+- INFO (fixed): 39-13's equality test passes the same explicit `--files` list to all three entry points.
+The checker confirmed the adapter path (`ExecuteDispatchSpec.files` defaults to `()`, no adapter dispatch refused), the wave map
+(no same-wave file overlap) and that 39-06 alone owns the R7 bracket rule. Its edge and structure checks were partial; the
+orchestrator then ran them mechanically on all 19 plans: `verify plan-structure` and `frontmatter validate --schema plan` 38/38 valid
+(after two criterion fixes in 39-15), every one of the 67 Edge Coverage rows and all 10 Prohibitions named in at least one plan.
