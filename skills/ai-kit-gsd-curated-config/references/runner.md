@@ -54,7 +54,7 @@ ai-kit's `config.toml` table `[runner.retry]` (the project `.aikit/config.toml` 
 `[runner.retry.scopes."<scope>"]`). The owner edits that table; this skill never writes it. The runner
 migrates an old `workflow.cross_ai_retry` block and the old user `cross-ai.json` into it once (see the
 policy reference). CONFIG also keeps a `retry`
-object, the fallback below those two (the built-in defaults come after it, per key; a copy whose CONFIG `retry` predates `hard_every_s` takes that key from the defaults): do not tune it there, because CONFIG edits only
+object, the fallback below those two (the built-in defaults come after it, per key; a copy whose CONFIG `retry` predates `hard_every_s` takes that key from the defaults, so an upgraded copy keeps its own `hard_waits_s` list, such as 600, 900, 1800 s, and then checks every 600 s until the cap; set `hard_waits_s = [60, 300]` in `[runner.retry]` for the shipped schedule): do not tune it there, because CONFIG edits only
 receive `.new` upgrades. The caller owns the hard waits and notice. CONFIG retains `capS` (at most 14400), `attemptTimeoutS`, `routerBacked`, `runtime` and `idleTimeoutS`; a copy whose CONFIG predates `idleTimeoutS` reads the watchdog as off. `forbiddenPaths` and `admissionPhrases` are optional CONFIG keys, absent from the shipped block: without them the template's seed lists apply, and a value that is not a list of strings keeps the seed with a note. For caller actions on any non-ok
 status, see [`../../ai-kit-cross-ai/SKILL.md`](../../ai-kit-cross-ai/SKILL.md).
 

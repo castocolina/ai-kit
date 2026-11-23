@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=11 sha256=05974a97a164ac780d4b2a6f367f29f117740c7ff75fbdae3db4070015fe648c
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=11 sha256=255da19265d0c52a58c268ef04d366a54830a89f994ec2ed58821969706dfdee
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v11).
  *
@@ -2623,7 +2623,7 @@ function eventsWithRaw(cli, stdout, terminalOnly = false) {
   return { events, eventRaw };
 }
 
-// SPEC R4 (D-09): whole seconds from the router's "(reset after <n>h <n>m <n>s)"; parts add up in any order, a repeated unit or any other form is absent (null). Display only: no wait reads it.
+// SPEC R4 (D-09): whole seconds from the router's "(reset after <n>h <n>m <n>s)"; parts add up in any order, a repeated unit or any other form is absent (null). Shown as an upstream field; statedResetS reads it once for the reset check (R5), never as a wait by itself.
 function resetAfterSeconds(text) {
   const m = /\(reset after ([^)]*)\)/i.exec(String(text || ''));
   if (!m) return null;
@@ -4001,7 +4001,8 @@ function writeCycleState(file, data) {
 // 38.1 R11 (D-23..D-25): a usage-limited pool's blocked-until record; the runner never acts on it.
 // Mirrors Phase 36's POOL_RX (lane_settings.py) so a caller's --pool equals the recorded string.
 const BLOCKED_POOL_RE = /^[A-Za-z0-9._-]{1,64}:[a-z]{1,16}$/;
-const ROW_POOL_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+// The tier part of BLOCKED_POOL_RE, so a row tier that validates always forms a pool key.
+const ROW_POOL_RE = /^[a-z]{1,16}$/;
 const BLOCKED_DAY_S = 86400;
 const BLOCKED_MARGIN_S = 120;
 function blockedIso(s) { return new Date(s * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'); }
@@ -7266,6 +7267,8 @@ async function main(argv) {
   // SPEC R5: check only spawned runs, including failed runs without replacing their status.
   const checked = o.mode === 'exec' && (r.attempts || 0) > 0 && (noTree || (after && liveBaseline)) ? await executeFindings(raw, r, after, process.cwd(), o, noTree) : null;
   if (aborting) return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal'); // Signal during post-run reads.
+  // 38.1 R11: the record follows the attempt's class, whatever the tree state or a later git read says.
+  if (r.ok) blockedClearAfterOk(o.pool); else blockedAfterStop(o.pool, c.model, { ...r, cli: c.name });
   if (
     r.status === 'contract_violation' || r.status === 'git_error' || r.status === 'git_timeout'
   ) {
@@ -7286,7 +7289,6 @@ async function main(argv) {
     }, 'class');
   }
   if (r.ok) {
-    blockedClearAfterOk(o.pool);
     if (!noTree && (after === null || before === null)) {
       const status = gitFailStatus();
       return reportAndFinish(status, { ...liveFields, tree: 'unknown', cli_rc: 0, exit: 1 });
@@ -7311,7 +7313,6 @@ async function main(argv) {
       ...liveFields, tree: 'unknown', cli_rc: r.cli_rc ?? '-', exit: 1,
     });
   }
-  blockedAfterStop(o.pool, c.model, { ...r, cli: c.name });
   const finalStatus = r.status || 'crash';
   return reportAndFinish(finalStatus, {
     ...liveFields, tree, cli_rc: r.cli_rc, cli: c.name, model: c.model,

@@ -134,7 +134,8 @@ the caller only waits.
   16, 26 minutes after the soft series and every 10 minutes after that. A wait of 60 s or more is
   one exit 75 with `retry_after_s=` and the call never sleeps it; a configured hard wait
   under 60 s (0 included) runs inside the call when the deadline leaves 60 s after it, else it
-  becomes a 60 s hint (a 0 s wait inside the call is an immediate re-attempt).
+  becomes a 60 s hint (a 0 s wait inside the call is an immediate re-attempt). That re-attempt
+  belongs to the next check (`cycle` + 1) and is not a soft retry.
 - A wait that would pass the 4-hour cap (`capS`, 14400) ends the episode: the call exits 69 with
   `stopped=cap`. With `hard_every_s = 0` the re-invoke after the last list entry still runs the
   task, and when it needs the hard tier again it exits 69 with `stopped=hard-waits` (a fixed list

@@ -19,7 +19,7 @@ sys.path.insert(0, str(REPO))
 from tests.cross_ai_selftest import _real_node_executable
 
 sys.path.insert(0, str(REPO / "skills" / "ai-kit-spec-review"))
-from ai_kit_spec import lane_settings
+from ai_kit_spec import lane_price, lane_settings
 
 NODE = _real_node_executable()
 HELP_DIR = REPO / "tests" / "fixtures" / "cli_help"
@@ -264,6 +264,33 @@ class TestRunnerDescribe(unittest.TestCase):
                                       text=True, timeout=30, check=False)
                 self.assertEqual(proc.returncode, 0)
                 self.assertEqual(proc.stdout, "blocked_until=2023-11-15T04:59:20Z failures=2\n")
+
+    def test_phase36_pool_key_equals_the_runner_key_for_one_lane(self):
+        """One shared fixture (SPEC R11): Phase 36's key and the runner's key for the same lane."""
+        if NODE is None:
+            self.skipTest("node not on PATH")
+        lanes = [["fake/placeholder-model-1", "fake"], ["fake-go.x_1/placeholder-model-2", "other"],
+                 ["placeholder-model-3", "fake"]]
+        script = ("import { pathToFileURL } from 'node:url';"
+                  " const m = await import(pathToFileURL(process.env.POOL_TEMPLATE).href);"
+                  " const lanes = JSON.parse(process.env.POOL_LANES);"
+                  " process.stdout.write(JSON.stringify(lanes.map(([model]) =>"
+                  " m.blockedPoolKey(null, { pool: 'free' }, model))));")
+        with tempfile.TemporaryDirectory() as home:
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": home, "LANG": "C",
+                   "AI_KIT_REFUSE_REAL_HOME": "1", "POOL_TEMPLATE": str(TEMPLATE),
+                   "POOL_LANES": json.dumps(lanes)}
+            proc = subprocess.run([NODE, "--input-type=module", "-e", script], cwd=home, env=env,
+                                  stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  timeout=30, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        runner = json.loads(proc.stdout)
+        phase36 = [lane_price.pool_key(model, provider) for model, provider in lanes]
+        self.assertEqual(runner[:2], phase36[:2])
+        self.assertEqual(runner[:2], ["fake:free", "fake-go.x_1:free"])
+        # A slashless id names no provider to the runner; it needs --pool (SKILL section 6).
+        self.assertIsNone(runner[2])
+        self.assertEqual(phase36[2], "fake:free")
 
     def test_statuses_equal_the_status_table(self):
         self.assertEqual(json.loads(describe()[1])["statuses"], status_table())

@@ -337,6 +337,15 @@ class PolicyText(unittest.TestCase):
                       "the series then resumes from its own count", section)
         self.assertNotIn("retry_after_s=0", section)
 
+    def test_section_6_has_one_row_per_retry_key_with_its_default(self):
+        """SPEC R10 edge: each `[runner.retry]` key, `hard_every_s` included, has one row."""
+        section = _section(SKILL.read_text(encoding="utf-8"), "## 6. Hard tier and notice")
+        rows = [[cell.strip().strip("`") for cell in line.strip("|").split("|")]
+                for line in section.splitlines() if line.startswith("| `")]
+        retry = template_config(TEMPLATE.read_bytes())["retry"]
+        self.assertEqual(sorted((row[0], row[1]) for row in rows),
+                         sorted((key, _toml_line_value(value)) for key, value in retry.items()))
+
     def test_policy_doc_states_the_same_numbers(self):
         waits, every, cap, margin = retry_policy_numbers(TEMPLATE.read_text(encoding="utf-8"))
         text = POLICY.read_text(encoding="utf-8")

@@ -209,7 +209,7 @@ A failed attempt's `status=` names one class from a closed list. Setting reasons
 |---|---|---|
 | `quota` | 75 | a usage or rate limit; it cycles only on a confirmed router lane, and a direct lane stops at once |
 | `billing` | 69 | the account cannot pay or the plan is not open; on a confirmed router lane a billing row marked for the router reads as `quota` |
-| `auth` | 69 | the host or the provider refused the credentials |
+| `auth` | 69 | the host or the provider refused the credentials; on a confirmed router lane an auth row marked for the router (a router-tail credential failure) reads as `quota` |
 | `permission_blocked` | 69 | the host refused a tool or a path |
 | `bad_model` | 69 | the model id is missing, not served or not configured |
 | `bad_request` | 69 | the provider refused the request itself (data inspection, context length, a client rule); the same input never succeeds, so it is an owner stop |
@@ -316,6 +316,17 @@ print-and-stop handoff. Never both.
 
 The hard tier's schedule (`[runner.retry]`): the first check after `hard_waits_s` entry 1 (default 60 s), the second after entry 2 (default 300 s), then a periodic check every `hard_every_s` (default 600 s) until the 4-hour cap (CONFIG `capS`, at most 14400, never raised); a wait that would pass the cap ends the episode with `stopped=cap`. `hard_every_s = 0` keeps the list-end stop `stopped=hard-waits` (a fixed list then a stop is, for example, `hard_waits_s = [600, 900, 1800]` with `hard_every_s = 0`). A stated reset time (section 4) adds one reset check at that time plus 120 s, once per episode, when that is at least 60 s ahead, inside the cap and earlier than the next check: the reset check replaces the wait of the check it comes before; the series then resumes from its own count. The report line's `check=` names the check a hint is for: `first` for every `hard_waits_s` entry, `periodic` for each `hard_every_s` wait, `reset` for the extra check, `-` otherwise. A configured hard wait under 60 s (0 included) runs inside the call when the deadline leaves 60 s after it, else it becomes a 60 s hint; a 0 s wait inside the call is an immediate re-attempt. An episode can hold about 24 hints, each still one one-shot wait; a lane the idle watchdog ends on every attempt retries every 10 minutes for up to 4 hours, so set `hard_every_s = 0` with a short `hard_waits_s` list for an earlier stop (`max_retries` only shortens each call's soft series).
 
+| Key in `[runner.retry]` | Default | Bounds | What it sets |
+|---|---|---|---|
+| `base_s` | `1` | 0..60 | the first soft wait, in seconds |
+| `factor` | `1.5` | 1.0..3.0 | how much each soft wait grows |
+| `max_retries` | `5` | 0..10 | same-session retries in one soft series |
+| `session_resets` | `1` | 0..3 | session resets, each followed by another soft series |
+| `hard_waits_s` | `[60, 300]` | 1 to 6 entries, each 0..`capS` | the first hard-tier checks, in order |
+| `hard_every_s` | `600` | 0 or 60..`capS` | the periodic check after the list; 0 stops at the list's end |
+
+When a runner copy's CONFIG `retry` predates `hard_every_s` (a copy upgraded in place keeps its CONFIG), the copy keeps its own `hard_waits_s` list and takes `hard_every_s` 600 from the defaults: a list of 600, 900, 1800 s then checks every 600 s until the cap. To run the defaults above, set `hard_waits_s = [60, 300]` in `[runner.retry]` of ai-kit's `config.toml`.
+
 On `stopped=hard-waits` or `stopped=cap`, print the `cross-ai: report` line and the `AIKIT-XAI`
 line verbatim to the user, plus the `cross-ai: upstream` lines verbatim when the report says
 `upstream=present`. With `upstream=-` there are none: say there is no upstream evidence, and
@@ -342,7 +353,7 @@ the state path and the re-invoke command, and stop. Whether the owner runs it is
 
 ### Blocked-until record of a limited pool
 
-A quota stop on a lane whose matched row carries a pool (opencode's free-usage row) or whose call passes `--pool <provider>:free` writes one record for that pool under `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/blocked/`. The record holds `blocked_until`: the stated `retryAfterMs` (capped at 24 hours) plus 120 s, else 24 hours; a second failure in a row after that time waits at least 24 hours. An ok attempt deletes it only when the call passed `--pool` for that pool; an ok lane of the same provider without `--pool` (a paid lane) keeps it, so a caller of a usage-limited lane always passes `--pool`. `--blocked-status <provider>:free` prints `blocked_until=<time|-> failures=<n>` and `--blocked-clear <provider>:free` deletes the record; neither starts a host. A missing or malformed record reads as none. The runner never refuses or switches a lane because of a record: choosing a lane is the caller's. A client-rule refusal (`FreeTierError`, `MissingSessionID`, the free-tier version gate) is `bad_request` and writes no record; a router lane's quota cycle never writes one.
+A quota stop on a lane whose matched row carries a pool (opencode's free-usage row) or whose call passes `--pool <provider>:free` writes one record for that pool under `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/blocked/`. A row's pool takes its provider from the model id's part before `/`, so a lane whose id has no `/` writes one only with `--pool`. The record follows the attempt, not the run's status: a review whose tree changed or a git read that failed afterwards (`contract_violation`, `git_error`, `git_timeout`) still writes or clears it. The record holds `blocked_until`: the stated `retryAfterMs` (capped at 24 hours) plus 120 s, else 24 hours; a second failure in a row after that time waits at least 24 hours. An ok attempt deletes it only when the call passed `--pool` for that pool; an ok lane of the same provider without `--pool` (a paid lane) keeps it, so a caller of a usage-limited lane always passes `--pool`. `--blocked-status <provider>:free` prints `blocked_until=<time|-> failures=<n>` and `--blocked-clear <provider>:free` deletes the record; neither starts a host. A missing or malformed record reads as none. The runner never refuses or switches a lane because of a record: choosing a lane is the caller's. A client-rule refusal (`FreeTierError`, `MissingSessionID`, the free-tier version gate) is `bad_request` and writes no record; a router lane's quota cycle never writes one.
 
 ## 7. GSD retry, skip, abort
 

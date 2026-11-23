@@ -829,7 +829,7 @@ const CLASSIFY_CASES = [
   {
     name: 'host-copilot-one-word-off', cli: 'copilot',
     stderr: 'Execution failed: Model "placeholder-model-1" is not  available.',
-    expect: { status: 'crash', pattern: 'none', rule: '-' },
+    expect: { status: 'crash', pattern: 'none', rule: '-', cliPattern: 'unverified' },
   },
 ];
 
@@ -1031,6 +1031,9 @@ function classifyCases() {
           [{ ...base, match: 'a'.repeat(201) }, 'match'],
           [{ ...base, match: '(' }, 'match'],
           [{ ...base, cli: 'nosuch' }, 'cli'],
+          [{ ...base, pool: 'Free' }, 'pool'],
+          [{ ...base, pool: 'tier-1' }, 'pool'],
+          [{ ...base, pool: 'a'.repeat(17) }, 'pool'],
         ];
         for (const [row, field] of cases) {
           const reason = validateRow(row, RUNTIMES);
@@ -2002,6 +2005,9 @@ const FAKE_MODES = {
     process.stderr.write('quota exceeded\n');
     process.exit(1);
   },
+  // 38.1 review: a free-pool limit after an edit, and one whose post-run git read fails.
+  dirtyfreelimit: () => { fs.appendFileSync('a.txt', 'df\n'); process.stderr.write('429: {"type":"error","error":{"type":"FreeUsageLimitError","status":429,"retryAfterMs":24240000}}\n'); process.exit(1); },
+  gitfailfreelimit: () => { fs.writeFileSync((process.env.HOME || '') + '/.fake-git-fail', '1'); process.stderr.write('429: {"type":"error","error":{"type":"FreeUsageLimitError","status":429,"retryAfterMs":24240000}}\n'); process.exit(1); },
   reedit: () => { fs.appendFileSync('dirty.txt', 'more\n'); process.stdout.write('# Summary\nok'); },
   subedit: () => { fs.appendFileSync('sub/f.txt', 'edit\n'); process.stdout.write('# Summary\nok'); },
   ignorededit: () => { fs.appendFileSync('x.local', 'edit\n'); process.stdout.write('# Summary\nok'); },
@@ -2497,6 +2503,11 @@ process.stdin.on('data', (d) => { input += d; }).on('end', () => {
   }
   if (argOf('--model') === 'fake-model-missing') {
     console.log(JSON.stringify({ type: 'result', is_error: true, result: "There's an issue with the selected model (fake-model-missing). It may not exist or you may not have access to it." }));
+    process.exit(1);
+  }
+  // 38.1 review: only the structured status field can classify this result (its text matches no row).
+  if (argOf('--model') === 'fake-status-429') {
+    console.log(JSON.stringify({ type: 'result', is_error: true, api_error_status: 429, api_error_type: 'fake_error_type', result: 'Request failed' }));
     process.exit(1);
   }
   const execute = argOf('--permission-mode') !== 'plan';
@@ -4315,6 +4326,36 @@ async function blackBoxSelfTest(listOnly = false) {
           } catch { return 'missing record'; }
           return null;
         },
+      },
+      {
+        // 38.1 review: a quota stop over a dirty review tree still writes the record (the run reports contract_violation).
+        name: 'blocked-review-dirty-writes', kind: 'logic',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/dirtyfreelimit'], exit: 1,
+        status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/dirtyfreelimit exit=1 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.filter((line) => line === 'pi dirtyfreelimit').length !== 1) return 'unexpected attempts';
+          if (!/^cross-ai: blocked-until pool=fake:free until=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z failures=1 basis=retry_after_ms$/m.test(r.stderr || '')) return 'missing blocked notice';
+          return fs.existsSync(REC(ctx)) ? null : 'missing record';
+        },
+      },
+      {
+        // 38.1 review: a quota stop whose post-run git read fails still writes the record (the run reports git_error).
+        name: 'blocked-git-fail-writes', kind: 'logic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/gitfailfreelimit'], exit: 1,
+        status: /^AIKIT-XAI status=git_error cli=pi model=fake\/gitfailfreelimit exit=1 .* tree=unknown action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.filter((line) => line === 'pi gitfailfreelimit').length !== 1) return 'unexpected attempts';
+          if (!/^cross-ai: blocked-until pool=fake:free until=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z failures=1 basis=retry_after_ms$/m.test(r.stderr || '')) return 'missing blocked notice';
+          return fs.existsSync(REC(ctx)) ? null : 'missing record';
+        },
+      },
+      {
+        // 38.1 review: an ok attempt clears the named pool even when the review tree is dirty (the run reports contract_violation).
+        name: 'blocked-review-dirty-ok-clears', kind: 'logic', setup: PLANT,
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-edit', '--pool', 'fake:free'], exit: 1,
+        status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/review-edit exit=1 .* action=stop$/,
+        check: (r, ctx) => ((r.stderr || '').includes('cross-ai: blocked-until cleared pool=fake:free') && !fs.existsSync(REC(ctx))
+          ? null : 'record not cleared'),
       },
       ...[
         ['blocked-client-rule-no-record', 'freetier', 'bad_request'],
@@ -9877,7 +9918,8 @@ async function blackBoxSelfTest(listOnly = false) {
             if (got.status !== want.expect.status) {
               return `${want.name} status ${got.status} expected ${want.expect.status}`;
             }
-            const expectedPattern = patternFor(RUNTIMES[want.cli], want.cli, null, classifyOne(want));
+            // A fixed value, never patternFor's own answer: cliPattern is the --classify-only pattern where a runtime-level flag demotes it.
+            const expectedPattern = want.expect.cliPattern ?? want.expect.pattern;
             if (got.pattern !== expectedPattern) {
               return `${want.name} pattern ${got.pattern} expected ${expectedPattern}`;
             }
@@ -10725,6 +10767,18 @@ async function blackBoxSelfTest(listOnly = false) {
         check: (r) => {
           const rule = statusTail(r.stderr || '')?.rule;
           return rule === 'claude-selected-model' ? null : `rule ${rule}`;
+        },
+      },
+      {
+        // 38.1 review: claude's api_error_status reaches the status-code row through a real lane (R3), not only through the pure case.
+        name: 'stdout-claude-status-field', kind: 'logic',
+        args: ['--runtime', 'claude', '--role', 'review', '--model', 'fake-status-429'], exit: 75,
+        status: /^AIKIT-XAI status=quota cli=claude model=fake-status-429 exit=75 .* action=stop$/,
+        check: (r, ctx) => {
+          const rule = statusTail(r.stderr || '')?.rule;
+          if (rule !== 'code-429') return `rule ${rule}`;
+          const calls = ctx.calls.filter((line) => line === 'claude fake-status-429').length;
+          return calls === 1 ? null : `calls ${calls}`;
         },
       },
       {
