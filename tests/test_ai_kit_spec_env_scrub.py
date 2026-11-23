@@ -123,7 +123,7 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
                 timeout=timeout,
             ),
             seams=execute_dispatch.ExecuteSeams(
-                build_tooling_guidance_fn=lambda *_a, **_kw: "",
+                compose_fn=lambda *_a, **_kw: execute_dispatch.ComposeResult(),
                 build_reinforcement_fn=lambda *_a, **_kw: "",
                 build_soft_confinement_fn=lambda *_a, **_kw: "",
                 # which_fn: the image without node must still reach the spawn.
@@ -152,9 +152,7 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
                 prompt="p", timeout_tiers=[timeout], tool_availability={},
             ),
             seams=reviewer_dispatch.ReviewerSeams(
-                build_tooling_guidance_fn=lambda *_a, **_kw: "",
-                resolve_shared_reference_fn=lambda: None,
-                code_index_registered_fn=lambda _cli: False,
+                compose_fn=lambda *_a, **_k: reviewer_dispatch.ComposeResult(),
             ),
         )
         assert result["returncode"] == 0, result

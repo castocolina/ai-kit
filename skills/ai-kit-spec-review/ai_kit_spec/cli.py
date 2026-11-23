@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from ai_kit_spec import (
+    capability_block,
     catalog_cmds,
     catalog_fetch,
     config_migrate,
@@ -18,6 +19,7 @@ from ai_kit_spec import (
     lane_effort,
     lane_settings,
     optional_sources,
+    prompt_guard,
     propose_cmds,
     provider_check,
     role_orders,
@@ -35,6 +37,7 @@ from ai_kit_spec.cache import (
     cache_read_json,
     cache_write_json,
 )
+from ai_kit_spec.capability_block import LaneRefused
 from ai_kit_spec.catalog_attribution import attribution_lines, catalog_sources
 from ai_kit_spec.catalog_build import (
     CatalogSources,
@@ -423,6 +426,11 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
                              help="e.g. GSD's own real SUMMARY.md shape -- omit for a dispatch "
                                   "mode whose caller already knows its own output convention")
     p_dispatch.add_argument("--tool-availability-json", default=None)
+    p_dispatch.add_argument("--files", nargs="*", default=None,
+                            help="every path the prompt embeds; validated; without it no "
+                                 "capability block is built (a stderr note says so); pass --files "
+                                 "with no "
+                                 "value for none")
     p_dispatch.add_argument("--agents-tooling-path", default=None)
     p_dispatch.add_argument("--code-index-registered", action="store_true")
     p_dispatch.add_argument(
@@ -451,6 +459,9 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
         "--timeout-tiers", required=True,
         help="comma-separated seconds, e.g. '600,1200,1800' -- escalation order")
     p_dispatch_reviewer.add_argument("--tool-availability-json", default=None)
+    p_dispatch_reviewer.add_argument(
+        "--files", nargs="*", default=None,
+        help="paths embedded in the prompt; omit for no block, or pass --files with no values")
     p_dispatch_reviewer.add_argument("--agents-tooling-path", default=None)
     p_dispatch_reviewer.add_argument(
         "--cwd", default=None,
@@ -490,6 +501,7 @@ def _build_parser() -> argparse.ArgumentParser:
     catalog_cmds.register_parsers(sub)
     propose_cmds.register_parsers(sub)
     config_status.register_parsers(sub)
+    capability_block.register_parsers(sub)
     skill_table.register_parsers(sub)
     skill_classify.register_parsers(sub)
     return parser
@@ -1253,8 +1265,12 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
     if args.format_block_file:
         with open(args.format_block_file, encoding="utf-8") as f:
             format_block = f.read()
-    tool_availability = (json.loads(args.tool_availability_json)
-                          if args.tool_availability_json else {})
+    if args.tool_availability_json is not None:
+        print("ai-kit-spec: --tool-availability-json is ignored: the capability block resolves "
+              "tools on the lane's own PATH", file=sys.stderr)
+    if args.files is None:
+        print("ai-kit-spec: no capability block built: no --files given "
+              "(pass --files to get the lane's capability block)", file=sys.stderr)
     candidate = {"runtime": rid, "model": args.model, "effort": args.effort,
                  "service_tier": args.service_tier}
     try:
@@ -1265,11 +1281,15 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
                 args.target_dir,
                 args.timeout,
                 format_block=format_block,
-                tool_availability=tool_availability,
+                tool_availability={},
                 agents_tooling_path=args.agents_tooling_path,
                 code_index_registered=args.code_index_registered,
+                files=None if args.files is None else tuple(args.files),
             )
         )
+    except LaneRefused as exc:
+        print(json.dumps(exc.record, sort_keys=True), file=sys.stderr)
+        return prompt_guard.REFUSED_EXIT
     except ValueError as exc:
         print(f"dispatch-execute: {exc}", file=sys.stderr)
         return 1
@@ -1297,20 +1317,28 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
         with open(args.prompt_file, encoding="utf-8") as f:
             prompt = f.read()
     timeout_tiers = [int(t) for t in args.timeout_tiers.split(",") if t.strip()]
-    tool_availability = (json.loads(args.tool_availability_json)
-                          if args.tool_availability_json else {})
+    if args.tool_availability_json is not None:
+        print("ai-kit-spec: --tool-availability-json is ignored: the capability block resolves "
+              "tools on the lane's own PATH", file=sys.stderr)
+    if args.files is None:
+        print("ai-kit-spec: no capability block built: no --files given "
+              "(pass --files to get the lane's capability block)", file=sys.stderr)
     try:
         result = deps.dispatch_reviewer_fn(
             ReviewerDispatchSpec(
                 reviewers[args.index],
                 prompt,
                 timeout_tiers,
-                tool_availability,
+                {},
                 args.agents_tooling_path,
                 cwd=args.cwd,
+                files=None if args.files is None else tuple(args.files),
             ),
             seams=ReviewerSeams(runner_tiers_fn=deps.runner_tiers_fn, custom_fn=deps.custom_fn),
         )
+    except LaneRefused as exc:
+        print(json.dumps(exc.record, sort_keys=True), file=sys.stderr)
+        return prompt_guard.REFUSED_EXIT
     except ValueError as exc:
         # Deliberately no "### Status:" substring -- same fail-closed convention
         # render-command uses: a malformed reviewer entry (bad/missing command template,
@@ -1381,6 +1409,7 @@ _COMMANDS = {
     **catalog_cmds.COMMANDS,
     **propose_cmds.COMMANDS,
     **config_status.COMMANDS,
+    **capability_block.COMMANDS,
     **skill_table.COMMANDS,
     **skill_classify.COMMANDS,
 }

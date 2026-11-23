@@ -25,6 +25,15 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
+WRITES = {"cursor": "unknown", "opencode": "unknown", "pi": "unknown", "codex": "workspace"}
+CAP_LINE = ('cross-ai: capabilities {"write":{"value":"WRITE","label":{"state":"verified",'
+            '"source":"from argv"}},"shell":{"value":"unknown","label":{"state":"unknown",'
+            '"source":"not shown by the final argv"}},"skills":{"value":"unknown","label":'
+            '{"state":"unknown","source":"not shown by the final argv"}},"mcp":{"value":'
+            '"unknown","label":{"state":"unknown","source":"not shown by the final argv"}},'
+            '"prompt":{"channel":"stdin","max_bytes":null}}')
+UNKNOWN_WINDOW = {"value": None, "label": "unknown", "source": None, "note": None}
+
 # Bare module imports -- test classes call module-qualified names like
 # `detection.detect_tool_availability(...)`, which need the module in scope alongside the
 # individually-named imports below.
@@ -58,6 +67,7 @@ from ai_kit_spec.cache import (
     cache_write_json,
     cache_write_text,
 )
+from ai_kit_spec.capability_block import ComposeResult, ComposeSeams
 from ai_kit_spec.cli import main
 from ai_kit_spec.commands import (
     ResolvedReviewer,
@@ -3957,7 +3967,8 @@ class TestMainCli(unittest.TestCase):
 
         def dispatch(spec):
             return execute_dispatch.dispatch_execute(
-                spec, execute_dispatch.ExecuteSeams(runner_fn=fake_runner))
+                spec, execute_dispatch.ExecuteSeams(
+                    runner_fn=fake_runner, compose_fn=lambda *_a, **_k: ComposeResult()))
 
         with tempfile.TemporaryDirectory() as d:
             prompt_path = os.path.join(d, "prompt.txt")
@@ -4983,7 +4994,8 @@ class TestDispatchExecute(unittest.TestCase):
                     candidate={"runtime": "cursor-agent", "model": "gpt-6[effort=high]"},
                     prompt="p", target_dir=target, timeout=600,
                 ),
-                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+                seams=execute_dispatch.ExecuteSeams(
+                    runner_fn=fake_runner, compose_fn=lambda *_a, **_k: ComposeResult()),
             )
         self.assertEqual(captured["spec"].runtime, "cursor")
         self.assertEqual(result["runtime"], "cursor")
@@ -5021,7 +5033,8 @@ class TestDispatchExecute(unittest.TestCase):
                     target_dir=target,
                     timeout=600,
                 ),
-                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+                seams=execute_dispatch.ExecuteSeams(
+                    runner_fn=fake_runner, compose_fn=lambda *_a, **_k: ComposeResult()),
             )
         self.assertEqual(captured["spec"].runtime, "codex")
         self.assertEqual(captured["spec"].mode, "exec")
@@ -5055,7 +5068,12 @@ class TestDispatchExecute(unittest.TestCase):
                     target_dir=target,
                     timeout=600,
                 ),
-                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+                seams=execute_dispatch.ExecuteSeams(
+                    runner_fn=fake_runner,
+                    compose_seams=ComposeSeams(
+                        print_argv_fn=lambda spec, _env: [
+                            CAP_LINE.replace("WRITE", WRITES[spec.runtime])],
+                        scan_fn=lambda *_a: {}, window_fn=lambda *_a: UNKNOWN_WINDOW)),
             )
             captured["target"] = target
         return captured
@@ -5071,7 +5089,7 @@ class TestDispatchExecute(unittest.TestCase):
         captured = self._confinement_prompt("codex")
         self.assertNotIn("NO operating-system-level write confinement", captured["prompt"])
 
-    def test_includes_tool_guidance_when_provided(self):
+    def test_includes_the_capability_block(self):
         candidate = {"runtime": "cursor-agent", "model": "sonnet", "key": "cursor-agent/sonnet"}
         captured = {}
 
@@ -5091,12 +5109,12 @@ class TestDispatchExecute(unittest.TestCase):
                     agents_tooling_path="/repo/AGENTS-TOOLING.md",
                     code_index_registered=True,
                 ),
-                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+                seams=execute_dispatch.ExecuteSeams(
+                    runner_fn=fake_runner,
+                    compose_fn=lambda *_a, **_k: ComposeResult(block="BLOCK")),
             )
-        self.assertIn("/repo/AGENTS-TOOLING.md", captured["prompt"])
-        self.assertIn("search_graph", captured["prompt"])
-        self.assertIn("configured for this CLI", captured["prompt"])
-        self.assertNotIn("codebase-memory-mcp cli <tool> --flag value", captured["prompt"])
+        self.assertTrue(captured["prompt"].startswith("BLOCK\n\n"))
+        self.assertIn("do the task", captured["prompt"])
 
     def test_includes_output_format_block_when_given(self):
         candidate = {
@@ -5120,7 +5138,8 @@ class TestDispatchExecute(unittest.TestCase):
                     timeout=600,
                     format_block="FORMAT-BLOCK-MARKER",
                 ),
-                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+                seams=execute_dispatch.ExecuteSeams(
+                    runner_fn=fake_runner, compose_fn=lambda *_a, **_k: ComposeResult()),
             )
         self.assertIn("FORMAT-BLOCK-MARKER", captured["prompt"])
 
@@ -5147,7 +5166,8 @@ class TestDispatchExecute(unittest.TestCase):
                     target_dir=target,
                     timeout=600,
                 ),
-                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+                seams=execute_dispatch.ExecuteSeams(
+                    runner_fn=fake_runner, compose_fn=lambda *_a, **_k: ComposeResult()),
             )
         self.assertEqual(captured["spec"].effort, "high")
         self.assertEqual(captured["spec"].service_tier, "priority")
@@ -5167,7 +5187,8 @@ class TestDispatchExecute(unittest.TestCase):
                     target_dir="/no/such/dir",
                     timeout=600,
                 ),
-                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+                seams=execute_dispatch.ExecuteSeams(
+                    runner_fn=fake_runner, compose_fn=lambda *_a, **_k: ComposeResult()),
             )
         self.assertIn("/no/such/dir", str(ctx.exception))
         self.assertIn("does not exist", str(ctx.exception))
@@ -5264,7 +5285,7 @@ class TestExecuteCliRejection(unittest.TestCase):
               mock.patch("sys.stdin", io.StringIO("task"))):
             code, stderr, calls = self._rejected_dispatch_run("claude", cache_dir, False)
         self.assertEqual(code, 0)
-        self.assertEqual(stderr, "")
+        self.assertIn("no capability block built", stderr)
         self.assertEqual(len(calls), 1)
 
     def test_grok_keeps_its_custom_entry_generator(self):
@@ -5567,9 +5588,8 @@ class TestDispatchReviewer(unittest.TestCase):
             ),
             seams=reviewer_dispatch.ReviewerSeams(
                 runner_tiers_fn=fake_tiers,
-                build_tooling_guidance_fn=lambda *a, **kw: "TOOLING GUIDANCE HERE",
-                resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
-                code_index_registered_fn=lambda cli: True,
+                compose_fn=lambda *_a, **_k: reviewer_dispatch.ComposeResult(
+                    block="TOOLING GUIDANCE HERE"),
             ),
         )
 
@@ -5610,8 +5630,9 @@ class TestDispatchReviewer(unittest.TestCase):
             ),
             seams=reviewer_dispatch.ReviewerSeams(
                 custom_fn=fake_custom,
-                resolve_shared_reference_fn=lambda: "/fake/tooling-guidance.md",
-                code_index_registered_fn=lambda cli: False,
+                compose_fn=lambda *_a, **_k: reviewer_dispatch.ComposeResult(
+                    block="SHARED_TOOLING_PATH = /fake/tooling-guidance.md\n"
+                          "TOOL_AVAILABILITY = {}"),
             ),
         )
 
@@ -5621,79 +5642,41 @@ class TestDispatchReviewer(unittest.TestCase):
         self.assertIn("Read the checklist and review...", prompt_element)
         self.assertEqual(captured["prompt"], prompt_element)
 
-    def test_code_index_registration_is_resolved_internally_not_asked_of_the_caller(self):
-        asked = []
+    def test_compose_receives_the_lane_request(self):
+        captured = []
 
-        def fake_tiers(spec, tiers, prompt, seams):
-            del spec, tiers, prompt, seams
-            return runner_dispatch.RunnerResult(0, "", {"status": "ok"}, None, False, [], "")
+        def compose(*args):
+            captured.extend(args[:3])
+            return reviewer_dispatch.ComposeResult()
 
-        def fake_health(cli):
-            asked.append(cli)
-            return True
-
-        captured_guidance_args = {}
-
-        def fake_guidance(cli, availability, agents_path, code_index_registered, **kw):
-            del cli
-            del availability
-            del agents_path
-            captured_guidance_args["code_index_registered"] = code_index_registered
-            return ""
-
-        reviewer_dispatch.dispatch_reviewer(
-            reviewer_dispatch.ReviewerDispatchSpec(
-                reviewer_entry={
-                    "key": "k",
-                    "model": "m",
-                    "vendor": "v",
-                    "runtime": "codex",
-                    "route": "subprocess",
-                    "extra": {},
-                },
-                prompt="p",
-                timeout_tiers=[600],
-                tool_availability={"codebase-memory-mcp": True},
-            ),
-            seams=reviewer_dispatch.ReviewerSeams(
-                runner_tiers_fn=fake_tiers,
-                build_tooling_guidance_fn=fake_guidance,
-                resolve_shared_reference_fn=lambda: None,
-                code_index_registered_fn=fake_health,
-            ),
-        )
-
-        self.assertEqual(asked, ["codex"])
-        self.assertTrue(captured_guidance_args["code_index_registered"])
-
-    def test_custom_entry_never_runs_the_registration_check(self):
-        asked = []
-
-        def fake_custom(spec, prompt, seams):
-            del spec, prompt, seams
+        def runner(*_args):
             return runner_dispatch.RunnerResult(0, "", None, None, False, [], "")
 
+        entry = {"key": "k", "model": "fake-model", "runtime": "codex"}
         reviewer_dispatch.dispatch_reviewer(
-            reviewer_dispatch.ReviewerDispatchSpec(
-                reviewer_entry={
-                    "key": "custom",
-                    "model": "m",
-                    "vendor": "v",
-                    "command": "my-script --model {model} --prompt {prompt}",
-                    "extra": {},
-                },
-                prompt="p",
-                timeout_tiers=[600],
-                tool_availability={},
-            ),
-            seams=reviewer_dispatch.ReviewerSeams(
-                custom_fn=fake_custom,
-                resolve_shared_reference_fn=lambda: None,
-                code_index_registered_fn=lambda cli: asked.append(cli) or True,
-            ),
-        )
+            reviewer_dispatch.ReviewerDispatchSpec(entry, "p", [600], {}),
+            reviewer_dispatch.ReviewerSeams(compose_fn=compose, runner_tiers_fn=runner))
+        req, prompt, files = captured
+        self.assertEqual((req.runtime, req.role, req.runner_spec.runtime),
+                         ("codex", "review", "codex"))
+        self.assertEqual((prompt, files), ("p", ()))
 
-        self.assertEqual(asked, [])
+    def test_custom_entry_composes_without_a_runner_spec(self):
+        captured = []
+
+        def compose(*args):
+            captured.append(args[0])
+            return reviewer_dispatch.ComposeResult()
+
+        def runner(*_args):
+            return runner_dispatch.RunnerResult(0, "", None, None, False, [], "")
+
+        entry = {"key": "k", "model": "fake-model", "command": "fake-command {prompt}"}
+        reviewer_dispatch.dispatch_reviewer(
+            reviewer_dispatch.ReviewerDispatchSpec(entry, "p", [600], {}),
+            reviewer_dispatch.ReviewerSeams(compose_fn=compose, custom_fn=runner))
+        self.assertIsNone(captured[0].runtime)
+        self.assertIsNone(captured[0].runner_spec)
 
     def test_native_route_raises_value_error_naming_the_key(self):
         with self.assertRaises(ValueError) as ctx:
@@ -5711,8 +5694,7 @@ class TestDispatchReviewer(unittest.TestCase):
                     tool_availability={},
                 ),
                 seams=reviewer_dispatch.ReviewerSeams(
-                    resolve_shared_reference_fn=lambda: None,
-                    code_index_registered_fn=lambda cli: False,
+                    compose_fn=lambda *a, **_k: (_ for _ in ()).throw(AssertionError(a)),
                     runner_tiers_fn=lambda *a: (_ for _ in ()).throw(AssertionError(a)),
                 ),
             )
@@ -11576,9 +11558,7 @@ class TestDispatchReviewerRealChild(unittest.TestCase):
                     ),
                     seams=reviewer_dispatch.ReviewerSeams(
                         custom_fn=runner_dispatch.run_custom_command,
-                        build_tooling_guidance_fn=lambda *a, **kw: "",
-                        resolve_shared_reference_fn=lambda: None,
-                        code_index_registered_fn=lambda cli: False,
+                        compose_fn=lambda *_a, **_k: reviewer_dispatch.ComposeResult(),
                     ),
                 )
             self.assertEqual(result["returncode"], 0, result)
@@ -11670,7 +11650,7 @@ class TestDispatchExecuteArgv(unittest.TestCase):
                     timeout=600,
                 ),
                 seams=execute_dispatch.ExecuteSeams(
-                    build_tooling_guidance_fn=lambda *a, **kw: "",
+                    compose_fn=lambda *_a, **_k: ComposeResult(),
                     # which_fn: the image without node must still reach the spawn.
                     runner_seams=runner_dispatch.RunnerSeams(
                         popen_fn=fake_popen, which_fn=lambda _name, **_k: "node",
@@ -11705,7 +11685,8 @@ class TestDispatchExecuteArgv(unittest.TestCase):
                     target_dir=target,
                     timeout=600,
                 ),
-                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+                seams=execute_dispatch.ExecuteSeams(
+                    runner_fn=fake_runner, compose_fn=lambda *_a, **_k: ComposeResult()),
             )
         self.assertEqual(result["command"], shlex.join(
             ["node", "runner", "--model-codex", "gpt-5.6-sol", "--mode", "exec"]

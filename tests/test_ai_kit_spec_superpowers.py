@@ -929,9 +929,10 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
             return RunnerResult(0, "DONE", {"status": "ok"}, None, False, argv, "")
 
         def dispatch_execute_with_fake_subprocess(spec):
-            from ai_kit_spec.execute_dispatch import ExecuteSeams
+            from ai_kit_spec.execute_dispatch import ComposeResult, ExecuteSeams
 
-            return real_dispatch_execute(spec, seams=ExecuteSeams(runner_fn=fake_runner))
+            return real_dispatch_execute(spec, seams=ExecuteSeams(
+                runner_fn=fake_runner, compose_fn=lambda *_a, **_k: ComposeResult()))
 
         with tempfile.TemporaryDirectory() as target:
             result = dispatch_injection.dispatch_superpowers_task(

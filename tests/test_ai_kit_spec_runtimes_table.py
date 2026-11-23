@@ -16,7 +16,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import commands, detection, execute_dispatch, model_heuristics
+from ai_kit_spec import commands, detection, model_heuristics, runner_dispatch
 from ai_kit_spec.cli import main
 from ai_kit_spec.detection import normalize_runtime_keys, runtime_id
 from ai_kit_spec.error_classifier import (
@@ -455,7 +455,7 @@ class TestLegacyEntryPoints(unittest.TestCase):
 class TestRegistryIdsInTable(unittest.TestCase):
     def test_command_and_code_index_registries_use_table_ids(self):
         ids = set(detection.RUNTIMES)
-        self.assertTrue(set(execute_dispatch.OS_SANDBOXED_EXEC) <= ids)
+        self.assertTrue(set(runner_dispatch.OS_SANDBOXED_EXEC) <= ids)
         self.assertTrue(set(detection._MULTI_PROVIDER_CLIS) <= ids)
         self.assertTrue(set(detection.CBM_REGISTRATION_KEYS) <= ids)
 

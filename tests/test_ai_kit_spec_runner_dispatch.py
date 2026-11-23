@@ -804,8 +804,7 @@ class TestEffortWiring(unittest.TestCase):
         extra = {"effort": "high"} if effort else {}
         entry = {"key": "k", "runtime": runtime, "model": base, "extra": extra}
         seams = reviewer_dispatch.ReviewerSeams(
-            runner_tiers_fn=fake, build_tooling_guidance_fn=lambda *_a, **_k: "",
-            resolve_shared_reference_fn=lambda: None, code_index_registered_fn=lambda _rt: False)
+            runner_tiers_fn=fake, compose_fn=lambda *_a, **_k: reviewer_dispatch.ComposeResult())
         reviewer_dispatch.dispatch_reviewer(
             reviewer_dispatch.ReviewerDispatchSpec(entry, "review this", [600], {}), seams)
         quota.probe_reviewer_quota(ResolvedReviewer("k", base, "", runtime, None, extra),
@@ -816,7 +815,7 @@ class TestEffortWiring(unittest.TestCase):
                 execute_dispatch.dispatch_execute(
                     execute_dispatch.ExecuteDispatchSpec(candidate, "execute", target, 30),
                     execute_dispatch.ExecuteSeams(runner_fn=fake, print_fn=lambda _: None,
-                        build_tooling_guidance_fn=lambda *_a, **_k: ""))
+                        compose_fn=lambda *_a, **_k: execute_dispatch.ComposeResult()))
         return seen
 
     def test_dispatch_reviewer_forms(self):
@@ -1036,8 +1035,7 @@ class TestDispatchReviewerRunner(unittest.TestCase):
 
         seams = reviewer_dispatch.ReviewerSeams(
             runner_tiers_fn=never, custom_fn=never,
-            build_tooling_guidance_fn=lambda *_a, **_kw: "",
-            resolve_shared_reference_fn=lambda: None, code_index_registered_fn=lambda _rt: False,
+            compose_fn=lambda *_a, **_k: reviewer_dispatch.ComposeResult(),
         )
         entries = (
             {"key": "oc", "runtime": "opencode", "model": "x/y", "route": "bad_model"},

@@ -4,22 +4,42 @@ and the block built from them (SPEC R3, R4; D-02 to D-04).
 """
 
 import json
+import math
 import os
 import re
 import shutil
+import subprocess
+import sys
+import tempfile
+from collections.abc import Callable
 from typing import NamedTuple
 
+from ai_kit_spec import lens_delivery, prompt_guard, skill_table
 from ai_kit_spec.detection import (
     CBM_NAME,
     CBM_REGISTRATION_KEYS,
     cbm_registration,
     detect_tool_availability,
+    resolve_agents_tooling_path,
     runtime_id,
 )
 from ai_kit_spec.prompt_guard import escape_value
-from ai_kit_spec.runner_dispatch import SETTING_LINE_RE
+from ai_kit_spec.runner_dispatch import (
+    PREVIEW_TIMEOUT_S,
+    SETTING_LINE_RE,
+    RunnerSeams,
+    RunnerSpec,
+    child_env,
+    print_argv_lines,
+    review_spec,
+    spec_with_effort,
+)
 from ai_kit_spec.secret_shapes import redact
-from ai_kit_spec.tooling_guidance import CBM_TOOLS, _code_index_line
+from ai_kit_spec.tooling_guidance import (
+    CBM_TOOLS,
+    _code_index_line,
+    resolve_shared_tooling_reference_path,
+)
 
 CAPABILITIES_PREFIX = "cross-ai: capabilities "
 SKILL_BLOCK_RE = re.compile(
@@ -384,6 +404,322 @@ def build_block(lane: BlockInput) -> str:
     sections = (_lane_section(lane), _access_section(lane), _tools_section(lane, tools),
                 _code_index_section(lane, tools), _skills_section(lane), _settings_section(facts))
     return "\n\n".join("\n".join(section) for section in sections if section)
+
+
+class LaneRequest(NamedTuple):
+    """Inputs for one lane composition."""
+    runtime: str | None
+    model: str
+    role: str
+    cwd: str
+    runner_spec: RunnerSpec | None
+    native: bool = False
+    soft_confinement: str | None = None
+    lens_role: str = "review_lens"
+
+
+def _print_argv(spec: RunnerSpec, env: dict) -> list[str] | None:
+    return print_argv_lines(spec, RunnerSeams(env_fn=lambda: dict(env)))
+
+
+class ComposeSeams(NamedTuple):
+    """Replaceable external observations for composition."""
+    print_argv_fn: Callable[[RunnerSpec, dict], list[str] | None] = _print_argv
+    scan_fn: Callable[[dict, str], dict] = skill_table.scan
+    window_fn: Callable[..., dict] = prompt_guard.window_for
+
+
+DEFAULT_SEAMS = ComposeSeams()
+
+
+class ComposeResult(NamedTuple):
+    """Block and run-scoped resources produced for a lane."""
+    block: str = ""
+    skill_names: tuple = ()
+    skill_paths: tuple = ()
+    mcp_config: str | None = None
+    run_dir: str | None = None
+    refusal: dict | None = None
+    window: dict | None = None
+    facts: object = None
+
+
+class LaneRefused(ValueError):
+    """A closed refusal at a dispatch boundary."""
+    def __init__(self, record: dict):
+        self.record = record
+        super().__init__(f"refused: {record.get('reason')}")
+
+
+def with_block(block: str, prompt_text: str) -> str:
+    """Prepend a nonempty block to a prompt."""
+    return f"{block}\n\n{prompt_text}" if block else prompt_text
+
+
+def lane_spec(spec: RunnerSpec, composed: ComposeResult) -> RunnerSpec:
+    """Apply the composed delivery arguments to a runner spec."""
+    return spec._replace(skill_names=composed.skill_names, skill_paths=composed.skill_paths,
+                         mcp_config=composed.mcp_config)
+
+
+def cleanup(composed: ComposeResult) -> None:
+    """Remove run-scoped resources."""
+    if composed.run_dir:
+        shutil.rmtree(composed.run_dir, ignore_errors=True)
+
+
+def _table_host(scan: dict, runtime: str | None) -> dict:
+    shared = scan.get("agents", {})
+    if runtime in scan:
+        own = scan[runtime]
+        return {**own, "skills": [*own.get("skills", []), *shared.get("skills", [])],
+                "mcp": own.get("mcp", "unknown")}
+    return {"skills": list(shared.get("skills", [])), "mcp": "unknown"}
+
+
+def _git_value(directory: str, *args: str) -> str | None:
+    try:
+        result = subprocess.run(["git", "-C", directory, "rev-parse", *args],
+                                capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _doc_worktrees(files, repo: str, cwd: str) -> tuple:
+    common = _git_value(repo, "--path-format=absolute", "--git-common-dir")
+    if not common:
+        return ()
+    roots = set()
+    for value in files:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        path = os.path.realpath(os.path.join(cwd, value))
+        if os.path.commonpath((path, repo)) == repo:
+            continue
+        parent = os.path.dirname(path)
+        while not os.path.isdir(parent):
+            next_parent = os.path.dirname(parent)
+            if next_parent == parent:
+                break
+            parent = next_parent
+        top = _git_value(parent, "--show-toplevel")
+        if top and _git_value(top, "--path-format=absolute", "--git-common-dir") == common:
+            roots.add(os.path.realpath(top))
+    return tuple(sorted(roots))
+
+
+class _Lane(NamedTuple):
+    req: LaneRequest
+    env: dict
+    child: dict
+    host: dict
+    repo: str
+    roots: list
+    doc_roots: tuple
+    notes: tuple
+    seams: ComposeSeams
+    shared_path: str | None
+    agents_path: str | None
+    tooling_omitted: tuple
+
+
+def guidance_paths(env: dict, repo: str, roots: list) -> tuple[str | None, str | None, tuple]:
+    """Resolve guidance paths without embedding rejected values."""
+    values = (resolve_shared_tooling_reference_path(),
+              resolve_agents_tooling_path(child_env(env=env)))
+    accepted, omitted = [], []
+    for name, value in zip(("SHARED_TOOLING_PATH", "AGENTS_TOOLING_PATH"), values, strict=True):
+        bad = (prompt_guard.validate_values([(name.lower(), str(value))], repo, roots)
+               if value else [])
+        accepted.append(str(value) if value and not bad else None)
+        if bad:
+            omitted.append((name, bad[0]["reason"]))
+    return accepted[0], accepted[1], tuple(omitted)
+
+
+def _lane(spec, env, seams, files) -> _Lane:
+    scan = seams.scan_fn(env, spec.cwd)
+    repo = prompt_guard.repo_root(spec.cwd)
+    doc_roots = _doc_worktrees(files, repo, spec.cwd)
+    notes = (f"documents from other worktrees: {len(doc_roots)} "
+             f"({', '.join(doc_roots)})",) if doc_roots else ()
+    roots = skill_table.skill_roots(scan)
+    shared, agents, omitted = guidance_paths(env, repo, roots)
+    return _Lane(spec, env, child_env(env=env), _table_host(scan, spec.runtime), repo,
+                 roots, doc_roots, notes, seams, shared, agents, omitted)
+
+
+def _value_refusal(lane: _Lane, files, skill_paths, run_dir, mcp_file) -> dict | None:
+    values: list[tuple[str, object]] = [("cwd", lane.req.cwd)]
+    values.extend((f"skill_path[{i}]", p) for i, p in enumerate(skill_paths))
+    docs = [(f"files[{i}]", value) for i, value in enumerate(files)]
+    bad = prompt_guard.validate_values(values, lane.repo, lane.roots, base=lane.req.cwd)
+    bad += prompt_guard.validate_values(docs, lane.repo, lane.roots, extra_roots=lane.doc_roots,
+                                        base=lane.req.cwd)
+    if mcp_file:
+        bad += prompt_guard.validate_values([("mcp_config", mcp_file)], lane.repo, lane.roots,
+                                            extra_roots=(run_dir,), base=lane.req.cwd)
+    return prompt_guard.refusal_record(bad[0]["reason"], {"rejections": bad}) if bad else None
+
+
+def _checked(lane: _Lane, files) -> list:
+    rows = lens_delivery.lens_set(lane.host, list(files or ()), role=lane.req.lens_role,
+                                  native_host=lane.req.runtime if lane.req.native else None)
+    return [lens_delivery.check_lens(row, lane.repo, lane.roots) for row in rows]
+
+
+def _mcp(lane: _Lane) -> tuple[str | None, str | None]:
+    picks = lens_delivery.mcp_pick(
+        lane.host, child_path(lane.child.get("PATH") or "", lane.req.cwd),
+        user=skill_table.table_inputs(lane.req.cwd, lane.env)[1])
+    if not picks:
+        return None, None
+    run_dir = tempfile.mkdtemp(prefix="aikit-mcp-")
+    try:
+        os.chmod(run_dir, 0o700)
+        mcp_file = lens_delivery.write_mcp_file(run_dir, picks)
+    except BaseException:
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise
+    return run_dir, mcp_file
+
+
+class _Fit(NamedTuple):
+    facts0: LaneFacts
+    window: dict
+    cap: int | None
+    run_dir: str | None
+    mcp_file: str | None
+    files: object
+
+
+def _block_input(lane: _Lane, facts, rows) -> BlockInput:
+    return BlockInput(facts, lane.child, lane.host, rows, lane.req.role,
+                      lane.req.runtime or "custom", lane.req.model, lane.req.soft_confinement,
+                      shared_path=lane.shared_path, agents_path=lane.agents_path,
+                      tooling_omitted=lane.tooling_omitted, notes=lane.notes, cwd=lane.req.cwd)
+
+
+def _delivery_bytes(facts: LaneFacts, delivered: list) -> tuple[int, int]:
+    prose = {b["name"]: b["bytes"] for b in facts.skill_blocks}
+    state = {s["name"]: (s["state"], s["form"]) for s in facts.skill_settings}
+    total = argv_total = 0
+    for row in delivered:
+        applied, form = state.get(row["skill_name"], (None, None))
+        if applied == "applied":
+            size = prose.get(row["skill_name"], 0) if form == "prose" else (
+                row["bytes"] if form in ("path", "name") else 0)
+            total += size
+            if form == "prose":
+                argv_total += size
+    return total, argv_total
+
+
+def _final(lane: _Lane, fit: _Fit, delivered: list, skipped: list, prompt_text: str):
+    composed = ComposeResult(skill_names=tuple(r["skill_name"] for r in delivered),
+                             skill_paths=tuple(r["path"] for r in delivered),
+                             mcp_config=fit.mcp_file, run_dir=fit.run_dir, window=fit.window)
+    assert lane.req.runner_spec is not None
+    runner = lane_spec(lane.req.runner_spec, composed)
+    facts = (fit.facts0 if runner == lane.req.runner_spec else
+             lane_facts(lane.seams.print_argv_fn(runner, lane.env)))
+    block = build_block(_block_input(lane, facts, [*delivered, *skipped]))
+    refusal = _value_refusal(lane, fit.files, composed.skill_paths, fit.run_dir, fit.mcp_file)
+    if refusal is not None:
+        return composed._replace(block=block, refusal=refusal, facts=facts), False
+    total, argv_total = _delivery_bytes(facts, delivered)
+    base = len(with_block(block, prompt_text).encode("utf-8"))
+    total += base
+    argv_total += base
+    refusal = prompt_guard.check_window(math.ceil(total / prompt_guard.BYTES_PER_TOKEN), fit.window)
+    retry = bool(delivered) and (refusal is not None or
+                                (fit.cap is not None and argv_total > fit.cap))
+    return composed._replace(block=block, refusal=None if retry else refusal, facts=facts), retry
+
+
+# pylint: disable-next=line-too-long
+def compose_for_lane(spec: LaneRequest, prompt_text: str, files, env: dict, seams: ComposeSeams) -> ComposeResult:  # noqa: E501
+    """Compose the tracer block from this lane's own preview."""
+    if files is None:
+        return ComposeResult()
+    lane = _lane(spec, env, seams, files)
+    if spec.native:
+        return ComposeResult(block=build_block(_block_input(lane, None, _checked(lane, files))),
+                             refusal=_value_refusal(lane, files, (), None, None))
+    if spec.runner_spec is None:
+        facts = lane_facts([])
+        return ComposeResult(block=build_block(_block_input(lane, facts, [])),
+                             refusal=_value_refusal(lane, files, (), None, None), facts=facts)
+    facts = lane_facts(seams.print_argv_fn(spec.runner_spec, env))
+    window = seams.window_fn(spec.runtime, spec.model, env, spec.cwd, context_form_applied(facts))
+    cap = facts.prompt["max_bytes"] if facts.prompt["channel"] == "argv" else None
+    run_dir, mcp_file = _mcp(lane)
+    fit = _Fit(facts, window, cap, run_dir, mcp_file, files)
+    try:
+        return _plan(lane, fit, prompt_text)
+    except BaseException:
+        if run_dir:
+            shutil.rmtree(run_dir, ignore_errors=True)
+        raise
+
+
+def _plan(lane: _Lane, fit: _Fit, prompt_text: str) -> ComposeResult:
+    draft = build_block(_block_input(lane, fit.facts0, []))
+    delivered, skipped = lens_delivery.plan_lenses(
+        _checked(lane, fit.files), len(with_block(draft, prompt_text).encode("utf-8")),
+        fit.window["value"], fit.cap)
+    while True:
+        composed, retry = _final(lane, fit, delivered, skipped, prompt_text)
+        if not retry:
+            return composed
+        skipped.append({**delivered.pop(), "note": "over_window"})
+
+
+def _soft_confinement(target_dir: str) -> str:
+    # Local import: execute_dispatch imports this module.
+    # pylint: disable=import-outside-toplevel,cyclic-import
+    from ai_kit_spec.execute_dispatch import build_soft_confinement_guidance
+
+    return build_soft_confinement_guidance(target_dir)
+
+
+def cmd_capability_block(args, deps) -> int:
+    """Print a lane's block without executing the lane."""
+    env = deps.env_fn()
+    cwd = os.path.abspath(args.cwd)
+    runner = (None if args.native else
+              review_spec(args.runtime, args.model, None, PREVIEW_TIMEOUT_S, cwd=cwd)
+              if args.role == "review" else
+              spec_with_effort(args.runtime, args.model, "exec", PREVIEW_TIMEOUT_S, {"cwd": cwd}))
+    soft = _soft_confinement(cwd) if args.role == "execute" else None
+    composed = compose_for_lane(LaneRequest(args.runtime, args.model, args.role, cwd, runner,
+                                            native=args.native, soft_confinement=soft),
+                                "", tuple(args.files), env, DEFAULT_SEAMS)
+    try:
+        if composed.refusal:
+            print(json.dumps(composed.refusal, sort_keys=True), file=sys.stderr)
+            return prompt_guard.REFUSED_EXIT
+        print(composed.block)
+        return 0
+    finally:
+        cleanup(composed)
+
+
+def register_parsers(sub) -> None:
+    """Register the read-only capability command."""
+    parser = sub.add_parser("capability-block",
+                            help="print a lane's capability block without spawning it (read only)")
+    parser.add_argument("--runtime", required=True)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--role", required=True, choices=["review", "execute"])
+    parser.add_argument("--files", nargs="*", default=[])
+    parser.add_argument("--cwd", default=os.getcwd())
+    parser.add_argument("--native", action="store_true",
+                        help="a native lane: the host runs it; prints its lens lines only")
+
+
+COMMANDS = {"capability-block": cmd_capability_block}
 
 
 def summary_line(facts: LaneFacts | None, runtime: str, model: str, role: str,
