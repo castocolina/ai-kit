@@ -2,7 +2,8 @@
 
 **Created:** 2026-11-16
 **Ambiguity score:** 0.16 (gate: ≤ 0.20)
-**Requirements:** 12 locked
+**Requirements:** 12 locked *(amended 2026-11-23, cross-phase amendment for what Phases 37, 38 and 38.1 shipped: still 12; R1, R3 to
+R9, R11 and R12 carry dated notes; see "Live facts added 2026-11-23")*
 
 ## Goal
 
@@ -34,6 +35,8 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
 
 **Live facts checked for this spec (2026-11-16, this machine; claude 2.1.325, codex 0.169.0, copilot 1.0.112, cursor-agent
 2026.11.13, opencode 2.3.0, pi 1.5.2, node 24.21.0, herdr present with `HERDR_ENV=1`; the runner is the pre-Phase-37 template):**
+*(amended 2026-11-23: the runner is now template 11 with Phase 37's skill and MCP forms; the argv and builder facts below are
+re-read in "Live facts added 2026-11-23", which outranks this list where they differ)*
 
 - The final review argv (`cross-ai.mjs --print-argv`) differs sharply per host. pi review: `--tools read,grep,find,ls --no-skills
   --no-mcp --no-extensions --no-context-files` (no shell, no skills, no MCP, read-only). pi exec: `--no-skills --no-extensions
@@ -94,6 +97,97 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
 - The five host skill-root copies and `PONYTAIL_SKILLS` are duplicated seed data; R1 gives the review and execute paths and the
   GSD config skill one source and leaves the five existing copies (outside this requirement's readers) listed here for the owner.
 
+**Live facts added 2026-11-23 (cross-phase amendment: what Phases 37, 38 and 38.1 shipped; read at HEAD 04fd6ca, unit 39 stacked
+on unit 38.1's review fold; every line below was read in the code or run under a scratch HOME with the real node,
+`cross-ai.mjs` = `skills/ai-kit-spec-review/references/cross-ai.mjs`, the harness = its sibling `cross-ai-selftest.mjs`; the live
+`--print-argv` run is `tmp/run-2026-11-19/p39-plan/argv_probe.py`, not committed):**
+
+- *Size and shape.* The runner is 7,475 lines at template version 11 (`cross-ai.mjs:2`, `cross_ai.py:60` `TEMPLATE_VERSION = 11`);
+  the harness is 12,026 lines. `--self-test-list` prints 908 cases (804 `logic`, 104 `runtime`) and
+  `tests/fixtures/cross_ai_selftest_secs.json` holds 908 entries; the shards stay 5 `logic` and 7 `runtime` modules
+  (`SHARD_COUNTS`, `tests/cross_ai_selftest.py:116`). A runner symbol a case uses must be in the trailing `export { ... }` list
+  (`cross-ai.mjs:7319`, the 38-09 arch rule). The copy rule of 38-25 and 38.1-12 holds: the template version goes 11 to 12 with every
+  pin, the live `.planning/scripts/cross-ai.mjs` is re-rendered once through `ensure-runner` in the phase's last code wave, then one
+  `--record-times`, the `E2E_RECORDED_SECS` refresh and the shard check against the 60 s budget; `make check-dogfood` closes it.
+- *Skills and MCP servers already reach a lane through the runner (Phase 37 R13 and R14, shipped).* The runner takes
+  `--skill-path <dir>` and `--skill-name <name>` (repeatable) and `--mcp-config <file>` (usage `cross-ai.mjs:41-43`, parsed `:6694`
+  to `:6699`). Each row has a `skills` field with three forms, `name`, `path` and `prose`, each with a source label and state
+  (`:1758-1759`, pi `:1834`, claude `:1899`, copilot `:1929`, cursor, opencode and codex `skillsNone`), and an `mcp` field (claude
+  `:1898`, copilot `:1928`, codex `:1867` unverified, pi, cursor and opencode none). `planSkills` (`:6521-6541`) applies, per skill,
+  the first `verified` form in the order name, path, prose; prose is the runner's own form: a delimited block
+  `<skill name=".." path=".." sha256="..">` with the `SKILL.md` body byte-equal (`skillBlock`, `:6520`), placed before the prompt.
+  The report lines are `cross-ai: setting skill=<name> applied form=<name|path|prose>` or `ignored reason=<code>` (`reportLines`,
+  `:2162`) and, per prose block, `cross-ai: skill-block <name> bytes=<n> sha256=<hex>` (`:6542`); `--print-argv` prints them
+  (`:7050-7051`). Live (2026-11-23, both roles): `--skill-path` is `applied form=path` on pi (argv gains `--skill <dir>`) and
+  `applied form=prose` on claude, copilot, codex, cursor and opencode with the argv unchanged; `--mcp-config` is `applied` on claude
+  (`--mcp-config <file> --strict-mcp-config`) and copilot (`--additional-mcp-config @<file>`), `ignored reason=mode_forbids` on pi
+  review, `no_form` on pi exec, cursor and opencode, and `unverified_form` on codex. An unknown runtime is a usage error (exit 2)
+  before any line is printed. The runner refuses as usage errors (exit 2, the whole lane) a skill directory without `SKILL.md`, an
+  empty `SKILL.md` (`:6499`), a body that is not strict UTF-8 or starts with a byte-order mark, a body over `FILE_READ_MAX` (65,536
+  bytes, `:6420`), a skill name outside `^[a-z0-9][a-z0-9-]{0,63}$` (`SKILL_NAME_RE`, `:6615`; the curated-config scan accepts
+  `[A-Za-z0-9_-]+`, `skill_scan.py:21`), a path holding a C0 or C1 control character (`CONTROL_CHAR_RE`, `:6617`, narrower than R8's
+  set), and a copilot prompt pushed over `ARGV_PROMPT_MAX` (102,400 bytes, `:3896`). The MCP file must be a regular file not readable
+  by group or others holding a non-empty `mcpServers` object (`loadMcpConfig`, `:6452-6466`). 37-REVIEW.md:100 (LOW-6, deferred):
+  the prose block escapes neither its `path` attribute nor a body holding `</skill>`. The runner checks no repository or skill root
+  (37 R13: "the repository-or-skill-root check is the caller's validator, Phase 39 R8"; the runner never scans a host).
+- *The Python side passes none of it.* `RunnerSpec` (`runner_dispatch.py:68-84`) and `runner_flags` (`:215-233`) carry no skill or
+  MCP field; `project_runner_command` (`:191-201`) builds the GSD hook string from the same `runner_flags`. `print_argv_lines`
+  (`:296-318`, run in its own process group, both streams) and `preview_setting` (`:327`) already read `--print-argv`; their
+  `SETTING_LINE_RE` (`:53-56`) drops `form=`. No lane config field carries skills or servers (`lane_settings.py:11`).
+- *The guidance builder is unchanged.* `build_tooling_guidance(cli, tool_availability, agents_tooling_path, code_index_registered,
+  shared_reference_path=None)` (`tooling_guidance.py:68-69`) is still called by `reviewer_dispatch._reviewer_full_prompt`
+  (`:46`, `:51-57`) and `execute_dispatch.build_execute_guidance` (`:72`, `:86-92`) with no argv or role; `OS_SANDBOXED_EXEC`
+  (`runner_dispatch.py:40`) also decides whether `--codex-sandbox` is passed (`:229-230`), which this phase leaves alone. The parent
+  tool map is `--tool-availability-json` (`cli.py:423`, `:451`; spec-review SKILL.md:316; `cross-ai-dispatch.md:67-79`).
+- *Argv per host now (2026-11-23).* As the Background list says, plus: copilot review now starts its profile with
+  `--allow-all-tools` before `--available-tools=view,grep,glob --excluded-tools=bash,create,edit,apply_patch --deny-tool=shell
+  --deny-tool=write --disable-builtin-mcps` (`:1922-1924`); pi review also passes `--no-approve --offline`; cursor exec adds
+  `--trust --approve-mcps`; opencode adds `--standalone` and the env `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1` (`:1802`). The
+  `--print-argv` stdout is one `runtime<TAB>binary<TAB>argv-JSON` line (`:7047`), which `gp_host.py:381-385` parses by its
+  three tab fields; every settings line goes to stderr.
+- *Closed lists and exits from 38 and 38.1.* `--describe` prints 11 keys: `schema`, `template_version`, `settings`, `reasons`,
+  `states`, `runtimes`, `host`, `statuses`, `findings`, `supervision_flags` and 38.1's `classes` (`describeJson`, `:6854-6885`); a
+  row field is copied into `runtimes` keyed by setting (`:6869`), so a new row field shows up there with no change to
+  `describeJson`. Runner exits in use: 0, 1, 2, 69 (38.1's `bad_request` among them), 75, 124, 127, 128 (`STATUS_TABLE`,
+  `:1506-1529`); 65 is free. `SETTING_REASONS` (`:1955`) holds ten codes, `ROW_CLASSES` (`:1460`) seven classes with `bad_request`,
+  `FINDING_CODES` (`:1629`) nine codes. The run lock is the runner's, in execute mode (`:4096` to `releaseLock` `:4289`; `locked`
+  exit 75); Python's `STATUS_TO_REASON` maps `locked`, `partial` and `bad_request` to `real_error`. The confirmed-router rule
+  (`model_heuristics.router_statement`, `:37`), `dispatch_classification`, the baseline, idle watchdog, finding group, `--sweep`,
+  the stdout classification channel, router cooldown rows, the hard tier (60, 300, then every 600 s up to the cap, `hard_every_s`),
+  `check=` and the blocked-until record (`--pool`, `--blocked-status`, `--blocked-clear`) are shipped and untouched by this phase.
+- *The window.* No accessor function exists: Phase 35 stores the resolved window on each catalog runtime row as `context`
+  (`{value, label, source, fetched_at}`, `catalog_labels.py:22`) and `ctx_window` (`catalog_facts.py:162-189`), resolved in the
+  order `[[models.context]]` (`catalog_context.override_for`, `:68`, label `user-stated`), host figures, models.dev (label
+  `measured`). `resolve_route` (`runner_dispatch.py:247-262`) is the existing reader pattern over the cached catalog.
+- *Phase 36 read-only outputs.* `check-reviewer` prints one JSON object (`cli.py:1324`, `:1351`); `config-status` prints the state
+  and one `checked <layer> <path> <status>` line per layer, not per lane (`config_status.py:63`, `:80`, `:85`).
+- *Other homes.* The UI extension list is `_FRONTEND_EXTENSIONS` in the superpowers adapter
+  (`task_classification.py:15`, `.tsx .jsx .css .vue .scss`), a module the frozen cross-skill allowlist does not list
+  (`tests/test_arch.py:1568`, `:1632-1665`: only the adapter's `cli.py`, `dispatch_injection.py` and launcher may import the review
+  package, and nothing may import the adapter). jev is reached by subprocess through its own ladder (`jev_names.find_jev` `:63`,
+  `ask_items` `:140-146`). The layered config writer is `config_io.cfg_write_toml` (`:1057`) over `toml_splice.publish` (`:780`,
+  atomic) and `set_table` (`:429`); `[skills.roles]` and `edit_lens_pass` exist nowhere yet. curated-config: `HOSTS` still has five
+  hosts and no copilot (`host.py:19`), `PONYTAIL_SKILLS` is `skill_scan.py:22`, `load_ai_kit_spec_module` is `gsd_catalog.py:28`,
+  `inventory.py` has no `skill_roles`.
+- *codebase-memory-mcp.* `codebase-memory-mcp --help` (0.12.1, 2026-11-23): the bare command "Run MCP server on stdio", and
+  `--tool-profile=analysis|scout` "Expose a restricted inspection surface" (its effect is unverified here).
+- *gsd-core 1.22.0.* The project-local gsd-core was upgraded to 1.22.0 on 2026-11-22 12:53 (`.claude/gsd-core/VERSION`).
+  `getGlobalSkillsBase` is still exported (`bin/lib/runtime-homes.cjs:47`, `:509`). gsd-core has no `--prepend-file` route: that flag
+  is the runner's own (`cross-ai.mjs:57`); `workflows/execute-phase.md:442` pipes the prompt to `workflow.cross_ai_command` under
+  `gsd_run run-with-timeout` (default 300 s, this project 1800, `.planning/config.json:47`), so a hook passes `--prepend-file` only
+  if its configured command string does. The "ADOPTED from GSD" refusal is GSD's review-lane rule (`review-lane-invocation.cjs:66-71`
+  `PROMPT_EXCEEDS_CONTEXT`, `refuseIfOverCap` `:385`, a 0.65 headroom `:294`, a 0 or null cap never refuses `:350-351`); this phase
+  keeps its own locked compare (estimate against the full window, the under-counting divisor as its margin). GSD has no
+  reject-only validator for prompt values (`security.cjs:478` `sanitizeForPrompt` rewrites; `assertWithinRoot` `:260` is a path
+  helper); R8 stays this phase's own rule.
+- *Test hygiene from 38.* A product spawn of node runs in its own session with a group kill on timeout (`run_in_own_group`,
+  `detection.py:951`; the PATH `node` may be a Volta shim); tests take node from `tests.cross_ai_selftest._real_node_executable`.
+- *Grok.* Grok is not a cross-AI target (owner directive 2026-11-20; Phase 39.1 removes its code). These files named no grok before
+  this amendment; this phase adds no grok row, form, fixture, case, list entry or doc line, and the runner's runtime rows hold none.
+- *Owner decision.* `.planning/docs/OWNER-DECISIONS-2026-11-16.md:52-54` confirms the after-approval pass off by default
+  (`edit_lens_pass`) with a diff the owner accepts (R9, the Interview Log's provisional item).
+- *Not re-checked.* The per-root skill counts of the Background list (the real home is not read in this run).
+
 ## Requirements
 
 1. **One role-keyed table of skills and MCP servers per host, rescanned every run (REV-05)**: a shared module of the review
@@ -116,6 +210,16 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
      invalidation step; a malformed MCP config reports `unknown` for that host; a test fails when a seed row lacks a source
      label, names a role outside the closed list, or names a model or provider; the role list in code, the seed file and the
      SKILL.md table are compared by one locking test.
+   - *Amended 2026-11-23 (Phase 37 R14 shipped; Live facts added 2026-11-23):* REV-05 also picks the MCP servers a lane gets and
+     writes the run-scoped file the runner reads (37 R14 left "which servers a task kind needs" to this phase). The pick: a server
+     whose table role is `code_index` and whose seed row records a launch form (binary name and arguments, with a source label;
+     the seed row for `codebase-memory-mcp` records the bare binary with `--tool-profile=analysis`, documented by its 0.12.1 help,
+     effect unverified), for both task kinds (review and execute), only when that binary resolves on the child's PATH. The file is
+     built from the resolved binary path and the seed arguments only (`{"mcpServers": {<name>: {"command": <abs path>, "args":
+     [...]}}}`), never from a host config value (the scan still reads names only), written mode 0600 into a run directory the
+     dispatch removes on every exit path, and passed as `--mcp-config`; whether it applies is the runner's report line. A server
+     without a recorded launch form (its definition lives only in a host config) is never enabled and is listed in the block as
+     present, not enabled. No other task kind or server role enables a server in this phase.
 
 2. **An optional configuration-time sorter proposes a role for an unknown skill and the owner confirms every sort (REV-05)**.
    - Current: no sorting step exists; an unknown skill has no role anywhere.
@@ -149,6 +253,20 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
      the expected values in a recorded fixture; a planted `--tools` entry that adds `bash` to a pi review lane flips `shell`; an
      unknown runtime prints all `unknown`; the sync test of Phase 37 compares the line between the template and the render; a
      doc-contract test lists each field and value.
+   - *Amended 2026-11-23 (Phases 37 and 38.1 shipped; Live facts added 2026-11-23):* `planSettings` (`cross-ai.mjs:2122`) is the
+     pure planner; its comment already reserves `capabilities` (`:2121`). The line is printed to stderr as `cross-ai: capabilities
+     <JSON>` beside the settings lines, because the stdout line is parsed by its three tab fields (`gp_host.py:381-385`). A row field
+     `capabilities` appears in `--describe` through the existing per-setting copy (`:6869`). The enums predate Phase 37's report
+     lines, so the mapping is: `skills` describes what the host itself loads: `none` when the argv carries `--no-skills` and no
+     path form applied, `path` when a `--skill` path form was applied, `discovery` when a name form was applied, else `unknown`;
+     the runner's prose blocks are not a host capability and are read from the `form=prose` report lines. `mcp` gains one value,
+     `call_file`, when a Phase 37 `--mcp-config` form was applied (from the argv); `none` when the argv turns MCP off (pi
+     `--no-mcp`); `host_config` only where a row label says the host reads its own config; else `unknown`. The object also carries
+     `prompt` (`{channel: argv|stdin, max_bytes: <int> or null}`, `max_bytes` being the largest prompt the runner admits on argv,
+     `ARGV_PROMPT_MAX` minus the resume reserve that `argvPromptProblem` adds, `:3905-3909`) read from the row's `argvPrompt`, so the caller can keep
+     lens prose under copilot's argv cap. An unknown runtime cannot reach the line (the runner exits 2 before planning); the Python
+     reader (R4) gives every field `unknown` for a non-zero exit, a missing line or an unparseable one, which covers the unknown
+     runtime and an old rendered copy.
 
 4. **Each lane's prompt carries a capability block built from those facts (REV-04)**.
    - Current: `build_tooling_guidance` emits `SHARED_TOOLING_PATH`, `AGENTS_TOOLING_PATH`, a `TOOL_AVAILABILITY` JSON line from
@@ -172,6 +290,13 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
      says registered); the tool list changes when a fake child PATH adds or removes a tool and does not change when only the
      parent's PATH does; the checklist's named variables are still present; the unknown-runtime block holds only "unknown" facts;
      `capability-block` output equals the block `dispatch-reviewer` prepends (same fixture, byte-equal).
+   - *Amended 2026-11-23 (Phase 37 shipped; Live facts added 2026-11-23):* the composer reads the capabilities line, the
+     `form=` of each `setting skill=` line, each `setting mcp=` line and each `skill-block ... bytes=` line from one
+     `print_argv_lines` call for the lane with its real `--skill-path`, `--skill-name` and `--mcp-config` flags (`RunnerSpec` and
+     `runner_flags` gain those fields, emitted after the existing setting flags, so a spec without them gives a byte-equal argv and
+     hook string; `SETTING_LINE_RE` gains the optional `form=`). The code index line has three routes, first match wins: the R1
+     run-scoped file applied for this call (MCP tool list, "enabled for this call"), a host config registration with `mcp` not
+     `none` (MCP tool list, the existing evidence phrase), the CLI form when `shell` is not `no`; never two lines.
 
 5. **Lens skills reach each lane by path where it can load them and inlined where it cannot (REV-03)**.
    - Current: no lens reaches a spec-review lane; `ai-kit-spec-review` mentions no lens; the GSD agent wiring (LENS-01) is separate.
@@ -189,6 +314,19 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
      the same lens inlined, a lane with a window of 4,000 tokens skips a 20,000-token lens by name, `simplify` goes only to a
      native Claude lane, and a lens with a control character in its path gets `path_rejected`; the closed list is compared with the
      SKILL.md table; no inlined text is shortened (byte-equal to the file body).
+   - *Amended 2026-11-23 (Phase 37 R13 shipped; Live facts added 2026-11-23):* Python no longer inlines lens text. It selects the
+     lens set and passes each delivered lens to the runner as `--skill-name <name> --skill-path <dir>`; the runner applies the first
+     verified form (name, path, prose) and its `skill=` report line says how the lens was delivered, which the block's SKILLS
+     section prints. "Delivered by path only where verified or probed" is the runner's `verified` state (pi `--skill` today); every
+     other host gets the runner's prose block, which carries the path and sha256 and is byte-equal to the file (`:6520`). Before a
+     lens is passed, the composer checks what the runner would refuse for the whole lane and skips that lens with a note from the
+     closed list instead: an empty `SKILL.md` gets `not_present`; a body that is not strict UTF-8, starts with a byte-order mark or
+     is over the runner's 65,536-byte read cap, a skill whose directory name and frontmatter name both miss the runner's name shape,
+     and a path that fails R8 get `path_rejected`; a lens the runner reports `ignored` gets `host_cannot_load`. The budget loop
+     (R7's estimate, table order, skip whole with `over_window`) runs before the flags are chosen and counts each delivered lens's
+     bytes whatever its form (a path form loads the file into the host's context too); prose bytes are the runner's block size,
+     which a sync test pins equal to the runner's `skill-block bytes=`. Where the capabilities line says the prompt rides argv
+     (`prompt.channel` `argv`), the loop also keeps the whole prompt under `prompt.max_bytes`, with the same `over_window` note.
 
 6. **A runner setting passes skill paths where a host has a form (REV-03, REV-04)**.
    - Current: the runner has no way to give a lane a skill path; pi review argv carries `--no-skills`.
@@ -204,6 +342,16 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
    - Acceptance: `--print-argv` with `--skill-path` for pi adds `--skill <path>` and reports it `applied`; for claude it reports
      `ignored unverified_form` and the argv is unchanged; an unknown runtime reports `ignored no_form`; a path outside the allowed
      roots is a usage error naming the path; the recorded-help flag test of Phase 37 covers the new flags.
+   - *Amended 2026-11-23 (Phase 37 R13 shipped; Live facts added 2026-11-23):* the setting exists: `--skill-path` and `--skill-name`
+     with the per-host forms, labels and report lines of 37 R13, and pi `--skill <path>` applied. What 37 shipped differs from this
+     text in two places, and the shipped behaviour stands: a host whose path form is `unverified` (claude, copilot) or unknown
+     reports `applied form=prose` with the argv unchanged, not `ignored unverified_form`; and an unknown runtime is a usage error
+     (exit 2), not `ignored no_form`. The repository-or-skill-root check stays the Python validator's (R8), as 37 R13 assigned it:
+     the runner never scans a host, so it cannot know a skill root. This phase's runner work for R6 is the control-character half
+     of the edge row below: `--skill-path` and `--skill-name` values are checked against R8's full character set (Cc, Zl, Zp and the
+     listed format code points) instead of C0 and C1 only, pinned equal to the Python validator by one shared fixture. The D-18
+     spike is not run in this run (live host calls need an owner consent line that is absent), so every path form keeps its label
+     and those hosts get prose.
 
 7. **A prompt larger than a lane's known window is refused for that lane before it is spawned, never trimmed (REV-04)**.
    - Current: nothing compares a prompt with a window; the host's own `context_length_exceeded` answer (38.1) comes after the
@@ -226,6 +374,12 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
      passes; no window shows `unknown` and runs; a user override beats a catalog value; an applied context form with an
      unverified effect shows `unknown`; the refusal result carries a reason from the closed list; two lanes with different windows
      get independent outcomes in one review; the list is compared with the SKILL.md table and the disjointness test.
+   - *Amended 2026-11-23 (Phases 35, 37 and 38.1 shipped; Live facts added 2026-11-23):* the window is read by one new accessor over
+     the cached catalog (the `resolve_route` pattern): the live `[[models.context]]` override first (`catalog_context.override_for`,
+     label `user-stated`), then the catalog runtime row's `context` fact with its label and source; anything else is `unknown`.
+     The refusal exit is 65 (free in `STATUS_TABLE`; 69 now also carries 38.1's `bad_request`). The disjointness test covers
+     `SETTING_REASONS`, `ROW_CLASSES` and the `--describe` `classes` keys, `FINDING_CODES` and the lens notes. The runner's prose
+     blocks are part of what is sent: the estimate counts them as R5's amendment says.
 
 8. **A value embedded in a prompt that holds a control character or points outside the repository or skill roots is rejected
    (REV-04)**.
@@ -241,6 +395,10 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
    - Acceptance: fixtures for a path with a newline, a bidi override, an empty string, a non-string, a symlink that leaves the
      repository, a path in a sibling checkout, a path inside a skill root and a path inside the repository; the first six are
      rejected with the right reason and the last two pass; a rejected value never reaches the prompt.
+   - *Amended 2026-11-23 (Phase 37 shipped; Live facts added 2026-11-23):* the values also include each `--skill-path` and
+     `--mcp-config` path the dispatch passes to the runner (the run-scoped MCP file lives under the run directory, which counts as
+     inside the allowed roots only for that one value). The runner's own `CONTROL_CHAR_RE` is C0 and C1 only; R6's amendment widens
+     the runner's skill checks to this set.
 
 9. **File-editing lenses run as an optional pass after approval (REV-03)**.
    - Current: no lens runs after a review; the review loop ends at approval.
@@ -253,6 +411,9 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
    - Acceptance: with the key unset no pass runs and the review result is unchanged; with it set and a fake write-capable lane the
      pass records the pre-pass content, the diff summary is printed and a rejection restores byte-equal files; a read-only lane
      is never chosen; a rejected path (R8) is skipped by name.
+   - *Amended 2026-11-23 (owner decision; Live facts added 2026-11-23):* the default-off key with a diff the owner accepts is
+     confirmed (`OWNER-DECISIONS-2026-11-16.md:52-54`); the provisional mark of D-14 is lifted. The run lock is the runner's, taken
+     in execute mode, so the pass runs as an execute-role runner call.
 
 10. **The GSD config skill reads the shared table (REV-05)**.
     - Current: `skill_scan.ponytail_visibility` answers from a hardcoded name tuple over `host.HOSTS`; `inventory.py` has no
@@ -275,6 +436,10 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
       choosing it. herdr is not used: the summary is plain text the skill prints; the review skill's own pane use is unchanged.
     - Acceptance: one test compares the three entry points' output for a fixture lane; the summary line appears in the
       spec-config check output for a fixture config and is absent from no lane.
+    - *Amended 2026-11-23 (Phase 36 shipped; Live facts added 2026-11-23):* `check-reviewer` prints one JSON object, so its summary
+      is one more string key, `capability`, in that object; `config-status` prints per-layer lines, so it gains one
+      `capability <runtime>/<model> <role>: <summary>` line per lane of the resolved `[lanes]` table after them. Both come from the
+      builder with no spawn of the lane (the `--print-argv` call is the runner's read-only dry run).
 
 12. **Skill text, docs, closed lists and the judge bar (JDG-04, HUB-09)**.
     - Current: `ai-kit-spec-review/SKILL.md`, `references/tooling-guidance.md`, `reviewer-prompts.md` and `cross-ai-dispatch.md`
@@ -291,6 +456,10 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
     - Acceptance: the judge loop ends with no critical or high finding or a B or better (recorded in 39-VERIFICATION.md); doc-contract
       tests pin the three closed lists (roles, refusal reasons, lens notes), the block's section names and the config keys;
       `make test` passes.
+    - *Amended 2026-11-23 (Phases 37 and 38.1 shipped; Live facts added 2026-11-23):* the docs describe lens delivery through the
+      runner's forms and report lines (R5's amendment), the MCP pick (R1's amendment) and the new capabilities values; the
+      `ai-kit-cross-ai` SKILL.md, which documents the runner's lines, joins the judge loop only if its text changes. The dated notes
+      in REQUIREMENTS.md (REV-03 to REV-05) and ROADMAP.md (Phase 39) for these amendments are a plan task, as 38.1 did.
 
 ## Boundaries
 
@@ -329,7 +498,8 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
 - The embedded-value validator rejects; nothing in this phase trims, rewrites or silently drops a prompt, a path or a lens.
 - English only; the hardcoding guard applies; skill names and tool names are allowed, model and provider names are not.
 - A SKILL.md describes behavior; provenance and version history live in a trailing section. The runner template version is bumped
-  by the plan so pristine copies upgrade, and the live copy is re-rendered with `make check-dogfood` closing the step.
+  by the plan so pristine copies upgrade, and the live copy is re-rendered with `make check-dogfood` closing the step. *(amended
+  2026-11-23: template 11 to 12 in the phase's last code wave, the 38.1-12 shape; see "Live facts added 2026-11-23")*
 
 ## Acceptance Criteria
 
@@ -352,7 +522,7 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
 
 ## Edge Coverage
 
-**Coverage:** 64/64 applicable edges resolved · 0 unresolved (64 engine rows from `edge_floor.py floor`)
+**Coverage:** 64/64 applicable edges resolved · 0 unresolved (64 engine rows from `edge_floor.py floor`) *(amended 2026-11-23: R5 gained 2 engine rows marked `(added 2026-11-23 ...)`, 66/66)*
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -381,13 +551,15 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
 | ordering | R4 | ✅ covered | Section order is fixed (lane, access, tools, code index, skills, settings) and pinned by the fixture comparison |
 | concurrency | R4 | ✅ covered | Two lanes of one review build independent blocks from their own argv and child PATH; no shared mutable state |
 | adjacency | R5 | ✅ covered | Two lenses with the same name on two roots resolve to the first root in the scan order and the second is not delivered again |
-| empty | R5 | ✅ covered | No present lens gives no lens section and no note; a lens with an empty SKILL.md is delivered as an empty body with a `not_present` style note named by the test |
+| empty | R5 | ✅ covered | No present lens gives no lens section and no note; a lens with an empty SKILL.md is delivered as an empty body with a `not_present` style note named by the test *(amended 2026-11-23: the runner refuses an empty SKILL.md for the whole lane, `cross-ai.mjs:6499`, so the lens is not passed and gets the note `not_present`)* |
+| boundary | R5 | ✅ covered | A lens body of exactly 65,536 bytes is passed and one byte more is skipped with `path_rejected` (the runner refuses `n > FILE_READ_MAX`); on an argv lane a prompt with its prose blocks of exactly `prompt.max_bytes` passes and one byte more skips the last lens with `over_window` (added 2026-11-23: R5's amendment names the runner's read cap and argv cap, and its edge floor gained this row) |
+| precision | R5 | 🧪 backstop | Every size is an integer byte count compared with `>` as the runner does; no tolerance (added 2026-11-23: same reason) |
 | encoding | R5 | ✅ covered | An inlined body is read as strict UTF-8 and embedded unmodified between delimiters with its sha256; a body that fails UTF-8 gets `path_rejected` for its path, not a lossy decode |
 | ordering | R5 | ✅ covered | Lenses are added in table order (role, then name), and the budget rule keeps that order; a skipped lens does not reorder the rest |
 | concurrency | R5 | 🧪 backstop | Lens files are read once per dispatch; an edit during the call has no effect until the next call |
 | adjacency | R6 | ✅ covered | Two `--skill-path` values naming the same directory apply once; a path that is also inside the working tree is applied as given |
 | empty | R6 | ✅ covered | No `--skill-path` leaves the argv byte-equal to Phase 37's; an empty value is a usage error naming the flag |
-| encoding | R6 | ✅ covered | The value is checked by the same validator rules as R8 inside the runner (a plain-Node copy of the control-character and root checks, pinned equal to the Python rule by a shared fixture) |
+| encoding | R6 | ✅ covered | The value is checked by the same validator rules as R8 inside the runner (a plain-Node copy of the control-character and root checks, pinned equal to the Python rule by a shared fixture) *(amended 2026-11-23: the control-character half only; the root check stays Python's, 37 R13, see R6's amendment)* |
 | ordering | R6 | ✅ covered | Several paths are passed in the order given, each as its own flag occurrence |
 | concurrency | R6 | 🧪 backstop | Pure argv planning, no state |
 | boundary | R7 | ✅ covered | Estimate equal to the window passes, one token more is refused; a window of zero or a non-integer is not a known window (shown unknown); the estimate of an empty prompt is zero |
@@ -451,6 +623,11 @@ host takes a setting is fixed knowledge in the runner rows with a source label, 
 Open for the plan (not blocking): the bytes-per-token constant's calibration against recorded host usage; whether a read-only claude
 plan lane or an opencode plan agent can run a shell (unverified: `shell` stays `unknown` until the spike); the exact `skill_roles`
 inventory field shape; the UI extension list's single home (reuse of the adapter's list); the execute-start spike's three hosts.
+*(amended 2026-11-23, from the code: the spike is not run in this run (no consent line for live host calls), so `shell` stays
+`unknown` for claude, opencode, cursor and codex review and every path form keeps its label; the UI list cannot move to one home,
+because the review package may not import the adapter and the adapter's `task_classification.py` may not import the review package
+(frozen allowlist, `tests/test_arch.py:1632-1665`): the review package keeps the list once for the lanes and a drift test pins the
+adapter's `_FRONTEND_EXTENSIONS` equal to it, so no third copy exists)*
 
 ## Interview Log
 
@@ -470,10 +647,11 @@ own reasoning. Summaries only, advisory. Rule: `mvp-mode` inactive, so the best 
 | 1 | Boundary Keeper | Where is a confirmed sort kept? | typesafe config_roles_table 0.97 (laya none low 0.57) | `[skills.roles]` in the layered config, labeled user-stated (R2) |
 | 1 | Simplifier | How is an unknown skill sorted? | laya none_of_these 0.93 (contradicts the evidence); second opinion typesafe helper_with_fallback low 0.79 | **Own reasoning:** jev when present, one item per skill from name and description only, advisory, owner confirms each, otherwise unsorted (R2, ledger); **jev overridden** |
 | 1 | Failure Analyst | How does a lens with no file on any host reach other lanes? | laya none_of_these low 0.39; second opinion typesafe native_only_named 0.86 | Native lane of its own host only, other lanes get a named note (R5) |
-| 1 | Boundary Keeper | How does the after-approval editing pass run? | typesafe opt_in_with_diff 0.83 (laya none low 0.28) | Off by default, write-capable lane, diff shown, owner accepts (R9); **needs owner confirmation** (the requirement wording says the pass runs) |
+| 1 | Boundary Keeper | How does the after-approval editing pass run? | typesafe opt_in_with_diff 0.83 (laya none low 0.28) | Off by default, write-capable lane, diff shown, owner accepts (R9); **needs owner confirmation** (the requirement wording says the pass runs) *(amended 2026-11-23: confirmed, `OWNER-DECISIONS-2026-11-16.md:52-54`)* |
 | 1 | Simplifier | Is herdr used to show a capability view or probe path reading? | typesafe not_used 0.87 (laya none low 0.63) | Not used; plain text and headless probes (R11, Constraints) |
 
 ---
 
 *Phase: 39-lane-capability-blocks-and-lens-skills*
 *Spec created: 2026-11-16*
+*Amended: 2026-11-23 (cross-phase amendment: what Phases 37, 38 and 38.1 shipped, gsd-core 1.22.0, grok not a target)*

@@ -2,7 +2,8 @@
 
 **Gathered:** 2026-11-16 (interactive path, no owner question needed, jev screening, after 39-SPEC.md)
 **Status:** Ready for planning (after Phase 37 lands: this phase extends its planner with a capabilities result and one setting, reads
-Phase 35's window per (runtime, model), and reuses Phase 36's read-only commands and Phase 38's run lock)
+Phase 35's window per (runtime, model), and reuses Phase 36's read-only commands and Phase 38's run lock) *(amended 2026-11-23:
+Phases 35 to 38.1 have landed; see "Added 2026-11-23")*
 
 <domain>
 ## Phase Boundary
@@ -58,12 +59,16 @@ into GSD agents and the hook route's block file or window flag (44); the vertica
   its argv; copilot review no shell, no write, no MCP; claude, cursor, opencode and codex review show a read-only mode but no
   tool list, so their `shell` stays `unknown` until a probe says otherwise. laya none_of_these 0.85 (contradicts the evidence);
   second opinion typesafe runner_row low 0.70. **jev overridden**; **own reasoning.** Ledger. **Needs owner awareness** (a
-  cross-phase addition to 37's planner, recorded in 37 CONTEXT's handoff).
+  cross-phase addition to 37's planner, recorded in 37 CONTEXT's handoff). *(amended 2026-11-23: the line goes to stderr as
+  `cross-ai: capabilities <JSON>`; the enum mapping onto Phase 37's report lines (`skills` `discovery` for an applied name form,
+  `mcp` `call_file` for an applied `--mcp-config` form) and the `prompt` member are in SPEC R3's amendment; see "Added 2026-11-23")*
 - **D-03: Python reads the line by running `--print-argv` for the lane at dispatch.** Live: 0.032 s per call, read-only, no
   migration (the existing WR-53 guarantee). The composer calls it once per (runtime, model, role, extras) in a run and keeps the
   result in memory for that run only. A missing `node`, a runner without the line (an old rendered copy) or an unparseable line
   gives the all-`unknown` capabilities with a visible reason, never a refusal and never a guess. A native lane (the host runs it,
-  no argv) gets no tool claims.
+  no argv) gets no tool claims. *(amended 2026-11-23: an unknown runtime makes the runner exit 2 before it plans, so this
+  all-`unknown` path is also the unknown-runtime path; the same call carries the lane's `--skill-path`, `--skill-name` and
+  `--mcp-config` flags through `print_argv_lines`, `runner_dispatch.py:296-318`)*
 - **D-04: The block has fixed sections in a fixed order.** `LANE` (runtime, model, role), `ACCESS` (write, shell, MCP in the
   runner's words), `TOOLS` (see D-05), `CODE INDEX` (D-06), `SKILLS` (delivered lenses by path or inline, skipped lenses with their
   note), `SETTINGS` (the settings actually applied from `--print-argv`: model, effort, context form; ignored ones are not
@@ -86,6 +91,8 @@ into GSD agents and the hook route's block file or window flag (44); the vertica
   its extension file" for pi) and the lane's `mcp` is not `no`; else the CLI form when `shell` is not `no`; else no line. Never
   both for one lane. The registration read stays per host and keeps returning `unknown` for a host with no reader; the line says
   "not tested in this session" as today. The same rule applies to any server in the table with the role `code_index`.
+  *(amended 2026-11-23: a third route comes first: the run-scoped `--mcp-config` file of D-21 applied for this call, read from the
+  runner's `setting mcp=` line; see SPEC R4's amendment)*
 
 ### The shared table (SPEC R1, R2, R10)
 
@@ -141,7 +148,9 @@ into GSD agents and the hook route's block file or window flag (44); the vertica
   labeled unverified; every other lane gets `built_in_no_file`. typesafe inline_unless_verified 0.95, native_only_named 0.86 on the
   second opinion; skip_whole_lens_named low 0.70 (typesafe; laya low 0.37): **own reasoning** for the whole-lens skip, since cutting
   a lens would be trimming and a refused lane would punish an optional extra. Ledger. Roadmap criterion 3 and REV-03 are amended
-  for the live facts (see D-19).
+  for the live facts (see D-19). *(amended 2026-11-23: Phase 37 R13 shipped the delivery itself: Python passes each lens as
+  `--skill-name` and `--skill-path` and the runner applies name, path or prose and reports `form=`; Python inlines nothing and
+  pre-checks what the runner would refuse, mapping each case to an existing note; see SPEC R5's amendment)*
 - **D-11: A repeatable runner setting `--skill-path <dir>` with a form per host, labeled.** It joins 37's settings report: `applied`
   where the row has a verified form (pi `--skill <path>`: pi 1.5.2's docs say explicit `--skill` paths still load under
   `--no-skills`), `ignored` with `unverified_form` for claude, copilot and cursor-agent (an `--add-dir <path>` flag exists in each
@@ -150,7 +159,10 @@ into GSD agents and the hook route's block file or window flag (44); the vertica
   the runner holds a plain-Node copy of the control-character and root rules, and one shared fixture pins it equal to the Python
   validator (D-13). The capabilities line reports `skills=path` only when a form was applied. opencode's `run --file` attaches a
   file's text to the message, which is inlining by another route and not adopted. typesafe runner_setting_with_forms 0.86 (laya low
-  0.64). Needs owner awareness (a new setting on the runner surface 37 defined).
+  0.64). Needs owner awareness (a new setting on the runner surface 37 defined). *(amended 2026-11-23: shipped by Phase 37 R13
+  with prose as the runner's own form, so `unverified_form` hosts report `applied form=prose`; the root rule stays Python-side
+  (37 R13), and the runner part left here is widening the skill flags' control-character check to D-13's set with the shared
+  fixture; see SPEC R6's amendment)*
 
 ### The window check and the validator (SPEC R7, R8)
 
@@ -172,7 +184,9 @@ into GSD agents and the hook route's block file or window flag (44); the vertica
   opinion (laya none_of_these 0.75 **jev overridden**), unknown_unless_user_stated 0.86, two_closed_lists 0.94,
   refused_result_no_spawn 0.84 (its reordered second opinion came back low, none_of_these 0.48, so the first answer stands). Open
   question for the researcher: calibrate the constant against recorded host usage (copilot's `--usage-output-file` writes token
-  counts; other hosts' usage output is unrecorded).
+  counts; other hosts' usage output is unrecorded). *(amended 2026-11-23: exit 65 is confirmed free (`cross-ai.mjs:1506-1529`; 69
+  also carries 38.1's `bad_request`); no accessor exists, so the plan adds one over the cached catalog; the constant stays 4 with no
+  calibration in this run (no live host call); see SPEC R7's amendment)*
 - **D-13: One validator for every embedded value, rejecting and never rewriting.** Control characters: Unicode categories `Cc`,
   `Zl`, `Zp` and the bidirectional and zero-width format characters U+200B to U+200F, U+202A to U+202E, U+2060 to U+2064, U+2066 to
   U+2069 and U+FEFF. A path is resolved (symlinks first) and must lie, compared by path components, inside the repository root of
@@ -191,7 +205,8 @@ into GSD agents and the hook route's block file or window flag (44); the vertica
   Phase 38 run lock applies. typesafe opt_in_with_diff 0.83 (laya low 0.28). **Needs owner confirmation:** REV-03 and roadmap
   criterion 3 say file-editing lenses "run as a pass after approval"; a default-off key softens that, because an editing pass over a
   document the reviewers just approved makes the approval stale and an unattended run cannot accept a diff. Provisional until the
-  owner answers. Ledger. Phase 40 owns the loop and places the step; this phase writes the step's contract.
+  owner answers. Ledger. Phase 40 owns the loop and places the step; this phase writes the step's contract. *(amended
+  2026-11-23: confirmed by the owner, `.planning/docs/OWNER-DECISIONS-2026-11-16.md:52-54`; no longer provisional)*
 - **D-15: curated-config derives its lens visibility from the table.** `inventory` gains `skill_roles` (through
   `load_ai_kit_spec_module`); `ponytail_visibility` is derived from it with the same output shape and the same five hosts it covers
   today, the hardcoded `PONYTAIL_SKILLS` tuple is removed, and a fixture test pins byte-equal output with the old function;
@@ -203,7 +218,8 @@ into GSD agents and the hook route's block file or window flag (44); the vertica
   and `config-status` outputs print one capability summary line per lane from it (no spawn). jev is used only by the sorter (D-09),
   probed at runtime, advisory, owner-confirmed, with the no-jev path (nothing proposed) tested. herdr is not used: the summary is
   plain text the calling skill prints, and the one place a pane might help (the spike below) runs headless first. typesafe
-  not_used 0.87 (laya low 0.63).
+  not_used 0.87 (laya low 0.63). *(amended 2026-11-23: `check-reviewer` prints one JSON object and `config-status` per-layer lines,
+  so the summary is a `capability` key and one line per lane; see SPEC R11's amendment)*
 
 ### Skills, docs, spike (SPEC R12)
 
@@ -219,7 +235,9 @@ into GSD agents and the hook route's block file or window flag (44); the vertica
   `--add-dir` for claude), whether claude's plan mode and opencode's plan agent can run a shell command, and whether codex's
   read-only sandbox and cursor's ask mode can; findings go to `tmp/` and into the rows' source labels (a verified form flips from
   `unverified_form`). herdr may drive a host for it where `HERDR_ENV=1` and the CLI exist; the fake-argv tests do not depend on it.
-  A host the spike does not cover stays unverified and inlines.
+  A host the spike does not cover stays unverified and inlines. *(amended 2026-11-23: not run in this run: a live host call needs an
+  owner consent line that is absent; every row keeps its label, `shell` stays `unknown` where the argv does not show it, and the
+  plans use fakes and fixtures only)*
 - **D-19: Cross-phase amendments made in this commit.** Roadmap Phase 39 criterion 3 and code anchors; REQUIREMENTS REV-03, REV-04
   and REV-05; Phase 37's CONTEXT handoff to Phase 39 (the capabilities result and `--skill-path` are added by this phase's plan;
   37's planner stays open to a row field per setting). Each is dated and cites the decision ids above. The live facts behind them:
@@ -228,10 +246,30 @@ into GSD agents and the hook route's block file or window flag (44); the vertica
   table, prompt size and context window matched only a compact-metrics note and a lens-brief eval note of Phase 30, neither in
   scope). Nothing folds here.
 
+### Added 2026-11-23 (cross-phase amendment: what Phases 37, 38 and 38.1 shipped; facts in SPEC "Live facts added 2026-11-23")
+
+- **D-21: The MCP servers a lane gets are picked here and handed to the runner as a run-scoped file.** Phase 37 R14 ships
+  `--mcp-config <file>` and leaves the choice by task kind to this phase. A server with role `code_index` whose seed row records a
+  launch form (`codebase-memory-mcp`: the bare binary, its 0.12.1 help says it runs the MCP server on stdio, with
+  `--tool-profile=analysis`, documented, effect unverified) is enabled for review and execute lanes when its binary resolves on the
+  child's PATH; the file holds only the resolved binary path and the seed arguments, mode 0600, in a run directory removed on every
+  exit path; a host config value is never read or copied; whether it applied is the runner's line. Servers without a launch form
+  are listed as present, not enabled. Own reasoning (the owner request of 2026-11-19 and 37 R14's handoff; read-only by default;
+  never a host config edit). Ledger.
+- **D-22: Lens delivery rides Phase 37's skill flags.** See D-10's note; the pre-checks map to `not_present` (empty body) and
+  `path_rejected` (bad UTF-8, byte-order mark, over the runner's 65,536-byte cap, a name the runner cannot address, an R8 failure),
+  and a runner `ignored` line to `host_cannot_load`; the lens notes stay a closed list of five.
+- **D-23: Template and copy rule.** Every template change of this phase lands before one last code wave that bumps the template
+  11 to 12 with every pin, re-renders the live copy with `ensure-runner`, re-records the self-test times once and checks the shards
+  (the 38.1-12 shape); the skill-judge loop and the closing gate follow as orchestrator plans (the 38.1-13 and 38.1-14 shapes).
+- **D-24: Grok.** Grok is not a cross-AI target (owner directive 2026-11-20; Phase 39.1 removes the code); this phase adds no grok
+  line anywhere and leaves existing grok code alone.
+
 ### Handoffs to later phases
 
 - **Phase 35**: exposes the window accessor for (runtime, model) with label and source (its D-09); if the executed shape differs,
-  this phase's plan adapts and records it.
+  this phase's plan adapts and records it. *(amended 2026-11-23: the shape differs: the window is the `context` fact on each catalog
+  runtime row, `catalog_facts.py:162-189`, with no accessor; this phase adds the reader)*
 - **Phase 36**: its read-only `check-reviewer` and `config-status` outputs print the summary line (D-16); nothing else changes.
 - **Phase 37**: the planner gains `capabilities` and `--skill-path` through a row field and a function (amendment recorded in 37
   CONTEXT); a context form applied there makes the window `unknown` for the size check; the recorded-help fixtures cover the new
