@@ -101,7 +101,12 @@ foreground pattern.
 When the request does not settle the role, stop before launching and ask; never default to
 `execute`, which selects the write-capable contract.
 
-The role confines the child, not the runner. Every launching call (not `--print-argv`,
+The role picks each runtime's own restriction for the child (opencode's `plan` agent, for
+example); it is not a sandbox. The `cross-ai: capabilities` line can report write, shell or MCP
+reach as `unknown`, and a review's git tree check finds checkout changes only after the call: it
+neither prevents them nor sees paths outside the checkout. A review whose child must not write
+needs containment verified on that host before the launch, or the isolated checkout below.
+Nothing confines the runner itself. Every launching call (not `--print-argv`,
 `--describe`, `--classify-only`, `--sweep` or the `--blocked-*` flags) first runs the one-time migration of a legacy
 `workflow.cross_ai_retry` block in a GSD `config.json`, and of the user
 `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json`, into ai-kit's `config.toml`, and rewrites
