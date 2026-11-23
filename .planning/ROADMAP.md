@@ -986,8 +986,8 @@ Plans:
 - [ ] 39-05-PLAN.md (wave 3): runner skill flags checked against the validator's control-character set
 - [ ] 39-06-PLAN.md (wave 4): token estimate, window accessor, refusal record and exit 65
 - [ ] 39-07-PLAN.md (wave 3): skill and MCP flags through `RunnerSpec`, lane facts parsed from `--print-argv`
-- [ ] 39-08-PLAN.md (wave 3): `classify-skills` (jev advisory) and `confirm-skill-role`
-- [ ] 39-09-PLAN.md (wave 3): curated-config `skill_roles` and the derived lens visibility
+- [ ] 39-08-PLAN.md (wave 3): `classify-skills` (jev advisory), `confirm-skill-role`, one config folder lock
+- [ ] 39-09-PLAN.md (wave 4): curated-config `skill_roles`, the derived lens visibility, its propose-and-confirm commands
 - [ ] 39-10-PLAN.md (wave 4): the capability block builder and the summary line
 - [ ] 39-11-PLAN.md (wave 5): lens selection, pre-checks and budget, the MCP pick and its run-scoped file
 - [ ] 39-12-PLAN.md (wave 6): dispatch wiring, pre-spawn refusal, `capability-block` command

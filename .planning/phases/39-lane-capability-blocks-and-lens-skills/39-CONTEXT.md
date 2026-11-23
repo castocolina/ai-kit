@@ -80,6 +80,7 @@ into GSD agents and the hook route's block file or window flag (44); the vertica
   the order is a stability choice pinned by a fixture). *(amended 2026-11-23, plan fix pass: `write` `full` keeps the existing
   sentence word for word; `write` `unknown` gets the same instruction with "make no assumption" and without the sentence's claim
   of no OS confinement (`execute_dispatch.py:44-47`), by SPEC R4's rule for unknown facts; see SPEC R4's fix-pass note)*
+  *(superseded 2026-11-23 by the orchestrator decision: D-04 stands as written; `full` or `unknown` gets the sentence word for word)*
 - **D-05: Tools are resolved against the child's PATH at dispatch time.** Each tool is resolved with `shutil.which` over the PATH of
   the exact environment the child receives (`runner_dispatch.child_env` for a Python dispatch; for a GSD hook the runner's
   `childEnv`, whose scrub list does not touch PATH). The tool line appears only when `shell` is `yes` or `unknown` and then reads

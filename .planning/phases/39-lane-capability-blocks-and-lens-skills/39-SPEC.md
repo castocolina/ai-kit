@@ -238,7 +238,10 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      name and description text and no path, key or config value (checked on the recorded request).
    - *Amended 2026-11-23, plan fix pass (read in the code):* "read-only" means `classify-skills` writes no ai-kit config and no
      skill file; the real jev client appends its own answer log under the state home (`jev_review.py:1937-1939`), which is jev's
-     record, not this command's write; tests use a fake jev and pin that no ai-kit config changes.
+     record, not this command's write; tests use a fake jev and pin that no ai-kit config changes. *(orchestrator decision
+     2026-11-23: CONTEXT D-09's curated-config caller is owned by 39-09: curated-config gains `classify-skills` and
+     `confirm-skill-role` subcommands that call the review package's same functions through `load_ai_kit_spec_module`; the D-18 live
+     probe is not run (no consent line) and is listed as an owner item in 39-19)*
 
 3. **The runner prints each lane's capabilities from its final argv (REV-04)**: the facts a block needs are computed in the
    runner, in the same place and from the same planner that builds the argv.
@@ -280,6 +283,10 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      (`cross-ai.mjs:2122-2127`, then the formula at `:7045-7046`), so the "one pure function over the row, the role and the final
      argv" is `laneCapabilities(row, role, argv, report)`, called where the argv is final (the `--print-argv` block); the planner's
      result keeps its shape.
+   - *Amended 2026-11-23, orchestrator decision:* R3's field list is `write` (`none`, `workspace`, `full`, `unknown`), `shell`
+     (`yes`, `no`, `unknown`), `skills` (`none`, `path`, `discovery`, `unknown`), `mcp` (`none`, `host_config`, `call_file`,
+     `unknown`), each `{value, label: {state, source}}`, plus `prompt` (`{channel: argv|stdin, max_bytes}`); `call_file` and `prompt`
+     are accepted additions; `--tool-profile=analysis` in the MCP seed launch form keeps its `unverified` label.
 
 4. **Each lane's prompt carries a capability block built from those facts (REV-04)**.
    - Current: `build_tooling_guidance` emits `SHARED_TOOLING_PATH`, `AGENTS_TOOLING_PATH`, a `TOOL_AVAILABILITY` JSON line from
@@ -316,6 +323,10 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      confinement" (`execute_dispatch.py:44-47`), more than an unknown fact supports; by this requirement's rule for unknown facts the
      block gives that lane the same instruction (write only inside the working directory) with "make no assumption" and without
      the confinement claim (39-10 `UNKNOWN_CONFINEMENT_LINE`); `write` `full` keeps the sentence word for word (CONTEXT D-04 note).
+     *(superseded 2026-11-23 by the orchestrator decision: D-04's locked sentence is given word for word to every execute lane
+     whose `write` is `full` or `unknown`; there is no softer line; `workspace` and `none` get no sentence, as D-04 says. On a claude
+     lane the run-scoped MCP file comes with `--strict-mcp-config`, 37 R14's verified form, so it replaces the host's other MCP
+     servers for that lane; the docs say so.)*
 
 5. **Lens skills reach each lane by path where it can load them and inlined where it cannot (REV-03)**.
    - Current: no lens reaches a spec-review lane; `ai-kit-spec-review` mentions no lens; the GSD agent wiring (LENS-01) is separate.
@@ -446,6 +457,14 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      skill's directory, a skill root, and are passed in the file list like every other embedded path. A path that does not exist
      yet (an execute plan names files it will create) is not unresolvable: its existing parent folders and links are resolved and
      the containment check applies to that real parent; `path_unresolvable` is for a value whose resolution fails (39-03).
+   - *Amended 2026-11-23, orchestrator decisions (supersede the two fix-pass sentences they name):* (a) never remove a feature: a
+     document from another worktree in a labeled multi-worktree review is NOT refused; the worktree root of each document the
+     caller names is an allowed root for that document value only, and the block's note reads `documents from other worktrees:
+     <n> (<root>, ...)`; this supersedes "it is rejected ... one worktree at a time" above; a sibling checkout not named as a review
+     document is still rejected. (b) A dispatch called without `--files` keeps today's behaviour: no refusal and no capability
+     block, with one stderr note naming the missing flag (R8's empty edge row, amended); exit 65 stays for a real refusal (a prompt
+     over the lane's known window, and a rejected value that is embedded). (c) An invalid guidance path is omitted and also named
+     in the summary line (`; note: guidance omitted: <NAME> (<reason>)`).
 
 9. **File-editing lenses run as an optional pass after approval (REV-03)**.
    - Current: no lens runs after a review; the review loop ends at approval.
@@ -460,7 +479,9 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      is never chosen; a rejected path (R8) is skipped by name.
    - *Amended 2026-11-23 (owner decision; Live facts added 2026-11-23):* the default-off key with a diff the owner accepts is
      confirmed (`OWNER-DECISIONS-2026-11-16.md:52-54`); the provisional mark of D-14 is lifted. The run lock is the runner's, taken
-     in execute mode, so the pass runs as an execute-role runner call.
+     in execute mode, so the pass runs as an execute-role runner call. *(orchestrator decision 2026-11-23: today only codex lanes show a
+     write capability, codex exec `full` and codex with `--codex-sandbox workspace-write` `workspace` (39-02's capability values), so
+     the pass runs only on those; recorded, accepted)*
 
 10. **The GSD config skill reads the shared table (REV-05)**.
     - Current: `skill_scan.ponytail_visibility` answers from a hardcoded name tuple over `host.HOSTS`; `inventory.py` has no
@@ -627,7 +648,7 @@ on unit 38.1's review fold; every line below was read in the code or run under a
 | precision | R7 | ✅ covered | The estimate is an integer from `ceil(bytes / constant)`; the refusal detail prints estimate, window, label and the constant, so a reader sees the rounding rule |
 | concurrency | R7 | ✅ covered | Two lanes of one review get independent window checks, each from its own preview and model id; one lane's refusal never changes or cancels another (the two-lane acceptance test) (added 2026-11-23: R7's plan fix-pass note changed its text and its edge floor gained this row) |
 | adjacency | R8 | ✅ covered | A path equal to the repository root passes, a path that only shares a name prefix with a root (`repo-other`) is outside (compared by path components, not by string prefix) |
-| empty | R8 | ✅ covered | An empty or whitespace-only value, a non-string and a missing file list are rejected with a reason, never treated as "no files" silently |
+| empty | R8 | ✅ covered | An empty or whitespace-only value, a non-string and a missing file list are rejected with a reason, never treated as "no files" silently *(amended 2026-11-23, orchestrator decision: a dispatch called without `--files` keeps today's behaviour: no refusal and no capability block, with the stderr note `ai-kit-spec: no capability block built: no --files given (pass --files to get the lane's capability block)`; it is not treated as "no files" silently because the note names it)* |
 | encoding | R8 | ✅ covered | Control characters are matched by Unicode category and the listed code points after no normalization; a non-NFC name is compared as given (the filesystem decides equality) |
 | ordering | R8 | ✅ covered | The first bad value in the list is named with its position; all bad values are reported in one result so a caller fixes them together |
 | concurrency | R8 | 🧪 backstop | A path can change between check and spawn (check-then-use); the validator runs immediately before the spawn and the limit is stated |
@@ -665,7 +686,7 @@ on unit 38.1's review fold; every line below was read in the code or run under a
 | MUST NOT trim, cut, rewrite or silently drop the base prompt, a path or an inlined lens; a lens that does not fit is skipped whole and named | R5, R7, R8 | resolved | verification: test — an inlined body is byte-equal to its file, an over-window lens appears as a note, and a refused prompt is unchanged |
 | MUST NOT deliver a lens by path where the lane's applied settings carry no verified or probed path form, and MUST NOT present an unverified form as applied | R5, R6 | resolved | verification: test — copilot and claude fixtures report `unverified_form` and inline the lens |
 | MUST NOT refuse a lane on an unknown window or on a window whose context form has an unverified effect, and MUST NOT let a refusal change another lane, the model or the runtime | R7 | resolved | verification: test — an unknown window runs, an applied context form shows `unknown`, and two lanes in one review get independent results |
-| MUST NOT embed a value with a control character or a real path outside the repository and the skill roots, and MUST NOT rewrite such a value to make it pass | R8 | resolved | verification: test — the rejection fixtures including a symlink out of a root and a sibling-prefix path |
+| MUST NOT embed a value with a control character or a real path outside the repository and the skill roots, and MUST NOT rewrite such a value to make it pass | R8 | resolved | verification: test — the rejection fixtures including a symlink out of a root and a sibling-prefix path *(amended 2026-11-23, orchestrator decision, never remove a feature: the worktree of a document the caller names in a labeled multi-worktree review is an allowed root for that document's value only, named in the block's note; any other path outside the roots is still rejected)* |
 | MUST NOT run a file-editing lens pass unless the owner enabled it, on a lane that is not write-capable, or keep its edits without the owner's acceptance | R9 | resolved | verification: test — key unset runs nothing, a read-only lane is never chosen, a rejection restores byte-equal files |
 | MUST NOT call jev, herdr, the network or a real host from the runner or from any test, and MUST NOT use a model or provider name other than `router-env/<x>` in code, seed rows, fixtures or docs | R2, R3, R12 | resolved | verification: test — the module tripwire, the arch rule that the template names neither client, and the hardcoding guard |
 
