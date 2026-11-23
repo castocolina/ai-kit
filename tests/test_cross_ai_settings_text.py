@@ -78,9 +78,13 @@ def group_problem(line, names):
     index = keys.index("cycles")
     if keys[index + 1:index + 6] != list(GROUP_KEYS):
         return "missing or misplaced group"
+    if keys[index + 6:index + 8] != ["coverage", "findings"]:
+        return "missing check group"
     if "retry_after_s" in keys and keys.index("retry_after_s") <= index + 5:
         return "misplaced retry"
     values = dict(pairs)
+    if not re.fullmatch(r"\d+/\d+|n/a|-", values["coverage"]):
+        return "invalid coverage"
     if not values["session"]:
         return "empty session"
     for key in ("applied", "ignored", "unknown"):
@@ -91,6 +95,45 @@ def group_problem(line, names):
     if values["escalate"] not in ("-", "runtime", "model", "runtime,model"):
         return "invalid escalate"
     return None
+
+
+STATUS_HEADING = "## 4. Read the result"
+FINDINGS_HEADING = "### Execute result checks"
+FLAGS_HEADING = "### Supervision flags"
+
+
+def status_rows(text) -> list[tuple[str, int]]:
+    rows = []
+    for line in _section(text, STATUS_HEADING).splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) > 1 and (re.fullmatch(r"\d+", cells[0]) or cells[0] == "128+n"):
+            code = 128 if cells[0] == "128+n" else int(cells[0])
+            rows.extend((name, code) for name in re.findall(r"`([a-z_]+)`", cells[1]))
+    return rows
+
+
+def finding_rows(text) -> list[tuple[str, str]]:
+    return re.findall(r"^\| \d+\. \| `([a-z_]+)` \| ([a-z_]+) \|",
+                      _section(text, FINDINGS_HEADING), re.MULTILINE)
+
+
+def flag_rows(text) -> list[str]:
+    return re.findall(r"^\| `(--[a-z-]+)", _section(text, FLAGS_HEADING), re.MULTILINE)
+
+
+def runner_statuses() -> dict[str, int]:
+    text = TEMPLATE.read_text(encoding="utf-8")
+    match = re.search(r"^const STATUS_TABLE = \{(.*?)^\};", text, re.MULTILINE | re.DOTALL)
+    assert match is not None
+    return {name: int(code) for name, code in re.findall(
+        r"^\s+([a-z_]+): \{ exit: (\d+) \}", match.group(1), re.MULTILINE)}
+
+
+def runner_flags() -> list[str]:
+    text = TEMPLATE.read_text(encoding="utf-8")
+    match = re.search(r"const SUPERVISION_FLAGS = Object\.freeze\(\[(.*?)\]\);", text)
+    assert match is not None
+    return re.findall(r"['\"](--[a-z-]+)['\"]", match.group(1))
 
 
 def vocabulary_names(text):
@@ -183,6 +226,71 @@ class SettingsReportDocs(unittest.TestCase):
             self.assertNotEqual(reason_rows(text), runner_list("SETTING_REASONS"))
 
 
+class SupervisionDocs(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.text = SKILL.read_text(encoding="utf-8")
+        cls.describe = describe_json()
+
+    def test_supervision_text_names_each_rule(self):
+        for value in ("--idle-timeout", "CONFIG.idleTimeoutS", "rule=idle-watchdog", "900",
+                      "ai-kit/spec/locks/", "`locked`", "cross-ai: finding reason=", "coverage=",
+                      "findings=", "--sweep", "cross-ai: sweep:", "herdr tab list",
+                      "jev-fast-decision"):
+            self.assertIn(value, self.text)
+        self.assertIn("never in a loop", self.text.lower())
+
+    def test_measured_figures_stated_once(self):
+        self.assertEqual(self.text.count("250 ms"), 1)
+        self.assertEqual(self.text.count("twice the capture cap"), 1)
+
+    def test_watchdog_is_no_longer_denied(self):
+        self.assertIsNone(re.search(r"\bno idle watchdog\b", self.text, re.IGNORECASE))
+
+    def test_evidence_dates_only_below_evidence(self):
+        self.assertIsNone(re.search(r"\d{4}-\d{2}-\d{2}", self.text.split("## Evidence")[0]))
+
+    def test_status_rows_match_runner_and_describe(self):
+        rows = status_rows(self.text)
+        self.assertEqual(len(rows), len(dict(rows)))
+        self.assertEqual(dict(rows), runner_statuses())
+        if self.describe is None:
+            self.skipTest("node not on PATH: the --describe leg is skipped")
+        self.assertEqual(dict(rows), self.describe["statuses"])
+
+    def test_finding_rows_match_runner_and_describe(self):
+        rows = finding_rows(self.text)
+        self.assertEqual([code for code, _ in rows], runner_list("FINDING_CODES"))
+        if self.describe is None:
+            self.skipTest("node not on PATH: the --describe leg is skipped")
+        self.assertEqual(rows, [(f["code"], f["result"]) for f in self.describe["findings"]])
+
+    def test_flag_rows_match_runner_and_describe(self):
+        rows = flag_rows(self.text)
+        self.assertEqual(rows, runner_flags())
+        self.assertEqual(len(rows), 5)
+        if self.describe is None:
+            self.skipTest("node not on PATH: the --describe leg is skipped")
+        self.assertEqual(rows, self.describe["supervision_flags"])
+
+    def test_contract_catches_a_missing_extra_or_swapped_row(self):
+        missing = self.text.replace(", `partial` | report", " | report", 1)
+        duplicate = self.text.replace("| 1 | `no_change`", "| 1 | `ok`, `no_change`", 1)
+        self.assertNotEqual(dict(status_rows(missing)), runner_statuses())
+        duplicate_rows = status_rows(duplicate)
+        self.assertNotEqual(len(duplicate_rows), len(dict(duplicate_rows)))
+        lines = self.text.splitlines()
+        first = next(line for line in lines if line.startswith("| 1. | `no_commit`"))
+        second = next(line for line in lines if line.startswith("| 2. | `task_uncovered`"))
+        ninth = next(line for line in lines if line.startswith("| 9. | `coverage_unchecked`"))
+        extra = self.text.replace(ninth, ninth + "\n| 10. | `extra` | info | extra |")
+        swapped = self.text.replace(first + "\n" + second, second + "\n" + first)
+        self.assertNotEqual(finding_rows(extra), finding_rows(self.text))
+        self.assertNotEqual(finding_rows(swapped), finding_rows(self.text))
+        sweep = next(line for line in lines if line.startswith("| `--sweep`"))
+        self.assertNotEqual(flag_rows(self.text.replace(sweep, "")), runner_flags())
+
+
 class StatusGroupDocs(unittest.TestCase):
     def test_sample_lines_carry_the_group(self):
         names = runner_list("SETTING_NAMES")
@@ -196,8 +304,9 @@ class StatusGroupDocs(unittest.TestCase):
     def test_group_check_catches_a_line_without_it(self):
         names = runner_list("SETTING_NAMES")
         prefix = "AIKIT-XAI model=fake/x attempts=1 cycles=0 "
-        group = "session=- applied=model ignored=- unknown=- escalate=-"
-        for line in (prefix, prefix + "retry_after_s=600 cycle=0 " + group,
+        group = "session=- applied=model ignored=- unknown=- escalate=- coverage=- findings=-"
+        for line in (prefix, prefix + "session=- applied=model ignored=- unknown=- escalate=-",
+                     prefix + "retry_after_s=600 cycle=0 " + group,
                      prefix + group.replace("applied=model", "applied=bogus")):
             self.assertIsNotNone(group_problem(line, names))
         self.assertIsNone(group_problem(prefix + group, names))

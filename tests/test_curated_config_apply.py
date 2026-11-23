@@ -542,7 +542,7 @@ def _run_apply(
     inv_path: str,
     project: str,
     env: dict,
-    fake: "FakeRun | _RecordingRun",
+    fake,
     *,
     dry_run: bool = True,
 ) -> tuple[int, dict | None, str, str]:
@@ -608,7 +608,8 @@ def _setup_scratch_project(tmp: str) -> tuple[str, dict, str]:
 def _tables_fake(config_path: str, home: str) -> FakeRun:
     return FakeRun(
         node_stdout=lambda argv, h=home: json.dumps(
-            tables_answer(json.loads(argv[6]), h)
+            [None] * len(json.loads(argv[4])["refs"]) if argv[2] == plan_io._GSD_SKILL_SCRIPT
+            else tables_answer(json.loads(argv[6]), h)
         ),
         config_path_stdout=config_path,
     )
@@ -644,6 +645,18 @@ def _assert_no_writes(project: str, fake: FakeRun) -> None:
             raise AssertionError("config-set was invoked")
 
 
+def fake_skill_child(run_fn, skipped: dict[str, str]):
+    def run(argv, **kwargs):
+        if len(argv) > 2 and argv[1] == "-e" and argv[2] == plan_io._GSD_SKILL_SCRIPT:
+            run_fn.argv_log.append(list(argv))
+            refs = json.loads(argv[4])["refs"]
+            return subprocess.CompletedProcess(
+                argv, 0, json.dumps([skipped.get(r) for r in refs]), ""
+            )
+        return run_fn(argv, **kwargs)
+    return run
+
+
 class TestApplyRefusals(unittest.TestCase):
     def test_missing_inventory_argparse(self) -> None:
         with self.assertRaises(SystemExit) as ctx:
@@ -651,6 +664,139 @@ class TestApplyRefusals(unittest.TestCase):
                 ["apply", "--plan", "p.json", "--project-dir", "d"]
             )
         self.assertEqual(ctx.exception.code, 2)
+
+    def test_no_child_before_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+            inv["existing_config"]["path"] = os.path.join(tmp, "other", ".planning", "config.json")
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(inv))
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan["inventory_digest"] = plan_schema.inventory_digest(inv)
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            fake.argv_log.clear()
+            code, _, out, err = _run_apply(plan_path, inv_path, project, env, fake)
+            self.assertEqual(code, 2)
+            self.assertIn("not the config this inventory was taken for", out + err)
+            self.assertFalse(any(len(a) > 1 and a[1] == "-e" for a in fake.argv_log))
+
+    def test_skill_child_runs_after_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, _inv, fake = _decided_plan(tmp)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan["entries"].append({"key": "agent_skills.gsd-planner", "op": "keep",
+                                    "existing": ["skills/gone"], "value": ["skills/gone"],
+                                    "source": "user", "why": "test"})
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            fake.argv_log.clear()
+            before = _tree_snapshot(project)
+            child = fake_skill_child(
+                fake, {"skills/gone": 'Skill not found at "skills/gone/SKILL.md"'}
+            )
+            code, _, out, err = _run_apply(plan_path, inv_path, project, env, child)
+            self.assertEqual(code, 2)
+            self.assertIn('apply refused: agent_skills.gsd-planner: gsd-core would skip gone '
+                          '(Skill not found at "skills/gone/SKILL.md"', out + err)
+            self.assertIn("plan-set", out + err)
+            calls = fake.argv_log
+            children = [i for i, a in enumerate(calls)
+                        if len(a) > 2 and a[2] == plan_io._GSD_SKILL_SCRIPT]
+            self.assertEqual(len(children), 1)
+            self.assertTrue(any("config-path" in a for a in calls[:children[0]]))
+            self.assertEqual(before, _tree_snapshot(project))
+            _assert_no_writes(project, fake)
+
+    def test_messages_join_in_entry_order(self) -> None:
+        inv = {"existing_config": {"values": {}}}
+        entries = [{"key": f"agent_skills.gsd-{agent}", "op": "keep",
+                    "existing": [f"skills/{agent}"]} for agent in ("planner", "executor")]
+        def run(argv, **_kwargs):
+            return subprocess.CompletedProcess(argv, 0, json.dumps(["missing"] * 2), "")
+        check = plan_io.SkillCheck("node", "tools", {}, "project", run)
+        result = plan_io.gsd_skipped_skill_problem({"entries": entries}, inv, check)
+        assert result is not None
+        self.assertLess(result.index("agent_skills.gsd-planner"),
+                        result.index("agent_skills.gsd-executor"))
+        self.assertIn("; agent_skills.gsd-executor", result)
+
+    def test_global_core_is_a_note(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            inputs = apply_mod.Inputs(plan, plan_path, inv, inv_path, project)
+            core = mock.Mock(scope="global")
+            target = apply_mod.Target(mock.Mock(), core, "config", env)
+            deps = apply_mod.ApplyDeps(lambda _: None, fake, lambda: env)
+            fake.argv_log.clear()
+            output = io.StringIO()
+            with contextlib.redirect_stderr(output), mock.patch.object(
+                apply_mod, "resolve_target", return_value=(target, None)
+            ), mock.patch.object(apply_mod, "preflight", return_value=[]), mock.patch.object(
+                cross_ai_script, "load_template", return_value=(b"template", None)
+            ):
+                bound, template, error = apply_mod.prepare(inputs, deps, _strict_encode())
+            self.assertIs(bound, target)
+            self.assertEqual(template, b"template")
+            self.assertIsNone(error)
+            self.assertIn("gsd-core is not project-local for this project; "
+                          "the skipped-skill check did not run", output.getvalue())
+            self.assertFalse(any(len(a) > 1 and a[1] == "-e" for a in fake.argv_log))
+
+    def test_skill_child_gets_the_inventory_home(self) -> None:
+        # gsd-core finds global skills under HOME: the child gets the inventory's, the rest of
+        # apply's env unchanged; an inventory without one keeps apply's env.
+        env = {"HOME": "/apply/home", "CLAUDE_CONFIG_DIR": "/cfg", "GSD_HOME": "/gsd"}
+        tools = mock.Mock(node_bin="node")
+        target = apply_mod.Target(tools, mock.Mock(scope="local", tools_path="t"), "c", env)
+        deps = apply_mod.ApplyDeps(lambda _: None, mock.Mock(), lambda: env)
+        for inv, home in (({"home": "/inv/home"}, "/inv/home"), ({}, "/apply/home")):
+            with self.subTest(home=home):
+                inputs = apply_mod.Inputs({"host": "claude"}, "p", inv, "i", "project")
+                check = apply_mod._skill_check(target, inputs, deps)
+                assert check is not None
+                self.assertEqual(check.env, {**env, "HOME": home})
+        self.assertEqual(env["HOME"], "/apply/home")
+
+    def test_expect_is_the_recorded_dir_of_the_checked_runtime(self) -> None:
+        inv = {"gsd_core": {"skills_roots": {"claude": "/h/.claude/skills",
+                                             "codex": "/h/.agents/skills"}}}
+        cases = (([], ["global:a"], "/h/.claude/skills"),
+                 ([{"key": "runtime", "op": "set", "value": "codex"}], ["global:a"],
+                  "/h/.agents/skills"),
+                 ([], ["skills/a"], None))
+        for entries, existing, expected in cases:
+            with self.subTest(expected=expected):
+                payloads = []
+                def run(argv, captured=payloads, **_kwargs):
+                    captured.append(json.loads(argv[4]))
+                    return subprocess.CompletedProcess(argv, 0, "[null]", "")
+                check = plan_io.SkillCheck("node", "tools", {}, "project", run)
+                plan = {"entries": [*entries, {"key": "agent_skills.gsd-planner", "op": "keep",
+                                               "existing": existing}]}
+                plan_io.gsd_skipped_skill_problem(
+                    plan, {**inv, "existing_config": {"values": {}}}, check)
+                self.assertEqual(payloads[0].get("expect"), expected)
+
+    def test_runtime_only_when_the_plan_writes_one(self) -> None:
+        cases = (([], None), ([{"key": "runtime", "op": "set", "value": "codex"}], "codex"))
+        for entries, expected in cases:
+            payloads = []
+            def run(argv, captured=payloads, **_kwargs):
+                captured.append(json.loads(argv[4]))
+                return subprocess.CompletedProcess(argv, 0, "[null]", "")
+            check = plan_io.SkillCheck("node", "tools", {}, "project", run)
+            plan = {"entries": [*entries, {"key": "agent_skills.gsd-planner", "op": "keep",
+                                           "existing": ["skills/test"]}]}
+            plan_io.gsd_skipped_skill_problem(plan, {"existing_config": {"values": {}}}, check)
+            base = payloads[0]["base"]
+            self.assertEqual(base.get("runtime"), expected)
+            if expected is None:
+                self.assertNotIn("runtime", base)
 
     def test_needs_choice_entry_named(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -692,6 +838,9 @@ class TestApplyRefusals(unittest.TestCase):
             os.symlink(outside, link)
             plan, _ = plan_io.load_plan(plan_path)
             assert plan is not None
+            fake_child = fake_skill_child(fake, {
+                "skills/escape": "escape outside project", "skills/missing": "missing skill",
+            })
             kept = ["skills/escape", "skills/missing"]
             plan["entries"].append({
                 "key": "agent_skills.gsd-planner", "op": "keep",
@@ -705,10 +854,13 @@ class TestApplyRefusals(unittest.TestCase):
             for dry_run in (True, False):
                 with self.subTest(dry_run=dry_run):
                     code, _report, out, err = _run_apply(
-                        plan_path, inv_path, project, env, fake, dry_run=dry_run
+                        plan_path, inv_path, project, env, fake_child, dry_run=dry_run
                     )
                     self.assertEqual(code, 2)
                     self.assertIn("apply refused", err + out)
+                    self.assertIn("escape outside project", err + out)
+                    self.assertIn("missing skill", err + out)
+                    self.assertIn("plan-set", err + out)
                     self.assertIn("escape", err + out)
                     self.assertIn("missing", err + out)
                     self.assertEqual(_tree_snapshot(project), before)
@@ -717,6 +869,7 @@ class TestApplyRefusals(unittest.TestCase):
     def test_hand_edited_skipped_skill_refused_before_any_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+            fake_child = fake_skill_child(fake, {"global:vaulted": "untrusted root"})
             inv["skills"].append({
                 "name": "vaulted", "root_kind": "global", "root": "~/.agents/skills",
                 "plugin": None, "real_dir": "/x/vault/vaulted",
@@ -739,10 +892,12 @@ class TestApplyRefusals(unittest.TestCase):
             for dry_run in (True, False):
                 with self.subTest(dry_run=dry_run):
                     code, _report, out, err = _run_apply(
-                        plan_path, inv_path, project, env, fake, dry_run=dry_run
+                        plan_path, inv_path, project, env, fake_child, dry_run=dry_run
                     )
                     self.assertEqual(code, 2)
                     self.assertIn("apply refused", err + out)
+                    self.assertIn("untrusted root", err + out)
+                    self.assertIn("plan-set", err + out)
                     self.assertIn("vaulted", err + out)
                     self.assertEqual(_tree_snapshot(project), before)
                     _assert_no_writes(project, fake)
@@ -772,14 +927,17 @@ class TestApplyRefusals(unittest.TestCase):
                 self._kept_global_plan(tmp, "gone")
             )
             shutil.rmtree(os.path.join(skills_dir, "gone"))
+            fake_child = fake_skill_child(fake, {"global:gone": "global skill missing"})
             before = _tree_snapshot(project)
             for dry_run in (True, False):
                 with self.subTest(dry_run=dry_run):
                     code, _report, out, err = _run_apply(
-                        plan_path, inv_path, project, env, fake, dry_run=dry_run
+                        plan_path, inv_path, project, env, fake_child, dry_run=dry_run
                     )
                     self.assertEqual(code, 2)
                     self.assertIn("apply refused", err + out)
+                    self.assertIn("global skill missing", err + out)
+                    self.assertIn("plan-set", err + out)
                     self.assertIn("gone", err + out)
                     self.assertEqual(_tree_snapshot(project), before)
                     _assert_no_writes(project, fake)
@@ -798,12 +956,15 @@ class TestApplyRefusals(unittest.TestCase):
             link = os.path.join(skills_dir, "moved", "SKILL.md")
             os.remove(link)
             os.symlink(os.path.join(outside, "SKILL.md"), link)
+            fake_child = fake_skill_child(fake, {"global:moved": "outside trusted roots"})
             before = _tree_snapshot(project)
             code, _report, out, err = _run_apply(
-                plan_path, inv_path, project, env, fake, dry_run=True
+                plan_path, inv_path, project, env, fake_child, dry_run=True
             )
             self.assertEqual(code, 2)
             self.assertIn("apply refused", err + out)
+            self.assertIn("outside trusted roots", err + out)
+            self.assertIn("plan-set", err + out)
             self.assertIn("moved", err + out)
             self.assertEqual(_tree_snapshot(project), before)
             _assert_no_writes(project, fake)
@@ -867,6 +1028,8 @@ class TestApplyRefusals(unittest.TestCase):
             )
 
             def reject_profile(argv, h=env["HOME"]):
+                if argv[2] == plan_io._GSD_SKILL_SCRIPT:
+                    return json.dumps([None] * len(json.loads(argv[4])["refs"]))
                 body = tables_answer(json.loads(argv[6]), h)
                 body["valid_keys"]["rejected"] = sorted(
                     set(body["valid_keys"]["rejected"]) | {"model_profile"}
@@ -1324,9 +1487,10 @@ class TestDryRunTracer(unittest.TestCase):
             self.assertEqual(art_rows[0]["kind"], "add")
             self.assertEqual(_tree_snapshot(project), before)
             node_calls = [a for a in fake.argv_log if a and a[0] == "node"]
-            self.assertEqual(len(node_calls), 2)
+            self.assertEqual(len(node_calls), 3)
             self.assertEqual(node_calls[0][2], "config-path")
-            self.assertEqual(node_calls[1][1], "-e")
+            self.assertEqual(node_calls[1][2], plan_io._GSD_SKILL_SCRIPT)
+            self.assertEqual(node_calls[2][1], "-e")
             for cmd in fake.argv_log:
                 joined = " ".join(str(part) for part in cmd)
                 self.assertNotIn("config-set", joined)
@@ -1400,6 +1564,71 @@ def _mutate_config_file(config_path: str, key: str, value) -> None:
     with open(config_path, "w", encoding="utf-8") as handle:
         json.dump(live, handle)
         handle.write("\n")
+
+
+class TestGsdSkillVerdictNotes(unittest.TestCase):
+    class Recorder:
+        def __init__(self, result):
+            self.result = result
+            self.calls = []
+
+        def __call__(self, argv, **kwargs):
+            self.calls.append((argv, kwargs))
+            if isinstance(self.result, Exception):
+                raise self.result
+            return subprocess.CompletedProcess(argv, *self.result)
+
+    def make_check(self, result):
+        recorder = self.Recorder(result)
+        return plan_io.SkillCheck("node", "project/bin/gsd-tools.cjs", {}, "project", recorder)
+
+    def test_no_refs_start_no_child(self):
+        check = self.make_check((0, "null", ""))
+        self.assertEqual(plan_io.gsd_skill_verdicts([], {}, check), ([], None))
+        self.assertEqual(check.run_fn.calls, [])
+
+    def test_unreadable_answer_is_a_note(self):
+        check = self.make_check((0, "null", ""))
+        base = {"runtime": "claude"}
+        result = plan_io.gsd_skill_verdicts(["x"], base, check)
+        self.assertEqual(result, (None, plan_io._NOTE_FAILED.format(detail="unreadable answer")))
+        argv, kwargs = check.run_fn.calls[0]
+        self.assertEqual(argv, ["node", "-e", plan_io._GSD_SKILL_SCRIPT,
+                                os.path.join("project", "bin", "lib", "init.cjs"),
+                                json.dumps({"refs": ["x"], "base": base, "project": "project"})])
+        self.assertEqual(kwargs["capture_output"], True)
+        self.assertEqual(kwargs["encoding"], "utf-8")
+        self.assertEqual(kwargs["env"], check.env)
+        self.assertEqual(kwargs["timeout"], plan_io._GSD_SKILL_TIMEOUT_S)
+
+    def test_exit_and_timeout_are_notes(self):
+        for response, detail in (((3, "", ""), "exit 3"),
+                                 (subprocess.TimeoutExpired("node", 30), "timed out after 30 s")):
+            with self.subTest(detail=detail):
+                check = self.make_check(response)
+                self.assertEqual(plan_io.gsd_skill_verdicts(["x"], {}, check),
+                                 (None, plan_io._NOTE_FAILED.format(detail=detail)))
+
+    def test_other_skills_dir_is_a_note(self):
+        check = self.make_check((0, json.dumps({"base": "/apply/.claude/skills"}), ""))
+        result = plan_io.gsd_skill_verdicts(["global:x"], {}, check, "/inv/.claude/skills")
+        detail = ("it reads global skills from /apply/.claude/skills, not the inventory's "
+                  "/inv/.claude/skills; rerun inventory in this environment")
+        self.assertEqual(result, (None, plan_io._NOTE_FAILED.format(detail=detail)))
+        self.assertEqual(json.loads(check.run_fn.calls[0][0][4])["expect"],
+                         "/inv/.claude/skills")
+
+    def test_cause_is_sanitized(self):
+        answer = ['[agent-skills] WARNING: Skill not found at "x\x1b[31m" — skipping']
+        check = self.make_check((0, json.dumps(answer), ""))
+        self.assertEqual(plan_io.gsd_skill_verdicts(["x"], {}, check),
+                         (['Skill not found at "x[31m"'], None))
+
+    def test_cause_empty_after_sanitizing_is_still_skipped(self):
+        for warning in ("", "\x1b\x07", "[agent-skills] WARNING:  — skipping"):
+            with self.subTest(warning=warning):
+                check = self.make_check((0, json.dumps([warning]), ""))
+                self.assertEqual(plan_io.gsd_skill_verdicts(["x"], {}, check), (["skipped"], None))
 
 
 class _RecordingRun:
@@ -2679,71 +2908,8 @@ class TestWritePathDiscipline(unittest.TestCase):
         self.assertEqual(_apply_write_path_findings(allowed), [])
 
 
-class TestLiveRootCoverage(unittest.TestCase):
-    """The live re-check reads trusted roots the way gsd-core does (``~/`` expanded, the
-    home dir, the filesystem root and relative roots never trusted)."""
-
-    def _tree(self, tmp):
-        home = os.path.join(tmp, "home")
-        kit = os.path.join(home, "kit", "skills", "jev")
-        host = os.path.join(home, ".claude", "skills")
-        os.makedirs(kit)
-        os.makedirs(host)
-        with open(os.path.join(kit, "SKILL.md"), "w", encoding="utf-8") as handle:
-            handle.write("---\n---\n# skill\n")
-        os.symlink(kit, os.path.join(host, "jev"))
-        inv = {"host": "claude", "gsd_core": {"skills_roots": {"claude": host}}}
-        return home, host, inv
-
-    def test_home_relative_root_covers_a_linked_skill(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            home, host, inv = self._tree(tmp)
-            skill_md = os.path.join(host, "jev", "SKILL.md")
-            with mock.patch.dict(os.environ, {"HOME": home}):
-                self.assertTrue(plan_io._root_covers(skill_md, "~/kit/skills"))
-                self.assertIsNone(plan_io._live_global_problem("jev", inv, ["~/kit/skills"]))
-                self.assertIsNotNone(plan_io._live_global_problem("jev", inv, []))
-
-    def test_too_broad_or_relative_roots_never_cover(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            home, host, _inv = self._tree(tmp)
-            skill_md = os.path.join(host, "jev", "SKILL.md")
-            with mock.patch.dict(os.environ, {"HOME": home}):
-                for root in ("~", "~/", home, os.sep, "kit/skills"):
-                    with self.subTest(root=root):
-                        self.assertFalse(plan_io._root_covers(skill_md, root))
-
-
 class TestLiveReferenceChecks(unittest.TestCase):
-    """Skill-judge round 3: every project path is checked like gsd-core does, a newly wired
-    reference is revalidated live, and the printed fix never switches or drops a healthy
-    reference."""
-
-    def _project(self, tmp, symlinked=False):
-        project = os.path.join(tmp, "project")
-        real_planning = os.path.join(tmp, "real-planning")
-        os.makedirs(project)
-        planning = os.path.join(project, ".planning")
-        if symlinked:
-            os.makedirs(real_planning)
-            os.symlink(real_planning, planning)
-        else:
-            os.makedirs(planning)
-        for rel in (".claude/skills/house", "skills/proj"):
-            os.makedirs(os.path.join(project, rel))
-            with open(os.path.join(project, rel, "SKILL.md"), "w", encoding="utf-8") as handle:
-                handle.write("---\n---\n# skill\n")
-        inv = {"existing_config": {"path": os.path.join(planning, "config.json")}}
-        return project, inv
-
-    def test_any_project_path_follows_gsd_cores_rule(self) -> None:
-        for symlinked in (False, True):
-            with self.subTest(symlinked=symlinked), tempfile.TemporaryDirectory() as tmp:
-                _project, inv = self._project(tmp, symlinked)
-                self.assertIsNone(plan_io._project_ref_skip_reason(".claude/skills/house", inv))
-                self.assertIsNone(plan_io._project_ref_skip_reason("skills/proj", inv))
-                self.assertIsNotNone(plan_io._project_ref_skip_reason("../outside/x", inv))
-                self.assertIsNotNone(plan_io._project_ref_skip_reason("skills/missing", inv))
+    """The printed fix identifies references that cannot round-trip."""
 
     def test_printed_fix_names_refs_that_cannot_round_trip(self) -> None:
         inv = {"skills": [
@@ -2763,37 +2929,12 @@ class TestLiveReferenceChecks(unittest.TestCase):
 
 
 class TestRoundFiveReferenceChecks(unittest.TestCase):
-    """Skill-judge round 4: bare names survive the printed fix, kept globals are judged by
-    the live (symlink-resolving) check, and names and paths follow gsd-core's grammar."""
+    """Bare names survive the printed fix."""
 
     def test_bare_names_survive_the_printed_fix(self) -> None:
         keep, note = plan_io._kept_names(["jev", "ponytail"], ["jev"], {"skills": []})
         self.assertEqual(keep, ["ponytail"])
         self.assertEqual(note, "")
-
-    def test_kept_global_covered_through_a_symlinked_root(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            store = os.path.join(tmp, "store", "skills", "foo")
-            os.makedirs(store)
-            with open(os.path.join(store, "SKILL.md"), "w", encoding="utf-8") as handle:
-                handle.write("---\n---\n# skill\n")
-            os.symlink(os.path.join(tmp, "store"), os.path.join(tmp, "link"))
-            host = os.path.join(tmp, "host-skills")
-            os.makedirs(host)
-            os.symlink(store, os.path.join(host, "foo"))
-            inv = {"host": "claude", "gsd_core": {"skills_roots": {"claude": host}},
-                   "skills": []}
-            root = os.path.join(tmp, "link", "skills")
-            self.assertIsNone(plan_io._kept_global_skip("global:foo", inv, [root]))
-            self.assertIsNotNone(plan_io._kept_global_skip("global:foo", inv, []))
-
-    def test_malformed_global_names_and_absolute_paths_are_skipped(self) -> None:
-        inv = {"host": "claude"}
-        for ref in ("global:plugin::skill", "global:plugin:bad.name", "global:a/b"):
-            with self.subTest(ref=ref):
-                self.assertIsNotNone(plan_io._kept_global_skip(ref, inv, []))
-        self.assertIsNotNone(plan_io._project_ref_skip_reason("/abs/skills/x", inv))
-
 
 if __name__ == "__main__":
     unittest.main()

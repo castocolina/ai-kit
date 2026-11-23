@@ -1,0 +1,211 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=331s out=1024417 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_dfccc1c1cffengFEwwv2FBOv8w applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"opencode:router-env/my-referee-one\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":19,\"D2\":15,\"D3\":15,\"D4\":14,\"D5\":12,\"D6\":13,\"D7\":12,\"D8\":8},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":108,\"max_total\":125,\"percent\":86.4,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":330,\"evidence\":\"“Atomic rewrites keep the file mode” is generic advice, stated as a guarantee, without telling the caller what to do with a runner file.\",\"fix\":\"Move the reminder to the Configuration section of references/subprocess-quota-policy.md. Tie it to the runner's owner-only state files and explain that replacing a file atomically does not by itself preserve its permissions.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":4,\"evidence\":\"“Use when you run, wait for, read, retry or chain an external AI CLI” exposes the main workflow but misses the hosting-only trigger, such as asking why reviews open herdr tabs.\",\"fix\":\"Use when launching, waiting for, reading, or continuing an ai-kit cross-AI review or execute lane through cross-ai.mjs (pi, opencode, codex, cursor, copilot, claude). Covers role, effort, context, sessions, skills, MCP, --argv-file, herdr tabs and headless runs, and interpreting AIKIT-XAI, findings, or ignored settings. Use when a lane hits quota or a 429, ends locked or partial, or exits 75 or 69: read retry_after_s=, notify the owner, and handle GSD retry/skip/abort without switching harness, provider, or model. Not for reviewer setup, curated GSD config, or unrelated session wakes.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":121,\"evidence\":\"The main body makes every caller read the hosted sweep's rename, cleanup, and tab-matching algorithm, starting with “The run record `run.json`,” even for a plain headless call.\",\"fix\":\"Move the hosted lock, sweep, and capture internals to a Hosted-lane diagnostics section in references/launch-and-wait.md; read it only when hosting fails, a tab close is unconfirmed, or a run was killed hard. Keep the stop and no-double-launch rules in the main workflow.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":97,\"evidence\":\"“$ROLE is `review` for a review lane” is the launch gate, but a real review can migrate legacy retry configuration before the tree snapshot. That write is documented only in the quota reference, which a plain launch is told to skip.\",\"fix\":\"Add a pre-launch check for a strict no-write request: use `--print-argv` for a preview only; do not launch a real review if it would migrate legacy retry config. Route the migration to the owner and link to the Configuration section for the affected paths.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/evals.json\",\"line\":6,\"evidence\":\"The live-launch case asks to run “plan-review.md” with `fake/ok` but supplies `files: []` and no fake CLI setup. Its expected result depends on inputs the eval does not provide.\",\"fix\":\"Bundle a review prompt and wire the case to the runner's existing fake OpenCode setup so it can assert the actual exit and trailer without invoking a real provider.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/evals.json\",\"line\":70,\"evidence\":\"The suite checks “exit 75 ... with no retry_after_s” but has no output case for a valid hard-tier delay, a central branch of the skill.\",\"fix\":\"Add a saved exit-75 trailer with `retry_after_s=600` and a conflicting upstream reset hint. Assert one eligible same-lane wake no earlier than the runner's delay, or a handoff without scheduling when no scheduler is callable.\"},{\"id\":\"D7-3\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/evals/trigger-queries.json\",\"line\":55,\"evidence\":\"“Arm a session wake so this run resumes after the usage limit” is labeled negative without saying whether the run is a native session or a cross-AI lane; that distinction determines the label.\",\"fix\":\"Make this negative explicitly about a native session with no runner, and add an implicit positive with concrete context such as a project lane log ending in `exit=75 retry_after_s=600`.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":43,\"evidence\":\"“An id missing from [the live listing] ends the call with `bad_model`” implies an exact match. The runner strips recognized suffixes before looking up the ID (cross-ai.mjs:6593–6601), so an OpenCode variant can pass preflight even though the full ID is absent from the listing.\",\"fix\":\"State that preflight checks the base ID for runtimes with a suffix rule. Do not treat a successful preflight as validation of the variant or effort suffix; use the runner's preflight diagnostic and final status.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":138,\"evidence\":\"“The call ends `timeout` (124) or `transient` (75 with `retry_after_s=`)” omits other outcomes. An idle-killed attempt can reach the hard-tier handler, which can return exit 69 when waits are exhausted or a bare 75 when state cannot be written (cross-ai.mjs:5316–5342, 5485–5515). A later attempt can also succeed.\",\"fix\":\"Describe the watchdog as ending an attempt, not deciding the call. Use the final `AIKIT-XAI` line and the exit table to distinguish successful retries, bare timeouts, waitable 75s, bare 75s, and terminal 69s.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":147,\"evidence\":\"“The last line is `AIKIT-XAI`” has no fallback when the runner never starts. For example, a missing `prompt.md` makes shell redirection fail before Node runs, so `lane.rc` can be nonzero while `lane.err` has no runner trailer.\",\"fix\":\"Add a missing or mismatched trailer branch: read the launching tool's diagnostics, report a launch or capture failure, and do not chain or schedule a retry from the shell exit alone.\"},{\"id\":\"D8-4\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":275,\"evidence\":\"“Re-invoke the same lane, the same CLI and the same model” does not spell out what must survive a scheduled handoff. The runner keys its cycle file by the resolved working directory, route kind, CLI, and model, and checks the prompt digest before reusing a session (cross-ai.mjs:3535–3539, 5196–5198, 5346–5361).\",\"fix\":\"Tell the caller to save the original command, working directory, prompt, and scope or environment overrides with the lane record. Reuse them for the wake, preserving the role and route selection, and use a fresh scratch directory for the new capture.\"},{\"id\":\"D8-5\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":83,\"evidence\":\"“Route the owner to ... `ensure-runner`” lacks a return check. An edited template-9 copy can still report `ready: true` for the builders while leaving a `.new` file, and this skill requires an active template of at least 10.\",\"fix\":\"After the owner resolves an upgrade, recheck the active runner's line-2 header and the pending `.new` file before launching. Explicitly say that `ensure-runner`'s `ready` flag alone does not satisfy this skill's floor.\"}]}"
+  }
+ ],
+ "digest": "369c06141a46101d3e6f51c73b12ce6ea6859d1709068c53247c644e043c0313",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "fbdac1e55606d6cb4bd680b275bf3eac300c4fc545c6a093e3e0b0c6b1e5ec85"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-one",
+ "loop": "38",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_settings_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_staged_mapper.py"
+ ],
+ "prompt_sha256": "9a5a59607178baec610bd54ca1a8698673ec474a815db2c54b4403e0531d2e73",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "“Atomic rewrites keep the file mode” is generic advice, stated as a guarantee, without telling the caller what to do with a runner file.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Move the reminder to the Configuration section of references/subprocess-quota-policy.md. Tie it to the runner's owner-only state files and explain that replacing a file atomically does not by itself preserve its permissions.",
+    "id": "D1-1",
+    "line": 330,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "“Use when you run, wait for, read, retry or chain an external AI CLI” exposes the main workflow but misses the hosting-only trigger, such as asking why reviews open herdr tabs.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use when launching, waiting for, reading, or continuing an ai-kit cross-AI review or execute lane through cross-ai.mjs (pi, opencode, codex, cursor, copilot, claude). Covers role, effort, context, sessions, skills, MCP, --argv-file, herdr tabs and headless runs, and interpreting AIKIT-XAI, findings, or ignored settings. Use when a lane hits quota or a 429, ends locked or partial, or exits 75 or 69: read retry_after_s=, notify the owner, and handle GSD retry/skip/abort without switching harness, provider, or model. Not for reviewer setup, curated GSD config, or unrelated session wakes.",
+    "id": "D4-1",
+    "line": 4,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "The main body makes every caller read the hosted sweep's rename, cleanup, and tab-matching algorithm, starting with “The run record `run.json`,” even for a plain headless call.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Move the hosted lock, sweep, and capture internals to a Hosted-lane diagnostics section in references/launch-and-wait.md; read it only when hosting fails, a tab close is unconfirmed, or a run was killed hard. Keep the stop and no-double-launch rules in the main workflow.",
+    "id": "D5-1",
+    "line": 121,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "“$ROLE is `review` for a review lane” is the launch gate, but a real review can migrate legacy retry configuration before the tree snapshot. That write is documented only in the quota reference, which a plain launch is told to skip.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Add a pre-launch check for a strict no-write request: use `--print-argv` for a preview only; do not launch a real review if it would migrate legacy retry config. Route the migration to the owner and link to the Configuration section for the affected paths.",
+    "id": "D6-1",
+    "line": 97,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The live-launch case asks to run “plan-review.md” with `fake/ok` but supplies `files: []` and no fake CLI setup. Its expected result depends on inputs the eval does not provide.",
+    "file": "skills/ai-kit-cross-ai/evals/evals.json",
+    "fix": "Bundle a review prompt and wire the case to the runner's existing fake OpenCode setup so it can assert the actual exit and trailer without invoking a real provider.",
+    "id": "D7-1",
+    "line": 6,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The suite checks “exit 75 ... with no retry_after_s” but has no output case for a valid hard-tier delay, a central branch of the skill.",
+    "file": "skills/ai-kit-cross-ai/evals/evals.json",
+    "fix": "Add a saved exit-75 trailer with `retry_after_s=600` and a conflicting upstream reset hint. Assert one eligible same-lane wake no earlier than the runner's delay, or a handoff without scheduling when no scheduler is callable.",
+    "id": "D7-2",
+    "line": 70,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“Arm a session wake so this run resumes after the usage limit” is labeled negative without saying whether the run is a native session or a cross-AI lane; that distinction determines the label.",
+    "file": "skills/ai-kit-cross-ai/evals/trigger-queries.json",
+    "fix": "Make this negative explicitly about a native session with no runner, and add an implicit positive with concrete context such as a project lane log ending in `exit=75 retry_after_s=600`.",
+    "id": "D7-3",
+    "line": 55,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“An id missing from [the live listing] ends the call with `bad_model`” implies an exact match. The runner strips recognized suffixes before looking up the ID (cross-ai.mjs:6593–6601), so an OpenCode variant can pass preflight even though the full ID is absent from the listing.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "State that preflight checks the base ID for runtimes with a suffix rule. Do not treat a successful preflight as validation of the variant or effort suffix; use the runner's preflight diagnostic and final status.",
+    "id": "D8-1",
+    "line": 43,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“The call ends `timeout` (124) or `transient` (75 with `retry_after_s=`)” omits other outcomes. An idle-killed attempt can reach the hard-tier handler, which can return exit 69 when waits are exhausted or a bare 75 when state cannot be written (cross-ai.mjs:5316–5342, 5485–5515). A later attempt can also succeed.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Describe the watchdog as ending an attempt, not deciding the call. Use the final `AIKIT-XAI` line and the exit table to distinguish successful retries, bare timeouts, waitable 75s, bare 75s, and terminal 69s.",
+    "id": "D8-2",
+    "line": 138,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“The last line is `AIKIT-XAI`” has no fallback when the runner never starts. For example, a missing `prompt.md` makes shell redirection fail before Node runs, so `lane.rc` can be nonzero while `lane.err` has no runner trailer.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Add a missing or mismatched trailer branch: read the launching tool's diagnostics, report a launch or capture failure, and do not chain or schedule a retry from the shell exit alone.",
+    "id": "D8-3",
+    "line": 147,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“Re-invoke the same lane, the same CLI and the same model” does not spell out what must survive a scheduled handoff. The runner keys its cycle file by the resolved working directory, route kind, CLI, and model, and checks the prompt digest before reusing a session (cross-ai.mjs:3535–3539, 5196–5198, 5346–5361).",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Tell the caller to save the original command, working directory, prompt, and scope or environment overrides with the lane record. Reuse them for the wake, preserving the role and route selection, and use a fresh scratch directory for the new capture.",
+    "id": "D8-4",
+    "line": 275,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“Route the owner to ... `ensure-runner`” lacks a return check. An edited template-9 copy can still report `ready: true` for the builders while leaving a `.new` file, and this skill requires an active template of at least 10.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "After the owner resolves an upgrade, recheck the active runner's line-2 header and the pending `.new` file before launching. Explicitly say that `ensure-runner`'s `ready` flag alone does not satisfy this skill's floor.",
+    "id": "D8-5",
+    "line": 83,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-one",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 86.4,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 19,
+   "D2": 15,
+   "D3": 15,
+   "D4": 14,
+   "D5": 12,
+   "D6": 13,
+   "D7": 12,
+   "D8": 8
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 108
+ }
+}

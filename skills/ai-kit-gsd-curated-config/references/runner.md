@@ -1,4 +1,4 @@
-# Runner details (template 9)
+# Runner details (template 10)
 
 Read when a runner upgrade, a `.new` merge, `ensure-runner`, the template flags, the live
 timeout, hand-edited CONFIG `extraArgs`, retry tuning ([runner.retry] in ai-kit's config.toml), or a dispatch
@@ -29,9 +29,11 @@ read-only and still reaches that shared service.
   The review lane passes it; the GSD hook does not, so the live timeout lookup below applies.
 - `--prepend-file <path>` puts that file, minus its leading `<!-- … -->` stamp lines, before
   the prompt.
-- `--codex-sandbox workspace-write` confines a codex exec target: writes stay inside the project
-  dir plus `/tmp` and `$TMPDIR`, which workspace-write always allows. Whether `.git` is writable
-  under it is unverified. Without the flag, codex exec runs with
+- `--codex-sandbox workspace-write` asks Codex for its `workspace-write` sandbox, not a fixed
+  path allowlist: by default it allows writes in the project dir plus `/tmp` and `$TMPDIR`, but
+  the owner's Codex config can add writable roots or exclude both temp locations (its
+  `sandbox_workspace_write` settings; not verified here). Check the effective writable roots
+  before promising a boundary. Whether `.git` is writable under it is unverified. Without the flag, codex exec runs with
   `--dangerously-bypass-approvals-and-sandbox`; every other exec target always runs with full
   permissions (no sandbox, no ask mode), and any guidance it receives is prose, not a boundary.
 
@@ -39,9 +41,10 @@ The call vocabulary (how to read each setting line and status field is [`../../a
 
 - `--role execute|review` names the contract; `--mode exec|review` stays an alias, and two values that disagree are a usage error (exit 2).
 - `--effort <level>` (any lowercase token; `--codex-effort` stays an alias), `--context <label>`, `--escalate-runtime`, `--escalate-model` and `--session-id <id>`: each named setting prints one `cross-ai: setting` line, `applied`, `ignored` with a reason, or `unknown`, and the status line carries `session=`, `applied=`, `ignored=`, `unknown=` and `escalate=`.
-- `--host auto|none`: `auto` runs the lane in a herdr tab when herdr is available; the runner's own default is `none`, and `AIKIT_HOST=none` wins over `auto`. The `host` line reads `applied`, or `ignored` with `no_herdr` or `host_failed`; the run directory `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/host/<run token>/` is removed after the lane.
+- `--host auto|none`: `auto` runs the lane in a herdr tab when herdr is available; the runner's own default is `none`, and `AIKIT_HOST=none` wins over `auto`. The `host` line reads `applied`, or `ignored` with `no_herdr` or `host_failed`; the run directory `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/host/<run token>/` is removed after the lane once herdr confirms the tab close (otherwise only `run.json` is kept for the sweep). A runner killed hard leaves that directory and its tab for the next real run's automatic sweep or `--sweep`, which closes only a tab whose id and complete label match the dead run's record once the runner and the launcher group are both gone; a live group, an unreadable record or unreachable herdr keeps the record.
 - `--skill-path <dir>`, `--skill-name <name>` and `--mcp-config <file>` hand a lane skills and MCP servers through the host's own forms only.
-- `--argv-file <path>` serves a runtime the runner has no formula for; `--describe` prints the runner's forms, reasons and states as JSON with no model call.
+- `--argv-file <path>` serves a runtime the runner has no formula for; `--describe` prints the runner's forms, reasons, states, statuses, finding codes and supervision flags as JSON with no model call.
+- Supervision flags, not lane settings (no `cross-ai: setting` line): `--idle-timeout <seconds|default>` (the idle watchdog, off unless it or `CONFIG.idleTimeoutS` is set), `--baseline <sha>`, `--plan-id <id>`, `--forbid <path>` (repeatable) and `--sweep` (no spawn, no lock, exit 0). A second execute run on one checkout ends `locked` (a bare exit 75, an owner stop); an execute result missing a planned task's commit ends `partial` (exit 1, empty stdout, `cross-ai: finding` lines, the status-line keys `coverage=` and `findings=`).
 
 ## Failure ladder
 
@@ -52,8 +55,7 @@ ai-kit's `config.toml` table `[runner.retry]` (the project `.aikit/config.toml` 
 migrates an old `workflow.cross_ai_retry` block and the old user `cross-ai.json` into it once (see the
 policy reference). CONFIG also keeps a `retry`
 object, the last fallback below those two: do not tune it there, because CONFIG edits only
-receive `.new` upgrades. The caller owns the hard waits and notice. CONFIG retains `capS` (at
-most 14400), `attemptTimeoutS`, `routerBacked` and `runtime`. For caller actions on any non-ok
+receive `.new` upgrades. The caller owns the hard waits and notice. CONFIG retains `capS` (at most 14400), `attemptTimeoutS`, `routerBacked`, `runtime` and `idleTimeoutS`; a copy whose CONFIG predates `idleTimeoutS` reads the watchdog as off. `forbiddenPaths` and `admissionPhrases` are optional CONFIG keys, absent from the shipped block: without them the template's seed lists apply, and a value that is not a list of strings keeps the seed with a note. For caller actions on any non-ok
 status, see [`../../ai-kit-cross-ai/SKILL.md`](../../ai-kit-cross-ai/SKILL.md).
 
 ## Runner upgrade
@@ -75,7 +77,7 @@ see what a project actually runs is the active runner's line-2 `template=<n>` he
 comes from the JSON it prints (`ready`, `runner`, `notes`), not from whether a `.new` file
 exists. A user-edited runner already on the current template is kept as-is and reported ready,
 with no `.new` file. An edited runner on an older template gets a `.new` file plus the printed
-notes. The readiness floor is template 9, the first that takes the flags ai-kit's builders emit (`--role`, `--host auto` and the lane settings); template 8 added `--runtime` and the retry config. Template 7
+notes. The shipped template is template 10 (the run lock, the idle watchdog, the execute result checks and `--sweep`, which no builder emits), so the readiness floor stays template 9, the first that takes the flags ai-kit's builders emit (`--role`, `--host auto` and the lane settings); template 8 added `--runtime` and the retry config. Template 7
 has neither `--runtime` nor the configurable retry series; it carries only the fixed
 `sameSessionRetries`/`cooldownS` knobs. A hook built with `--runtime` against a project's template-7 copy fails with `unknown
 argument` (exit 2) until `ensure-runner` re-renders it: a pristine copy upgrades in place, while an
@@ -87,7 +89,7 @@ that render is ready.
 **Live timeout:** the runner reads `workflow.cross_ai_timeout` the way gsd-core's
 `config-get` does: `.planning/[$GSD_PROJECT/][workstreams/$GSD_WORKSTREAM/]config.json`, then the
 root `.planning/config.json` only when a workstream lacks the key; no valid value means 300 s. It
-uses the smaller of that value and the timeout baked in at apply.
+uses the smaller of that value and the timeout baked in at apply. The idle watchdog is separate: an idle end is a timed-out attempt inside that deadline, never a second deadline.
 
 **Opt-in skills and MCP servers:** a call passes `--skill-path`, `--skill-name` and `--mcp-config` (above). Hand-editing the generated script's CONFIG `extraArgs` per target still works; the next apply then writes `cross-ai.mjs.new` instead of overwriting the live runner. Review mode refuses (exit 2) any `extraArgs` entry outside the runtime's review allowlist (pi `--skill <path>`), so extras for exec lanes cannot also run review lanes on that runtime. The MCP flags are not allowlist entries: the runner's own formulas turn `--mcp-config <file>` into `--mcp-config <file> --strict-mcp-config` for claude and `--additional-mcp-config @<file>` for copilot, so `CONFIG.extraArgs` cannot add an unreported server to a review lane.
 

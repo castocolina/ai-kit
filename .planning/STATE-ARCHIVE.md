@@ -2,441 +2,7 @@
 
 Pruned entries from STATE.md. Recoverable but no longer loaded into agent context.
 
-## Per-plan metric rows (Archived 2026-11-23 (merge of main into phase 36))
-
-| Plan | Duration | Tasks | Files |
-|------|----------|-------|-------|
-| Phase 06 P01 | 45min | 2 tasks | 14 files |
-| Phase 06 P02 | 50min | 2 tasks | 4 files |
-| Phase 06 P03 | 13min | 2 tasks | 16 files |
-| Phase 07 P01 | 55min | 2 tasks | 7 files |
-| Phase 07-curated-gsd-config-skill P02 | 45min | 2 tasks | 6 files |
-| Phase 07 P03 | 45min | 2 tasks | 5 files |
-| Phase 07 P04 | 2h40m | 2 tasks | 18 files |
-| Phase 09 P01 | 13min | 2 tasks | 21 files |
-| Phase 09-agents-md-checker-prune-ai-kit-project-rules-agents P02 | 25min | 3 tasks | 5 files |
-| Phase 10 P01 | 55min | 2 tasks | 16 files |
-| Phase 10-makefile-rules-checker-ai-kit-project-rules-makefile P02 | 55min | 3 tasks | 4 files |
-| Phase 10 P03 | ~5min | 3 tasks | 5 files |
-| Phase 11-pre-commit-rules-checker-ai-kit-project-rules-precommit P01 | 50min | 3 tasks | 16 files |
-| Phase 11 P02 | n/a | 3 tasks | 7 files |
-| Phase 11 P03 | single session | 3 tasks | 6 files |
-| Phase 11 P04 | single session | 3 tasks | 5 files |
-| Phase 12-architecture-rules-checker-ai-kit-project-rules-arch P03 | ~2h | 3 tasks | 4 files |
-| Phase 13-docker-rules-checker-ai-kit-project-rules-docker P01 | 45min | 2 tasks | 11 files |
-| Phase 13 P02 | ~2h | 3 tasks | 7 files |
-| Phase 13 P03 | ~2h | 3 tasks | 5 files |
-| Phase 13-docker-rules-checker-ai-kit-project-rules-docker P04 | ~1h 10min | 3 tasks | 4 files |
-| Phase 14 P01 | 105min | 2 tasks | 15 files |
-| Phase 14 P02 | 23min | 3 tasks | 4 files |
-| Phase 14-ci-cd-rules-checker-ai-kit-project-rules-cicd P03 | 95min | 3 tasks | 4 files |
-| Phase 14 P04 | 75min | 3 tasks | 4 files |
-| Phase 15 P01 | 10min | 3 tasks | 7 files |
-| Phase 15 P02 | ~30min | 3 tasks | 6 files |
-| Phase 15.1 P01 | ~35min | 3 tasks | 5 files |
-| Phase 15.1 P02 | 55min | 3 tasks | 3 files |
-| Phase 15.1 P03 | 75min | 3 tasks | 3 files |
-| Phase 15.1 P04 | ~70min | 3 tasks | 4 files |
-| Phase 15.2 P01 | ~35min | 3 tasks | 7 files |
-| Phase 16.1 P02 | 206s | 3 tasks | 6 files |
-| Phase 16.1 P03 | 805s | 3 tasks | 9 files |
-| Phase 16.1 P04 | 463s | 3 tasks | 8 files |
-| Phase 16.1 P29 | 244s | 2 tasks | 2 files |
-| Phase 16.1 P01 | 831s | 3 tasks | 14 files |
-| Phase 16.1 P05 | 676s | 3 tasks | 6 files |
-| Phase 16.1 P06 | 756s | 2 tasks | 9 files |
-| Phase 16.1 P07 | 685s | 3 tasks | 9 files |
-| Phase 16.1 P08 | 478s | 2 tasks | 11 files |
-| Phase 16.1 P30 | 364s | 2 tasks | 3 files |
-| Phase 16.1 P09 | 82s | 3 tasks | 8 files |
-| Phase 16.1 P10 | 1315s | 2 tasks | 6 files |
-| Phase 16.1 P11 | 184s | 2 tasks | 7 files |
-| Phase 16.1 P12 | 88s | 3 tasks | 10 files |
-| Phase 16.1 P13 | 1226s | 2 tasks | 9 files |
-| Phase 16.1 P15 | 173s | 2 tasks | 8 files |
-| Phase 16.1 P16 | 191s | 3 tasks | 12 files |
-| Phase 16.1 P18 | 208s | 3 tasks | 6 files |
-| Phase 16.1 P19 | 174s | 2 tasks | 8 files |
-| Phase 16.1 P26 | 143s | 2 tasks | 6 files |
-| Phase 16.1 P31 | 93s | 2 tasks | 2 files |
-| Phase 16.1 P17 | 222s | 3 tasks | 10 files |
-| Phase 16.1 P25 | 331s | 2 tasks | 3 files |
-| Phase 16.1 P27 | 122s | 2 tasks | 12 files |
-| Phase 16.1 P14 | 239s | 2 tasks | 3 files |
-| Phase 16.1 P21 | 260s | 3 tasks | 9 files |
-| Phase 16.1 P22 | 111s | 3 tasks | 11 files |
-| Phase 16.1 P28 | 276s | 2 tasks | 4 files |
-| Phase 16.1 P20 | 299s | 3 tasks | 5 files |
-| Phase 16.1 P23 | 637s | 3 tasks | 18 files |
-| Phase 16.1 P24 | 32s | 3 tasks | 8 files |
-| Phase 17 P01 | 898s | 3 tasks | 7 files |
-| Phase 17 P02 | 188s | 3 tasks | 8 files |
-| Phase 17 P03 | 222s | 3 tasks | 8 files |
-| Phase 17 P04 | 446s | 3 tasks | 4 files |
-| Phase 17 P05 | 420s | 3 tasks | 4 files |
-| Phase 17 P06 | 405s | 3 tasks | 3 files |
-| Phase 17 P07 | 453s | 3 tasks | 4 files |
-| Phase 17 P08 | 243s | 3 tasks | 4 files |
-| Phase 17 P09 | 321s | 3 tasks | 24 files |
-| Phase 18 P01 | 251s | 3 tasks | 7 files |
-| Phase 18 P02 | 381s | 3 tasks | 10 files |
-| Phase 18 P03 | 354s | 3 tasks | 11 files |
-| Phase 18 P04 | 222s | 2 tasks | 26 files |
-| Phase 18 P05 | 172s | 2 tasks | 3 files |
-| Phase 18 P06 | 333s | 2 tasks | 12 files |
-| Phase 18 P07 | 334s | 2 tasks | 26 files |
-| Phase 18 P08 | 176s | 2 tasks | 11 files |
-| Phase 18 P09 | 296s | 3 tasks | 7 files |
-| Phase 18 P10 | 775s | 2 tasks | 2 files |
-| Phase 18 P11 | 557s | 2 tasks | 1 files |
-| Phase 18 P12 | 541s | 2 tasks | 1 files |
-| Phase 18 P13 | 306s | 3 tasks | 7 files |
-| Phase 18 P14 | 478s | 2 tasks | 6 files |
-| Phase 18 P15 | 262s | 2 tasks | 4 files |
-| Phase 18 P16 | 176s | 3 tasks | 8 files |
-| Phase 18 P17 | 417s | 3 tasks | 3 files |
-| Phase 18 P18 | 729s | 2 tasks | 7 files |
-| Phase 18 P19 | 626s | 3 tasks | 2 files |
-| Phase 18 P20 | 315s | 3 tasks | 6 files |
-| Phase 18 P21 | 171s | 2 tasks | 4 files |
-| Phase 18 P22 | 402s | 2 tasks | 7 files |
-| Phase 18.1 P01 | 1431s | 3 tasks | 16 files |
-| Phase 18.1 P02 | 1046s | 3 tasks | 34 files |
-| Phase 18.1 P03 | 937s | 3 tasks | 7 files |
-| Phase 18.1 P04 | 342s | 2 tasks | 7 files |
-| Phase 18.1 P05 | 726s | 2 tasks | 16 files |
-| Phase 18.1 P06 | 414s | 3 tasks | 5 files |
-| Phase 18.1 P07 | 573s | 3 tasks | 18 files |
-| Phase 18.1 P08 | 661s | 3 tasks | 9 files |
-| Phase 18.1 P09 | 1243s | 3 tasks | 12 files |
-| Phase 18.1 P10 | 723s | 3 tasks | 9 files |
-| Phase 18.1 P11 | 138s | 3 tasks | 13 files |
-| Phase 18.1 P12 | 1519s | 3 tasks | 4 files |
-| Phase 18.1 P13 | 985s | 3 tasks | 5 files |
-| Phase 18.1 P14 | 424s | 3 tasks | 9 files |
-| Phase 18.1 P15 | 676s | 3 tasks | 12 files |
-| Phase 18.1 P16 | 1363s | 3 tasks | 11 files |
-| Phase 18.1 P17 | 851s | 3 tasks | 7 files |
-| Phase 18.1 P18 | 572s | 3 tasks | 10 files |
-| Phase 18.1 P19 | 674s | 2 tasks | 12 files |
-| Phase 18.1 P20 | 557s | 2 tasks | 13 files |
-| Phase 18.1 P21 | 1498s | 3 tasks | 8 files |
-| Phase 18.1 P22 | 1913s | 3 tasks | 14 files |
-| Phase 19 P01 | 2113s | 2 tasks | 8 files |
-| Phase 19 P02 | 815s | 2 tasks | 7 files |
-| Phase 19 P03 | 928s | 2 tasks | 7 files |
-| Phase 19 P04 | 438s | 2 tasks | 3 files |
-| Phase 19 P05 | 3600s | 2 tasks | 4 files |
-| Phase 19 P06 | 1500s | 2 tasks | 16 files |
-| Phase 19 P07 | 2658s | 3 tasks | 42 files |
-| Phase 19 P08 | 444s | 2 tasks | 8 files |
-| Phase 19 P09 | 1837s | 3 tasks | 40 files |
-| Phase 19 P10 | 590s | 2 tasks | 4 files |
-| Phase 20 P01 | 1603s | 2 tasks | 18 files |
-| Phase 20 P02 | 1770s | 2 tasks | 4 files |
-| Phase 20 P03 | 245s | 3 tasks | 4 files |
-| Phase 20 P04 | 336s | 3 tasks | 2 files |
-| Phase 20 P05 | 489s | 3 tasks | 2 files |
-| Phase 20 P06 | 1157s | 3 tasks | 25 files |
-| Phase 20 P07 | 960s | 2 tasks | 10 files |
-| Phase 21 P01 | 431s | 2 tasks | 9 files |
-| Phase 21 P07 | 543s | 2 tasks | 18 files |
-| Phase 21 P02 | 230s | 2 tasks | 10 files |
-| Phase 21 P03 | 1250s | 2 tasks | 8 files |
-| Phase 21 P04 | 1937s | 2 tasks | 17 files |
-| Phase 21 P05 | 759s | 2 tasks | 10 files |
-| Phase 21 P06 | 1263s | 2 tasks | 16 files |
-| Phase 21.1 P01 | 908s | 3 tasks | 21 files |
-| Phase 21.1 P02 | 3600s | 3 tasks | 2 files |
-| Phase 21.1 P03 | 746s | 3 tasks | 7 files |
-| Phase 21.1 P04 | 1837s | 3 tasks | 10 files |
-| Phase 21.1 P05 | 2004s | 2 tasks | 7 files |
-| Phase 21.1 P06 | 1990s | 3 tasks | 19 files |
-| Phase 21.1 P07 | 2586s | 3 tasks | 53 files |
-| Phase 21.2 P01 | 1842s | 3 tasks | 11 files |
-| Phase 21.2 P02 | 327s | 2 tasks | 8 files |
-| Phase 21.2 P03 | 1694s | 2 tasks | 6 files |
-| Phase 21.2 P04 | 2544s | 3 tasks | 13 files |
-| Phase 21.2 P05 | 1563s | 3 tasks | 10 files |
-| Phase 21.3 P01 | 451s | 3 tasks | 10 files |
-| Phase 21.3 P02 | 360s | 2 tasks | 8 files |
-| Phase 21.3 P03 | 725s | 2 tasks | 7 files |
-| Phase 21.3 P04 | 1763s | 2 tasks | 7 files |
-| Phase 21.3 P05 | 414s | 2 tasks | 8 files |
-| Phase 21.3 P06 | 1409s | 2 tasks | 8 files |
-| Phase 21.3 P07 | 1203s | 2 tasks | 10 files |
-| Phase 21.3 P08 | 482s | 2 tasks | 4 files |
-| Phase 22 P01 | 440s | 2 tasks | 3 files |
-| Phase 22 P02 | 925s | 2 tasks | 7 files |
-| Phase 22 P03 | 609s | 3 tasks | 15 files |
-| Phase 22 P04 | 1452s | 2 tasks | 7 files |
-| Phase 22 P05 | 797s | 2 tasks | 5 files |
-| Phase 22 P06 | 144s | 2 tasks | 4 files |
-| Phase 22 P07 | 0s | 3 tasks | 6 files |
-| Phase 23 P01 | 379s | 2 tasks | 8 files |
-| Phase 23 P02 | 251s | 2 tasks | 3 files |
-| Phase 23 P03 | 358s | 3 tasks | 22 files |
-| Phase 23 P04 | 3570s | 3 tasks | 19 files |
-| Phase 23 P10 | 536s | 2 tasks | 5 files |
-| Phase 23 P05 | 898s | 2 tasks | 12 files |
-| Phase 23 P11 | 480s | 2 tasks | 4 files |
-| Phase 23 P06 | 449s | 2 tasks | 15 files |
-| Phase 23 P07 | 306s | 3 tasks | 11 files |
-| Phase 23 P12 | 471s | 2 tasks | 5 files |
-| Phase 23 P08 | 466s | 2 tasks | 22 files |
-| Phase 23 P13 | 586s | 3 tasks | 11 files |
-| Phase 23 P09 | 406s | 3 tasks | 9 files |
-| Phase 23 P15 | 1815s | 2 tasks | 4 files |
-| Phase 23 P14 | 3571s | 2 tasks | 5 files |
-| Phase 23 P16 | 3570s | 3 tasks | 11 files |
-| Phase 23 P17 | 3571s | 2 tasks | 5 files |
-| Phase 25 P01 | 1215s | 2 tasks | 2 files |
-| Phase 25 P02 | 3336s | 2 tasks | 3 files |
-| Phase 25 P03 | 534s | 2 tasks | 6 files |
-| Phase 25 P04 | 636s | 2 tasks | 2 files |
-| Phase 25 P05 | 1737s | 3 tasks | 15 files |
-| Phase 25 P06 | 1797s | 3 tasks | 24 files |
-| Phase 25 P08 | 566s | 2 tasks | 8 files |
-| Phase 25 P09 | 309s | 3 tasks | 13 files |
-| Phase 25 P10 | 140s | 3 tasks | 8 files |
-| Phase 25 P11 | 5400s | 3 tasks | 30 files |
-| Phase 25.1 P01 | 700s | 2 tasks | 3 files |
-| Phase 25.1 P02 | 1338s | 3 tasks | 4 files |
-| Phase 25.1 P03 | 2266s | 3 tasks | 2 files |
-| Phase 25.1 P04 | 448s | 3 tasks | 2 files |
-| Phase 25.1 P05 | 1612s | 3 tasks | 7 files |
-| Phase 25.1 P06 | 518s | 3 tasks | 6 files |
-| Phase 25.1 P07 | 886s | 2 tasks | 9 files |
-| Phase 25.1 P08 | 756s | 3 tasks | 35 files |
-| Phase 25.1 P09 | 1916s | 3 tasks | 19 files |
-| Phase 25.1 P10 | 900s | 2 tasks | 2 files |
-| Phase 25.1 P11 | 396s | 3 tasks | 18 files |
-| Phase 25.1 P12 | 450s | 3 tasks | 9 files |
-| Phase 25.1 P13 | 321s | 2 tasks | 6 files |
-| Phase 25.1 P14 | 4800s | 2 tasks | 35 files |
-| Phase 25.1 P15 | 3000s | 2 tasks | 6 files |
-| Phase 26 P01 | 1484s | 2 tasks | 3 files |
-| Phase 26 P02 | 3084s | 2 tasks | 16 files |
-| Phase 26 P03 | 520s | 3 tasks | 8 files |
-| Phase 26 P04 | 1915s | 3 tasks | 11 files |
-| Phase 26 P05 | 2364s | 3 tasks | 8 files |
-| Phase 26 P06 | 2773s | 3 tasks | 11 files |
-| Phase 26 P07 | 903s | 2 tasks | 15 files |
-| Phase 26 P08 | 945s | 3 tasks | 18 files |
-| Phase 26 P09 | 1869s | 2 tasks | 16 files |
-| Phase 26 P10 | 438s | 3 tasks | 12 files |
-| Phase 27 P02 | unmeasured | 3 tasks | 4 files |
-| Phase 27 P03 | unmeasured | 3 tasks | 4 files |
-| Phase 27 P04 | unmeasured | 2 tasks | 4 files |
-| Phase 27 P05 | unmeasured | 2 tasks | 4 files |
-| Phase 27 P06 | unmeasured | 3 tasks | 6 files |
-| Phase 27 P07 | unmeasured | 2 tasks | 7 files |
-| Phase 27 P08 | unmeasured | 2 tasks | 6 files |
-| Phase 27 P10 | unmeasured | 3 tasks | 6 files |
-| Phase 35 P01 | 40min | 2 tasks | 29 files |
-| Phase 35 P02 | 6min | 2 tasks | 2 files |
-| Phase 35 P03 | 27min | 2 tasks | 10 files |
-| Phase 35 P04 | 17min | 2 tasks | 3 files |
-| Phase 35 P05 | 12min | 2 tasks | 2 files |
-| Phase 35 P06 | 17min | 2 tasks | 3 files |
-| Phase 35 P07 | 15min | 2 tasks | 3 files |
-| Phase 35 P08 | 10min | 2 tasks | 2 files |
-| Phase 35 P09 | 7min | 2 tasks | 7 files |
-| Phase 35 P10 | 17min | 2 tasks | 4 files |
-| Phase 35 P11 | 10min | 2 tasks | 2 files |
-| Phase 35 P12 | 19min | 2 tasks | 4 files |
-| Phase 35 P13 | 12min | 2 tasks | 6 files |
-| Phase 35 P18 | 23min | 2 tasks | 3 files |
-| Phase 35 P14 | 22min | 3 tasks | 4 files |
-| Phase 35 P17 | 17min | 2 tasks | 3 files |
-| Phase 35 P15 | 37min | 2 tasks | 7 files |
-| Phase 35 P16 | 34min | 2 tasks | 3 files |
-| Phase 35 P19 | 9min | 2 tasks | 2 files |
-| Phase 35 P20 | 10min | 2 tasks | 2 files |
-| Phase 35 P24 | 12min | 2 tasks | 6 files |
-| Phase 35 P21 | 12min | 2 tasks | 3 files |
-| Phase 35 P27 | 55min | 2 tasks | 5 files |
-| Phase 35 P22 | 14min | 2 tasks | 4 files |
-| Phase 35 P28 | 9min | 2 tasks | 2 files |
-| Phase 35 P23 | 12min | 2 tasks | 3 files |
-| Phase 35 P25 | 25min | 3 tasks | 9 files |
-| Phase 35 P26 | 11min | 3 tasks | 6 files |
-| Phase 36 P02 | 6min | 2 tasks | 3 files |
-| Phase 36 P01 | 9min | 2 tasks | 20 files |
-| Phase 36 P03 | 16min | 2 tasks | 3 files |
-| Phase 36 P05 | 14min | 3 tasks | 2 files |
-| Phase 36 P06 | 15min | 3 tasks | 2 files |
-| Phase 36 P04 | 10min | 2 tasks | 5 files |
-| Phase 36 P07 | 10min | 3 tasks | 4 files |
-| Phase 36 P09 | 11min | 3 tasks | 3 files |
-| Phase 36 P08 | 16min | 2 tasks | 4 files |
-| Phase 36 P10 | 16min | 3 tasks | 6 files |
-| Phase 36 P11 | 8min | 3 tasks | 4 files |
-| Phase 36 P12 | 13min | 2 tasks | 7 files |
-| Phase 36 P13 | 10min | 3 tasks | 3 files |
-| Phase 36 P14 | 8min | 2 tasks | 7 files |
-| Phase 36 P16 | 19min | 3 tasks | 5 files |
-| Phase 36 P15 | 3min | 2 tasks | 2 files |
-| Phase 36 P17 | 9min | 3 tasks | 3 files |
-| Phase 36 P18 | 8min | 3 tasks | 5 files |
-| Phase 36 P19 | 6min | 3 tasks | 6 files |
-| Phase 36 P20 | 14min | 3 tasks | 5 files |
-| Phase 36 P21 | 10min | 3 tasks | 3 files |
-| Phase 36 P22 | 13min | 2 tasks | 3 files |
-| Phase 36 P23 | 8min | 2 tasks | 3 files |
-| Phase 36 P24 | 3min | 2 tasks | 4 files |
-| Phase 36 P25 | 3min | 3 tasks | 4 files |
-| Phase 36 P26 | 2min | 2 tasks | 5 files |
-| Phase 36 P27 | 8min | 2 tasks | 20 files |
-| Phase 36 P28 | 7min | 2 tasks | 5 files |
-| Phase 36 P29 | 41min | 3 tasks | 27 files |
-
-## Blockers/Concerns (Archived 2026-11-23 (merge of main into phase 36))
-
-**Phase 24 review flag (2026-10-17).** Phase 24 shows "Executed", not "Complete": it ran on 2026-10-14 as a single plan outside the convergence flow, with no cross-AI review, code review or VERIFICATION.md. Its 13 SPEC acceptance boxes are unchecked and SDC-01..04 are Pending. When the v1.3 run reaches it, verify against all 13 SPEC requirements and run code review (ponytail and skill-judge) plus cross-AI review before marking it Complete; gaps become gap-closure plans. See ROADMAP Phase 24 "Review flag".
-
-**Phase 7 plan-review convergence — reviewer lane structurally blocked, not converged (2026-09-11).**
-`/gsd-review --phase 7 --opencode` returned a numerically "clean" CYCLE_SUMMARY
-(0 HIGH / 0 actionable) on cycle 1, but `07-REVIEWS.md`'s own coverage block
-shows `plan_coverage.opencode.missing: [07-01, 07-02, 07-03, 07-04]` — all 4
-plans. Root cause: opencode's sandbox denied `external_directory` access to
-`~/.claude/gsd-core/*` (where this Claude-Code-runtime install of gsd-core
-lives) on two identical dispatch attempts; the reviewer's own
-`[reviewed-without-source-citations]` marker confirms it reviewed nothing.
-This is a genuine tooling gap, not a clean pass — Phase 7's plans
-(07-CONTEXT.md D-03) require reading `model-catalog.cjs` under
-`~/.claude/gsd-core/bin/lib/` as ground truth, and opencode's real
-`~/.config/opencode/opencode.jsonc` only allowlists
-`external_directory: {"~/.config/opencode/gsd-core/*": "allow"}` — the
-opencode-runtime install path, not the claude-runtime one this project
-actually uses. Per ONESHOT-RULES.md Rule 1, this is NOT accepted as
-convergence; `gsd_run state planned-phase` was deliberately NOT called for
-Phase 7. Per Rule 5, the orchestrator did not edit the user's real
-`~/.config/opencode/opencode.jsonc` to add the missing allowlist entry, since
-that is real AI-CLI configuration outside this run's authorized scope. Phase
-7 is parked at "reviewed, unconverged" pending a human decision: (a) add
-`"~/.claude/gsd-core/*": "allow"` to that file's `external_directory`
-permission block, or (b) accept a different reviewer lane for this phase, or
-(c) accept proceeding to execution without a grounded cross-AI review for
-Phase 7 specifically. Resume with `/gsd-plan-review-convergence 7 --opencode`
-once a decision is made, or `/gsd-execute-phase 7` to proceed without it.
-
-**Phase 8 execution — Rule 7 circuit breaker, fell back to local gsd-executor (2026-09-11).**
-`workflow.cross_ai_execution` delegation for plan 08-01 was attempted against BOTH documented
-routes and both failed: primary `opencode run --model router-env/my-coding` exited 1 with
-"Service temporarily unavailable: all targets were skipped by pre-dispatch filters" (empty
-output, no SUMMARY produced); Rule 2 fallback `opencode run --model xai/grok-4.6` failed with
-a provider-side billing block (`personal-team-blocked:spending-limit`), confirmed by a direct
-probe immediately before falling back further. Both routes tried and failed per Rule 2's
-explicit text — this is Rule 7's circuit-breaker condition for the execution role specifically
-(distinct from Phase 7's plan-review-role circuit breaker above). Per Rule 2's "Local
-gsd-executor is a last resort... reaching it must be recorded as human_verification with which
-two routes failed and how, not silently absorbed as 'ran locally,'" Phase 8's plan 08-01 was
-executed via local `gsd-executor` instead. This is a recorded deviation from the intended
-cross-AI execution path, not a silent fallback — uz may want to restore provider credits/router
-health before future phases' cross-AI execution.
-
-**Phase 6 plan-review — Rule 7 circuit breaker on cycle 5, resolved via direct orchestrator
-fix (2026-09-11).** By cycle 5 of plan-review convergence, cross-AI review had driven HIGH
-findings to 0 (cycle 1: 7, cycle 2: 9, cycle 3: 12, cycle 4: 8, cycle 5: 0 — genuine convergence,
-not divergence), with only one residual MEDIUM. At cycle 5 every opencode reviewer lane was
-exhausted: pinned model (`xai/grok-4.6`) and fallback-ladder rung 2 (`openai/gpt-5.6-sol`, the
-model that had produced cycles 2-4) both hit provider billing/spending caps, rung 3
-(`xai/grok-4.6` again) was also out of credits, rung 4 (codex) had an expired/reused OAuth
-token, and 5 additional free-tier opencode models were tried with none producing a genuine
-source-grounded review (hangs, early termination, or refusal to read real files) — 9 total
-failed invocation attempts. This is Rule 7's circuit-breaker condition for the REVIEW role
-(distinct from Phase 7's review-role sandbox-permission breaker and Phase 8's execution-role
-breaker above). Rather than escalate for a 6th cross-AI cycle against an exhausted lane, the
-review agent performed direct self-verification (read the current plan files fresh, confirmed
-all cycle-4 findings resolved with file:line citations) and surfaced one new MEDIUM (a
-duplicate-finding bug in `check_validate_order`/`build_remediation`). The orchestrator
-independently verified that finding against the real plan text, confirmed it was real, and
-fixed it directly (commit `95e120f`) rather than dispatching another agent cycle against a
-known-exhausted lane. Phase 6 is now considered converged (0 HIGH, 0 actionable) on the
-strength of direct self-verification plus orchestrator fix, not a 6th cross-AI pass — uz may
-want to restore opencode provider credits before relying on cross-AI review/execution again;
-this is the second such billing-driven circuit breaker this run (see Phase 8 above), suggesting
-the underlying provider-credit exhaustion is a standing condition, not a one-off.
-
-Phases 6-8 are mutually independent and independent of the completed v1.0
-phases — any order is fine. Phases 6 and 7 both end with the same
-skill-authoring pipeline (`/superpowers:writing-skills` → `/skill-judge` →
-`/naming-analyzer`); consider whether to plan/execute them together or
-sequentially.
-
-**v1.2 (Phases 9-15) — strict dependency chain, unlike v1.1 (2026-09-13).**
-Unlike v1.0's and v1.1's phases (which were either chained through concrete
-reused artifacts or fully independent), Phases 9-15 must be planned and
-executed in strict numeric order: Phase 10 cannot safely claim the Makefile
-logic Phase 9 drops until Phase 9 has actually landed (otherwise neither
-skill owns those checks, or both do); Phases 11-14 each build on the prior
-phase's shared-package/skill-authoring conventions; Phase 15 (the
-orchestrator) needs all 5 domain checkers plus the pruned agents checker to
-exist before it has anything to aggregate. Do not parallelize these phases
-even though `.planning/config.json` has `parallelization: true` — that
-setting applies to independent plans within a phase, not to this milestone's
-cross-phase ordering constraint.
-
-**v1.3 (Phases 16-22) — mostly linear, with two independent tail phases
-(2026-09-23).** Phases 16 → 17 → 18 → 19 form a strict build chain (each
-later phase's code depends on the prior phase's modules). Phase 20 (codex +
-opencode) depends on Phase 19's completed, evaluated rewrite. Phases 21
-(cursor) and 22 (pi) each depend only on Phase 19 — they are mutually
-independent of each other and of Phase 20, and may be planned/executed in
-any order, or deferred, without blocking anything else in this milestone.
-
-## Deferred Items (Archived 2026-11-23 (merge of main into phase 36))
-
-Items acknowledged and deferred at milestone close, most recent first:
-
-| Category | Item | Status | Deferred At | Milestone |
-|----------|------|--------|-------------|-----------|
-| deferred_items | Phase 06: pre-existing ruff/pylint in status-line.py / wizard_app.py / test_ai_kit_spec_superpowers.py | acknowledged | 2026-09-23 | v1.2 |
-| deferred_items | Phase 07: same pre-existing ruff/pylint debt blocking `make validate` | acknowledged | 2026-09-23 | v1.2 |
-| deferred_items | Phase 15.1 Plan 01: mmdc real-render test env failure; pyright pair_checks.py:178 (fixed in 15.2) | acknowledged | 2026-09-23 | v1.2 |
-| deferred_items | Phase 15.1 Plan 03: ruff E501 test_ai_kit_usage_metrics.py (fixed in 15.2) | acknowledged | 2026-09-23 | v1.2 |
-| deferred_items | Phase 15.1 Plan 04: mmdc real-render test env failure | acknowledged | 2026-09-23 | v1.2 |
-| deferred_items | Phase 15.1 Plan 05: mmdc env failure; ruff E501 (fixed in 15.2) | acknowledged | 2026-09-23 | v1.2 |
-| deferred_items | Phase 15.1 code review: flat-mode sort-key guard + regression test (fixed in 15.2) | acknowledged | 2026-09-23 | v1.2 |
-| deferred_items | Phase 01.1 (archived v1.0): pre-existing ruff E501/RUF012 in status-line.py / wizard_app.py | acknowledged | 2026-09-23 | v1.2 |
-
-### Carried to the owner at the v1.3 close (disclosed, not acknowledged)
-
-The v1.3 close used `override_closeout`. These items were NOT acknowledged through
-`audit-open acknowledge`, so the next `audit-open` scan still lists them. Paths are under
-`.planning/milestones/v1.3-phases/`. After the owner review of 2026-11-02, `.planning/milestones/v1.3-OWNER-FOLLOWUP.md` records each item as closed
-(from history or live), decided or discarded; every still-open check and owner decision is tracked in the todo named in the last todo row below.
-
-| Category | Item | Status | Deferred At | Milestone |
-|----------|------|--------|-------------|-----------|
-| verification_gaps | 20, 21, 21.1, 21.2, 21.3, 22, 23, 24, 25.1, 26, 27 `*-VERIFICATION.md` | human_needed (file status unchanged; per-item dispositions in the follow-up file) | 2026-10-31 | v1.3 |
-| verification_gaps | 25/25-VERIFICATION.md | gaps_found (stale; only gap is the skill-judge gate) | 2026-10-31 | v1.3 |
-| uat_gaps | 16/16-UAT.md | testing (1 pending scenario) | 2026-10-31 | v1.3 |
-| todos | 2026-10-11-execute-system-one-decision-skill-plan.md | (presence-only) | 2026-10-31 | v1.3 |
-| todos | 2026-10-12-promote-cursor-statusline-poc-into-999-4.md | (presence-only) | 2026-10-31 | v1.3 |
-| todos | 2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md | (presence-only) | 2026-10-31 | v1.3 |
-| todos | 2026-10-14-agents-md-quota-schedule-rules-and-goal-prompt-skill.md | (presence-only) | 2026-10-31 | v1.3 |
-| todos | 2026-10-14-wire-jev-fast-decision-cross-host-discovery-scaffolding.md | (presence-only) | 2026-10-31 | v1.3 |
-| todos | 2026-10-18-atomic-reusable-decision-system-skills.md | (presence-only) | 2026-10-31 | v1.3 |
-| todos | 2026-10-18-precompact-hook-pre-summarizes-chunks-via-decision-system.md | (presence-only) | 2026-10-31 | v1.3 |
-| todos | 2026-10-18-visible-tool-advisory-hooks-pre-and-post-tool-use.md | (presence-only) | 2026-10-31 | v1.3 |
-| todos | 2026-10-24-make-the-ai-kit-session-hooks-dynamic-worktree-indexing-advi.md | (presence-only) | 2026-10-31 | v1.3 |
-| todos | 2026-10-29-unify-review-execute-lane-toml-effort-escalation-and-jev-classification.md | (presence-only) | 2026-10-31 | v1.3 |
-| todos | 2026-10-31-refactor-execute-gsd-and-rules-agents-sj-1-sj-3.md | (presence-only) | 2026-10-31 | v1.3 |
-| owner_captures | 25, 25.1, 26, 27 `*-OWNER-CAPTURES.md` | partly closed or discarded on 2026-11-02; remaining open items and owner decisions in the follow-up file | 2026-10-31 | v1.3 |
-| todos | 2026-11-02-pending-live-checks-and-owner-decisions-from-v1.3.md | open: 21 live checks and 9 owner decisions, all deferred here (nothing decided) | 2026-11-02 | v1.3 |
-| planning | `.planning/milestones/NEXT-MILESTONE-INPUTS.md` | classifies every open item above into nine themes as input for the next milestone (nothing decided; the owner's own topics are added before `/gsd-new-milestone`) | 2026-11-02 | v1.3 |
-| skill_judge | ai-kit-spec-goal-prompt round 7: referee-one 94.4% A, referee-three 87.2% B, 0 critical | UNRESOLVED against a 90.4 base; owner decides (accept, or lower the base) | 2026-10-31 | v1.3 |
-| skill_judge | ai-kit-spec-config 99 vs base 105 | UNRESOLVED (no Owner-decision line) | 2026-10-31 | v1.3 |
-| skill_judge | SJ-1 execute-gsd 101 vs 105; SJ-2 execute-superpowers FAIL 86/120; SJ-3 project-rules-agents FAIL 93 | deferred by Owner-decision to the refactor todo and backlog 999.16 | 2026-10-31 | v1.3 |
-| owner_decision | Phase 20 WR-12, Phase 26 item 11 (R18/R19/R20), Phase 27 `PI_SKILLS`, base-score re-baseline | owner to decide; the other Phase 20 and 21.1 items are kept as is (follow-up file, section 3) | 2026-10-31 | v1.3 |
-| dry_run | Phase 24 chain dry run | two of three scenarios ran on 2026-10-24; the no-backend scenario is covered by unit test only | 2026-10-31 | v1.3 |
-| windows | WINDOWS.md entry 7 (autonomous block names an unverified primitive) | open design decision | 2026-10-31 | v1.3 |
-| backlog | 999.16 event-keyed playbook skill (feasibility check first) | open on purpose | 2026-10-31 | v1.3 |
-| backlog | 999.17 lite or strong executor choice via jev-fast-decision | open on purpose | 2026-10-31 | v1.3 |
-
-## Pruned 2026-11-23 (phases 1-32, kept recent 3)
+## Pruned 2026-11-22 (phases 1-32, kept recent 3)
 
 ### Decisions
 
@@ -541,10 +107,8 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 | 31 | 6 | - | - |
 | 32 | 9 | - | - |
 
-## Per-plan metric rows (Archived 2026-11-23 (merge of main into phase 37))
+## Per-plan metric rows (Archived 2026-11-22 (phase 38 close))
 
-| Plan | Duration | Tasks | Files |
-|------|----------|-------|-------|
 | Phase 06 P01 | 45min | 2 tasks | 14 files |
 | Phase 06 P02 | 50min | 2 tasks | 4 files |
 | Phase 06 P03 | 13min | 2 tasks | 16 files |
@@ -855,8 +419,36 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 | Phase 37 P22 | 12min | 3 tasks | 8 files |
 | Phase 37 P23 | 20min | 3 tasks | 2 files |
 | Phase 37 P24 | 70min | 3 tasks | 14 files |
+| Phase 38 P01 | 6min | 3 tasks | 1 files |
+| Phase 38 P02 | 10min | 2 tasks | 1 files |
+| Phase 38 P03 | 8min | 2 tasks | 4 files |
+| Phase 38 P04 | 13min | 3 tasks | 8 files |
+| Phase 38 P05 | 11min | 3 tasks | 9 files |
+| Phase 38 P06 | 13min | 2 tasks | 4 files |
+| Phase 38 P07 | 7min | 2 tasks | 2 files |
+| Phase 38 P08 | 31min | 3 tasks | 5 files |
+| Phase 38 P27 | 12min | 2 tasks | 5 files |
+| Phase 38 P09 | 8min | 3 tasks | 3 files |
+| Phase 38 P10 | 9min | 2 tasks | 3 files |
+| Phase 38 P11 | 18min | 2 tasks | 2 files |
+| Phase 38 P12 | 14min | 2 tasks | 3 files |
+| Phase 38 P13 | 28min | 3 tasks | 2 files |
+| Phase 38 P14 | 29min | 3 tasks | 2 files |
+| Phase 38 P15 | 20min | 3 tasks | 2 files |
+| Phase 38 P16 | 32min | 3 tasks | 2 files |
+| Phase 38 P17 | 15min | 3 tasks | 2 files |
+| Phase 38 P18 | 17min | 3 tasks | 2 files |
+| Phase 38 P19 | 15min | 3 tasks | 5 files |
+| Phase 38 P20 | 22min | 3 tasks | 2 files |
+| Phase 38 P21 | 14min | 3 tasks | 2 files |
+| Phase 38 P22 | 12min | 2 tasks | 3 files |
+| Phase 38 P23 | 10min | 3 tasks | 4 files |
+| Phase 38 P24 | 9min | 2 tasks | 5 files |
+| Phase 38 P25 | 25min | 3 tasks | 33 files |
+| Phase 38 P26 | 30min | 3 tasks | 7 files |
 
-## Blockers/Concerns (Archived 2026-11-23 (merge of main into phase 37))
+## Blockers/Concerns (Archived 2026-11-22 (phase 38 close))
+
 
 **Phase 24 review flag (2026-10-17).** Phase 24 shows "Executed", not "Complete": it ran on 2026-10-14 as a single plan outside the convergence flow, with no cross-AI review, code review or VERIFICATION.md. Its 13 SPEC acceptance boxes are unchecked and SDC-01..04 are Pending. When the v1.3 run reaches it, verify against all 13 SPEC requirements and run code review (ponytail and skill-judge) plus cross-AI review before marking it Complete; gaps become gap-closure plans. See ROADMAP Phase 24 "Review flag".
 
@@ -951,7 +543,9 @@ opencode) depends on Phase 19's completed, evaluated rewrite. Phases 21
 independent of each other and of Phase 20, and may be planned/executed in
 any order, or deferred, without blocking anything else in this milestone.
 
-## Deferred Items (Archived 2026-11-23 (merge of main into phase 37))
+
+## Deferred Items (Archived 2026-11-22 (phase 38 close))
+
 
 Items acknowledged and deferred at milestone close, most recent first:
 
@@ -1000,3 +594,5 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 | windows | WINDOWS.md entry 7 (autonomous block names an unverified primitive) | open design decision | 2026-10-31 | v1.3 |
 | backlog | 999.16 event-keyed playbook skill (feasibility check first) | open on purpose | 2026-10-31 | v1.3 |
 | backlog | 999.17 lite or strong executor choice via jev-fast-decision | open on purpose | 2026-10-31 | v1.3 |
+
+

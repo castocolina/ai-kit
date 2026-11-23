@@ -59,6 +59,8 @@ from tests.test_curated_config_skills import add_plugin, add_skill
 # when checked once on 2026-10-17; tests.test_ai_kit_gsd_curated_config_matrix re-checks only the
 # installed tables' key parity. 1.20.0 was checked on 2026-11-06 (quick task 261106-n8k): both
 # tables value-equal to the 1.16.0 fixture (35 agents), this module plus the matrix 0 skipped.
+# 1.22.0 (2026-11-22) resolves a Claude agent under `omit` to its tier alias, not an empty model;
+# the matrix's control 1 and `TestP2ApplyRemovesOmit` follow it.
 # Rule (owner, 2026-11-06): any release at or above the oldest verified line runs, so a gsd-core
 # upgrade runs the guard and a real incompatibility fails it instead of skipping it. An older or
 # unparsable version still skips with a named reason.
@@ -370,6 +372,30 @@ class TestRealApply(_RealGsdTestCase):
 
         self.assertEqual(_sha256(parent_config), before_cfg)
         self.assertEqual(_sha256(parent_runner), before_runner)
+
+    def test_skill_check_runs_under_the_inventory_home(self) -> None:
+        # Apply under another HOME (as the matrix does): gsd-core still judges the skills in
+        # the home the inventory scanned, so the check runs and react-dev is kept.
+        node_bin = _gsd16_or_skip(self)
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        bundle = _golden_bundle(scratch)
+        other_home = os.path.join(scratch, "other_home")
+        os.makedirs(other_home)
+        env = {**bundle["resolve_env"], "HOME": other_home}
+        code, _report, _stdout, err = _real_apply(
+            bundle["plan_path"], bundle["inv_path"], bundle["project"], env, env, node_bin
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("the skipped-skill check did not run", err)
+        tools = REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs"
+        got = gsd_tools.config_get(
+            gsd_tools.GsdTools(node_bin, str(tools)), bundle["project"],
+            "agent_skills.gsd-executor",
+            run_fn=lambda cmd, **kw: subprocess.run(cmd, env=env, **kw),
+        )
+        assert isinstance(got.value, list)
+        self.assertIn("global:react-dev", got.value)
 
     def test_nth_key_failure_restores_bytes(self) -> None:
         node_bin = _gsd16_or_skip(self)

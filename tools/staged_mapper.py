@@ -122,8 +122,12 @@ TIGHT_SKILL_FOLDERS = frozenset({"ai-kit-spec-review"})
 
 # Test modules that read every file under skills/ through a directory walk and name no skill folder,
 # so no name form selects them: any staged path under skills/ selects them (a plan-35-13 commit
-# changed a skill file and its commit hook missed tests.test_skill_text_history).
-SKILLS_TREE_WALKERS = frozenset({"tests.test_skill_text_history"})
+# changed a skill file and its commit hook missed tests.test_skill_text_history; a plan-38-13 commit
+# added a model literal to the self-test harness and its hook missed the hardcoded-model guard).
+SKILLS_TREE_WALKERS = frozenset({
+    "tests.test_skill_text_history",
+    "tests.test_arch_hardcoded_models",
+})
 
 
 def _skill_forms(folder: str) -> tuple[str, ...]:

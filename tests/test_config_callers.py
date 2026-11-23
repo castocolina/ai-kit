@@ -18,6 +18,7 @@ from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 RUNNER_TEMPLATE = REPO / "skills" / "ai-kit-spec-review" / "references" / "cross-ai.mjs"
+RUNNER_SIBLING = RUNNER_TEMPLATE.with_name("cross-ai-selftest.mjs")
 MIGRATION_SOURCE = REPO / "skills" / "ai-kit-spec-review" / "ai_kit_spec" / "config_migrate.py"
 OLD_NAMES = ("review-spec.toml", "review-spec-trust")
 RUNTIME_SUFFIXES = (".py", ".mjs")
@@ -40,8 +41,8 @@ ALLOWED_GSD_WRITES = frozenset({
     # the one-time removal of the legacy workflow.cross_ai_retry block (D-13, D-17)
     "skills/ai-kit-spec-review/references/cross-ai.mjs::migrateRetrySources",
     # self-test fixtures: a scratch repository with a synthetic GSD config
-    "skills/ai-kit-spec-review/references/cross-ai.mjs::runSelfTestCase",
-    "skills/ai-kit-spec-review/references/cross-ai.mjs::blackBoxSelfTest",
+    "skills/ai-kit-spec-review/references/cross-ai-selftest.mjs::runSelfTestCase",
+    "skills/ai-kit-spec-review/references/cross-ai-selftest.mjs::blackBoxSelfTest",
     # the environment matrix's scratch repository (a synthetic config with model_profile only)
     "tools/env_matrix.py::custom_tmpdir",
 })
@@ -201,13 +202,15 @@ class TestForeignKeys(unittest.TestCase):
         self.assertEqual(hits, [])
 
     def test_runner_names_cross_ai_retry_only_in_the_migrator(self):
-        lines = RUNNER_TEMPLATE.read_text(encoding="utf-8").splitlines()
-        first_import = next(i for i, line in enumerate(lines) if line.startswith("import "))
-        allowed = {"migrateRetrySources", "removeRetryBlock", "blackBoxSelfTest"}
-        for index, line in enumerate(lines):
-            if "cross_ai_retry" not in line or index < first_import:
-                continue
-            self.assertIn(enclosing_function(lines, index), allowed, f"line {index + 1}")
+        for path, allowed in ((RUNNER_TEMPLATE, {"migrateRetrySources", "removeRetryBlock"}),
+                              (RUNNER_SIBLING, {"blackBoxSelfTest"})):
+            lines = path.read_text(encoding="utf-8").splitlines()
+            first_import = next(i for i, line in enumerate(lines) if line.startswith("import "))
+            for index, line in enumerate(lines):
+                if "cross_ai_retry" not in line or index < first_import:
+                    continue
+                self.assertIn(enclosing_function(lines, index), allowed,
+                              f"{path.name} line {index + 1}")
 
     def test_enclosing_function_finder_is_not_vacuous(self):
         lines = ["function a() {", "  x;", "}", "// doc for b", "// more", "function b() {", "  y;",
@@ -225,9 +228,13 @@ class TestForeignKeys(unittest.TestCase):
         template = RUNNER_TEMPLATE.relative_to(REPO).as_posix()
         for name in js_gsd_write_sites(RUNNER_TEMPLATE.read_text(encoding="utf-8")):
             labels.add(f"{template}::{name}")
+        sibling = RUNNER_SIBLING.relative_to(REPO).as_posix()
+        for name in js_gsd_write_sites(RUNNER_SIBLING.read_text(encoding="utf-8")):
+            labels.add(f"{sibling}::{name}")
         outside = sorted(labels - ALLOWED_GSD_WRITES)
         self.assertEqual(outside, [], "GSD config write outside the allowed paths")
         self.assertIn(f"{template}::migrateRetrySources", labels)
+        self.assertIn(f"{sibling}::runSelfTestCase", labels)
 
     def test_write_scan_is_not_vacuous(self):
         bad = ('import json\nimport os\n\ndef bad(root):\n'

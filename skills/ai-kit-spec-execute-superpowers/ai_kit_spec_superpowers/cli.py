@@ -50,10 +50,10 @@ from ai_kit_spec_superpowers.dispatch_injection import (
     SuperpowersDispatchGuidance,
     assemble_candidates,
     build_dispatch_injection,
-    classify_dispatch_failure,
     compute_ladder_keys,
     compute_resume_exclusions,
     derive_files_touched_sizes,
+    dispatch_classification,
     dispatch_superpowers_task,
     implementer_status,
     reasons_summary,
@@ -74,7 +74,7 @@ class CliDeps(NamedTuple):
     reasons_summary_fn: Callable[[dict], dict] = reasons_summary
     classify_task_fn: Callable[[str], str | None] = classify_task
     dispatch_superpowers_task_fn: Callable[..., dict] = dispatch_superpowers_task
-    classify_dispatch_failure_fn: Callable[[dict], str] = classify_dispatch_failure
+    classify_dispatch_failure_fn: Callable[[dict], dict] = dispatch_classification
     compute_resume_exclusions_fn: Callable[..., list] = compute_resume_exclusions
     cache_read_json_fn: Callable[[str], Any] = cache_read_json
     cache_write_json_fn: Callable[[str, Any], None] = cache_write_json
@@ -356,7 +356,7 @@ def _cmd_dispatch_task(args: argparse.Namespace, deps: CliDeps) -> int:
 
 def _cmd_classify_dispatch_failure(args: argparse.Namespace, deps: CliDeps) -> int:
     result = json.loads(args.dispatch_result_json)
-    deps.stdout.write(deps.classify_dispatch_failure_fn(result))
+    deps.stdout.write(json.dumps(deps.classify_dispatch_failure_fn(result)))
     return 0
 
 

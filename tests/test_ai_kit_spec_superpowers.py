@@ -1,4 +1,5 @@
 import contextlib
+import copy
 import hashlib
 import io
 import json
@@ -983,7 +984,7 @@ class TestClassifyDispatchFailure(unittest.TestCase):
             "ok",
         )
 
-    def test_quota_on_hinted_transient_capacity_exit(self):
+    def test_quota_cycle_on_hinted_transient_capacity_exit(self):
         payload = {
             "returncode": 75, "reason": "capacity",
             "status": {
@@ -991,7 +992,7 @@ class TestClassifyDispatchFailure(unittest.TestCase):
                 "retry_after_s": "600", "cycle": "0",
             },
         }
-        self.assertEqual(dispatch_injection.classify_dispatch_failure(payload), "quota")
+        self.assertEqual(dispatch_injection.classify_dispatch_failure(payload), "quota_cycle")
 
     def test_quota_on_bare_transient_exit(self):
         # 25.1 WR-01: a bare 75 is a spent ladder whose hint was dropped (state unwritable);
@@ -1071,35 +1072,94 @@ class TestClassifyDispatchFailure(unittest.TestCase):
             "real_error",
         )
 
-    def test_wake_tokens_come_from_the_nested_status_dict(self):
-        # The SKILL's quota branch reads retry_after_s and cycle from the nested status dict,
-        # the parsed AIKIT-XAI line. Both tokens live nowhere else in the dispatch result, so
-        # this runs the exact extraction the SKILL shows and asserts both values.
-        payload = json.dumps({
+    def test_wake_tokens_come_from_the_classifier_object(self):
+        payload = {
             "runtime": "pi", "model": "router-env/x", "returncode": 75, "reason": "quota",
             "status": {"status": "quota", "exit": "75", "retry_after_s": "600", "cycle": "2"},
+        }
+        self.assertEqual(dispatch_injection.dispatch_classification(payload), {
+            "class": "quota_cycle", "retry_after_s": 600, "cycle": 2,
         })
-        # Run the exact one-liners the SKILL shows, so this fails if they drift.
-        skill = pathlib.Path(__file__).resolve().parents[1].joinpath(
-            "skills/ai-kit-spec-execute-superpowers/references/dispatch-external-cli.md"
-        ).read_text(encoding="utf-8")
-        out = {}
-        for token in ("retry_after_s", "cycle"):
-            shown = (
-                'd=json.loads(sys.argv[1]); s=d.get("status") or {}; '
-                f'print("" if s.get("{token}") is None else s.get("{token}"))'
-            )
-            self.assertIn(shown, skill)
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf), unittest.mock.patch.object(
-                sys, "argv", ["skill", payload]
-            ):
-                exec(compile("import json,sys; " + shown, "<skill>", "exec"))
-            out[token] = buf.getvalue().strip()
-        self.assertEqual(out, {"retry_after_s": "600", "cycle": "2"})
-        self.assertEqual(
-            dispatch_injection.classify_dispatch_failure(json.loads(payload)), "quota",
-        )
+
+    def test_reference_classifies_once(self):
+        text = (_SUPER_REFS / "dispatch-external-cli.md").read_text(encoding="utf-8")
+        self.assertEqual(text.count("classify-dispatch-failure"), 1)
+        self.assertIn('tee -a "$SCALARS"',
+                      _ref_block("dispatch-external-cli.md", "CLASSIFICATION="))
+        self.assertFalse(any(line.startswith("RETURNCODE=") for line in text.splitlines()))
+
+
+_CLASSIFICATION_ROWS = (
+    ("75-tokens", {"returncode": 75, "reason": "capacity", "status": {
+        "status": "transient", "exit": "75", "retry_after_s": "600", "cycle": "2"}},
+     "quota_cycle", 600, 2),
+    ("75-zero-ints", {"returncode": 75, "reason": "quota", "status": {
+        "status": "quota", "exit": "75", "retry_after_s": 0, "cycle": 0}},
+     "quota_cycle", 0, 0),
+    ("leading-zeros", {"returncode": 75, "reason": "capacity", "status": {
+        "status": "transient", "exit": "75", "retry_after_s": "007", "cycle": "01"}},
+     "quota_cycle", 7, 1),
+    ("75-bare", {"returncode": 75, "reason": "capacity", "status": {
+        "status": "transient", "exit": "75"}}, "quota", None, None),
+    ("75-retry-only", {"returncode": 75, "reason": "capacity", "status": {
+        "status": "transient", "exit": "75", "retry_after_s": "600"}}, "quota", 600, None),
+    ("75-cycle-only", {"returncode": 75, "reason": "capacity", "status": {
+        "status": "transient", "exit": "75", "cycle": "1"}}, "quota", None, 1),
+    ("69-tokens", {"returncode": 69, "reason": "capacity", "status": {
+        "status": "transient", "exit": "69", "retry_after_s": "600", "cycle": "1"}},
+     "quota", 600, 1),
+    ("69-auth", {"returncode": 69, "reason": "auth"}, "real_error", None, None),
+    ("malformed", {"returncode": 75, "reason": "capacity", "status": {
+        "status": "transient", "exit": "75", "retry_after_s": "600s", "cycle": "0"}},
+     "real_error", None, 0),
+    ("malformed-reason-quota", {"returncode": 75, "reason": "quota", "status": {
+        "status": "quota", "exit": "75", "retry_after_s": "600s", "cycle": "1"}},
+     "quota", None, 1),
+    ("negative", {"returncode": 75, "reason": "capacity", "status": {
+        "status": "transient", "exit": "75", "retry_after_s": -1, "cycle": 0}},
+     "real_error", None, 0),
+    ("float", {"returncode": 75, "reason": "capacity", "status": {
+        "status": "transient", "exit": "75", "retry_after_s": 1.5, "cycle": 0}},
+     "real_error", None, 0),
+    ("bool", {"returncode": 75, "reason": "capacity", "status": {
+        "status": "transient", "exit": "75", "retry_after_s": True, "cycle": 0}},
+     "real_error", None, 0),
+    ("overlong", {"returncode": 75, "reason": "capacity", "status": {
+        "status": "transient", "exit": "75", "retry_after_s": "9" * 5000, "cycle": "0"}},
+     "real_error", None, 0),
+    ("non-dict-status", {"returncode": 75, "reason": "capacity", "status": "quota"},
+     "real_error", None, None),
+    ("empty-status", {"returncode": 75, "reason": "capacity", "status": {}},
+     "real_error", None, None),
+    ("no-status-reason-quota", {"returncode": 75, "reason": "quota"}, "quota", None, None),
+    ("exit-0", {"returncode": 0}, "ok", None, None),
+    ("other-exit", {"returncode": 1, "reason": "real_error", "status": {
+        "status": "crash", "exit": "1"}}, "real_error", None, None),
+    ("locked", {"returncode": 75, "reason": "real_error", "status": {
+        "status": "locked", "exit": "75"}}, "real_error", None, None),
+    ("locked-beats-tokens-and-reason", {"returncode": 75, "reason": "quota", "status": {
+        "status": "locked", "exit": "75", "retry_after_s": "600", "cycle": "1"}},
+     "real_error", 600, 1),
+    ("partial", {"returncode": 1, "reason": "real_error", "status": {
+        "status": "partial", "exit": "1"}}, "real_error", None, None),
+)
+
+
+class TestDispatchClassificationTable(unittest.TestCase):
+    def test_table(self):
+        for name, result, cls, retry, cycle in _CLASSIFICATION_ROWS:
+            with self.subTest(name=name):
+                self.assertEqual(dispatch_injection.dispatch_classification(result), {
+                    "class": cls, "retry_after_s": retry, "cycle": cycle,
+                })
+                self.assertEqual(dispatch_injection.classify_dispatch_failure(result), cls)
+
+    def test_pure(self):
+        result = copy.deepcopy(_CLASSIFICATION_ROWS[0][1])
+        before = copy.deepcopy(result)
+        self.assertEqual(dispatch_injection.dispatch_classification(result),
+                         dispatch_injection.dispatch_classification(result))
+        self.assertEqual(result, before)
 
 
 class TestCliSubcommandHandlers(unittest.TestCase):
@@ -2271,14 +2331,21 @@ class TestCodeIndexRegistration(unittest.TestCase):
 
 
 class TestCliClassifyDispatchFailure(unittest.TestCase):
-    def test_prints_the_classification_string(self):
-        out = io.StringIO()
-        result = {"returncode": 75, "reason": "quota"}
-        rc = superpowers_cli.main(
-            ["classify-dispatch-failure", "--dispatch-result-json", json.dumps(result)], stdout=out
-        )
-        self.assertEqual(rc, 0)
-        self.assertEqual(out.getvalue(), "quota")
+    def test_prints_the_classification_object(self):
+        for name, result, cls, retry, cycle in _CLASSIFICATION_ROWS:
+            with self.subTest(name=name):
+                out = io.StringIO()
+                rc = superpowers_cli.main(
+                    ["classify-dispatch-failure", "--dispatch-result-json", json.dumps(result)],
+                    stdout=out,
+                )
+                self.assertEqual(rc, 0)
+                self.assertEqual(json.loads(out.getvalue()), {
+                    "class": cls, "retry_after_s": retry, "cycle": cycle,
+                })
+                if name == "no-status-reason-quota":
+                    self.assertEqual(out.getvalue(),
+                                     '{"class": "quota", "retry_after_s": null, "cycle": null}')
 
 
 class TestImplementerStatus(unittest.TestCase):
@@ -3150,8 +3217,9 @@ class TestFixRoundAndWakeScope(unittest.TestCase):
 
     def test_schedule_or_stop_requires_classified_quota_and_numeric_tokens(self):
         flat = self._flat(_SUPER_REFS / "dispatch-external-cli.md")
-        self.assertIn('Only a classified `"quota"` with `RETURNCODE` 75', flat)
-        self.assertIn("both matching `[0-9]+`", flat)
+        self.assertIn('Only a classified `"quota_cycle"` (exit 75 with whole-number '
+                      '`retry_after_s` and `cycle` in `$CLASSIFICATION`)', flat)
+        self.assertIn("this is the only classifier call", flat)
         skill = " ".join((_SUPER_REFS.parent / "SKILL.md").read_text(encoding="utf-8").split())
         stops = " ".join((_SUPER_REFS / "resolution-stops.md").read_text(encoding="utf-8").split())
         self.assertIn("`ai-kit-spec: ignoring untrusted project-local config <path>;", skill)
@@ -3514,7 +3582,7 @@ class TestScalarFile(unittest.TestCase):
     def test_every_listing_that_prints_scalars_appends_them(self):
         for name, needle in (("SKILL.md", "RESUME_FOUND"), ("session-wake.md", "WAKE_OWNED"),
                              ("dispatch-external-cli.md", "REPORT_MODE=%s"),
-                             ("dispatch-external-cli.md", "RETRY_AFTER_S=%s")):
+                             ("dispatch-external-cli.md", "CLASSIFICATION=%s")):
             path = _SUPER_SKILL if name == "SKILL.md" else _SUPER_REFS / name
             blocks = re.findall(r"```bash\n(.*?)```", path.read_text(encoding="utf-8"), re.DOTALL)
             hits = [b for b in blocks if needle in b and "printf" in b]

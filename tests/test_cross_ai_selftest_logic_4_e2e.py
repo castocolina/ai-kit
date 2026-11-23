@@ -1,4 +1,4 @@
-"""E2E tier: logic shard 4 of 4 of the runner self-test (tests/cross_ai_selftest.py)."""
+"""E2E tier: logic shard 4 of 5 of the runner self-test (tests/cross_ai_selftest.py)."""
 
 import unittest
 

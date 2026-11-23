@@ -1813,6 +1813,7 @@ SHAPE_COPIES = (
     "skills/ai-kit-session-wake/ai_kit_session_wake/secret_shapes.py",
 )
 SHAPES_RUNNER = "skills/ai-kit-spec-review/references/cross-ai.mjs"
+SELFTEST_SIBLING = "skills/ai-kit-spec-review/references/cross-ai-selftest.mjs"
 _JS_KEY_SHAPES = re.compile(r"^const KEY_SHAPES = (\[.*\]);$", re.MULTILINE)
 
 
@@ -1857,9 +1858,10 @@ def runner_shape_problems(shapes, runner_text):
 
 
 # 37 D-22 / 0b-6: the runner template names no jev client and spawns herdr only through herdrCall,
-# limited to HERDR_VERBS; Phase 38 adds tab list. Full-line and block comments are not code.
+# limited to HERDR_VERBS (38 D-27 added tab list, read by the sweep).
+# Full-line and block comments are not code.
 _JEV_CLIENT_RX = re.compile(r"\bjev|decide\.py|typesafe", re.IGNORECASE)
-HERDR_VERBS_ALLOWED = ("tab create", "pane run", "tab close")
+HERDR_VERBS_ALLOWED = ("tab create", "pane run", "tab close", "tab list")
 _JS_HERDR_VERBS = re.compile(r"^const HERDR_VERBS = Object\.freeze\(\[(.*)\]\);$", re.MULTILINE)
 _HERDR_CALL = re.compile(r"\bherdrCall\(\s*'([^']*)'")
 _HERDR_CALL_ANY = re.compile(r"\bherdrCall\(\s*(?!')")
@@ -1924,6 +1926,61 @@ def runner_herdr_problems(text) -> list[str]:
             inside = False
     if count != 1:
         problems.append(f"{count} herdr spawn sites (one expected, in herdrCall)")
+    return problems
+
+
+# 38-08 / SPEC R8: the harness imports runner names through one list; the runner exports
+# them through one trailing list, never per declaration (extractors read function lines).
+_JS_ANY_EXPORT_LIST = re.compile(r"^export\s*\{", re.MULTILINE)
+_JS_ANY_RUNNER_IMPORT = re.compile(r"from\s*'\./cross-ai\.mjs'")
+_JS_EXPORT_LIST = re.compile(r"^export \{\n((?:  [A-Za-z_$][\w$]*,\n)*)\};$", re.MULTILINE)
+_JS_RUNNER_IMPORT = re.compile(
+    r"^import \{\n((?:  [A-Za-z_$][\w$]*,\n)*)\} from '\./cross-ai\.mjs';$", re.MULTILINE)
+_JS_DECL_EXPORT = re.compile(r"^export (?:async |function|const|let|var|class)", re.MULTILINE)
+_JS_TOP_DECL = re.compile(
+    r"^(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)|"
+    r"^(?:const|let|var|class)\s+([A-Za-z_$][\w$]*)", re.MULTILINE)
+
+
+def _list_names(body: str) -> list[str]:
+    return [line.strip().rstrip(",") for line in body.splitlines() if line.strip()]
+
+
+def selftest_import_problems(runner_text: str, sibling_text: str) -> list[str]:
+    problems = []
+    exports = _JS_EXPORT_LIST.findall(runner_text)
+    imports = _JS_RUNNER_IMPORT.findall(sibling_text)
+    export_count = len(_JS_ANY_EXPORT_LIST.findall(runner_text))
+    import_count = len(_JS_ANY_RUNNER_IMPORT.findall(sibling_text))
+    if export_count != 1:
+        problems.append(f"runner has {export_count} export lists (one expected)")
+    elif not exports:
+        problems.append("export list is not one name per line")
+    if import_count != 1:
+        problems.append(f"harness has {import_count} runner import lists (one expected)")
+    elif not imports:
+        problems.append("runner import list is not one name per line")
+    for match in _JS_DECL_EXPORT.finditer(runner_text):
+        problems.append(f"per-declaration export: {runner_text[match.start():].splitlines()[0]}")
+    exported = set(_list_names(exports[0])) if len(exports) == 1 else set()
+    declared = {a or b for a, b in _JS_TOP_DECL.findall(runner_text)}
+    for name in sorted(exported - declared):
+        problems.append(f"runner exports {name}, which it does not declare")
+    for name in _list_names(imports[0]) if len(imports) == 1 else []:
+        if name not in exported:
+            problems.append(f"harness imports {name}, the runner does not export it")
+    return problems
+
+
+def sibling_herdr_problems(text) -> list[str]:
+    problems = []
+    for number, line in js_code_lines(text):
+        if re.search(r"\bherdrCall\(", line):
+            problems.append(f"{number}: the harness calls herdrCall")
+        if _HERDR_SPAWN.search(line):
+            problems.append(f"{number}: the harness spawns HERDR_BIN")
+        if _HERDR_LITERAL_SPAWN.search(line):
+            problems.append(f"{number}: the harness spawns the herdr literal")
     return problems
 
 
@@ -2475,9 +2532,26 @@ class TestArchitecture(unittest.TestCase):
         self.assertGreater(len(js_code_lines(text)), 1000)
         self.assertEqual([], runner_jev_hits(text))
 
-    def test_runner_spawns_herdr_only_through_three_verbs(self):
+    def test_runner_spawns_herdr_only_through_listed_verbs(self):
         with open(os.path.join(_REPO_ROOT, SHAPES_RUNNER), encoding="utf-8") as handle:
             self.assertEqual([], runner_herdr_problems(handle.read()))
+
+    def test_selftest_imports_only_exported_runner_names(self):
+        with open(os.path.join(_REPO_ROOT, SHAPES_RUNNER), encoding="utf-8") as handle:
+            runner = handle.read()
+        with open(os.path.join(_REPO_ROOT, SELFTEST_SIBLING), encoding="utf-8") as handle:
+            sibling = handle.read()
+        self.assertEqual([], selftest_import_problems(runner, sibling))
+
+    def test_selftest_sibling_names_no_jev_client(self):
+        with open(os.path.join(_REPO_ROOT, SELFTEST_SIBLING), encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertGreater(len(js_code_lines(text)), 1000)
+        self.assertEqual([], runner_jev_hits(text))
+
+    def test_selftest_sibling_never_spawns_herdr(self):
+        with open(os.path.join(_REPO_ROOT, SELFTEST_SIBLING), encoding="utf-8") as handle:
+            self.assertEqual([], sibling_herdr_problems(handle.read()))
 
 
 # --------------------------------------------------------------------------- #
@@ -3508,14 +3582,17 @@ class TestArchNonVacuity(unittest.TestCase):
 
     def test_herdr_rule_flags_each_widening(self):
         good = ("const HERDR_BIN = 'herdr';\n"
-                "const HERDR_VERBS = Object.freeze(['tab create', 'pane run', 'tab close']);\n"
+                "const HERDR_VERBS = Object.freeze(['tab create', 'pane run', "
+                "'tab close', 'tab list']);\n"
                 "function herdrCall(verb, args) { return spawnSync(HERDR_BIN, "
                 "[...verb.split(' '), ...args]); }\n"
                 "herdrCall('tab create', []);\n")
         cases = (
             ("good", good, []),
-            ("verbs", good.replace("'tab close']", "'tab close', 'pane read']"),
-             ["HERDR_VERBS is ['tab create', 'pane run', 'tab close', 'pane read']"]),
+            ("verbs", good.replace("'tab list']", "'tab list', 'pane read']"),
+             ["HERDR_VERBS is ['tab create', 'pane run', 'tab close', 'tab list', 'pane read']"]),
+            ("dropped", good.replace(", 'tab list']", "]"),
+             ["HERDR_VERBS is ['tab create', 'pane run', 'tab close']"]),
             ("call", good + "herdrCall('agent prompt', []);\n", ["5: herdrCall verb agent prompt"]),
             ("literal", good + "spawnSync('herdr', ['pane', 'read']);\n",
              ["5: spawns the herdr literal"]),
@@ -3535,6 +3612,41 @@ class TestArchNonVacuity(unittest.TestCase):
         for name, text, expected in cases:
             with self.subTest(case=name):
                 self.assertEqual(expected, runner_herdr_problems(text))
+
+
+    def test_selftest_import_rule_catches_each_gap(self):
+        runner = "function a() {}\nconst b = 1;\nexport {\n  a,\n  b,\n};\n"
+        sibling = "import {\n  a,\n  b,\n} from './cross-ai.mjs';\n"
+        cases = (
+            ("good", runner, sibling, []),
+            ("unused export", runner, "import {\n  a,\n} from './cross-ai.mjs';\n", []),
+            ("missing export", runner, sibling.replace("  b,\n", "  b,\n  c,\n"),
+             ["harness imports c, the runner does not export it"]),
+            ("undeclared export", runner.replace("  b,\n", "  b,\n  d,\n"), sibling,
+             ["runner exports d, which it does not declare"]),
+            ("per-declaration", runner + "export function e() {}\n", sibling,
+             ["per-declaration export: export function e() {}"]),
+            ("no export list", "function a() {}\n", sibling,
+             ["runner has 0 export lists (one expected)",
+              "harness imports a, the runner does not export it",
+              "harness imports b, the runner does not export it"]),
+            ("no import list", runner, "const a = 1;\n",
+             ["harness has 0 runner import lists (one expected)"]),
+            ("two export lists", runner + "export { a };\n", sibling,
+             ["runner has 2 export lists (one expected)"]),
+            ("two import lists", runner, sibling + "import { a } from './cross-ai.mjs';\n",
+             ["harness has 2 runner import lists (one expected)"]),
+        )
+        for name, runner_text, sibling_text, expected in cases:
+            with self.subTest(case=name):
+                self.assertEqual(expected, selftest_import_problems(runner_text, sibling_text))
+
+    def test_sibling_herdr_rule_flags_each_form(self):
+        text = ("const a = 1;\nherdrCall('tab list', []);\nspawnSync(HERDR_BIN, []);\n"
+                "spawn('herdr', []);\n// herdrCall('tab list', [])\n"
+                "writeExe(binDir, HERDR_BIN, '', '');\n")
+        self.assertEqual(["2: the harness calls herdrCall", "3: the harness spawns HERDR_BIN",
+                          "4: the harness spawns the herdr literal"], sibling_herdr_problems(text))
 
 
 class TestSessionWakeIsolation(unittest.TestCase):

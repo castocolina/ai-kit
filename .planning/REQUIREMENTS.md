@@ -149,7 +149,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   Phases 37-38 for `ai-kit-cross-ai`, Phases 39-40 for `ai-kit-spec-review`, and that next phase for
   `ai-kit-session-wake`; the 32.4 closing report shows every judged skill's evals, trigger-query and test state and
   names the phase for each one still missing; the requirement completes when every kept skill has them)*
-- [ ] **JDG-04**: Every phase of this milestone that adds or materially changes a SKILL.md (the batch phases and
+- [x] **JDG-04**: Every phase of this milestone that adds or materially changes a SKILL.md (the batch phases and
   every other phase that touches a skill, including the new `ai-kit-project-rules` skill) leaves each such skill
   with new-shape evals and tests, no critical or high finding or grade B or better, and no regression beyond judge
   variation, recorded in that phase's verification before it closes; each such phase carries a success criterion
@@ -379,7 +379,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [x] **RUN-02**: The runner accepts a session id and prints the one it used, so a lane can resume across rounds.
   *(amended 2026-11-16, 37 D-03: one `--session-id` flag, `session=` in the status line, chosen or minted per runtime row,
   a rejected id fails visibly)*
-- [ ] **RUN-03**: An opt-in idle watchdog ends a lane's process group after a set time without output, using the
+- [x] **RUN-03**: An opt-in idle watchdog ends a lane's process group after a set time without output, using the
   existing exit vocabulary; its default is one a slow, quiet model does not trip, and the runner self-test has a
   case for it. For an execute lane the idle clock also resets when the checkout's tree state or commits change, so
   a quiet lane that is committing is never ended and one that prints but changes nothing is reported. *(amended
@@ -388,7 +388,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   `--idle-timeout <seconds|default>` or the baked `CONFIG.idleTimeoutS`, `default` is 900 s labeled judged, an idle kill is
   a timed-out attempt in the existing retry ladder, and review lanes reset on output only)* *(amended 2026-11-16, re-run 2, 38
   D-28, RUN-13: for a lane the runner hosts in a herdr tab, "output" is growth of the lane's `out` or `err` file)*
-- [ ] **RUN-04**: The Phase 25 review cleanup lands: one confirmed-router rule, a quota-cycle class, the long
+- [x] **RUN-04**: The Phase 25 review cleanup lands: one confirmed-router rule, a quota-cycle class, the long
   self-test moved out of rendered copies, the user's lower timeout restored on cleanup, curated-config's
   `plan_io.py` calling gsd-core's `buildAgentSkillsBlock` instead of re-implementing it, and the dead `runCli`
   state, the live-detection plumbing and the clamp helpers removed. *(amended 2026-11-16, 38 D-17 to D-22, live-verified:
@@ -407,14 +407,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   rows with recorded real evidence are promoted)*
 - [x] **RUN-06**: A test keeps the runner template and the rendered project copy in sync. *(amended 2026-11-16, 37 D-18:
   the test renders into a scratch project and reads no `.planning/` path; `tools/check_dogfood.py` stays the live check)*
-- [ ] **RUN-07**: An execute run through the runner records a start-of-run tree baseline and takes a run lock,
+- [x] **RUN-07**: An execute run through the runner records a start-of-run tree baseline and takes a run lock,
   because the lock exists to stop two runs from sharing one checkout: two runs started at once on the same checkout
   leave one running and the other refused, a stale lock left by a dead process is reported and cleared, and later
   checks compare against the baseline. A test starts two runs at once. *(amended 2026-11-16, 38 D-06 to D-10: the
   refused run ends with the new status `locked` and a bare exit 75, and the baseline is reused by a later round for the
   same task until it ends ok)* *(amended 2026-11-16, re-run 2, 38 D-26, RUN-13: for a hosted lane the recorded child group is
   the launcher's group; a surviving tab is not a live lane and holds no lock)*
-- [ ] **RUN-08**: Before an execute result counts as done, the runner checks the planned tasks against the commits
+- [x] **RUN-08**: Before an execute result counts as done, the runner checks the planned tasks against the commits
   actually made: a planned task with no matching commit, an early exit, a summary that admits skipped work, or a
   diff touching forbidden files turns the result into partial or failed; fake-lane tests cover each case. *(amended
   2026-11-16, 38 D-11 to D-15: `partial` (new, exit 1) for an uncovered task, no commit or an admission phrase,
@@ -450,7 +450,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   and with `AIKIT_HOST=none`. A pane has no exit code, so a hosted lane reports through its own files (output, error, exit code),
   never through herdr's screen text or agent status; the runner touches only the tab it opened. *(added 2026-11-16, 37 D-22 to D-29,
   owner directive "herdr hosting"; interactive agent TUIs, TUI apps, e2e runs and pane reuse are Phase 42's and the calling skills')*
-- [ ] **RUN-13**: A lane the runner hosts in a herdr tab (RUN-12) is as safe as a headless one: the run lock names the lane's
+- [x] **RUN-13**: A lane the runner hosts in a herdr tab (RUN-12) is as safe as a headless one: the run lock names the lane's
   launcher group as its child group, the opt-in idle watchdog reads the lane's own output files, the execute checks use the same
   inputs, a hosted lane's output files stay bounded, and the secret files of a hosted lane are deleted by the launcher as its first
   steps. A run killed hard leaves a secret-free record in its run directory, and a sweep (at the start of every real run, and on
@@ -1081,7 +1081,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | JDG-01 | Phase 32 | Complete |
 | JDG-02 | Phase 32 | Complete |
 | JDG-03 | Phase 32.4 | Complete |
-| JDG-04 | Phase 31, Phase 32 | Pending |
+| JDG-04 | Phase 31, Phase 32 | Complete |
 | JDG-05 | Phase 32 | Complete |
 | JDG-06 | Phase 32 | Complete |
 | JDG-07 | Phase 32 | Complete |
@@ -1121,17 +1121,17 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | EXE-09 | Phase 41 | Pending |
 | RUN-01 | Phase 37 | Complete |
 | RUN-02 | Phase 37 | Complete |
-| RUN-03 | Phase 38 | Pending |
-| RUN-04 | Phase 38 | Pending |
+| RUN-03 | Phase 38 | Complete |
+| RUN-04 | Phase 38 | Complete |
 | RUN-05 | Phase 38.1 | Pending |
 | RUN-06 | Phase 37 | Complete |
-| RUN-07 | Phase 38 | Pending |
-| RUN-08 | Phase 38 | Pending |
+| RUN-07 | Phase 38 | Complete |
+| RUN-08 | Phase 38 | Complete |
 | RUN-09 | Phase 38.1 | Pending |
 | RUN-10 | Phase 38.1 | Pending |
 | RUN-11 | Phase 38.1 | Pending |
 | RUN-12 | Phase 37 | Complete |
-| RUN-13 | Phase 38 | Pending |
+| RUN-13 | Phase 38 | Complete |
 | RUN-14 | Phase 38.1 | Pending |
 | RUN-15 | Phase 39.1 | Pending |
 | RULE-01 | Phase 45 | Pending |

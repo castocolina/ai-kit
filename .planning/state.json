@@ -91,12 +91,12 @@
     {
       "number": "37",
       "name": "Shared runner options and session ids",
-      "status": "complete"
+      "status": "in_progress"
     },
     {
       "number": "38",
       "name": "Runner hardening and run safety",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "38.1",
@@ -204,5 +204,5 @@
     "label": "Advance to the next step (verify)",
     "reason": "Phase 16 of 40 · 40% · ready to verify"
   },
-  "updated_at": "2026-11-22T01:23:15.719Z"
+  "updated_at": "2026-11-22T15:54:41.785Z"
 }

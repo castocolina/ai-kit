@@ -57,7 +57,7 @@ def runner_floor_problem(label: str, value) -> str | None:
 
 SCRIPT_PATH = ".planning/scripts/cross-ai.mjs"
 TEMPLATE_NAME = "cross-ai.mjs"
-TEMPLATE_VERSION = 9
+TEMPLATE_VERSION = 10
 MIN_TIMEOUT_S = 1800
 DEFAULT_PREFER = ("pi", "cursor", "opencode")
 RUNNER_IDS = ("pi", "cursor", "opencode", "codex")
@@ -177,6 +177,26 @@ def timeout_ok(value) -> bool:
 
 def timeout_value(existing) -> int:
     return existing if timeout_ok(existing) else MIN_TIMEOUT_S
+
+
+def timeout_problem(label: str, value) -> str | None:
+    if timeout_ok(value):
+        return None
+    return f"{label} must be an integer >= {MIN_TIMEOUT_S} (got {value!r})"
+
+
+def timeout_why(key: str, existing) -> str:
+    """The timeout entry's reason; it names a current value that the plan replaces (38 R10)."""
+    why = f"cross-AI outer timeout (18 D-12); minimum {MIN_TIMEOUT_S}s"
+    if existing is None or timeout_ok(existing):
+        return why
+    if isinstance(existing, (bool, int, float)):
+        return f"{why}; replaced by {MIN_TIMEOUT_S}: {timeout_problem(key, existing)}"
+    # 38 R10: free text never repeats a string or container value; existing carries it.
+    return (
+        f"{why}; replaced by {MIN_TIMEOUT_S}: {key} holds a {type(existing).__name__}, "
+        f"not an integer >= {MIN_TIMEOUT_S}"
+    )
 
 
 def manager_flags_value(existing) -> str:

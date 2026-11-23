@@ -55,6 +55,10 @@ def _real_node_executable() -> str | None:
 _RESOLVED_TEMPLATE = resolve_cross_ai_template_path()
 assert _RESOLVED_TEMPLATE is not None, "the shipped runner template is missing"
 TEMPLATE = _RESOLVED_TEMPLATE
+# 38-08: a shipping check: the self-test harness must sit beside the template (the shard
+# modules load it through TEMPLATE).
+SIBLING = os.path.join(os.path.dirname(TEMPLATE), "cross-ai-selftest.mjs")
+assert os.path.isfile(SIBLING), "the self-test harness beside the runner template is missing"
 
 
 def runner_env(tmp: str) -> dict[str, str]:
@@ -104,11 +108,12 @@ def runner_env(tmp: str) -> dict[str, str]:
 # ONE load reading (`load_reading`, passed to Node as AIKIT_XAI_SELFTEST_LOAD): a second,
 # independently sampled reading (or Python's CPU count against Node's availableParallelism under
 # an affinity mask) could differ, so the guard could fire before the ceilings it guards. One shard
-# takes about 25 s at idle; 4 x 120 s plus 300 s for the rest of a module stays under the
-# runner's 900 s module deadline (DeadlineCouplingTest pins it).
+# takes about 35 to 45 s at idle (38-25); 4 x 120 s plus 300 s for the rest of a module stays under
+# the runner's 900 s module deadline (DeadlineCouplingTest pins it).
 SHARD_GUARD_SECS = 120
 MAX_LOAD_FACTOR = 4
-SHARD_COUNTS = {"logic": 4, "runtime": 4}
+# 38-25: sized so each shard stays near 40 s, well inside the 60 s commit budget
+SHARD_COUNTS = {"logic": 5, "runtime": 7}
 LIST_TIMEOUT_SECS = 60
 TIMES_FIXTURE = os.path.join(REPO_ROOT, "tests", "fixtures", "cross_ai_selftest_secs.json")
 SHARD_MODULE = "tests.test_cross_ai_selftest_{kind}_{index}_e2e"

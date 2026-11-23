@@ -761,6 +761,8 @@ class TestStatusMapDrift(unittest.TestCase):
             ("git_timeout", None, "git_timeout"),
             ("git_error", None, "real_error"),
             ("empty_answer", None, "real_error"),
+            ("locked", 2, "real_error"),
+            ("partial", 124, "real_error"),
             (None, 0, None),
             (None, 127, "dispatch_unavailable"),
             (None, 2, "configuration"),

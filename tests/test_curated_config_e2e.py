@@ -84,6 +84,101 @@ class _RealGsdTestCase(unittest.TestCase):
             run_fn=lambda cmd, **kw: subprocess.run(cmd, env=child_env, **kw),
         )
 
+class TestGsdSkillVerdicts(_RealGsdTestCase):
+    def setUp(self):
+        super().setUp()
+        self.project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.project, ignore_errors=True)
+        self.require_real_gsd(self.project)
+        tools = gsd_catalog.resolve_gsd_tools_path(self.resolve_env, start=self.project)
+        assert tools is not None
+        detection = gsd_catalog.load_ai_kit_spec_module("detection")
+        assert detection is not None
+        assert self.node_bin is not None
+        self.check = plan_io.SkillCheck(
+            self.node_bin, tools, dict(self.child_env), self.project, detection.run_in_own_group
+        )
+
+    def verdicts(self, refs, roots):
+        return plan_io.gsd_skill_verdicts(
+            refs, {"runtime": "claude", "agent_skills_security": {"trusted_global_roots": roots}},
+            self.check,
+        )
+
+    def linked_skill(self):
+        elsewhere = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, elsewhere, ignore_errors=True)
+        target = Path(elsewhere) / "linked"
+        target.mkdir()
+        (target / "SKILL.md").write_text("skill", encoding="utf-8")
+        skills = Path(self.child_env["HOME"]) / ".claude" / "skills"
+        skills.mkdir(parents=True)
+        os.symlink(target, skills / "linked")
+        return elsewhere
+
+    def test_project_skill_resolves_and_missing_is_skipped(self):
+        skill = Path(self.project) / "skills" / "ok-skill"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("skill", encoding="utf-8")
+        result, note = self.verdicts(["skills/ok-skill", "skills/missing-skill"], [])
+        self.assertIsNone(note)
+        assert result is not None
+        self.assertIsNone(result[0])
+        self.assertTrue(result[1].startswith('Skill not found at "skills/missing-skill/SKILL.md"'))
+        self.assertNotIn("[agent-skills]", result[1])
+        self.assertNotIn("— skipping", result[1])
+
+    def test_symlinked_global_outside_the_skills_dir_is_skipped(self):
+        self.linked_skill()
+        result, note = self.verdicts(["global:linked"], [])
+        self.assertIsNone(note)
+        assert result is not None
+        self.assertTrue(result[0].startswith('Global skill "linked" failed path check'))
+
+    def test_trusted_root_accepts(self):
+        root = self.linked_skill()
+        self.assertEqual(self.verdicts(["global:linked"], [root]), ([None], None))
+
+    def test_overbroad_roots_never_accept(self):
+        self.linked_skill()
+        for root in ("/", "~"):
+            with self.subTest(root=root):
+                result, note = self.verdicts(["global:linked"], [root])
+                self.assertIsNone(note)
+                assert result is not None
+                self.assertTrue(result[0].startswith('Global skill "linked" failed path check'))
+
+    def test_custom_claude_config_dir_skill_resolves(self):
+        # A skill only under CLAUDE_CONFIG_DIR, recorded there by inventory, resolves.
+        config_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, config_dir, ignore_errors=True)
+        skill = config_dir / "skills" / "custom"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("skill", encoding="utf-8")
+        check = self.check._replace(env={**self.check.env, "CLAUDE_CONFIG_DIR": str(config_dir)})
+        base = {"runtime": "claude"}
+        self.assertEqual(plan_io.gsd_skill_verdicts(["global:custom"], base, check,
+                                                    str(config_dir / "skills")), ([None], None))
+
+    def test_other_global_skills_dir_is_a_note_not_a_verdict(self):
+        # The inventory scanned another home: gsd-core's answer would be about the wrong dir.
+        elsewhere = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, elsewhere, ignore_errors=True)
+        result, note = plan_io.gsd_skill_verdicts(
+            ["global:missing"], {"runtime": "claude"}, self.check, str(elsewhere / "skills"))
+        self.assertIsNone(result)
+        assert note is not None
+        self.assertIn(f"not the inventory's {elsewhere / 'skills'}", note)
+        self.assertIn("the skipped-skill check did not run", note)
+
+    def test_malformed_name_and_absolute_path_are_skipped(self):
+        result, note = self.verdicts(["global:bad..name", "/abs/skill"], [])
+        self.assertIsNone(note)
+        assert result is not None
+        self.assertTrue(result[0].startswith('Invalid global skill name "bad..name"'))
+        self.assertTrue(result[1].startswith('Skipping unsafe path "/abs/skill"'))
+
+
 def _real_node_executable():
     """node's real binary, not a version-manager shim (volta, asdf, ...) that would look
     for its own state under the temp HOME; `None` when node is missing or broken."""

@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import shlex
+import sys
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
@@ -181,16 +182,13 @@ def plan_set(call: EditCall, key: str, raw: str) -> tuple[dict, list[str]]:
 
 
 def _skipped_skills_refusal(call: EditCall, plan: dict, key: str) -> None:
-    """No edit leaves an agent_skills entry gsd-core would skip; force-immune (like apply)."""
-    if key == "agent_skills_security.trusted_global_roots":
-        keys = None
-    elif key.startswith("agent_skills."):
-        keys = {key}
-    else:
-        return
-    problem = plan_io.skipped_skill_problem(plan, call.inv, keys)
-    if problem:
-        raise PlanEditError(problem)
+    """Plan edits leave the skipped-skill refusal to apply."""
+    if key == "agent_skills_security.trusted_global_roots" or key.startswith("agent_skills."):
+        print(
+            "ai-kit-gsd-curated-config: note: "
+            "the skipped-skill check runs at apply (plan-set has no project root)",
+            file=sys.stderr,
+        )
 
 
 def _is_script_pseudo_key(key: str) -> bool:

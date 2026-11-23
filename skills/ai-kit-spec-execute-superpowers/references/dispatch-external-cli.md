@@ -4,8 +4,8 @@ MANDATORY read in full before the first `dispatch-task` of a task and again befo
 result. Do NOT load it for `mode == "native"`. `SKILL.md` Step 3 sends you here; every `$VAR`
 below is restored by the scalar loader that opens each `Bash` call (`SKILL.md`, Step 0), and a block
 that prints scalars appends them to `$SCALARS` with `tee -a`. The steps, in order: **Artifact
-setup**, **Compose**, **Status contract**, **Dispatch**, **Classify** (`ok`, `quota`,
-`real_error`), and inside `quota` the named steps **Relay**, **Read tokens**, **Write state** and
+setup**, **Compose**, **Status contract**, **Dispatch**, **Classify** (`ok`, `quota_cycle`, `quota`,
+`real_error`), and inside `quota_cycle` and `quota` the named steps **Relay**, **Read tokens**, **Write state** and
 **Schedule-or-stop**. Other files refer to them by these names, never by number.
 
 ## Artifact setup
@@ -111,11 +111,13 @@ like a native report either way.
 ```bash
 DISPATCH_RESULT_JSON="$(cat "$DISPATCH_BASE.json")"
 CLASSIFICATION="$(python3 "$SHIM" classify-dispatch-failure --dispatch-result-json "$DISPATCH_RESULT_JSON")"
-printf 'CLASSIFICATION=%s\n' "$CLASSIFICATION"
+printf 'CLASSIFICATION=%s\n' "$CLASSIFICATION" | tee -a "$SCALARS"
 ```
 
+It prints one JSON object, for example `{"class": "quota_cycle", "retry_after_s": 600, "cycle": 2}`, and this is the only classifier call: branch on its `class` (`ok`, `quota_cycle`, `quota` or `real_error`); `retry_after_s` and `cycle` are whole numbers, or `null` when the runner printed none or a malformed one. The runner statuses `locked` and `partial` always classify `real_error`. An answer that is not that object schedules nothing: stop exactly as the `real_error` branch does.
+
 - **`"ok"`** — run `printf 'LAST_DISPATCHED_KEY=%s\n' "$INJECTION_KEY" | tee -a "$SCALARS"` (only an
-  `ok` dispatch sets the next round's escalation anchor; `quota` and `real_error` never do), clear
+  `ok` dispatch sets the next round's escalation anchor; `quota_cycle`, `quota` and `real_error` never do), clear
   the resume state (`SKILL.md` Step 3, "Clear the resume state"), then continue
   with subagent-driven-development's "2. Handle the report", reading the status from `stdout`,
   never from `$REPORT_FILE`:
@@ -131,8 +133,8 @@ printf 'STATUS=%s\n' "$STATUS"
   `BLOCKED` from an external CLI, follow the handler's BLOCKED routes in its "2. Handle the report" (1 more context, 3 split,
   4 plan defect) on the same pair, but never its route 2 ("more capable model") on your own: that is a model switch
   after an unusable run, so stop and report for the owner's decision.
-- **`"quota"`** — the runner's hard-tier outcome: a confirmed-router quota stop or an exhausted
-  transient ladder carrying `retry_after_s=`, and also the terminal `RETURNCODE` 69 hard-tier
+- **`"quota_cycle"`** and **`"quota"`** — the runner's hard-tier outcome: `quota_cycle` is a confirmed-router quota stop or an exhausted
+  transient ladder carrying whole-number `retry_after_s=` and `cycle=` (exit 75); `quota` is the terminal `RETURNCODE` 69 hard-tier
   stops and a bare `RETURNCODE` 75; **Schedule-or-stop** below decides wait versus stop. The
   classifier also returns `"quota"` when `reason == "quota"` at any other `RETURNCODE`; that case
   is an owner stop too (no re-resolve: NEVER index). In this
@@ -161,29 +163,20 @@ printf '%s' "$EXCLUDED_KEYS_JSON" > "$RUN_DIR/EXCLUDED_KEYS_JSON.json"
 printf 'FOLD_REASON=%s\n' "$FOLD_REASON"
 ```
 
-  **Read tokens.** `retry_after_s` and `cycle` are in the nested `status` dict parsed from the
-  runner's `AIKIT-XAI` line, not at the top level of `$DISPATCH_RESULT_JSON`:
+  **Read tokens.** `retry_after_s` and `cycle` are the keys of `$CLASSIFICATION` (the scalar loader restores it): whole numbers or `null`. Never parse the dispatch result by hand.
 
-```bash
-DISPATCH_RESULT_JSON="$(cat "$DISPATCH_BASE.json")"
-RETURNCODE="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("returncode"))' "$DISPATCH_RESULT_JSON")"
-RETRY_AFTER_S="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); s=d.get("status") or {}; print("" if s.get("retry_after_s") is None else s.get("retry_after_s"))' "$DISPATCH_RESULT_JSON")"
-CYCLE="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); s=d.get("status") or {}; print("" if s.get("cycle") is None else s.get("cycle"))' "$DISPATCH_RESULT_JSON")"
-printf 'RETURNCODE=%s\nRETRY_AFTER_S=%s\nCYCLE=%s\n' "$RETURNCODE" "$RETRY_AFTER_S" "$CYCLE" | tee -a "$SCALARS"
-```
-
-  **Write state.** Runs for every classified `"quota"`, owner stops included, so each stop has a
+  **Write state.** Runs for every classified `"quota_cycle"` and `"quota"`, owner stops included, so each stop has a
   `$RESUME_STATE_PATH` to report. This branch already folded this key into the wave sets, so run the pinned
   variant of the resumable-state bash, shown in full in `references/state-management.md` under
   "Pinned-injection state write": it uses the loaded `RESUME_STATE_PATH` and persists
   `INJECTION_JSON.json` as `injection_json`, so the wake re-dispatches this exact injection. Do not
   edit the Step 2 block by hand.
 
-  **Schedule-or-stop.** Only a classified `"quota"` with `RETURNCODE` 75 and `RETRY_AFTER_S` and
-  `CYCLE` both matching `[0-9]+` gets the one-shot wait and re-dispatch of the same task, lane and
-  model (a hint such as `600s` classifies `real_error` and never reaches this branch). A tokenless
-  runner `RETURNCODE` 69 or 75 whose status is `transient` or `quota` is classified `quota` but is
-  an owner stop: relay, write pinned state, schedule nothing. A `RETURNCODE` 69
+  **Schedule-or-stop.** Only a classified `"quota_cycle"` (exit 75 with whole-number `retry_after_s` and
+  `cycle` in `$CLASSIFICATION`) gets the one-shot wait and re-dispatch of the same task, lane and
+  model (a hint such as `600s` classifies `real_error` and never reaches this branch). A runner
+  `RETURNCODE` 69 or 75 whose status is `transient` or `quota` with no token or only one of the two
+  (neither malformed) is classified `quota` but is an owner stop: relay, write pinned state, schedule nothing. A `RETURNCODE` 69
   (`stopped=hard-waits`, `stopped=cap`, or a `cross-ai: lane stopped=` refusal) is an owner stop
   after relaying the evidence, including that line's state path, whose deletion is the owner's
   reset; schedule nothing and re-arm nothing. A bare `RETURNCODE` 75 is also an owner stop.
@@ -196,7 +189,7 @@ if [ "$WAKE_OWNED" = 1 ]; then
 fi
 ```
 
-  Where `CronCreate` is callable, schedule one one-shot wake at `retry_after_s` (`RETRY_AFTER_S`;
+  Where `CronCreate` is callable, schedule one one-shot wake at `retry_after_s` (`$CLASSIFICATION`'s `retry_after_s`;
   whole-minute rounding and the under-60 s case: ai-kit-cross-ai section 6) with the wake
   prompt; the job lives only as long as the session. **MANDATORY: read
   `references/quota-wake.md` in full before scheduling or printing a wake** (Do NOT load it on an

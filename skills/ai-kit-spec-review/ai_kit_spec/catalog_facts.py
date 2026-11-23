@@ -8,11 +8,11 @@ from typing import NamedTuple
 from ai_kit_spec import catalog_bands, catalog_context, catalog_tiers, model_names, optional_sources
 from ai_kit_spec.catalog_labels import fact
 from ai_kit_spec.model_catalog import canonical_key, merge_catalog_entry
-from ai_kit_spec.model_heuristics import infer_purpose_from_name
+from ai_kit_spec.model_heuristics import ROUTER_ALIAS_SOURCE, infer_purpose_from_name
 from ai_kit_spec.model_names import BlankNameError, split_effort
 
 ROUTER_PREFIX = "router-env/"
-ROUTER_SOURCE = "router-env alias naming"
+ROUTER_SOURCE = ROUTER_ALIAS_SOURCE
 _HEURISTIC_FIELDS = ("is_router", "batch_mode", "fallback_quota")
 _NO_TIMES = {}
 _NO_MATCHES = {}

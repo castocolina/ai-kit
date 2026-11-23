@@ -11763,6 +11763,7 @@ class TestCrossAiTemplateText(unittest.TestCase):
             "effort": {},
             "extraArgs": {},
             "heartbeatS": 30,
+            "idleTimeoutS": 0,
             "models": {},
             "outerTimeoutS": 1800,
             "runtime": "pi",

@@ -412,13 +412,15 @@ class ShardCoverageTest(unittest.TestCase):
     def test_a_case_without_a_kind_fails_the_listing(self):
         node_bin = _real_node_executable()
         assert node_bin is not None
-        with open(TEMPLATE, encoding="utf-8") as handle:
+        harness = os.path.join(os.path.dirname(TEMPLATE), "cross-ai-selftest.mjs")
+        with open(harness, encoding="utf-8") as handle:
             text = handle.read()
         broken, count = re.subn(r"^[ ]*kind: 'logic',\n", "", text, count=1, flags=re.MULTILINE)
         self.assertEqual(count, 1)
         with tempfile.TemporaryDirectory() as tmp:
+            shutil.copyfile(TEMPLATE, os.path.join(tmp, "cross-ai.mjs"))
             path = os.path.join(tmp, "cross-ai.mjs")
-            with open(path, "w", encoding="utf-8") as handle:
+            with open(os.path.join(tmp, "cross-ai-selftest.mjs"), "w", encoding="utf-8") as handle:
                 handle.write(broken)
             proc = subprocess.run(
                 [node_bin, path, "--self-test-list"],
@@ -514,6 +516,12 @@ class TestRenderedRunner(unittest.TestCase):
             self.assertEqual(plan.kind, "add")
             cross_ai_script.write_script(plan)
             script_path = os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
+            # 38-08: a rendered copy ships without the harness; the template's sibling
+            # beside it runs the smoke set.
+            shutil.copyfile(
+                os.path.join(os.path.dirname(TEMPLATE), "cross-ai-selftest.mjs"),
+                os.path.join(tmp, ".planning", "scripts", "cross-ai-selftest.mjs"),
+            )
             with open(script_path, "rb") as f:
                 written = f.read()
             self.assertEqual(cross_ai_script.script_state(written), "pristine")
@@ -861,6 +869,7 @@ def _route_catalog(cache_home: str) -> None:
             "confidence": "high",
             "last_verified": "2026-01-01",
             "fallback_quota": True,
+            "is_router": True,
             "heuristic_confirmed": ["fallback_quota"],
         },
     }

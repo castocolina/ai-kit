@@ -30,6 +30,50 @@ def infer_fallback_quota(provider_or_key: str) -> bool:
     return infer_is_router(provider_or_key)
 
 
+# 35 D-15: the source label of the router-env alias assumption (catalog_facts writes it).
+ROUTER_ALIAS_SOURCE = "router-env alias naming"
+
+
+def router_statement(entry) -> bool | None:
+    """38 D-17: the one confirmed-router rule.
+
+    True for a confirmed router lane (the owner's word, or the router-env alias
+    assumption), False when the owner said it is not one, None when only a heuristic
+    or nothing speaks (a judged name hint stays advisory).
+    """
+    if not isinstance(entry, dict):
+        return None
+    confirmed = entry.get("heuristic_confirmed")
+    owner = {f for f in confirmed if f in ("is_router", "fallback_quota")} if isinstance(
+        confirmed, list
+    ) else set()
+    facts = entry.get("facts")
+    klass = facts.get("class") if isinstance(facts, dict) else None
+    klass = klass if isinstance(klass, dict) else {}
+    quota, router = entry.get("fallback_quota"), entry.get("is_router")
+    stated = klass.get("label") == "user-stated"
+    # an explicit owner false wins over every assumption
+    owner_false = ("fallback_quota" in owner and quota is False) or (
+        "is_router" in owner and router is False
+    )
+    if owner_false or (stated and klass.get("value") != "router"):
+        return False
+    # unknown or disagreeing heuristic fields never confirm
+    if quota is not True or router is not True:
+        return None
+    if owner or stated:
+        return True
+    if (entry.get("provider") == "router-env" and klass.get("label") == "assumed"
+            and klass.get("source") == ROUTER_ALIAS_SOURCE and klass.get("value") == "router"):
+        return True
+    return None
+
+
+def is_confirmed_router(entry) -> bool:
+    """True only for a confirmed router lane (router_statement is True)."""
+    return router_statement(entry) is True
+
+
 _PURPOSE_NAME_HINTS = {
     "review": ("review", "plan-review"),
     "execute": ("coding", "execute"),

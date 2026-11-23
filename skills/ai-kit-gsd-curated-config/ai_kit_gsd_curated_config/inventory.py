@@ -439,6 +439,8 @@ def _assemble_inventory(project_dir, host_name, host_source, core: host.GsdCore,
         "conflicts": conflicts,
         "info": info,
         "warnings": sorted(warnings),
+        # apply's gsd-core skill check runs under this HOME, the one the skills were scanned in
+        "home": home,
         **({"pi_session": parts["pi_session"]} if "pi_session" in parts else {}),
     }
 

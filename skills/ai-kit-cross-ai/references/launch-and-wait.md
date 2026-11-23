@@ -34,7 +34,7 @@ The background task identifies the lane; stop a lane by stopping its task. When 
 arrives, read `lane.rc`, then the last line of `lane.err`, for example:
 
 ```
-AIKIT-XAI status=ok cli=opencode model=fake/ok exit=0 cli_rc=0 elapsed=0s out=296 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_1 applied=model,provider,role ignored=- unknown=- escalate=-
+AIKIT-XAI status=ok cli=opencode model=fake/ok exit=0 cli_rc=0 elapsed=0s out=296 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_1 applied=model,provider,role ignored=- unknown=- escalate=- coverage=- findings=-
 ```
 
 A stop carries the report line before it:

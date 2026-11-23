@@ -39,9 +39,9 @@ only, never a request).
 
 These are this CLI's exits. The rendered runner (`cross-ai.mjs`) has its own; read its stop from
 the `AIKIT-XAI` line's `status=`, never from the exit code alone: 1 covers `git_error`,
-`git_timeout`, `crash`, `no_change`, `empty_answer` and `contract_violation`; 2 `usage`,
-`no_model`, `empty_stdin`; 69 a terminal stop; 75 quota or transient (with `retry_after_s=` the
-hard tier, bare an owner stop); 124 `timeout`; 127
+`git_timeout`, `crash`, `no_change`, `empty_answer`, `contract_violation` and `partial`; 2 `usage`,
+`no_model`, `empty_stdin`; 69 a terminal stop; 75 quota, transient or `locked` (with `retry_after_s=` the
+hard tier, bare an owner stop, as `locked` always is); 124 `timeout` (the deadline or the idle watchdog); 127
 `not_installed` (the runner's stop, not a missing shell command); 128+N `signal`.
 
 ## Resolve the entrypoint
@@ -109,12 +109,12 @@ python3 "$ENTRYPOINT" recommend --inventory "$WORK/inventory.json" --profile <pr
    `effect`/unverified flag, and the plan's `router_backed` value per runner. `router_backed` is
    what authorizes a router lane's quota cycles, and a name-only guess does not. `recommend` sets
    it from the inventory: a candidate whose `is_router` and `router_confirmed` are both true (and
-   whose declared purpose is `execute`) starts that runner at `true`. There is no key to edit it
+   whose declared purpose is `execute`) starts that runner at `true`. `router_confirmed` is true when the router fallback is owner-stated, or assumed for an alias that follows the owner's router naming convention; a judged hint never confirms it, and an owner `false` wins. There is no key to edit it
    directly. Re-picking a model with `plan-set script:cross-ai.model.<runner>` recomputes it from
    that same inventory rule, so re-picking the confirmed router keeps it `true` and re-picking a
    direct model sets it `false`. Resolve each choice with `plan-set` or decline it with
    `plan-unset` — never skip one. Values are JSON for lists, booleans and numbers
-   (`'["ponytail"]'`, `true`, `1800`) and bare text for strings. An `agent_skills.<agent>`
+   (`'["ponytail"]'`, `true`, `1800`) and bare text for strings. A `workflow.cross_ai_timeout` that is not an integer of at least 1800 is replaced by 1800; its plan entry shows the current value beside the new one, and its reason says why the current value is refused. An `agent_skills.<agent>`
    value is that agent's whole list.
 
 ```bash
@@ -141,8 +141,8 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
      project's pi session; with no candidate, decline it with `plan-unset`.
    - **Trusted roots** (`agent_skills_security.trusted_global_roots`): the one candidate's
      `value` is the whole list — already-configured roots first, then the new `~/` roots.
-     Approve it with that list, or decline with `plan-unset` (refused while agents still hold
-     the skills it covers — the full rule is in Skills). The new root is the machine-specific
+     Approve it with that list, or decline with `plan-unset` (`apply` refuses the plan while
+     agents still hold the skills it covers — the full rule is in Skills). The new root is the machine-specific
      skills dir of the ai-kit install. A list that drops an
      already-configured root is refused; the refusal prints the merged list — re-run
      `plan-set` with it (entrypoint and `--plan` included).
@@ -168,7 +168,11 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
    and that list is what the user approves. Then end the turn and apply only after the user
    answers. A "go ahead" given before those rows were
    shown does not approve them: the plan review summarizes, and the dry run is the first
-   place the user sees every key that changes.
+   place the user sees every key that changes. `apply` recomputes its writes from the live
+   config and does not compare them with the approved preview, so right before the real apply
+   run the dry run again and compare its rows with the approved ones; any difference goes back
+   to the user for a fresh approval. This narrows, but does not close, the window for a
+   concurrent edit of the config.
    On a project with no config yet, `remove` rows marked `"predicted": true` are the keys
    `config-new-project` is expected to copy from the global defaults — unverified until apply.
 
@@ -219,7 +223,7 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
 ## Cross-AI execution
 
 v2 `apply` sets `workflow.cross_ai_command` to `node .planning/scripts/cross-ai.mjs` and renders
-the bundled template 9. Each call uses one runtime (`CONFIG.runtime`, set by the plan) and its
+the bundled template 10. Each call uses one runtime (`CONFIG.runtime`, set by the plan) and its
 model; a missing binary stops as `not_installed` and is never replaced. Only when the owner
 asks, never as an answer to a stop or to `not_installed`, the runtime changes through
 `plan-set script:cross-ai.runtime <id>`, a dry run and an apply. Never hand-edit CONFIG: edits
@@ -232,8 +236,11 @@ receive `.new` on upgrade. The hook names the runner, never a raw vendor CLI str
   It also passes no `--prepend-file`/`--no-preamble`: the runner's own preamble is the only
   guidance. Never describe a v2-configured codex target as sandboxed.
 - **v1 `apply-execution`** names one runtime and model and adds `--codex-sandbox workspace-write`
-  for codex: writes stay inside the project dir plus `/tmp` and `$TMPDIR` (`.git` writability
-  unverified). Every other exec target still runs with full permissions.
+  for codex: Codex's `workspace-write` sandbox, not a fixed path allowlist (by default the project
+  dir plus `/tmp` and `$TMPDIR`; the owner's Codex config can add or exclude writable roots, so
+  check the effective ones before promising a boundary; `.git` writability unverified, see
+  [`references/runner.md`](references/runner.md)). Every other exec target still runs with full
+  permissions.
 
 This skill never dispatches a model call: check a runner with `--print-argv` only. A live dispatch
 runs with full permissions and only when the user asks for one. When you see a dispatch's output
@@ -295,8 +302,9 @@ than `ok` comes up.
   (gsd-core drops it where it does not exist).
 - **Refusal → action** (each refusal prints its fix; re-run it with the entrypoint and
   `--plan`):
-  - a **declined** root (`plan-unset`) while `agent_skills` entries still hold the skills it
-    covers → the refusal offers two fixes joined by "or"; declining means the second one,
+  - a **declined** root (`plan-unset` only prints a note; `apply` and `apply --dry-run`
+    refuse) while `agent_skills` entries still hold the skills it covers → the refusal offers
+    two fixes joined by "or"; declining means the second one,
     `plan-set agent_skills.<agent> ...`, which drops those skills;
   - a reference gsd-core would skip → the printed fix keeps every healthy reference whose
     bare name re-resolves to it: a bare name (the form a fresh plan holds), a
@@ -304,18 +312,13 @@ than `ok` comes up.
     Any other healthy reference (a namespaced `global:<plugin>:<name>`, a project path
     outside `skills/`, a `global:<name>` a project copy would shadow) is named for an
     explicit decision, never dropped or switched.
-- **Refusals `--force` cannot bypass:** `plan-set` and `plan-unset` refuse an `agent_skills`
-  entry gsd-core would skip, and `apply` and `apply --dry-run` refuse such a plan
-  (hand-edited included) before any write. What is checked:
-  - a kept `global:<name>`: live, as gsd-core checks it (the host skills dir entry exists and
-    holds a SKILL.md whose realpath is inside the host skills dir or an effective trusted
-    root, `~/` expanded and symlinks resolved);
-  - a kept project path: relative, inside the project, with a SKILL.md;
-  - a kept `global:` name outside gsd-core's grammar, or a namespaced one on a non-claude
-    host: skipped;
-  - a newly wired entry: against the inventory snapshot only, where a configured root is
-    compared as written (a root reached through a symlink needs its real path). Re-run
-    `inventory` after skills move.
+- **Refusals `--force` cannot bypass:** `apply` and `apply --dry-run` refuse a plan
+  (hand-edited included) holding an `agent_skills` entry gsd-core would skip, before any write;
+  `plan-set` and `plan-unset` only print a note that this check runs at apply. What is checked:
+  each kept or newly wired entry, by the project's own gsd-core (its `buildAgentSkillsBlock`,
+  called once per reference): an entry whose block comes back empty is refused as gsd-core would
+  skip it, with gsd-core's warning as the cause. With no project-local gsd-core, on pi, or when
+  gsd-core cannot answer, the check is skipped with a named note.
 - Unknown installed skills get capped proposals (one per name, wireable only) — never
   auto-install or auto-wire them.
 - **Jev session gate:** inventory detects the jev (System One) backend, `system_one_backend`, by a TCP
@@ -356,7 +359,8 @@ than `ok` comes up.
 ## NEVER
 
 - **Never replace `gsd-settings` / `gsd-config`.** Power-user and integration knobs stay there;
-  route tuning questions to `gsd-settings --advanced`.
+  route tuning questions to `gsd-config --advanced` and integration questions (API keys, review
+  CLI routing, agent-skill injection) to `gsd-config --integrations`.
 - **In the v2 flow, never skip the plan review or the dry run, and never resolve a
   `needs_choice` yourself**, whatever the user says about speed or trust ("just apply it"):
   those two steps are where the user sees what changes and what is removed. The v1 path has

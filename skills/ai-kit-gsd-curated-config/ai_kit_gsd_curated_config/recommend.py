@@ -900,13 +900,14 @@ def _cross_ai_exec_entries(ctx: PlanCtx, answer: dict, targets: list) -> tuple[l
         )
     )
     timeout_key = "workflow.cross_ai_timeout"
+    timeout_now = presets.get_dotted(ctx.existing, timeout_key)
     entries.append(
         make_entry(
             ctx,
             timeout_key,
-            cross_ai.timeout_value(presets.get_dotted(ctx.existing, timeout_key)),
+            cross_ai.timeout_value(timeout_now),
             "preset",
-            f"cross-AI outer timeout (18 D-12); minimum {cross_ai.MIN_TIMEOUT_S}s",
+            cross_ai.timeout_why(timeout_key, timeout_now),
         )
     )
     mgr_key = "manager.flags.execute"

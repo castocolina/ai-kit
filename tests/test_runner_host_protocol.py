@@ -188,7 +188,7 @@ class TestHostProtocol(unittest.TestCase):
                 self.assertEqual(result["stdout"], "tab create --label x\n")
                 self.assertEqual(result["detail"], None if code == "0" else "exit 3")
                 self.assertEqual(bad, "herdr verb pane read is not one of "
-                                 "tab create, pane run, tab close")
+                                 "tab create, pane run, tab close, tab list")
 
     def test_protocol_fixture_matches_runner(self):
         fixture = json.loads(FIXTURE.read_text())

@@ -421,36 +421,49 @@ def implementer_status(stdout: str) -> str:
     return found.pop() if len(found) == 1 else "BLOCKED"
 
 
-def classify_dispatch_failure(dispatch_result: dict) -> str:
-    """Classify runner outcomes without authorizing a candidate switch.
+# 38 R7: runner outcomes (a refused lock, a partial execute run), never a host quota.
+RUNNER_ONLY_STATUSES = ("locked", "partial")
 
-    ``quota`` is the time-bound outcome for which the runner asks the caller to wait:
-    either a confirmed-router quota stop or a spent transient ladder carrying its hard-tier
-    hint. It also covers a hard-tier stop (exit 69, ``stopped=hard-waits`` or ``cap``) and a
-    bare exit 75 whose hint was dropped, for both the quota and the transient class; this
-    function does not tell those apart and never re-dispatches. The tokens live only in the
-    nested ``status`` dict.
-    Only exit 75 with whole-number ``retry_after_s`` and ``cycle`` gets the one one-shot
-    re-invoke of the same injection. Other outcomes, including auth and timeout, are
-    ``real_error``.
+
+def _whole_token(token) -> int | None:
+    if isinstance(token, int) and not isinstance(token, bool) and token >= 0:
+        return token
+    # bounded: int() of an unbounded digit string can raise ValueError
+    if isinstance(token, str) and re.fullmatch(r"[0-9]{1,15}", token):
+        return int(token)
+    return None
+
+
+def classify_dispatch_failure(dispatch_result: dict) -> str:
+    """The class of dispatch_classification (38 R7): ok, quota_cycle, quota or real_error."""
+    return dispatch_classification(dispatch_result)["class"]
+
+
+def dispatch_classification(dispatch_result: dict) -> dict:
+    """Classify runner outcomes without authorizing a candidate switch (38 R7, D-18).
+
+    Return the class plus both tokens as whole numbers (None when absent or malformed).
+    quota_cycle is exit 75 with both tokens whole numbers: the one case that gets the single
+    re-invoke of the same injection. quota is an owner stop: exit 69 or 75 whose status is
+    transient or quota with no malformed token (bare, or one token), or reason quota. The runner
+    statuses locked and partial are real_error by name, before the exit code. Everything else,
+    auth and timeout included, is real_error.
     """
+    raw = dispatch_result.get("status")
+    status = raw if isinstance(raw, dict) else {}
+    given = (status.get("retry_after_s"), status.get("cycle"))
+    retry, cycle = (_whole_token(t) for t in given)
+    malformed = any(g is not None and t is None for g, t in zip(given, (retry, cycle), strict=True))
     returncode = dispatch_result.get("returncode", 0)
-    if returncode == 0:
-        return "ok"
-    status = dispatch_result.get("status")
-    if returncode == 75 and isinstance(status, dict):
-        tokens = (status.get("retry_after_s"), status.get("cycle"))
-        if all(
-            (isinstance(token, int) and not isinstance(token, bool) and token >= 0)
-            or (isinstance(token, str) and re.fullmatch(r"[0-9]+", token))
-            for token in tokens
-        ):
-            return "quota"
-    # A malformed hint is not the runner's line, so only a bare one reads as the lane's wait.
-    if (returncode in (69, 75) and isinstance(status, dict)
-            and status.get("status") in ("transient", "quota")
-            and status.get("retry_after_s") is None):
-        return "quota"
-    if dispatch_result.get("reason") == "quota":
-        return "quota"
-    return "real_error"
+    if status.get("status") in RUNNER_ONLY_STATUSES:
+        cls = "real_error"
+    elif returncode == 0:
+        cls = "ok"
+    elif returncode == 75 and retry is not None and cycle is not None:
+        cls = "quota_cycle"
+    elif ((returncode in (69, 75) and status.get("status") in ("transient", "quota")
+           and not malformed) or dispatch_result.get("reason") == "quota"):
+        cls = "quota"
+    else:
+        cls = "real_error"
+    return {"class": cls, "retry_after_s": retry, "cycle": cycle}

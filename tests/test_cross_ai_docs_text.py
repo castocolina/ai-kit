@@ -1,6 +1,7 @@
 """37-22: pin runner documentation, hosting and marked-region adjacency (SPEC R11)."""
 
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -13,11 +14,27 @@ README = REPO / "README.md"
 CLAUDE_PROFILE = REPO / "skills/ai-kit-spec-review/references/cli-profiles/claude.md"
 SPEC_CONFIG_SKILL = REPO / "skills/ai-kit-spec-config/SKILL.md"
 TEMPLATE = REPO / "skills/ai-kit-spec-review/references/cross-ai.mjs"
+ERROR_CLASSIFIER_DIR = REPO / "skills/ai-kit-spec-review"
+CURATED_SKILL = REPO / "skills/ai-kit-gsd-curated-config/SKILL.md"
+SUPERVISION_FLAGS = ("--baseline", "--forbid", "--idle-timeout", "--plan-id", "--sweep")
 RUNNER_FLAGS = (
     "--role", "--effort", "--codex-effort", "--context", "--escalate-runtime",
     "--escalate-model", "--session-id", "--host", "--skill-path", "--skill-name",
     "--mcp-config", "--argv-file", "--describe",
 )
+
+
+def dispatch_status_names(text) -> set[str]:
+    section = text.split("## Status line to reason", 1)[1].split("\n## ", 1)[0]
+    return {name for line in section.splitlines() if line.startswith("|")
+            for name in re.findall(r"`([a-z_]+)`", line.split("|")[1])}
+
+
+def runner_status_names() -> set[str]:
+    text = TEMPLATE.read_text(encoding="utf-8")
+    match = re.search(r"^const STATUS_TABLE = \{(.*?)^\};", text, re.MULTILINE | re.DOTALL)
+    assert match is not None
+    return set(re.findall(r"^\s+([a-z_]+): \{", match.group(1), re.MULTILINE))
 
 
 def template_allowlist(text):
@@ -101,10 +118,11 @@ class ReadmeAndProfileDocs(unittest.TestCase):
         lines = README.read_text(encoding="utf-8").splitlines()
         cross = next(line for line in lines if line.startswith("| [`ai-kit-cross-ai`]"))
         curated = next(line for line in lines if line.startswith("| [`ai-kit-gsd-curated-config`]"))
-        for value in ("settings report", "session ids", "`--argv-file`", "herdr"):
+        for value in ("settings report", "session ids", "`--argv-file`", "herdr",
+                      "idle watchdog", "`locked`", "`partial`", "`--sweep`"):
             self.assertIn(value, cross)
         for value in ("cross-ai: setting", "`--host auto`", "`AIKIT_HOST=none`",
-                      "no automatic fallback"):
+                      "no automatic fallback", "run lock"):
             self.assertIn(value, curated)
 
     def test_claude_profile_names_the_execute_formula(self):
@@ -117,6 +135,62 @@ class ReadmeAndProfileDocs(unittest.TestCase):
     def test_spec_config_effort_sentence_names_the_generic_flag(self):
         self.assertNotIn("the runner passes it as `--codex-effort`",
                          SPEC_CONFIG_SKILL.read_text(encoding="utf-8"))
+
+
+class SupervisionDocsText(unittest.TestCase):
+    def test_dispatch_table_covers_every_runner_status(self):
+        text = DISPATCH.read_text(encoding="utf-8")
+        self.assertTrue(runner_status_names() <= dispatch_status_names(text))
+
+    def test_new_statuses_map_to_real_error(self):
+        row = next(line for line in DISPATCH.read_text(encoding="utf-8").splitlines()
+                   if "`partial`" in line and line.startswith("|"))
+        self.assertIn("`locked`", row)
+        self.assertTrue(row.endswith("| `real_error` |"))
+        sys.path.insert(0, str(ERROR_CLASSIFIER_DIR))
+        try:
+            from ai_kit_spec.error_classifier import STATUS_TO_REASON
+
+            self.assertEqual(STATUS_TO_REASON["partial"], "real_error")
+            self.assertEqual(STATUS_TO_REASON["locked"], "real_error")
+        finally:
+            sys.path.remove(str(ERROR_CLASSIFIER_DIR))
+
+    def test_dispatch_names_the_check_group_and_sweep(self):
+        text = DISPATCH.read_text(encoding="utf-8")
+        for value in ("`coverage`", "`findings`", "cross-ai: finding reason=", "--sweep",
+                      "complete label", "cross-ai: note: an execute run holds this checkout"):
+            self.assertIn(value, text)
+
+    def test_runner_md_names_the_supervision_flags(self):
+        text = RUNNER_MD.read_text(encoding="utf-8")
+        template = TEMPLATE.read_text(encoding="utf-8")
+        for flag in SUPERVISION_FLAGS:
+            self.assertIn(flag, text)
+            self.assertIn(f"'{flag}'", template)
+        for value in ("idleTimeoutS", "forbiddenPaths", "admissionPhrases", "`locked`",
+                      "`partial`", "coverage=", "findings="):
+            self.assertIn(value, text)
+
+    def test_status_scan_catches_a_missing_status(self):
+        text = DISPATCH.read_text(encoding="utf-8")
+        text = text.replace(", `locked` | `real_error` |", " | `real_error` |")
+        self.assertFalse(runner_status_names() <= dispatch_status_names(text))
+
+    def test_curated_skill_names_the_new_rules(self):
+        text = CURATED_SKILL.read_text(encoding="utf-8")
+        step =text.split("3. **Review the plan with the user**", 1)[1].split("```", 1)[0]
+        for value in ("cross_ai_timeout", "1800", "current value",
+                      "owner's router naming convention"):
+            self.assertIn(value, step)
+        refusal = text.split("**Refusals `--force` cannot bypass:**", 1)[1].split("\n- ", 1)[0]
+        self.assertIn("buildAgentSkillsBlock", refusal)
+
+    def test_curated_exit_sentence_names_the_new_statuses(self):
+        text = CURATED_SKILL.read_text(encoding="utf-8").split("These are this CLI's exits.", 1)[1]
+        paragraph = text.split("\n\n", 1)[0]
+        for value in ("`partial`", "`locked`", "idle watchdog"):
+            self.assertIn(value, paragraph)
 
 
 class MarkedRegionInRunner(unittest.TestCase):

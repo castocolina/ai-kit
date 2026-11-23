@@ -5,6 +5,7 @@ import contextlib
 import json
 import os
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -212,6 +213,25 @@ def resolve_target(inputs: Inputs, deps: ApplyDeps) -> tuple[Target | None, str 
     if isinstance(built, str):
         return None, built
     return built, None
+
+
+def _skill_check(target: Target, inputs: Inputs, deps: ApplyDeps) -> plan_io.SkillCheck | None:
+    if inputs.plan["host"] == "pi":
+        detail = "agent skills have no effect on pi"
+    elif target.core.scope != "local":
+        detail = "gsd-core is not project-local for this project"
+    else:
+        detection = gsd_catalog.load_ai_kit_spec_module("detection")
+        if detection is not None:
+            # gsd-core finds global skills under os.homedir(): give it the inventory's HOME
+            home = inputs.inv.get("home")
+            env = {**target.env, "HOME": home} if isinstance(home, str) and home else target.env
+            return plan_io.SkillCheck(target.tools.node_bin, target.core.tools_path, env,
+                                      inputs.project_dir, detection.bounded_run(deps.run_fn))
+        detail = f"gsd-core's skill check failed ({gsd_catalog.SIBLING_MISSING})"
+    print(f"ai-kit-gsd-curated-config: note: {detail}; the skipped-skill check did not run",
+          file=sys.stderr)
+    return None
 
 
 def _encode_entry(entry: dict, inv: dict, encode: Callable[[str, object], str]) -> str | None:
@@ -905,12 +925,14 @@ def prepare(
         return None, None, "apply refused while needs_choice remains: " + ", ".join(
             open_choices
         )
-    skipped = plan_io.skipped_skill_problem(inputs.plan, inputs.inv)
-    if skipped:
-        return None, None, "apply refused: " + skipped
     target, error = resolve_target(inputs, deps)
     if target is None:
         return None, None, error
+    check = _skill_check(target, inputs, deps)
+    if check is not None:
+        skipped = plan_io.gsd_skipped_skill_problem(inputs.plan, inputs.inv, check)
+        if skipped:
+            return target, None, "apply refused: " + skipped
     problems = preflight(inputs, target, deps, encode)
     if problems:
         return target, None, problems[0]

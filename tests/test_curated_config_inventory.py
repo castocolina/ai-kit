@@ -10,7 +10,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(
@@ -22,15 +24,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-k
 from ai_kit_gsd_curated_config import (
     catalog_adapter,
     cli,
+    cross_ai,
+    cross_ai_script,
     gsd_catalog,
     inventory,
+    plan_edit,
     plan_io,
     plan_schema,
     presets,
     project_facts,
 )
 from ai_kit_spec import cache as spec_cache
-from ai_kit_spec import gsd_tools, model_catalog
+from ai_kit_spec import gsd_tools, model_catalog, model_heuristics, runner_dispatch
+from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
 from tests.test_curated_config_recommend import build, entry_map, make_inventory
 
@@ -359,6 +365,7 @@ class TestCatalogTracer(unittest.TestCase):
             "router-env/my-coding": {
                 "provider": "router-env",
                 "is_router": True,
+                "fallback_quota": True,
                 "heuristic_confirmed": ["is_router"],
                 "name_declared_purpose": "execute",
                 "runtimes": {"opencode": {"model_id": "router-env/my-coding"}},
@@ -879,42 +886,6 @@ class TestBuildCandidates(unittest.TestCase):
         self.assertIsNone(by_model["mystery/model"]["vendor"])
         self.assertIsNone(by_model["router-env/r"]["vendor"])
 
-    def test_router_confirmed_rules(self):
-        entries = {
-            "router-env/a": {
-                "provider": "router-env",
-                "is_router": True,
-                "heuristic_confirmed": ["is_router"],
-                "name_declared_purpose": "execute",
-                "runtimes": {"opencode": {"model_id": "router-env/a"}},
-            },
-            "router-env/b": {
-                "provider": "router-env",
-                "is_router": True,
-                "name_declared_purpose": "execute",
-                "runtimes": {"opencode": {"model_id": "router-env/b"}},
-            },
-            "router-env/c": {
-                "provider": "router-env",
-                "is_router": True,
-                "heuristic_confirmed": ["is_router"],
-                "runtimes": {"opencode": {"model_id": "router-env/c"}},
-            },
-        }
-        runtimes = {
-            "clis": {
-                "opencode": {
-                    "installed": True,
-                    "models": ["router-env/a", "router-env/b", "router-env/c"],
-                }
-            }
-        }
-        out = catalog_adapter.build_candidates(runtimes, entries, "opencode", self._weights())
-        by_model = {c["model"]: c for c in out}
-        self.assertTrue(by_model["router-env/a"]["router_confirmed"])
-        self.assertFalse(by_model["router-env/b"]["router_confirmed"])
-        self.assertFalse(by_model["router-env/c"]["router_confirmed"])
-
     def test_pi_router_candidate_from_merged_catalog(self):
         spec_cli = gsd_catalog.load_ai_kit_spec_module("cli")
         assert spec_cli is not None
@@ -1122,6 +1093,122 @@ class TestBuildCandidates(unittest.TestCase):
         self.assertEqual(legacy, id_keyed)
         with open(catalog_path, encoding="utf-8") as fh:
             self.assertIn("cursor-agent", json.load(fh)["acme/m"]["runtimes"])
+
+
+_BOTH = {"is_router": True, "fallback_quota": True}
+_ALIAS = {"value": "router", "label": "assumed", "source": "router-env alias naming"}
+_ROUTER_MATRIX = (
+    ("owner-quota", {"provider": "fake", **_BOTH, "heuristic_confirmed": ["fallback_quota"]},
+     True, "router"),
+    ("owner-router", {**_BOTH, "heuristic_confirmed": ["is_router"]}, True, "router"),
+    ("owner-class", {"provider": "fake", **_BOTH, "class": {
+        "value": "router", "label": "user-stated", "source": "confirm-model"}}, True, "router"),
+    ("alias-assumed", {**_BOTH, "class": _ALIAS}, True, "router"),
+    ("hint-only", {**_BOTH}, None, None),
+    ("judged-class", {**_BOTH, "class": {"value": "router", "label": "judged", "source": "jev",
+                                         "confidence": "low"}}, None, None),
+    ("not-router", {"provider": "fake", "is_router": False, "fallback_quota": False}, None, None),
+    ("owner-false-beats-alias", {"is_router": True, "fallback_quota": False,
+                                 "heuristic_confirmed": ["fallback_quota"], "class": _ALIAS},
+     False, "unknown"),
+    ("owner-class-beats-alias", {**_BOTH, "class": {"value": "coding", "label": "user-stated",
+                                                    "source": "confirm-model"}}, False, "unknown"),
+    ("fields-disagree", {"is_router": False, "fallback_quota": True, "class": _ALIAS}, None, None),
+    ("assumed-other-source", {**_BOTH, "class": {"value": "router", "label": "assumed",
+                                                 "source": "jev"}}, None, None),
+    ("no-heuristic-fields", {}, None, None),
+)
+
+
+def _router_entry(name, fields):
+    fields = dict(fields)
+    klass = fields.pop("class", None)
+    entry = {
+        "provider": "router-env", "runtimes": {"pi": {"model_id": f"router-env/m-{name}"}},
+        "name_declared_purpose": "execute", "source": {}, "confidence": "low",
+        "last_verified": "2026-01-01", **fields,
+    }
+    if klass is not None:
+        entry["facts"] = {"class": {**klass, "fetched_at": "2026-01-01T00:00:00Z"}}
+    return entry
+
+
+class TestRouterRuleMatrix(unittest.TestCase):
+    def _env(self, entries):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        seed_cache(tmp, {}, {"_meta": {"schema_version": model_catalog.CATALOG_SCHEMA_VERSION},
+                             **entries})
+        return {"XDG_CACHE_HOME": tmp, "HOME": tmp}
+
+    def _row(self, model, entries):
+        ranker = gsd_catalog.load_ai_kit_spec_module("model_ranker")
+        assert ranker is not None
+        runtimes = {"clis": {"pi": {"installed": True, "models": [model]}}}
+        return catalog_adapter.build_candidates(runtimes, entries, "claude",
+                                                ranker.load_ranking_weights())[0]
+
+    def test_one_answer_through_every_caller(self):
+        entries = {f"router-env/m-{name}": _router_entry(name, fields)
+                   for name, fields, _, _ in _ROUTER_MATRIX}
+        env = self._env(entries)
+        path = resolve_cross_ai_template_path()
+        assert path is not None
+        template = Path(path).read_bytes()
+        for name, _, statement, route in _ROUTER_MATRIX:
+            with self.subTest(name=name):
+                model = f"router-env/m-{name}"
+                entry = entries[model]
+                self.assertIs(model_heuristics.router_statement(entry), statement)
+                self.assertEqual(runner_dispatch.resolve_route("pi", model, env), route)
+                row = self._row(model, {model: entry})
+                self.assertIs(row["router_confirmed"], statement is True)
+                self.assertIs(plan_edit._confirmed_router(row), statement is True)
+                inv = make_inventory(host="claude", candidates=[row])
+                inv["installed_runtimes"] = ["pi"]
+                targets = cross_ai.exec_targets(inv, "standard")
+                self.assertTrue(targets)
+                cfg = cross_ai_script.runner_config(
+                    template, cross_ai.script_artifact(targets, cross_ai.MIN_TIMEOUT_S), ())
+                self.assertIs(cfg.get("routerBacked", {}).get("pi", False), statement is True)
+
+    def test_missing_entry_is_safe(self):
+        env = self._env({})
+        model = "router-env/m-absent"
+        self.assertIsNone(model_heuristics.router_statement(None))
+        self.assertIsNone(runner_dispatch.resolve_route("pi", model, env))
+        self.assertFalse(self._row(model, {})["router_confirmed"])
+
+    def test_missing_quota_is_not_confirmed(self):
+        _, catalog = TestCatalogTracer()._tracer_fixture()
+        entry = dict(catalog["router-env/my-coding"])
+        del entry["fallback_quota"]
+        ranker = gsd_catalog.load_ai_kit_spec_module("model_ranker")
+        assert ranker is not None
+        rows = catalog_adapter.build_candidates(
+            {"clis": {"opencode": {"installed": True, "models": ["router-env/my-coding"]}}},
+            {"router-env/my-coding": entry}, "claude", ranker.load_ranking_weights())
+        self.assertFalse(rows[0]["router_confirmed"])
+
+    def test_first_sorted_key_wins_for_a_shared_lane(self):
+        model = "router-env/m-shared"
+        hint = _router_entry("shared", _ROUTER_MATRIX[4][1])
+        alias = _router_entry("shared", _ROUTER_MATRIX[3][1])
+        for entries, route, confirmed in (({"a-hint": hint, "b-alias": alias}, None, False),
+                                           ({"a-alias": alias, "b-hint": hint}, "router", True)):
+            with self.subTest(confirmed=confirmed):
+                self.assertEqual(
+                    runner_dispatch.resolve_route("pi", model, self._env(entries)), route)
+                self.assertIs(self._row(model, entries)["router_confirmed"], confirmed)
+
+    def test_older_sibling_fails_closed(self):
+        real = gsd_catalog.load_ai_kit_spec_module
+        def older(name):
+            return types.SimpleNamespace() if name == "model_heuristics" else real(name)
+        model = "router-env/m-alias-assumed"
+        entry = _router_entry("alias-assumed", _ROUTER_MATRIX[3][1])
+        with mock.patch.object(gsd_catalog, "load_ai_kit_spec_module", side_effect=older):
+            self.assertFalse(self._row(model, {model: entry})["router_confirmed"])
 
 
 class TestGsdCoreResolution(unittest.TestCase):

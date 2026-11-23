@@ -64,6 +64,27 @@
     "Explains exit 2 as a refused call and names the missing runner formula for placeholder-cli-1",
     "Offers --argv-file with a JSON array of argv strings, placeholders limited to {model}, {effort} and {session}, and the prompt on stdin"
    ]
+  },
+  {
+   "id": "edge-locked-is-a-bare-75",
+   "prompt": "My execute lane exited 75 and its last line reads AIKIT-XAI status=locked cli=pi model=fake/ok exit=75 with no retry_after_s. Should I schedule a wait and retry?",
+   "expected_output": "Explains that locked means another execute run holds the checkout's run lock, that a bare 75 is an owner stop with no wait to schedule, and that the caller reports it or starts the run after the other run's own exit, without retrying in a loop or switching runtime or model.",
+   "files": [],
+   "assertions": [
+    "Treats locked as a bare 75 owner stop and schedules no wait",
+    "Offers to report it or to start the run after the other run's own exit, never a retry loop or another runtime or model"
+   ]
+  },
+  {
+   "id": "edge-partial-resume-with-missing-list",
+   "prompt": "Outside GSD, my own script ran an execute lane with a plan prompt holding an objective and three task blocks. It ended with status=partial exit=1 session=placeholder-sid-7, nothing on stdout, and the line cross-ai: finding reason=task_uncovered detail=Task 2: wire the parser. What do I do?",
+   "expected_output": "Explains that partial means a planned task has no covering commit and that stdout stays empty on purpose; reports the finding, then resumes session placeholder-sid-7 once with the same runtime, model and role, sending the original prompt unchanged (objective and task blocks) plus a paragraph naming Task 2, so the baseline and the coverage check still apply; says that with session=- or under GSD's retry prompt it is an owner stop instead, and that a second partial is an owner stop.",
+   "files": [],
+   "assertions": [
+    "Names task_uncovered as a missing commit for Task 2 and says stdout is empty on purpose",
+    "Resumes the same session once with the original prompt (objective and task blocks) plus the missing-task paragraph, not the missing task alone",
+    "Treats session=-, GSD's retry prompt and a second partial as owner stops"
+   ]
   }
  ]
 }

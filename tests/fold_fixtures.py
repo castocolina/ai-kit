@@ -33,6 +33,13 @@ def git_env(home):
     env.update({
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_SYSTEM": os.devnull,
+        # No background maintenance: a detached `git maintenance run --auto` after a fixture push
+        # creates and removes objects/maintenance.lock while a test copies the template tree.
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": "gc.auto",
+        "GIT_CONFIG_VALUE_0": "0",
+        "GIT_CONFIG_KEY_1": "maintenance.auto",
+        "GIT_CONFIG_VALUE_1": "false",
         "HOME": str(home),
         "GIT_AUTHOR_NAME": "Fixture Author",
         "GIT_AUTHOR_EMAIL": "author@example.com",

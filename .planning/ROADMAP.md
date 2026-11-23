@@ -124,7 +124,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 35: Model discovery and catalog** - spec-config lists every model on every host with honest source, usability and tier labels (completed 2026-11-20)
 - [x] **Phase 36: spec-config as the hub** - Every spec skill chains spec-config; reviewers and executors kept apart with opt-in escalation (completed 2026-11-21)
 - [x] **Phase 37: Shared runner options and session ids** - One runner for GSD cross-AI and ai-kit lanes, with per-call settings and resumable sessions (completed 2026-11-21)
-- [ ] **Phase 38: Runner hardening and run safety** - Idle watchdog, the Phase 25 cleanup, a run lock with a tree baseline, and a plan-versus-commits check before done
+- [x] **Phase 38: Runner hardening and run safety** - Idle watchdog, the Phase 25 cleanup, a run lock with a tree baseline, and a plan-versus-commits check before done (completed 2026-11-22)
 - [ ] **Phase 38.1: Runner error classification and retry policy (INSERTED)** - Wider error catalogue, stdout limit matching, router cooldowns and the owner's retry policy
 - [ ] **Phase 39: Lane capability blocks and lens skills** - Each lane is told only the tools it really has; lens skills reach reviewers
 - [ ] **Phase 39.1: Remove the grok runtime (INSERTED)** - The grok CLI runtime leaves detection, command building, the runner table, profiles, docs and tests; its models stay reachable through opencode, pi and cursor-agent *(inserted 2026-11-19, owner decision)*
@@ -895,7 +895,41 @@ Plans:
   6. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation. *(amended 2026-11-07, 32.1 D-01: `ai-kit-cross-ai` reaches the bar with new-shape evals and tests by this phase's close if Phase 37 did not bring it there)*
   7. A runner killed hard in the middle of a lane the runner hosts in a herdr tab leaves nothing that the next run or `--sweep` cannot clean: the secret files go at once, the recorded tab is closed by id only when its id and label match the record of a dead run, no other tab is touched, an unreachable herdr keeps only a secret-free record, and the lock, the idle clock and the execute checks behave for a hosted lane as for a headless one. *(added 2026-11-16, re-run 2, 38 D-25 to D-33, owner directive "herdr hosting": a `run.json` record per run directory, a sweep at the start of every real run and on demand with `--sweep`, the lane's launcher group as the lock's child group, the idle clock reading the lane's `out` and `err` files, an output bound by truncation, the launcher deleting the env and prompt files as its first steps, and the snapshot excluding a state home that lies inside the checkout; herdr's screen text, agent status and wait output, and the existence of a tab, are still never a verdict or a liveness signal)*
 
-**Plans**: TBD
+**Plans**: 27/27 plans complete in 21 waves *(planned 2026-11-21; 38-01, the spike, and 38-26, the judge loop with the live sweep check and the final `make test`, are orchestrator actions; runner plans run one after another; the live runner copy is re-rendered only by 38-25)*
+**Wave 1**
+- [x] 38-01-PLAN.md (wave 1): spike: host output timing and pid start-time reads, `38-SPIKE.md` (orchestrator action)
+- [x] 38-02-PLAN.md (wave 1): runner dead code (`watchChunk`, `dropState`), kept-helpers comment, `temp-dirs-gone` case
+- [x] 38-03-PLAN.md (wave 1): curated-config timeout entry shows current and new value; doc scan test
+- [x] 38-04-PLAN.md (wave 1): one confirmed-router rule in `model_heuristics.py`; `build_runner_argv` one-liner
+- [x] 38-05-PLAN.md (wave 1): `quota_cycle` class, JSON `classify-dispatch-failure`, `locked`/`partial` as `real_error`
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 38-06-PLAN.md (wave 2): curated-config skipped-skill check asks gsd-core after destination binding
+- [x] 38-07-PLAN.md (wave 2): runner hardcoding-baseline hits rewritten, runner entry removed
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 38-08-PLAN.md (wave 3): self-test harness moved to `cross-ai-selftest.mjs`, export list, refusal in rendered copies
+- [x] 38-27-PLAN.md (wave 3): re-implemented skill-resolution helpers deleted, plan-edit tests migrated
+
+**Waves 4 to 21** *(one plan each, in order)*
+- [x] 38-09-PLAN.md (wave 4): tests of the move (export-list arch rule, rendered-copy refusal)
+- [x] 38-10-PLAN.md (wave 5): `--idle-timeout`, `CONFIG.idleTimeoutS`, `planIdle`, `--print-argv` idle line
+- [x] 38-11-PLAN.md (wave 6): headless idle hook, `rule=idle-watchdog`, ladder unchanged
+- [x] 38-12-PLAN.md (wave 7): finding plumbing and the `coverage= findings=` status-line group
+- [x] 38-13-PLAN.md (wave 8): run lock and `locked`
+- [x] 38-14-PLAN.md (wave 9): stale-lock and refusal rules
+- [x] 38-15-PLAN.md (wave 10): start-of-run baseline and `--baseline`
+- [x] 38-16-PLAN.md (wave 11): execute tree polling and `no_tree_change`
+- [x] 38-17-PLAN.md (wave 12): pure plan checks, seed lists, `--forbid`, `--plan-id`
+- [x] 38-18-PLAN.md (wave 13): execute checks wired, `partial`, fail-closed git evidence
+- [x] 38-19-PLAN.md (wave 14): `tab list`, hosted idle hook, output bound
+- [x] 38-20-PLAN.md (wave 15): the sweep and `--sweep`
+- [x] 38-21-PLAN.md (wave 16): state-home exclusion, hosted lock record, hosted equals headless for findings
+- [x] 38-22-PLAN.md (wave 17): `--describe` statuses, findings and supervision flags
+- [x] 38-23-PLAN.md (wave 18): `ai-kit-cross-ai` SKILL.md and doc-contract test
+- [x] 38-24-PLAN.md (wave 19): dispatch doc, `runner.md`, READMEs, curated-config SKILL.md passages
+- [x] 38-25-PLAN.md (wave 20): template 10, live copy re-render, shard times re-recorded
+- [x] 38-26-PLAN.md (wave 21): judge loop, live sweep check, final `make test` (orchestrator action)
 
 ### Phase 38.1: Runner error classification and retry policy (INSERTED)
 
@@ -1264,7 +1298,7 @@ Plans:
 | 35. Model discovery and catalog | 28/28 | Complete    | 2026-11-20 |
 | 36. spec-config as the hub | 29/29 | Complete    | 2026-11-21 |
 | 37. Shared runner options and session ids | 26/26 | Complete    | 2026-11-21 |
-| 38. Runner hardening and run safety | 0/TBD | Not started | - |
+| 38. Runner hardening and run safety | 27/27 | Complete    | 2026-11-22 |
 | 38.1. Runner error classification and retry policy | 0/TBD | Not started | - |
 | 39. Lane capability blocks and lens skills | 0/TBD | Not started | - |
 | 40. Resilient review sized by jev | 0/TBD | Not started | - |

@@ -83,8 +83,9 @@ class TestRender(unittest.TestCase):
         # C-WR-04/PT-07: plans stamp TEMPLATE_VERSION; readiness is a floor at or below it.
         shipped = cross_ai_script.template_version(self.template)
         self.assertEqual(cross_ai.TEMPLATE_VERSION, shipped)
-        self.assertEqual(cross_ai_script._READY_TEMPLATE, shipped)
-        self.assertEqual(shipped, 9)
+        self.assertEqual(shipped, 10)
+        self.assertEqual(cross_ai_script._READY_TEMPLATE, 9)
+        self.assertLessEqual(cross_ai_script._READY_TEMPLATE, shipped)
 
     def test_project_paths_match_the_runner_dispatch_paths(self):
         # PT-07: the GSD hook names files this module renders.
