@@ -21,6 +21,7 @@ import sys
 from collections.abc import Callable
 from typing import Any, NamedTuple, TextIO
 
+from ai_kit_spec import capability_block, prompt_guard
 from ai_kit_spec.cache import cache_read_json, cache_write_json
 from ai_kit_spec.config_io import ConfigError
 from ai_kit_spec.detection import (
@@ -348,7 +349,14 @@ def _cmd_dispatch_task(args: argparse.Namespace, deps: CliDeps) -> int:
     guidance = _dispatch_guidance_for_cli(deps, args, injection, format_block)
     dispatch_request = DispatchTaskRequest(
         injection, prompt, args.target_dir, args.timeout)
-    result = deps.dispatch_superpowers_task_fn(dispatch_request, guidance=guidance)
+    try:
+        result = deps.dispatch_superpowers_task_fn(dispatch_request, guidance=guidance)
+    except capability_block.LaneRefused as exc:
+        deps.stdout.write(json.dumps({"runtime": injection.get("runtime"),
+                                      "model": injection.get("model"), "command": "", "stdout": "",
+                                      "returncode": prompt_guard.REFUSED_EXIT, "timed_out": False,
+                                      "reason": exc.record["reason"], "status": exc.record}))
+        return prompt_guard.REFUSED_EXIT
     _maybe_write_report_fallback(args, result, report_before)
     deps.stdout.write(json.dumps(result))
     return 0

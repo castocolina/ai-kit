@@ -1,11 +1,12 @@
 """36 SPEC R1, D-02: config-status says whether lanes are configured (active, pending or none)
-and which two files it checked. Read only: nothing is migrated, trusted or written.
+and which two files it checked. Read only: nothing is migrated, trusted or written; each lane's
+capability line comes from the runner's --print-argv dry run (39 R11), never a spawn of the lane.
 cli.py registers it; this module never imports cli.
 """
 
 import os
 
-from ai_kit_spec import config_io, config_migrate, trust
+from ai_kit_spec import capability_block, config_io, config_migrate, trust
 
 _ROLES = ("review", "execute")
 _PENDING = frozenset({"untrusted", "pending-migration"})
@@ -77,12 +78,29 @@ def config_status(
     return state, [("project", project_path, project), ("user", user_path, user)]
 
 
+def capability_lines(cwd: str, env: dict, role: str | None) -> list[str]:
+    """Return previews for the effective lanes in configuration order."""
+    resolved = config_io.cfg_resolve(cwd, env, warn_fn=lambda _line: None, migrate=False)
+    lines = []
+    for each_role in ((role,) if role else _ROLES):
+        for entry in resolved.get(each_role) or []:
+            if isinstance(entry, dict):
+                rt, model, text = capability_block.lane_summary(
+                    entry, each_role, cwd, env, capability_block.DEFAULT_SEAMS)
+                lines.append(f"capability {rt}/{model} {each_role}: {text}")
+    return lines
+
+
 def cmd_config_status(args, deps) -> int:
-    """Print the state and the two checked paths."""
-    state, checked = config_status(args.cwd, deps.env_fn(), args.role)
+    """Print the state, checked paths and effective lane previews."""
+    env = deps.env_fn()
+    state, checked = config_status(args.cwd, env, args.role)
+    lines = capability_lines(args.cwd, env, args.role) if state == "active" else []
     print(state)
     for layer, path, status in checked:
         print(f"checked {layer} {path} {status}")
+    for line in lines:
+        print(line)
     return 0
 
 

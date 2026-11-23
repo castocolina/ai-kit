@@ -26,7 +26,7 @@ sys.path.insert(
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute"))
 
 import detect_framework as router_detect_framework
-from ai_kit_spec import routing, runner_dispatch
+from ai_kit_spec import capability_block, routing, runner_dispatch
 from ai_kit_spec_superpowers import cli as superpowers_cli
 from ai_kit_spec_superpowers import dispatch_injection, task_classification
 
@@ -1803,6 +1803,35 @@ class TestResolveInjectionRouting(unittest.TestCase):
 
 
 class TestCliDispatchTask(unittest.TestCase):
+    def test_dispatch_task_refusal_exits_65(self):
+        record = {"status": "refused", "reason": "prompt_over_window", "detail": {}}
+        def refuse(*_args, **_kwargs):
+            raise capability_block.LaneRefused(record)
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt = os.path.join(tmp, "prompt.txt")
+            fmt = os.path.join(tmp, "format.md")
+            report = os.path.join(tmp, "task-1-report.md")
+            for path in (prompt, fmt):
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("task")
+            injection = {"mode": "external_cli", "runtime": "pi",
+                         "model": "fake/placeholder-model-1", "key": "r1"}
+            rc = superpowers_cli.main(
+                ["dispatch-task", "--injection-json", json.dumps(injection),
+                 "--prompt-file", prompt, "--target-dir", tmp, "--heartbeat-interval", "60",
+                 "--timeout", "900",
+                 "--format-block-file", fmt, "--report-file", report],
+                dispatch_superpowers_task_fn=refuse, detect_tool_availability_fn=lambda: {},
+                resolve_agents_tooling_path_fn=lambda: None, cbm_registered_fn=lambda _: False,
+                stdout=out)
+            self.assertFalse(os.path.exists(report))
+        payload = json.loads(out.getvalue())
+        self.assertEqual(rc, 65)
+        self.assertEqual(payload["returncode"], 65)
+        self.assertEqual(payload["status"], record)
+        self.assertEqual(dispatch_injection.classify_dispatch_failure(payload), "real_error")
+
     def test_dispatch_task_refuses_a_native_injection_with_a_clear_error(self):
         # HIGH finding: dispatch-task is the only real entry point that ever reaches
         # dispatch_superpowers_task -- a native injection must fail here with a clear,

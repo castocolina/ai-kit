@@ -1334,7 +1334,8 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
                 cwd=args.cwd,
                 files=None if args.files is None else tuple(args.files),
             ),
-            seams=ReviewerSeams(runner_tiers_fn=deps.runner_tiers_fn, custom_fn=deps.custom_fn),
+            seams=ReviewerSeams(runner_tiers_fn=deps.runner_tiers_fn, custom_fn=deps.custom_fn,
+                                compose_seams=capability_block.DEFAULT_SEAMS),
         )
     except LaneRefused as exc:
         print(json.dumps(exc.record, sort_keys=True), file=sys.stderr)
@@ -1352,6 +1353,18 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
         return result["returncode"] if result["returncode"] is not None else 1
     print(json.dumps(result))
     return 0
+
+def _capability_key(args, rid, extra, deps) -> str:
+    knobs = {**(extra if isinstance(extra, dict) else {}),
+             **({"effort": args.effort} if args.effort is not None else {})}
+    entry = {"model": args.model, "command": args.reviewer_command, "key": args.key,
+             "extra": knobs}
+    if rid is not None:
+        entry["runtime"] = rid
+    rt, model, text = capability_block.lane_summary(
+        entry, "review", os.getcwd(), deps.env_fn(), capability_block.DEFAULT_SEAMS)
+    return f"capability {rt}/{model} review: {text}"
+
 
 def _cmd_check_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     extra = json.loads(args.extra_json) if args.extra_json else {}
@@ -1376,6 +1389,7 @@ def _cmd_check_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
             key, problem = usability.record_usability(args.catalog_path, rid, args.model, record)
             result["usability"] = {"recorded": key is not None, "key": key,
                                    "problem": problem, "state": record["state"]}
+    result["capability"] = _capability_key(args, rid, extra, deps)
     for field in ("detail", "reason"):
         value = result.get(field)
         if isinstance(value, str):

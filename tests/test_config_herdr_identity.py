@@ -18,7 +18,7 @@ from unittest import mock
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import cli, herdr_source
+from ai_kit_spec import capability_block, cli, herdr_source
 from ai_kit_spec.detection import RUNTIMES_SCHEMA_VERSION
 from ai_kit_spec.model_catalog import CATALOG_SCHEMA_VERSION
 from ai_kit_spec.runner_dispatch import RunnerResult
@@ -107,6 +107,8 @@ class TestHerdrIdentity(unittest.TestCase):
             with (mock.patch.dict(os.environ, env, clear=True),
                   mock.patch("time.time", return_value=1000.0),
                   mock.patch("ai_kit_spec.effort_probe.print_argv_lines", _fake_preview),
+                  mock.patch.object(capability_block, "DEFAULT_SEAMS",
+                                    capability_block.ComposeSeams(print_argv_fn=lambda *_a: None)),
                   redirect_stdout(out), redirect_stderr(err)):
                 code = cli.main(argv, env_fn=lambda: dict(env), runner_fn=_fake_runner)
             runs.append((argv[0], code, out.getvalue(), err.getvalue()))

@@ -722,6 +722,32 @@ def register_parsers(sub) -> None:
 COMMANDS = {"capability-block": cmd_capability_block}
 
 
+def lane_summary(entry: dict, role: str, cwd: str, env: dict,
+                 seams: ComposeSeams) -> tuple[str, str, str]:
+    """Preview one resolved lane without executing it."""
+    roots = skill_table.skill_roots(seams.scan_fn(env, cwd))
+    omitted = guidance_paths(env, prompt_guard.repo_root(cwd), roots)[2]
+    notes = tuple(f"guidance omitted: {name} ({reason})" for name, reason in omitted)
+    label = escape_value(str(entry.get("model") or entry.get("key", "")))
+    if "runtime" not in entry and not entry.get("command"):
+        return "native", label, summary_line(None, "native", label, role, notes=notes)
+    runtime = entry.get("runtime")
+    if (("runtime" in entry and (not isinstance(runtime, str) or not runtime))
+            or ("extra" in entry and not isinstance(entry["extra"], dict))):
+        return (escape_value(repr(runtime)), label,
+                "invalid lane entry: runtime must be a string and extra a table")
+    if entry.get("command") and not runtime:
+        return "custom", label, summary_line(lane_facts([]), "custom", label, role, notes=notes)
+    assert isinstance(runtime, str)
+    rt = runtime_id(runtime)
+    knobs = {**entry, **(entry.get("extra") or {}), "cwd": cwd}
+    runner = spec_with_effort(rt, entry.get("model", ""),
+                              "review" if role == "review" else "exec", PREVIEW_TIMEOUT_S, knobs)
+    shown = escape_value(rt)
+    return shown, label, summary_line(lane_facts(seams.print_argv_fn(runner, env)),
+                                      shown, label, role, notes=notes)
+
+
 def summary_line(facts: LaneFacts | None, runtime: str, model: str, role: str,
                  notes: tuple = ()) -> str:
     """Return facts for the capability summary; runtime and model belong to its prefix."""

@@ -6,11 +6,12 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import cli, config_io, config_migrate
+from ai_kit_spec import capability_block, cli, config_io, config_migrate
 
 REVIEW_LANE = '[[lanes.review]]\nkey = "{key}"\nruntime = "codex"\nmodel = "placeholder-model-1"\n'
 COMMAND_LANE = ('[[lanes.review]]\nkey = "c1"\nmodel = "placeholder-model-2"\n'
@@ -43,7 +44,9 @@ class _StatusCase(unittest.TestCase):
 
     def run_status(self, *extra):
         out, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
+        seams = capability_block.ComposeSeams(print_argv_fn=lambda *_a: None)
+        with (redirect_stdout(out), redirect_stderr(err),
+              mock.patch.object(capability_block, "DEFAULT_SEAMS", seams)):
             code = cli.main(["config-status", "--cwd", self.cwd, *extra],
                             env_fn=lambda: dict(self.env))
         return code, out.getvalue().splitlines(), err.getvalue()
@@ -51,10 +54,11 @@ class _StatusCase(unittest.TestCase):
     def expect(self, state, project, user, *extra):
         code, lines, err = self.run_status(*extra)
         self.assertEqual(code, 0, err)
-        self.assertEqual(lines, [
+        self.assertEqual(lines[:3], [
             state, f"checked project {os.path.abspath(self.project_path())} {project}",
             f"checked user {self.user_path()} {user}",
         ])
+        self.assertTrue(all(line.startswith("capability ") for line in lines[3:]), lines)
 
 
 class TestConfigStatusTracer(_StatusCase):
