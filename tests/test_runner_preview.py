@@ -36,7 +36,7 @@ from ai_kit_spec.runner_dispatch import (
     runner_flags,
 )
 
-from tests.cross_ai_selftest import _real_node_executable
+from tests.cross_ai_selftest import require_real_node
 
 REPO = Path(__file__).resolve().parents[1]
 SOURCE_ROOTS = ("skills", "tools")
@@ -213,10 +213,50 @@ class TestPreviewReaders(unittest.TestCase):
                 self.assertIsNone(print_argv_lines(spec, seams, run))
 
 
+def _node_gate_outcome(repo_root: str, path: str) -> unittest.TestResult:
+    """Run one inner test that needs node, with a synthetic PATH and repo root."""
+
+    class Inner(unittest.TestCase):
+        def test_needs_node(self):
+            require_real_node(self, repo_root=repo_root)
+
+    result = unittest.TestResult()
+    with patch.dict(os.environ, {"PATH": path}):
+        Inner("test_needs_node").run(result)
+    return result
+
+
+class TestRequireRealNode(unittest.TestCase):
+    """A missing node fails in a checkout and skips only in the clean room (no .git)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.empty_path = Path(tmp.name) / "bin"
+        self.empty_path.mkdir()
+        self.repo = Path(tmp.name) / "repo"
+        self.repo.mkdir()
+
+    def test_no_node_in_a_checkout_fails(self):
+        (self.repo / ".git").mkdir()
+        result = _node_gate_outcome(str(self.repo), str(self.empty_path))
+        self.assertEqual((len(result.failures), len(result.skipped)), (1, 0))
+        self.assertIn("no real node executable on PATH", result.failures[0][1])
+
+    def test_no_node_in_a_worktree_checkout_fails(self):
+        (self.repo / ".git").write_text("gitdir: /elsewhere\n", encoding="utf-8")
+        result = _node_gate_outcome(str(self.repo), str(self.empty_path))
+        self.assertEqual((len(result.failures), len(result.skipped)), (1, 0))
+
+    def test_no_node_in_the_clean_room_skips(self):
+        result = _node_gate_outcome(str(self.repo), str(self.empty_path))
+        self.assertEqual((len(result.failures), len(result.skipped)), (0, 1))
+        self.assertIn("clean-room", result.skipped[0][1])
+
+
 class TestLaneFactsFromTheRunner(unittest.TestCase):
     def setUp(self):
-        self.node = _real_node_executable()
-        self.assertIsNotNone(self.node, "no real node executable on PATH")
+        self.node = require_real_node(self)
 
     def _run(self, tmp, spec):
         node = self.node

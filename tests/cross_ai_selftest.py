@@ -52,6 +52,19 @@ def _real_node_executable() -> str | None:
     return proc.stdout if proc.returncode == 0 and os.path.isfile(proc.stdout) else None
 
 
+def require_real_node(test: unittest.TestCase, message: str = "no real node executable on PATH",
+                      repo_root: str = REPO_ROOT) -> str:
+    """The real node path for a test that needs it. A missing node fails the test in a checkout
+    (39-06, 39-07, 39-11: a visible failure, never a silent skip) and skips it only in the
+    clean-room container, whose build context has no `.git` (tests/e2e/docker/run.sh)."""
+    node = _real_node_executable()
+    if node is not None:
+        return node
+    if not os.path.exists(os.path.join(repo_root, ".git")):
+        test.skipTest("no real node executable in the clean-room container (no .git)")
+    test.fail(message)
+
+
 _RESOLVED_TEMPLATE = resolve_cross_ai_template_path()
 assert _RESOLVED_TEMPLATE is not None, "the shipped runner template is missing"
 TEMPLATE = _RESOLVED_TEMPLATE

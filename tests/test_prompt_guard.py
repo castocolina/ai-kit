@@ -17,7 +17,7 @@ from ai_kit_spec import config_io, prompt_guard
 from ai_kit_spec.model_catalog import CATALOG_SCHEMA_VERSION
 from ai_kit_spec.runner_facts import read_runner_describe
 
-from tests.cross_ai_selftest import _real_node_executable
+from tests.cross_ai_selftest import _real_node_executable, require_real_node
 
 NODE = _real_node_executable()
 
@@ -239,7 +239,7 @@ class TestWindowCheck(unittest.TestCase):
 class TestRefusalDisjoint(unittest.TestCase):
     def setUp(self):
         if NODE is None:
-            self.fail("node not on PATH: the disjointness checks need the real node")
+            require_real_node(self, "node not on PATH: the disjointness checks need the real node")
 
     def test_reasons_disjoint_from_runner_lists(self):
         obj = read_runner_describe(NODE, str(TEMPLATE))["describe"]

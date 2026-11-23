@@ -29,7 +29,7 @@ from ai_kit_spec.lens_delivery import (
 from ai_kit_spec.prompt_guard import REFUSAL_REASONS
 from ai_kit_spec.runner_dispatch import RunnerSeams, RunnerSpec, child_env, print_argv_lines
 
-from tests.cross_ai_selftest import _real_node_executable
+from tests.cross_ai_selftest import require_real_node
 
 
 def skill(root, dir_name, data: bytes) -> str:
@@ -182,9 +182,7 @@ class TestPins(unittest.TestCase):
         self.assertEqual(len(set(LENS_NOTES)), 5)
         self.assertIn(HOST_CANNOT_LOAD, LENS_NOTES)
         self.assertTrue(set(LENS_NOTES).isdisjoint(REFUSAL_REASONS))
-        node = _real_node_executable()
-        self.assertIsNotNone(node)
-        assert node is not None
+        node = require_real_node(self)
         template = tooling_guidance.resolve_cross_ai_template_path()
         with (tempfile.TemporaryDirectory() as tmp,
               patch.dict(os.environ, {"HOME": tmp, "AI_KIT_REFUSE_REAL_HOME": "1"})):
@@ -233,8 +231,7 @@ class TestMcpPick(unittest.TestCase):
 
 class TestRunnerSync(unittest.TestCase):
     def setUp(self):
-        self.node = _real_node_executable()
-        self.assertIsNotNone(self.node, "no real node executable on PATH")
+        self.node = require_real_node(self)
 
     def _run(self, tmp, spec):
         node = self.node
