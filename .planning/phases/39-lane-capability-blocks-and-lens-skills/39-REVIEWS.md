@@ -1671,3 +1671,13 @@ The checker confirmed the adapter path (`ExecuteDispatchSpec.files` defaults to 
 (no same-wave file overlap) and that 39-06 alone owns the R7 bracket rule. Its edge and structure checks were partial; the
 orchestrator then ran them mechanically on all 19 plans: `verify plan-structure` and `frontmatter validate --schema plan` 38/38 valid
 (after two criterion fixes in 39-15), every one of the 67 Edge Coverage rows and all 10 Prohibitions named in at least one plan.
+
+### Plan check, second pass (the four checks the first pass left partial)
+
+No blocker, 2 warnings: 39-14's test used 39-12's `CAP_LINE` by reference (fixed: the literal is in 39-14's task); the R10 adjacency
+edge row has no test whose name matches (39-09 `test_per_host_global_roots_only` may cover it; not confirmed, open, low). Shared names
+of 39-01..39-09 against their users: consistent. Every SPEC acceptance item has a named test or gate (matched by name, not by
+body). About 40 edge rows and the 10 prohibitions were traced by name only. The orchestrator also removed a duplicate never-raising
+reader (39-04's `seed_and_user`; 39-01's `table_inputs` is the one helper), added dated SPEC notes for the remaining plan
+deviations (R3 the capability function sits where the argv is final; R4 route 2 and the write-unknown confinement line; R5 the
+20,000-token acceptance case; R8 a not-yet-existing path; R11 saved native lanes) and the R8 idempotency edge row (68/68).

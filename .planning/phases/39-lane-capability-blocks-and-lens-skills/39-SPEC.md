@@ -3,7 +3,8 @@
 **Created:** 2026-11-16
 **Ambiguity score:** 0.16 (gate: ≤ 0.20)
 **Requirements:** 12 locked *(amended 2026-11-23, cross-phase amendment for what Phases 37, 38 and 38.1 shipped: still 12; R1, R3 to
-R9, R11 and R12 carry dated notes; see "Live facts added 2026-11-23")*
+R9, R11 and R12 carry dated notes, and the plan fix pass added notes to R2, R3, R4, R5, R7, R8, R10 and R11; see "Live facts added
+2026-11-23")*
 
 ## Goal
 
@@ -275,7 +276,10 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      its example `'mcp__radius__*'`, `:126`, names MCP tools only), so of the R3 boundary edge's "a wildcard is `yes`" only a bare `*`
      gives `yes`; any other pattern gives `unknown`, never a guess. copilot review's `--disable-builtin-mcps` disables the built-in
      servers only (`tests/fixtures/cli_help/copilot/help.txt:121-123`), so its `mcp` is `unknown`, not `none` (CONTEXT D-02's
-     "no MCP" for copilot review reads as unknown).
+     "no MCP" for copilot review reads as unknown). `planSettings` runs before the formula builds the final argv
+     (`cross-ai.mjs:2122-2127`, then the formula at `:7045-7046`), so the "one pure function over the row, the role and the final
+     argv" is `laneCapabilities(row, role, argv, report)`, called where the argv is final (the `--print-argv` block); the planner's
+     result keeps its shape.
 
 4. **Each lane's prompt carries a capability block built from those facts (REV-04)**.
    - Current: `build_tooling_guidance` emits `SHARED_TOOLING_PATH`, `AGENTS_TOOLING_PATH`, a `TOOL_AVAILABILITY` JSON line from
@@ -306,6 +310,12 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      hook string; `SETTING_LINE_RE` gains the optional `form=`). The code index line has three routes, first match wins: the R1
      run-scoped file applied for this call (MCP tool list, "enabled for this call"), a host config registration with `mcp` not
      `none` (MCP tool list, the existing evidence phrase), the CLI form when `shell` is not `no`; never two lines.
+   - *Amended 2026-11-23, plan fix pass (read in the code):* route 2 needs `mcp` `host_config` or `unknown`: with a call file applied,
+     claude also gets `--strict-mcp-config` (`cross-ai.mjs:1898`), so a host registration proves nothing for that lane. For an
+     execute lane whose `write` is `unknown`, the existing soft-confinement sentence states "NO operating-system-level write
+     confinement" (`execute_dispatch.py:44-47`), more than an unknown fact supports; by this requirement's rule for unknown facts the
+     block gives that lane the same instruction (write only inside the working directory) with "make no assumption" and without
+     the confinement claim (39-10 `UNKNOWN_CONFINEMENT_LINE`); `write` `full` keeps the sentence word for word (CONTEXT D-04 note).
 
 5. **Lens skills reach each lane by path where it can load them and inlined where it cannot (REV-03)**.
    - Current: no lens reaches a spec-review lane; `ai-kit-spec-review` mentions no lens; the GSD agent wiring (LENS-01) is separate.
@@ -342,7 +352,9 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      recorded host (label unverified), else noted `built_in_no_file`; with `simplify` seeded `edit_lens`, that rule applies in the
      R9 pass, and the acceptance case runs with the `edit_lens` role. The concurrency backstop "lens files are read once per
      dispatch" holds for the Python side; the runner reads each `--skill-path` file again at the preview and at the launch
-     (`loadSkills`, `cross-ai.mjs:6495-6503`), a stated check-then-use limit like R8's.
+     (`loadSkills`, `cross-ai.mjs:6495-6503`), a stated check-then-use limit like R8's. The acceptance case "a lane with a window of
+     4,000 tokens skips a 20,000-token lens" is tested on the budget function with the size given: a real 20,000-token body
+     (about 80,000 bytes) is over the runner's 65,536-byte read cap, so in a dispatch it gets `path_rejected` before the budget runs.
 
 6. **A runner setting passes skill paths where a host has a form (REV-03, REV-04)**.
    - Current: the runner has no way to give a lane a skill path; pi review argv carries `--no-skills`.
@@ -431,7 +443,9 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      lies outside the dispatch's repository root: as the edge row for a sibling checkout says, it is rejected
      (`path_outside_roots`), never passed around the validator; the skill text tells the caller to review such a set one worktree
      at a time. The checklist and framework-profile paths the review skill writes into its own prompt text lie in the installed
-     skill's directory, a skill root, and are passed in the file list like every other embedded path.
+     skill's directory, a skill root, and are passed in the file list like every other embedded path. A path that does not exist
+     yet (an execute plan names files it will create) is not unresolvable: its existing parent folders and links are resolved and
+     the containment check applies to that real parent; `path_unresolvable` is for a value whose resolution fails (39-03).
 
 9. **File-editing lenses run as an optional pass after approval (REV-03)**.
    - Current: no lens runs after a review; the review loop ends at approval.
@@ -480,7 +494,9 @@ on unit 38.1's review fold; every line below was read in the code or run under a
     - *Amended 2026-11-23 (Phase 36 shipped; Live facts added 2026-11-23):* `check-reviewer` prints one JSON object, so its summary
       is one more string key, `capability`, in that object; `config-status` prints per-layer lines, so it gains one
       `capability <runtime>/<model> <role>: <summary>` line per lane of the resolved `[lanes]` table after them. Both come from the
-      builder with no spawn of the lane (the `--print-argv` call is the runner's read-only dry run).
+      builder with no spawn of the lane (the `--print-argv` call is the runner's read-only dry run). *(plan fix pass, read in the
+      code: the lane resolver drops a stored `route` field (`_combine_role` calls `_drop_stored_routes`, `config_io.py:680-691`), so a saved lane counts as native only when it has
+      neither a runtime nor a command; its summary reads `native lane, no tool claims`)*
 
 12. **Skill text, docs, closed lists and the judge bar (JDG-04, HUB-09)**.
     - Current: `ai-kit-spec-review/SKILL.md`, `references/tooling-guidance.md`, `reviewer-prompts.md` and `cross-ai-dispatch.md`
@@ -563,7 +579,7 @@ on unit 38.1's review fold; every line below was read in the code or run under a
 
 ## Edge Coverage
 
-**Coverage:** 64/64 applicable edges resolved · 0 unresolved (64 engine rows from `edge_floor.py floor`) *(amended 2026-11-23: R5 gained 2 engine rows and, in the plan fix pass, R7 gained 1, each marked `(added 2026-11-23 ...)`, 67/67)*
+**Coverage:** 64/64 applicable edges resolved · 0 unresolved (64 engine rows from `edge_floor.py floor`) *(amended 2026-11-23: R5 gained 2 engine rows and, in the plan fix pass, R7 and R8 gained 1 each, each marked `(added 2026-11-23 ...)`, 68/68)*
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -615,6 +631,7 @@ on unit 38.1's review fold; every line below was read in the code or run under a
 | encoding | R8 | ✅ covered | Control characters are matched by Unicode category and the listed code points after no normalization; a non-NFC name is compared as given (the filesystem decides equality) |
 | ordering | R8 | ✅ covered | The first bad value in the list is named with its position; all bad values are reported in one result so a caller fixes them together |
 | concurrency | R8 | 🧪 backstop | A path can change between check and spawn (check-then-use); the validator runs immediately before the spawn and the limit is stated |
+| idempotency | R8 | 🧪 backstop | Validating the same values twice gives the same rejections in the same order; the validator reads paths and writes nothing (added 2026-11-23: R8's plan fix-pass note changed its text and its edge floor gained this row) |
 | adjacency | R9 | ✅ covered | An approved file that a lens would edit and that is also on a rejected path is skipped by name, the others continue |
 | empty | R9 | ✅ covered | No present `edit_lens` skill, or an empty approved file list, runs no pass and says so |
 | encoding | R9 | ✅ covered | Pre-pass content is stored as bytes and restored as bytes (a test restores a file with non-UTF-8 content) |
