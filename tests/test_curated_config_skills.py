@@ -1,13 +1,18 @@
 """Skill scan and System One backend detection for curated-config inventory (18-03)."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
+from typing import cast
 from unittest import mock
 
 sys.path.insert(
@@ -16,7 +21,18 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_gsd_curated_config import host, plan_io, recommend, skill_scan, skills
+from ai_kit_gsd_curated_config import cli as curated_cli
+from ai_kit_gsd_curated_config import (
+    gsd_catalog,
+    host,
+    inventory,
+    plan_io,
+    recommend,
+    skill_scan,
+    skills,
+)
+from ai_kit_spec import cli as spec_cli
+from ai_kit_spec import skill_table
 
 from tests.test_curated_config_golden import tables_answer
 from tests.test_curated_config_inventory import (
@@ -26,6 +42,26 @@ from tests.test_curated_config_inventory import (
     run_inventory,
 )
 from tests.test_curated_config_recommend import entry_map, make_inventory, run_recommend
+
+FROZEN_VISIBILITY = (
+    '{"claude": ["ponytail", "ponytail-gain", "ponytail-help"], '
+    '"codex": ["ponytail-audit", "ponytail-debt", "ponytail-review"], '
+    '"opencode": ["ponytail"], "cursor": [], "pi": []}'
+)
+
+
+def _fake_jev(answers, calls):
+    def run(args, input=None, **kwargs):
+        calls.append((input, kwargs.get("cwd")))
+        assert input is not None
+        items = json.loads(input)["items"]
+        rows = {}
+        for item in items:
+            name = item["context"][len("Skill name: "):].split(".", 1)[0]
+            if name in answers:
+                rows[item["id"]] = {"decided_by": "fake", "fake": answers[name]}
+        return subprocess.CompletedProcess(args, 0, stdout=json.dumps({"items": rows}), stderr="")
+    return run
 
 
 def make_home(root: str) -> str:
@@ -137,6 +173,114 @@ class TestSkillInventoryEndToEnd(unittest.TestCase):
         ponytail_vis = parsed["ponytail_visibility"]
         self.assertEqual(set(ponytail_vis.keys()), set(host.HOSTS))
         self.assertTrue(all(not names for names in ponytail_vis.values()))
+
+    def test_inventory_carries_skill_roles_with_copilot(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        project = os.path.join(root, "project")
+        os.makedirs(project)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        add_skill(os.path.join(home, ".copilot", "skills"), "lens-a")
+        code, parsed, _err = run_inventory(
+            project, _inventory_env(home), FakeRun(node_stdout=self._node_answer(home)),
+            "--host", "claude",
+        )
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertEqual(set(parsed["skill_roles"]),
+                         {"claude", "codex", "opencode", "cursor", "copilot", "pi", "agents"})
+        rows = parsed["skill_roles"]["copilot"]["skills"]
+        self.assertEqual([row["name"] for row in rows], ["lens-a"])
+        self.assertEqual(rows[0]["role"], "unsorted")
+        self.assertEqual(set(parsed["ponytail_visibility"]), set(host.HOSTS))
+        self.assertEqual(parsed["skill_roles"]["cursor"]["skills"], [])
+        self.assertIsNone(plan_io._validate_inventory(parsed))
+
+    def test_skill_under_two_hosts_once_per_host_in_skill_roles_and_visibility(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        project = os.path.join(root, "project")
+        os.makedirs(project)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        add_skill(os.path.join(home, ".claude", "skills"), "ponytail")
+        add_skill(os.path.join(home, ".config", "opencode", "skills"), "ponytail")
+        code, parsed, _err = run_inventory(
+            project, _inventory_env(home), FakeRun(node_stdout=self._node_answer(home)),
+            "--host", "claude",
+        )
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        for name in ("claude", "opencode"):
+            self.assertEqual([r["name"] for r in parsed["skill_roles"][name]["skills"]].count(
+                "ponytail"), 1)
+            self.assertEqual(parsed["ponytail_visibility"][name], ["ponytail"])
+
+    def test_missing_skill_table_module(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        project = os.path.join(root, "project")
+        os.makedirs(project)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        add_skill(os.path.join(home, ".claude", "skills"), "ponytail")
+        real = gsd_catalog.load_ai_kit_spec_module
+        with mock.patch.object(
+            gsd_catalog, "load_ai_kit_spec_module",
+            side_effect=lambda name: None if name == "skill_table" else real(name),
+        ):
+            code, parsed, _err = run_inventory(
+                project, _inventory_env(home), FakeRun(node_stdout=self._node_answer(home)),
+                "--host", "claude",
+            )
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertNotIn("skill_roles", parsed)
+        self.assertIn(inventory._SKILL_TABLE_MISSING_WARN, parsed["warnings"])
+        self.assertEqual(parsed["ponytail_visibility"]["claude"], ["ponytail"])
+        self.assertIsNone(plan_io._validate_inventory(parsed))
+
+    def test_malformed_roles_config_warns(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        project = os.path.join(root, "project")
+        os.makedirs(os.path.join(project, ".aikit"))
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        with open(os.path.join(project, ".aikit", "config.toml"), "w", encoding="utf-8") as fh:
+            fh.write("[skills.roles")
+        code, parsed, _err = run_inventory(
+            project, _inventory_env(home), FakeRun(node_stdout=self._node_answer(home)),
+            "--host", "claude",
+        )
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertTrue(parsed["skill_roles"]["claude"]["notes"][0].startswith(
+            "skills.roles ignored: "
+        ))
+        warnings = [w for w in parsed["warnings"] if w.startswith(
+            "skill_roles: skills.roles ignored: "
+        )]
+        self.assertEqual(len(warnings), 1)
+        self.assertIsNone(plan_io._validate_inventory(parsed))
+
+    def test_missing_sibling_fails_as_before(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        project = os.path.join(root, "project")
+        os.makedirs(project)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        with mock.patch.object(
+            gsd_catalog, "load_ai_kit_spec_module", side_effect=lambda name: None
+        ):
+            code, _parsed, err = run_inventory(
+                project, _inventory_env(home), FakeRun(node_stdout=self._node_answer(home)),
+                "--host", "claude",
+            )
+        self.assertNotEqual(code, 0)
+        self.assertIn(gsd_catalog.SIBLING_MISSING, err)
 
     def test_host_list_passed_and_null_current_root_warns(self):
         """C-IN-07: the node query reads host.HOSTS; a null root for this host warns."""
@@ -458,6 +602,39 @@ class TestReadJson(unittest.TestCase):
 
 
 class TestPonytailVisibility(unittest.TestCase):
+    def test_table_unavailable_keeps_five_hosts(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        expected = {h: [] for h in host.HOSTS}
+        missing_roots = cast(dict, None)
+        self.assertEqual(skill_scan.ponytail_visibility(missing_roots, home, skill_table), expected)
+        self.assertEqual(skill_scan.ponytail_visibility(missing_roots, home, None), expected)
+
+    def test_byte_equal_with_old_output(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        roots = {
+            "claude": os.path.join(home, ".claude", "skills"),
+            "codex": os.path.join(home, ".agents", "skills"),
+            "opencode": os.path.join(home, ".config", "opencode", "skills"),
+            "cursor": None,
+            "pi": os.path.join(home, ".pi", "agent", "skills"),
+        }
+        for name in ("ponytail", "ponytail-gain", "ponytail-help", "reducing-entropy", "other-a"):
+            add_skill(roots["claude"], name)
+        for name in ("ponytail-review", "ponytail-audit", "ponytail-debt", "lens-a"):
+            add_skill(roots["codex"], name)
+        for name in ("ponytail", "lens-b"):
+            add_skill(roots["opencode"], name)
+        self.assertEqual(
+            json.dumps(skill_scan.ponytail_visibility(roots, home, skill_table)), FROZEN_VISIBILITY
+        )
+        self.assertEqual(
+            json.dumps(skill_scan.ponytail_visibility(roots, home, None)), FROZEN_VISIBILITY
+        )
+
     def test_per_host_global_roots_only(self):
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
@@ -482,13 +659,29 @@ class TestPonytailVisibility(unittest.TestCase):
             return real(path, *args, **kwargs)
 
         with mock.patch.object(skill_scan.os.path, "realpath", spy):
-            vis = skill_scan.ponytail_visibility(roots, home)
+            vis = skill_scan.ponytail_visibility(roots, home, skill_table)
         # C-IN-04: the real home is used, never realpath("") (the process cwd).
         self.assertEqual(cwd_reads, [])
         self.assertEqual(vis["codex"], ["ponytail", "ponytail-review"])
         for host_name in host.HOSTS:
             if host_name != "codex":
                 self.assertEqual(vis[host_name], [])
+
+
+    def test_tuple_removed(self):
+        self.assertFalse(hasattr(skill_scan, "PONYTAIL_SKILLS"))
+
+    def test_family_rule_lists_new_ponytail_names(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        claude = os.path.join(home, ".claude", "skills")
+        add_skill(claude, "ponytail-extra")
+        add_skill(claude, "ponytailx")
+        self.assertEqual(
+            skill_scan.ponytail_visibility({"claude": claude}, home, skill_table)["claude"],
+            ["ponytail-extra"],
+        )
 
 
 class _FakeSocket:
@@ -1519,6 +1712,81 @@ class TestSkillsLayer(unittest.TestCase):
         ]
         wired = entry_map(_plan_with_affinity(inv))
         self.assertEqual(wired["agent_skills.gsd-debugger"]["value"], ["systematic-debugging"])
+
+
+class TestSkillSortCommands(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.home = os.path.join(self.temp.name, "home")
+        self.project = os.path.join(self.temp.name, "project")
+        os.makedirs(self.project)
+        self.env = lambda: {"HOME": self.home}
+        self.path = os.path.join(self.project, ".aikit", "config.toml")
+
+    def test_classify_skills_same_output_as_review_package(self):
+        add_skill(os.path.join(self.home, ".agents", "skills"), "lens-a",
+                  "Reviews plans for flaws")
+        calls = []
+        fake = _fake_jev({"lens-a": {"choice": "review_lens", "top": 0.9}}, calls)
+        # Pin discovery to a synthetic client regardless of the checkout's installed skills.
+        entry = os.path.join(self.temp.name, "jev_review.py")
+        with open(entry, "w", encoding="utf-8") as handle:
+            handle.write("# fake client, never run\n")
+        outputs = []
+        with mock.patch("ai_kit_spec.jev_names.find_jev", return_value=entry):
+            for cli in (curated_cli, spec_cli):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code = cli.main(["classify-skills", "--cwd", self.project],
+                                    run_fn=fake, env_fn=self.env)
+                self.assertEqual(code, 0)
+                outputs.append(output.getvalue())
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertIn("proposal lens-a role=review_lens confidence=0.90 advisory", outputs[0])
+        self.assertEqual(len(calls), 2)
+
+    def test_confirm_skill_role_writes_same_entry(self):
+        args = ["confirm-skill-role", "--name", "lens-a", "--role", "review_lens",
+                "--cwd", self.project]
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(curated_cli.main(args, env_fn=self.env), 0)
+        with open(self.path, "rb") as handle:
+            self.assertEqual(tomllib.load(handle), {"skills": {"roles": {"lens-a": "review_lens"}}})
+        args[4] = "unsorted"
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            self.assertEqual(curated_cli.main(args, env_fn=self.env), 2)
+        self.assertIn("confirm-skill-role: invalid role 'unsorted'", error.getvalue())
+        with open(self.path, "rb") as handle:
+            self.assertEqual(tomllib.load(handle), {"skills": {"roles": {"lens-a": "review_lens"}}})
+
+    def test_other_commands_never_load_the_sort_module(self):
+        def load(name):
+            if name == "skill_classify":
+                raise SyntaxError("a broken or newer sibling install")
+            return real(name)
+
+        real = gsd_catalog.load_ai_kit_spec_module
+        with mock.patch.object(gsd_catalog, "load_ai_kit_spec_module", side_effect=load):
+            args = curated_cli._build_parser().parse_args(["ensure-project", "--project-dir", "x"])
+        self.assertEqual(args.command, "ensure-project")
+
+    def test_missing_module_prints_sibling_note(self):
+        real = gsd_catalog.load_ai_kit_spec_module
+        commands = (["classify-skills", "--cwd", self.project],
+                    ["confirm-skill-role", "--name", "lens-a", "--role", "review_lens",
+                     "--cwd", self.project])
+        with mock.patch.object(gsd_catalog, "load_ai_kit_spec_module",
+                               side_effect=lambda name: None if name == "skill_classify"
+                               else real(name)):
+            for args in commands:
+                error = io.StringIO()
+                with contextlib.redirect_stderr(error):
+                    self.assertEqual(curated_cli.main(args, env_fn=self.env), 2)
+                self.assertEqual(error.getvalue(),
+                                 f"ai-kit-gsd-curated-config: {gsd_catalog.SIBLING_MISSING}\n")
+        self.assertFalse(os.path.exists(self.path))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,7 @@
+# Loop 39 round 1 fixes: ai-kit-gsd-curated-config
+
+decide.py row: fix (3 high findings, bar met); no further judge round (AGENTS.md fix rule).
+
+- D8-1 (referee-one, high): the `resolve_model_ids: omit` sentence claimed an empty model for every agent. It now keeps the unset rule and says the effect depends on the gsd-core release: older releases return an empty model, gsd-core 1.22.0 returns the agent's Claude tier alias (tests/test_ai_kit_gsd_curated_config_matrix.py:144-146), so a specific effect is claimed only after the target's own `resolve-model`. File: skills/ai-kit-gsd-curated-config/SKILL.md (step 3, Removals).
+- D8-2 (referee-one, high): "gets one wait and the same lane again" contradicted ai-kit-cross-ai section 6. The sentence now makes sections 6-8 the one retry procedure: one re-invoke only through section 6's confirmed one-shot wake or its print-and-stop handoff, never a wait inside the session; GSD dispatches stay report-only. File: skills/ai-kit-gsd-curated-config/SKILL.md (Cross-AI execution).
+- D8-8 (referee-one, high): `confirm-skill-role` left the target implicit (skill_classify.py:180-181 defaults to the current directory). Both commands now carry `--cwd "<target>"`, the written file `<target>/.aikit/config.toml` is named before asking, and `--global` is used only when the user asks for the user file. File: skills/ai-kit-gsd-curated-config/SKILL.md (Skill roles bullet).

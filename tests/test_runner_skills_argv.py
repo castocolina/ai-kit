@@ -11,6 +11,7 @@ from tests.cross_ai_selftest import _real_node_executable
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TEMPLATE = os.path.join(REPO_ROOT, "skills", "ai-kit-spec-review", "references", "cross-ai.mjs")
+CAPS_FIXTURE = os.path.join(REPO_ROOT, "tests", "fixtures", "runner_capabilities.json")
 LANE_ID = {
     "claude": "placeholder-model-1", "codex": "placeholder-model-1",
     "copilot": "placeholder-model-1", "cursor": "placeholder-model-1",
@@ -262,3 +263,68 @@ class TestSkillUsageErrors(_SkillCase):
                 self.assertTrue(any(line.startswith('cross-ai: ') and flag in line
                                     for line in lines))
                 self.assertNotIn(key, proc.stderr)
+
+
+class TestCapabilitiesLine(_SkillCase):
+    @staticmethod
+    def _caps(proc):
+        prefix = "cross-ai: capabilities "
+        line = next(line for line in proc.stderr.splitlines() if line.startswith(prefix))
+        return json.loads(line[len(prefix):])
+
+    def test_fixture_table(self):
+        skill = self._write_skill("lens-a")
+        mcp = os.path.join(self.cwd, "cap-mcp.json")
+        with open(mcp, "w", encoding="utf-8") as file:
+            json.dump({"mcpServers": {"placeholder-server-a": {"command": "placeholder-cmd"}}},
+                      file)
+        os.chmod(mcp, 0o600)
+        with open(CAPS_FIXTURE, encoding="utf-8") as file:
+            lanes = json.load(file)["lanes"]
+        for lane in lanes:
+            rt, mode = lane["runtime"], lane["mode"]
+            with self.subTest(runtime=rt, mode=mode, extra=lane["extra"]):
+                extra = [{"<SKILL>": skill, "<MCP>": mcp}.get(arg, arg)
+                         for arg in lane["extra"]]
+                proc = self._run("--runtime", rt, "--mode", mode, "--model", lane["model"], *extra)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                lines = [line for line in proc.stderr.splitlines()
+                         if line.startswith("cross-ai: capabilities ")]
+                self.assertEqual(len(lines), 1, proc.stderr)
+                caps = self._caps(proc)
+                values = {}
+                for field in ("write", "shell", "skills", "mcp"):
+                    item = caps[field]
+                    self.assertEqual(set(item), {"value", "label"})
+                    self.assertIsInstance(item["label"], dict)
+                    self.assertEqual(set(item["label"]), {"state", "source"})
+                    self.assertIn(item["label"]["state"], ("verified", "unverified", "unknown"))
+                    self.assertIsInstance(item["label"]["source"], str)
+                    self.assertTrue(item["label"]["source"])
+                    values[field] = item["value"]
+                values["prompt"] = caps["prompt"]
+                self.assertEqual(values, lane["capabilities"])
+
+    def test_line_follows_skill_lines(self):
+        skill = self._write_skill("lens-a")
+        proc = self._run("--runtime", "claude", "--mode", "review", "--model",
+                         LANE_ID["claude"], "--skill-path", skill)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        lines = proc.stderr.splitlines()
+        caps = [i for i, line in enumerate(lines) if line.startswith("cross-ai: capabilities ")]
+        self.assertEqual(len(caps), 1, proc.stderr)
+        self.assertTrue(any(line.startswith("cross-ai: skill-block lens-a ") for line in lines))
+        skill_lines = [i for i, line in enumerate(lines)
+                       if line.startswith(("cross-ai: setting ", "cross-ai: skill-block "))]
+        self.assertEqual(caps[0], skill_lines[-1] + 1)
+
+    def test_stdout_keeps_three_fields(self):
+        proc = self._run("--runtime", "pi", "--mode", "review", "--model", LANE_ID["pi"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        caps = [line for line in proc.stderr.splitlines()
+                if line.startswith("cross-ai: capabilities ")]
+        self.assertEqual(len(caps), 1, proc.stderr)
+        lines = [line for line in proc.stdout.splitlines() if line.strip()]
+        self.assertEqual(len(lines), 1, proc.stdout)
+        self.assertEqual(len(lines[0].split("\t")), 3)
+        self.assertTrue(all("capabilities" not in line for line in proc.stdout.splitlines()))

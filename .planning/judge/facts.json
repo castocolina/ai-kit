@@ -103,7 +103,7 @@
    "queries": null
   },
   "ai-kit-spec-config": {
-   "evals": 19,
+   "evals": 21,
    "modules": [
     "tests/test_ai_kit_spec_check_providers.py",
     "tests/test_ai_kit_spec_runtimes_table.py",
@@ -147,6 +147,7 @@
     "tests/test_cross_ai_skill_text.py",
     "tests/test_flow_docs.py",
     "tests/test_lane_settings.py",
+    "tests/test_lens_delivery.py",
     "tests/test_quota_policy_text.py",
     "tests/test_role_orders.py",
     "tests/test_skill_text_history.py",
@@ -211,7 +212,7 @@
    "queries": 20
   },
   "ai-kit-spec-review": {
-   "evals": 13,
+   "evals": 15,
    "modules": [
     "tests/test_ai_kit_commit_fold.py",
     "tests/test_ai_kit_commit_fold_adapters.py",
@@ -240,6 +241,8 @@
     "tests/test_ai_kit_spec_trust.py",
     "tests/test_arch.py",
     "tests/test_arch_hardcoded_models.py",
+    "tests/test_capability_block.py",
+    "tests/test_capability_entry_points.py",
     "tests/test_catalog_arena.py",
     "tests/test_catalog_attribution.py",
     "tests/test_catalog_bands.py",
@@ -260,6 +263,7 @@
     "tests/test_cbm_detection.py",
     "tests/test_check_dogfood.py",
     "tests/test_cli_help_flags.py",
+    "tests/test_compose_for_lane.py",
     "tests/test_config_callers.py",
     "tests/test_config_design_record.py",
     "tests/test_config_dir_parity.py",
@@ -297,6 +301,7 @@
     "tests/test_curated_config_script.py",
     "tests/test_curated_config_skills.py",
     "tests/test_cursor_agents.py",
+    "tests/test_edit_pass.py",
     "tests/test_effort_probe.py",
     "tests/test_flow_boundary.py",
     "tests/test_flow_brief.py",
@@ -319,10 +324,12 @@
     "tests/test_lane_pool.py",
     "tests/test_lane_price.py",
     "tests/test_lane_settings.py",
+    "tests/test_lens_delivery.py",
     "tests/test_models_config.py",
     "tests/test_no_seed_refusal.py",
     "tests/test_opencode_help_flags.py",
     "tests/test_pi_live_tools.py",
+    "tests/test_prompt_guard.py",
     "tests/test_propose_cmds.py",
     "tests/test_quota_policy_text.py",
     "tests/test_role_orders.py",
@@ -341,6 +348,7 @@
     "tests/test_runtime_list_drift.py",
     "tests/test_secret_shapes.py",
     "tests/test_sibling_resolution.py",
+    "tests/test_skill_table.py",
     "tests/test_skill_text_history.py",
     "tests/test_spec_chain_text.py",
     "tests/test_spec_config_catalog_text.py",
@@ -437,6 +445,7 @@
     "tests/test_precompact_core.py",
     "tests/test_secret_shapes_copy_install.py",
     "tests/test_setup.py",
+    "tests/test_skill_table.py",
     "tests/test_skill_text_history.py",
     "tests/test_wizard_pty.py"
    ],

@@ -2,15 +2,25 @@
 
 A table-runtime entry (route `subprocess` or `unverified`) runs through the cross-AI runner in
 review mode. A custom entry (a `command` and no runtime, D-21) runs through the fixed-argv
-launcher. A `native` route never reaches a subprocess: the host runs it. Tooling guidance is
-prefixed onto the prompt; a reviewer's own checklist skill owns the review contract.
+launcher. A `native` route never reaches a subprocess: the host runs it. The lane's capability
+block is prefixed onto the prompt; a reviewer's own checklist skill owns the review contract.
 """
+import os
 from collections.abc import Callable
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from ai_kit_spec import routing
+from ai_kit_spec.capability_block import (
+    ComposeResult,
+    ComposeSeams,
+    LaneRefused,
+    LaneRequest,
+    cleanup,
+    compose_for_lane,
+    lane_spec,
+    with_block,
+)
 from ai_kit_spec.commands import ResolvedReviewer, render_reviewer_command
-from ai_kit_spec.detection import check_cbm_registered
 from ai_kit_spec.runner_dispatch import (
     CustomSpec,
     RunnerResult,
@@ -19,19 +29,14 @@ from ai_kit_spec.runner_dispatch import (
     run_custom_command,
     run_runner_tiers,
 )
-from ai_kit_spec.tooling_guidance import (
-    build_tooling_guidance,
-    resolve_shared_tooling_reference_path,
-)
 
 
 class ReviewerSeams(NamedTuple):
     runner_tiers_fn: Callable[..., RunnerResult] = run_runner_tiers
     custom_fn: Callable[..., RunnerResult] = run_custom_command
     runner_seams: RunnerSeams = RunnerSeams()
-    build_tooling_guidance_fn: Callable[..., str] = build_tooling_guidance
-    resolve_shared_reference_fn: Callable[[], Any] = resolve_shared_tooling_reference_path
-    code_index_registered_fn: Callable[[Any], bool] = check_cbm_registered
+    compose_fn: Callable[..., ComposeResult] = compose_for_lane
+    compose_seams: ComposeSeams = ComposeSeams()
 
 
 class ReviewerDispatchSpec(NamedTuple):
@@ -41,22 +46,15 @@ class ReviewerDispatchSpec(NamedTuple):
     tool_availability: dict
     agents_tooling_path: object = None
     cwd: str | None = None
+    files: tuple | None = ()
 
 
-def _reviewer_full_prompt(
-    spec: ReviewerDispatchSpec, seams: ReviewerSeams
-) -> tuple[str | None, str]:
-    runtime = spec.reviewer_entry.get("runtime")
-    code_index_registered = bool(runtime) and seams.code_index_registered_fn(runtime)
-    tooling_guidance = seams.build_tooling_guidance_fn(
-        runtime,
-        spec.tool_availability or {},
-        spec.agents_tooling_path,
-        code_index_registered,
-        shared_reference_path=seams.resolve_shared_reference_fn(),
-    )
-    full_prompt = (tooling_guidance + "\n\n" + spec.prompt) if tooling_guidance else spec.prompt
-    return runtime, full_prompt
+def _reviewer_full_prompt(spec: ReviewerDispatchSpec, seams: ReviewerSeams, runner_spec):
+    entry = spec.reviewer_entry
+    return seams.compose_fn(
+        LaneRequest(entry.get("runtime"), entry.get("model", ""), "review",
+                    spec.cwd or os.getcwd(), runner_spec),
+        spec.prompt, spec.files, seams.runner_seams.env_fn(), seams.compose_seams)
 
 
 def _result_dict(result: RunnerResult) -> dict:
@@ -66,10 +64,8 @@ def _result_dict(result: RunnerResult) -> dict:
     }
 
 
-def _dispatch_runtime(entry: dict, spec: ReviewerDispatchSpec, prompt: str,
+def _dispatch_runtime(runner_spec, spec: ReviewerDispatchSpec, prompt: str,
                       seams: ReviewerSeams) -> dict:
-    runner_spec = review_spec(entry["runtime"], entry["model"], entry.get("extra"),
-                              spec.timeout_tiers[0], cwd=spec.cwd)
     result = seams.runner_tiers_fn(runner_spec, spec.timeout_tiers, prompt, seams.runner_seams)
     return _result_dict(result)
 
@@ -94,8 +90,8 @@ def dispatch_reviewer(
     active = seams or ReviewerSeams()
     if not spec.timeout_tiers:
         raise ValueError("timeout_tiers must name at least one tier -- got an empty list")
-    runtime, full_prompt = _reviewer_full_prompt(spec, active)
     entry = spec.reviewer_entry
+    runtime = entry.get("runtime")
     key = entry.get("key", "")
     if entry.get("route") == "native" or not (runtime or entry.get("command")):
         raise ValueError(
@@ -103,8 +99,22 @@ def dispatch_reviewer(
         )
     if entry.get("route") in routing.SKIP_ROUTES:
         raise ValueError(f"reviewer {key} route {entry['route']}: not dispatchable")
-    if runtime:
-        if not entry.get("model"):
-            raise ValueError(f"reviewer {key} names runtime {runtime} but no model")
-        return _dispatch_runtime(entry, spec, full_prompt, active)
-    return _dispatch_custom(entry, spec, full_prompt, active)
+    if runtime and not entry.get("model"):
+        raise ValueError(f"reviewer {key} names runtime {runtime} but no model")
+    runner_spec = (review_spec(runtime, entry["model"], entry.get("extra"),
+                               spec.timeout_tiers[0], cwd=spec.cwd) if runtime else None)
+    composed = (_reviewer_full_prompt(spec, active, runner_spec) if spec.prompt.strip()
+                else ComposeResult())
+    try:
+        if composed.refusal:
+            raise LaneRefused(composed.refusal)
+        if composed.window is not None and composed.window["value"] is None:
+            active.runner_seams.print_fn(
+                f"ai-kit-spec: window for {runtime}/{entry.get('model')}: unknown "
+                f"({composed.window['note'] or composed.window['label']}); not capped")
+        prompt = with_block(composed.block, spec.prompt)
+        if runner_spec is not None:
+            return _dispatch_runtime(lane_spec(runner_spec, composed), spec, prompt, active)
+        return _dispatch_custom(entry, spec, prompt, active)
+    finally:
+        cleanup(composed)

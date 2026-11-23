@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "skills", "ai-kit-gsd-curated-config"
 sys.path.insert(0, os.path.join(REPO_ROOT, "skills", "ai-kit-spec-review"))
 
 from ai_kit_gsd_curated_config import cross_ai_script
+from ai_kit_spec.capability_block import ComposeResult
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.execute_dispatch import (
     ExecuteDispatchSpec,
@@ -660,7 +661,7 @@ class TestReviewStatusesE2E(unittest.TestCase):
         lines: list[str] = []
         seams = ReviewerSeams(
             runner_seams=RunnerSeams(env_fn=lambda: env, print_fn=lines.append),
-            code_index_registered_fn=lambda _runtime: False,
+            compose_fn=lambda *_a, **_k: ComposeResult(),
         )
         result = dispatch_reviewer(
             ReviewerDispatchSpec(self._entry(model), "hi", tiers, {}, cwd=cwd), seams,

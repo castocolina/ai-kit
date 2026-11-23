@@ -363,7 +363,7 @@ class TestSpecConfigStep(unittest.TestCase):
         for index in auth_lines:
             self.assertTrue(never < index < section_end, lines[index])
 
-    def test_skill_evals_have_the_nineteen_cases(self):
+    def test_skill_evals_have_the_twenty_one_cases(self):
         with open(EVALS_JSON, encoding="utf-8") as handle:
             data = json.load(handle)
         self.assertEqual(
@@ -388,6 +388,8 @@ class TestSpecConfigStep(unittest.TestCase):
                 "precise-zero-price-data-use-yes",
                 "edge-zero-price-data-use-declined",
                 "edge-migration-deleted-unless-keep-backup",
+                "edge-sort-skills-jev-absent",
+                "edge-sort-proposal-is-advisory",
             ],
         )
 
@@ -464,7 +466,8 @@ class TestCheckOnlyProbeSet(_Scratch):
         start = text.rindex(opener, 0, text.index("probe_keys")) + len(opener)
         body = text[start : text.index('\n"\n', start)]
         review_dir = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review")
-        return body.replace('$(dirname "$TOOLS_PY")', review_dir).replace("$(pwd)", self.proj)
+        return body.replace('$(dirname "$TOOLS_PY")', review_dir).replace("<project root>",
+                                                                          self.proj)
 
     def test_snippet_lists_the_merged_probe_set(self):
         # a user-layer key reached only through the merge is listed; an uninstalled one is not

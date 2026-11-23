@@ -88,6 +88,35 @@
   ],
   "runtimes": {
     "claude": {
+      "capabilities": {
+        "facts": [],
+        "label": {
+          "source": "claude 2.1.330 --help 2026-11-21 (tests/fixtures/cli_help/claude/); --permission-mode lists plan and bypassPermissions without saying what they allow",
+          "state": "verified"
+        },
+        "tools": {
+          "allow": [
+            "--tools"
+          ],
+          "deny": [
+            "--disallowedTools",
+            "--disallowed-tools"
+          ],
+          "label": {
+            "source": "claude 2.1.330 --help 2026-11-21: \"--tools <tools...> Built-in tools to make available: \"\" for none, \"default\" for the default set, or tool names (e.g. \"Bash,Edit,Read\")\" and \"--disallowedTools, --disallowed-tools <tools...> Comma or space-separated list of tool names to deny\"",
+            "state": "verified"
+          },
+          "shell": [
+            "Bash"
+          ],
+          "variadic": true,
+          "write": [
+            "Edit",
+            "Write",
+            "NotebookEdit"
+          ]
+        }
+      },
       "context": {
         "kind": "id-suffix",
         "label": {
@@ -179,6 +208,73 @@
       "source": "unverified"
     },
     "codex": {
+      "capabilities": {
+        "facts": [
+          {
+            "field": "write",
+            "label": {
+              "source": "codex 0.170.0 --help 2026-11-21: \"-s, --sandbox <SANDBOX_MODE> Select the sandbox policy to use when executing model-generated shell commands [possible values: read-only, workspace-write, danger-full-access]\"",
+              "state": "verified"
+            },
+            "run": [
+              "--sandbox",
+              "read-only"
+            ],
+            "value": "none"
+          },
+          {
+            "field": "write",
+            "label": {
+              "source": "codex 0.170.0 --help 2026-11-21: \"-s, --sandbox <SANDBOX_MODE> Select the sandbox policy to use when executing model-generated shell commands [possible values: read-only, workspace-write, danger-full-access]\"",
+              "state": "verified"
+            },
+            "run": [
+              "--sandbox",
+              "workspace-write"
+            ],
+            "value": "workspace"
+          },
+          {
+            "field": "write",
+            "label": {
+              "source": "codex 0.170.0 --help 2026-11-21: \"-s, --sandbox <SANDBOX_MODE> Select the sandbox policy to use when executing model-generated shell commands [possible values: read-only, workspace-write, danger-full-access]\"",
+              "state": "verified"
+            },
+            "run": [
+              "--sandbox",
+              "danger-full-access"
+            ],
+            "value": "full"
+          },
+          {
+            "field": "write",
+            "label": {
+              "source": "codex 0.170.0 --help 2026-11-21: \"--dangerously-bypass-approvals-and-sandbox Skip all confirmation prompts and execute commands without sandboxing\"",
+              "state": "verified"
+            },
+            "run": [
+              "--dangerously-bypass-approvals-and-sandbox"
+            ],
+            "value": "full"
+          },
+          {
+            "field": "shell",
+            "label": {
+              "source": "codex 0.170.0 --help 2026-11-21: \"--dangerously-bypass-approvals-and-sandbox Skip all confirmation prompts and execute commands without sandboxing\"",
+              "state": "verified"
+            },
+            "run": [
+              "--dangerously-bypass-approvals-and-sandbox"
+            ],
+            "value": "yes"
+          }
+        ],
+        "label": {
+          "source": "codex 0.170.0 --help 2026-11-21 (tests/fixtures/cli_help/codex/)",
+          "state": "verified"
+        },
+        "tools": null
+      },
       "context": {
         "key": "model_context_window",
         "kind": "config",
@@ -276,6 +372,37 @@
       "source": "unverified"
     },
     "copilot": {
+      "capabilities": {
+        "facts": [],
+        "label": {
+          "source": "copilot 1.0.112 --help 2026-11-21 (tests/fixtures/cli_help/copilot/)",
+          "state": "verified"
+        },
+        "tools": {
+          "allow": [
+            "--available-tools"
+          ],
+          "deny": [
+            "--excluded-tools",
+            "--deny-tool"
+          ],
+          "label": {
+            "source": "copilot 1.0.112 --help 2026-11-21: \"--available-tools [<tools>...] Only these tools will be available to the model\", \"--excluded-tools [<tools>...] These tools will not be available to the model\" and \"--deny-tool [<tools>...] Tools the CLI does not have permission to use\"",
+            "state": "verified"
+          },
+          "shell": [
+            "bash",
+            "shell"
+          ],
+          "variadic": true,
+          "write": [
+            "create",
+            "edit",
+            "apply_patch",
+            "write"
+          ]
+        }
+      },
       "context": {
         "flag": "--context",
         "kind": "flag",
@@ -371,6 +498,50 @@
       "source": "unverified"
     },
     "cursor": {
+      "capabilities": {
+        "facts": [
+          {
+            "field": "write",
+            "label": {
+              "source": "cursor-agent 2026.11.13 --help 2026-11-21: \"ask: Q&A style for explanations and questions (read-only)\"",
+              "state": "verified"
+            },
+            "run": [
+              "--mode",
+              "ask"
+            ],
+            "value": "none"
+          },
+          {
+            "field": "write",
+            "label": {
+              "source": "cursor-agent 2026.11.13 --help 2026-11-21: \"plan: read-only/planning (analyze, propose plans, no edits)\"",
+              "state": "verified"
+            },
+            "run": [
+              "--mode",
+              "plan"
+            ],
+            "value": "none"
+          },
+          {
+            "field": "shell",
+            "label": {
+              "source": "cursor-agent 2026.11.13 --help 2026-11-21: \"-f, --force Force allow commands unless explicitly denied\"",
+              "state": "verified"
+            },
+            "run": [
+              "--force"
+            ],
+            "value": "yes"
+          }
+        ],
+        "label": {
+          "source": "cursor-agent 2026.11.13 --help 2026-11-21 (tests/fixtures/cli_help/cursor/)",
+          "state": "verified"
+        },
+        "tools": null
+      },
       "context": {
         "key": "context",
         "kind": "bracket",
@@ -455,6 +626,14 @@
       "source": "unverified"
     },
     "opencode": {
+      "capabilities": {
+        "facts": [],
+        "label": {
+          "source": "opencode 2.3.2 help 2026-11-21: no recorded help line states the write reach, a shell tool or MCP for the run flags",
+          "state": "unknown"
+        },
+        "tools": null
+      },
       "context": {
         "kind": "none",
         "label": {
@@ -538,6 +717,77 @@
       "source": "unverified"
     },
     "pi": {
+      "capabilities": {
+        "facts": [
+          {
+            "field": "mcp",
+            "label": {
+              "source": "pi 1.5.2 --help 2026-11-21: \"--no-mcp Disable built-in MCP support: no servers connect and no MCP tools\"",
+              "state": "verified"
+            },
+            "run": [
+              "--no-mcp"
+            ],
+            "value": "none"
+          },
+          {
+            "field": "skills",
+            "label": {
+              "source": "pi 1.5.2 --help 2026-11-21: \"--no-skills, -ns Disable skills discovery and loading\"",
+              "state": "verified"
+            },
+            "run": [
+              "--no-skills"
+            ],
+            "value": "none"
+          },
+          {
+            "field": "shell",
+            "label": {
+              "source": "pi 1.5.2 --help 2026-11-21: \"--no-tools, -nt Disable all tools by default (built-in and extension)\"",
+              "state": "verified"
+            },
+            "run": [
+              "--no-tools"
+            ],
+            "value": "no"
+          },
+          {
+            "field": "write",
+            "label": {
+              "source": "pi 1.5.2 --help 2026-11-21: \"--no-tools, -nt Disable all tools by default (built-in and extension)\"",
+              "state": "verified"
+            },
+            "run": [
+              "--no-tools"
+            ],
+            "value": "none"
+          }
+        ],
+        "label": {
+          "source": "pi 1.5.2 --help 2026-11-21 (tests/fixtures/cli_help/pi/)",
+          "state": "verified"
+        },
+        "tools": {
+          "allow": [
+            "--tools"
+          ],
+          "deny": [
+            "--exclude-tools"
+          ],
+          "label": {
+            "source": "pi 1.5.2 --help 2026-11-21: \"--tools, -t <tools> Comma-separated allowlist of tool names or patterns (*) to enable\" and \"Only +name/-name entries add to or remove from the defaults\"",
+            "state": "verified"
+          },
+          "shell": [
+            "bash"
+          ],
+          "write": [
+            "edit",
+            "write"
+          ]
+        }
+      },
       "context": {
         "kind": "none",
         "label": {
@@ -682,5 +932,5 @@
     "--pool",
     "--sweep"
   ],
-  "template_version": 11
+  "template_version": 12
 }

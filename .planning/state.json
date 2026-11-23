@@ -101,12 +101,12 @@
     {
       "number": "38.1",
       "name": "Runner error classification and retry policy",
-      "status": "complete"
+      "status": "in_progress"
     },
     {
       "number": "39",
       "name": "Lane capability blocks and lens skills",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "40",
@@ -202,7 +202,7 @@
   "next": {
     "command": "/gsd-progress --next",
     "label": "Advance to the next step (verify)",
-    "reason": "Phase 16 of 40 · 43% · ready to verify"
+    "reason": "Phase 16 of 41 · 41% · ready to verify"
   },
-  "updated_at": "2026-11-23T03:08:16.751Z"
+  "updated_at": "2026-11-23T20:32:09.180Z"
 }

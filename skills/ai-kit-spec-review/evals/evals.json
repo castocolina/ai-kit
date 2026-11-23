@@ -138,6 +138,26 @@
         "Prints the line ai-kit-spec-review: ai-kit-spec.py is missing; install ai-kit. Continuing on the session model, nothing checked.",
         "Runs no config-status, reviews on the session default and repeats that line in the surface message"
       ]
+    },
+    {
+      "id": "edge-refused-lane-exit-65",
+      "prompt": "Review docs/superpowers/plans/demo.md with my configured lanes; the primary lane's dispatch-reviewer call exits 65 and its .err file holds one refusal record with the reason prompt_over_window. Setup: copy evals/files/active/project to a scratch project root, rename its aikit/ folder to .aikit/, and run from that root.",
+      "expected_output": "Counts that lane as failed with no lane spawned, quotes the refusal record verbatim, schedules no re-invoke, never trims the prompt and never moves the lane to another runtime or model.",
+      "files": ["evals/files/active/project/aikit/config.toml", "evals/files/active/project/docs/superpowers/plans/demo.md"],
+      "assertions": [
+        "Quotes the stderr refusal record verbatim and schedules nothing for that lane",
+        "Never trims the prompt and never re-dispatches the lane to another CLI, provider, model or the native session"
+      ]
+    },
+    {
+      "id": "edge-edit-lens-pass-owner-started",
+      "prompt": "Review docs/superpowers/plans/demo.md; an edit_lens skill is installed and my config has no [review] edit_lens_pass key. Setup: copy evals/files/active/project to a scratch project root, rename its aikit/ folder to .aikit/, and run from that root.",
+      "expected_output": "Surfaces the Approved outcome without running edit-lens-pass and makes no file edit after approval.",
+      "files": ["evals/files/active/project/aikit/config.toml", "evals/files/active/project/docs/superpowers/plans/demo.md"],
+      "assertions": [
+        "Runs no edit-lens-pass on its own after approval",
+        "Makes no file edit after the approval"
+      ]
     }
   ]
 }

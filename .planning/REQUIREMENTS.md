@@ -277,7 +277,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   PROVISIONAL, needs owner confirmation: selection skips a lane whose pool's blocked-until time has not passed, the fallback is
   a lane of a different pool, and the first selection after the time tries the lane once)*
 - [ ] **REV-02**: jev classifies reviewer-fixer disagreements and gray areas before the user is asked.
-- [ ] **REV-03**: Lens skills present in the environment (the ponytail family, reducing-entropy, naming-analyzer,
+- [x] **REV-03**: Lens skills present in the environment (the ponytail family, reducing-entropy, naming-analyzer,
   simplify, impeccable for UI) reach reviewers by path in the prompt guidance; file-editing lenses run as a pass
   after approval; a lens is inlined in the prompt when the lane's host cannot load it by path (Claude built-ins, pi
   through an allow-listed `--skill`). *(amended 2026-11-16, 39 D-10, D-11, D-14: pi is the one host whose own docs verify a
@@ -285,7 +285,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   by a native lane of its host, other lanes get a named note; the file-editing pass after approval is opt-in
   (`[review] edit_lens_pass`, off by default), runs on a write-capable lane and the owner accepts its diff, needs owner
   confirmation)*
-- [ ] **REV-04**: Each lane gets a capability block built from its final argv (read-only or write, shell or not, the
+  *(amended 2026-11-23, 39-SPEC "Live facts added 2026-11-23": lens text is not inlined by Python any more; each delivered lens goes to the runner as --skill-name and --skill-path and the runner's first verified form (name, path, prose) delivers it; the after-approval pass stays off by default, owner-confirmed)*
+- [x] **REV-04**: Each lane gets a capability block built from its final argv (read-only or write, shell or not, the
   tools found on the child's PATH, codebase-memory-mcp only when its binary is on that PATH (it replaced codegraph in Phase 32.5)), so no lane is told about a tool it cannot use.
   A prompt larger than a lane's known context window (the lane's own runtime's value in the catalog, or a user override
   per (runtime, model); *amended 2026-11-16, 35 D-09*) is refused for that lane with a named reason and never
@@ -297,11 +298,13 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   against the PATH of the exact child environment at dispatch time, not the parent's; a lane whose argv applies a context form
   with an unverified effect has an `unknown` window unless the user stated one; the pre-spawn refusal is Python-side only, a GSD
   hook route is Phase 44's)*
-- [ ] **REV-05**: One role-keyed table of the skills (and MCP servers where a host allows it) present on each host,
+  *(amended 2026-11-23, 39-SPEC "Live facts added 2026-11-23": the capabilities line is the runner's stderr line cross-ai: capabilities <JSON>, with the mcp value call_file and a prompt object; a refusal exits 65; the window is a [[models.context]] override, then the catalog runtime row's context fact)*
+- [x] **REV-05**: One role-keyed table of the skills (and MCP servers where a host allows it) present on each host,
   rescanned every run, is shared by review, execute and curated-config; an optional config-time jev step sorts an
   unknown skill into a role, and the user confirms every such sort. *(amended 2026-11-16, 39 D-07 to D-09: the roles are a
   closed list with a locking test, seed rows are examples with source labels and never decide presence, a confirmed sort is a
   `[skills.roles]` config entry labeled user-stated, and MCP servers are listed by name only from each host's own config)*
+  *(amended 2026-11-23, 39-SPEC "Live facts added 2026-11-23": the table also picks the MCP servers a lane gets: a code_index server whose seed row records a launch form and whose binary is on the child's PATH, written into a run-scoped --mcp-config file)*
 - [ ] **REV-06**: jev picks the reviewer for a plan and how many lanes it gets (one or two) from files touched,
   complexity, task count and category, on top of deterministic signals (security, data, irreversible operations).
 - [ ] **REV-07**: Before a review or judge round, spec-review pings each chosen lane with a short probe, replaces
@@ -1104,9 +1107,9 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | HUB-10 | Phase 36 | Complete |
 | REV-01 | Phase 40 | Pending |
 | REV-02 | Phase 40 | Pending |
-| REV-03 | Phase 39 | Pending |
-| REV-04 | Phase 39 | Pending |
-| REV-05 | Phase 39 | Pending |
+| REV-03 | Phase 39 | Complete |
+| REV-04 | Phase 39 | Complete |
+| REV-05 | Phase 39 | Complete |
 | REV-06 | Phase 40 | Pending |
 | REV-07 | Phase 40 | Pending |
 | REV-08 | Phase 40 | Pending |

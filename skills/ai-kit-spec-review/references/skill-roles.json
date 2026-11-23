@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "roles": ["review_lens", "edit_lens", "ui_lens", "code_index", "decision_helper", "host_control", "skill_judge", "unsorted"],
+  "rows": [
+    {"name": "ponytail-review", "kind": "skill", "role": "review_lens", "source": "judged 2026-11-16 from the skill's own description"},
+    {"name": "ponytail-audit", "kind": "skill", "role": "review_lens", "source": "judged 2026-11-16 from the skill's own description"},
+    {"name": "ponytail-debt", "kind": "skill", "role": "review_lens", "source": "judged 2026-11-16 from the skill's own description"},
+    {"name": "reducing-entropy", "kind": "skill", "role": "review_lens", "source": "judged 2026-11-16 from the skill's own description"},
+    {"name": "naming-analyzer", "kind": "skill", "role": "review_lens", "source": "judged 2026-11-16 from the skill's own description"},
+    {"name": "ponytail", "kind": "skill", "role": "edit_lens", "source": "judged 2026-11-16 from the skill's own description"},
+    {"name": "simplify", "kind": "skill", "role": "edit_lens", "source": "judged 2026-11-16 from the skill's own description", "built_in": "claude"},
+    {"name": "impeccable", "kind": "skill", "role": "ui_lens", "source": "judged 2026-11-16 from the skill's own description"},
+    {"name": "codebase-memory", "kind": "skill", "role": "code_index", "source": "judged 2026-11-16 from the skill's own description"},
+    {"name": "graphify", "kind": "skill", "role": "code_index", "source": "judged 2026-11-16 from the skill's own description"},
+    {"name": "codebase-memory-mcp", "kind": "mcp", "role": "code_index", "source": "judged 2026-11-16 from the skill's own description", "launch": {"command": "codebase-memory-mcp", "args": ["--tool-profile=analysis"], "source": "codebase-memory-mcp 0.12.1 --help 2026-11-23: bare command runs the MCP server on stdio; --tool-profile=analysis|scout exposes a restricted inspection surface (effect unverified)"}},
+    {"name": "jev-fast-decision", "kind": "skill", "role": "decision_helper", "source": "judged 2026-11-16 from the skill's own description"},
+    {"name": "herdr", "kind": "skill", "role": "host_control", "source": "judged 2026-11-16 from the skill's own description"},
+    {"name": "skill-judge", "kind": "skill", "role": "skill_judge", "source": "judged 2026-11-16 from the skill's own description"}
+  ]
+}

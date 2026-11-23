@@ -16,6 +16,7 @@ import {
   CLI_NAME_RE,
   CONFIG,
   CONTEXT_RE,
+  CONTROL_CHAR_RE,
   CURSOR_MODEL_ID,
   EXEC_PREAMBLE,
   FINDING_CODES,
@@ -33,6 +34,7 @@ import {
   PATTERNS,
   PI_MODEL_ID,
   PLAN_ID_RE,
+  PROMPT_CONTROL_RE,
   RESUME_MSG,
   RETRY_DEFAULTS,
   ROW_CLASSES,
@@ -94,6 +96,7 @@ import {
   killGroup,
   ladderNext,
   ladderStop,
+  laneCapabilities,
   launcherVerified,
   liveCheck,
   liveMatch,
@@ -160,6 +163,9 @@ import {
   which,
   writeCycleState,
 } from './cross-ai.mjs';
+
+const CAPABILITIES_FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tests', 'fixtures', 'runner_capabilities.json');
+const PROMPT_CONTROL_FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tests', 'fixtures', 'prompt_control_chars.json');
 
 function codexPair(message) {
   return [
@@ -10185,6 +10191,176 @@ async function blackBoxSelfTest(listOnly = false) {
           confirmReport(plan.report, ['-p', '--add-dir', '/x/proj'], composePrompt(plan.promptPrefix, null, 'p', ''));
           try { confirmReport(plan.report, ['-p', '--add-dir', '/x/proj'], 'p'); } catch { return null; }
           return 'missing prompt proof accepted';
+        },
+      },
+      {
+        name: 'cap-pi-review-line',
+        kind: 'logic',
+        args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const prefix = 'cross-ai: capabilities ';
+          const lines = (r.stderr || '').split('\n').filter((line) => line.startsWith(prefix));
+          if (lines.length !== 1) return `lines ${lines.length}`;
+          const caps = JSON.parse(lines[0].slice(prefix.length));
+          if (caps.write.value !== 'none' || caps.shell.value !== 'no' || caps.skills.value !== 'none' || caps.mcp.value !== 'none' || JSON.stringify(caps.prompt) !== JSON.stringify({ channel: 'stdin', max_bytes: null })) return `values ${JSON.stringify(caps)}`;
+          const stdout = (r.stdout || '').split('\n').filter((line) => line.length);
+          return stdout.length === 1 && stdout[0].split('\t').length === 3 ? null : 'stdout';
+        },
+      },
+      {
+        name: 'cap-print-argv-table',
+        kind: 'logic',
+        args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        setup: (c) => {
+          c.skillDir = makeSkill(c, 1);
+          c.mcpFile = path.join(c.tmp, 'cap-mcp.json');
+          fs.writeFileSync(c.mcpFile, JSON.stringify({ mcpServers: { 'placeholder-server-a': { command: 'placeholder-cmd' } } }), { mode: 0o600 });
+          return null;
+        },
+        check: async (_r, c) => {
+          const fixture = JSON.parse(fs.readFileSync(CAPABILITIES_FIXTURE, 'utf8'));
+          for (const lane of fixture.lanes) {
+            const extra = lane.extra.map((v) => v.replaceAll('<SKILL>', c.skillDir).replaceAll('<MCP>', c.mcpFile));
+            const desc = `${lane.runtime} ${lane.mode} ${extra.join(' ')}`;
+            const result = await runCaseProcess({ args: ['--print-argv', '--runtime', lane.runtime, '--mode', lane.mode, '--model', lane.model, ...extra] }, c);
+            if (result.status !== 0) return `${desc} exit ${result.status}`;
+            const prefix = 'cross-ai: capabilities ';
+            const lines = (result.stderr || '').split('\n').filter((line) => line.startsWith(prefix));
+            if (lines.length !== 1) return `${desc} lines ${lines.length}`;
+            const caps = JSON.parse(lines[0].slice(prefix.length));
+            if (JSON.stringify({ write: caps.write.value, shell: caps.shell.value, skills: caps.skills.value, mcp: caps.mcp.value, prompt: caps.prompt }) !== JSON.stringify(lane.capabilities)) return `${desc} got ${JSON.stringify(caps)}`;
+            for (const field of ['write', 'shell', 'skills', 'mcp']) {
+              const entry = caps[field], label = entry.label;
+              if (Object.keys(entry).sort().join(',') !== 'label,value' || !label || typeof label !== 'object' || Object.keys(label).sort().join(',') !== 'source,state' || !['verified', 'unverified', 'unknown'].includes(label.state) || typeof label.source !== 'string' || !label.source) return `${desc} label ${field}`;
+            }
+          }
+          return null;
+        },
+      },
+      {
+        name: 'cap-planted-tools-flip',
+        kind: 'logic',
+        args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1'],
+        config: { extraArgs: { pi: ['--tools', 'read,grep,find,ls,bash'] } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const prefix = 'cross-ai: capabilities ';
+          const line = (r.stderr || '').split('\n').find((v) => v.startsWith(prefix));
+          const caps = line ? JSON.parse(line.slice(prefix.length)) : null;
+          return caps && caps.shell.value === 'unknown' && caps.write.value === 'unknown' && caps.shell.label.state === 'unknown' && caps.shell.label.source.startsWith('from argv --tools') ? null : `flip ${JSON.stringify(caps)}`;
+        },
+      },
+      {
+        name: 'cap-pure-tool-lists',
+        kind: 'logic',
+        pure: () => {
+          const cap = (rt, argv, report = []) => laneCapabilities(RUNTIMES[rt], 'review', argv, report);
+          const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+          let c = cap('pi', ['--tools', '']); if (c.shell.value !== 'no' || c.write.value !== 'none') return 'a';
+          if (cap('pi', ['--tools', 'read,grep']).shell.value !== 'no') return 'b';
+          c = cap('pi', ['--tools', 'read,bash']); if (c.shell.value !== 'yes' || c.write.value !== 'unknown') return 'c';
+          if (cap('pi', ['--tools', 'read,*']).shell.value !== 'yes') return 'd';
+          if (cap('pi', ['--tools', '+bash']).shell.value !== 'unknown' || cap('claude', ['--tools', 'default']).shell.value !== 'unknown') return 'e';
+          if (cap('copilot', ['--available-tools=view,bash', '--excluded-tools=bash']).shell.value !== 'no') return 'f';
+          if (cap('pi', ['--tools', 'read', '--tools', 'bash']).shell.value !== 'unknown') return 'g';
+          c = cap('codex', []); if (c.write.value !== 'unknown' || c.shell.value !== 'unknown') return 'h';
+          c = laneCapabilities({ argvFile: true, forms: RUNTIMES.pi.forms }, 'review', ['--tools', 'bash', '--no-mcp'], []);
+          for (const field of ['write', 'shell', 'skills', 'mcp']) if (c[field].value !== 'unknown' || !eq(c[field].label, { state: 'unknown', source: 'argv file lane: declared by --argv-file' })) return 'i';
+          c = laneCapabilities({ forms: { capabilities: { tools: null, facts: [{ run: ['--placeholder-flag'], field: 'mcp', value: 'host_config', label: { state: 'unverified', source: 's' } }] } } }, 'review', ['--placeholder-flag'], []); if (c.mcp.value !== 'host_config') return 'j';
+          if (cap('pi', ['--tools=read, bash']).shell.value !== 'yes') return 'k';
+          c = cap('cursor', ['--force', '--mode', 'ask']); if (c.shell.value !== 'yes' || c.write.value !== 'none') return 'l';
+          c = laneCapabilities(RUNTIMES.codex, 'exec', ['--dangerously-bypass-approvals-and-sandbox', '--sandbox', 'read-only'], []); if (c.write.value !== 'unknown' || c.write.label.state !== 'unknown' || c.write.label.source !== '--sandbox and --dangerously-bypass-approvals-and-sandbox disagree in the final argv; no recorded help says which wins' || c.shell.value !== 'yes') return 'm';
+          if (cap('codex', ['--sandbox=read-only']).write.value !== 'none') return 'm2';
+          if (cap('pi', ['--tools', 'read,mcp__x__*']).shell.value !== 'unknown') return 'q';
+          c = cap('copilot', ['--available-tools', 'view', 'bash']); if (c.shell.value !== 'unknown' || c.write.value !== 'unknown') return 'r';
+          if (cap('copilot', ['--available-tools=view,shell']).shell.value !== 'yes') return 's';
+          if (cap('pi', ['--no-tools', '--tools', 'read,bash']).shell.value !== 'unknown') return 't';
+          c = cap('pi', ['--tools']); if (c.shell.value !== 'unknown' || c.write.value !== 'unknown') return 'u';
+          if (cap('copilot', ['--available-tools=bash,shell', '--deny-tool=shell']).shell.value !== 'yes') return 'v';
+          c = cap('claude', ['--tools=Bash,Read', '--disallowedTools=Bash']); if (c.shell.value !== 'no' || c.write.value !== 'none') return 'w';
+          c = cap('pi', ['--tools', '--no-mcp']); if (c.shell.value !== 'unknown' || c.mcp.value !== 'unknown') return 'x';
+          if (cap('copilot', ['--deny-tool=shell']).shell.value !== 'unknown') return 'y';
+          if (cap('pi', ['--no-skills'], [{ name: 'skill', state: 'applied', form: 'path', value: 'lens-a' }]).skills.value !== 'path') return 'n';
+          if (cap('claude', [], [{ name: 'skill', state: 'applied', form: 'prose', value: 'lens-a' }]).skills.value !== 'unknown') return 'o';
+          if (!eq(cap('copilot', []).prompt, { channel: 'argv', max_bytes: ARGV_PROMPT_MAX - 281 })) return 'p';
+          return null;
+        },
+      },
+      {
+        name: 'skillpath-bidi-rejected',
+        kind: 'logic',
+        args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1', '--skill-path', 'skills/lens\u202ea'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage /,
+        check: async (r, c) => {
+          const message = 'cross-ai: --skill-path must be a non-empty path without control characters';
+          if (!(r.stderr || '').split('\n').includes(message) || (r.stderr || '').includes('cross-ai: capabilities ')) return 'bidi';
+          for (const ch of ['\u2028', '\u2029', '\u200b', '\u2066', '\ufeff', '\u0085']) {
+            const value = `skills/lens${ch}a`;
+            const got = await runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1', '--skill-path', value] }, c);
+            if (got.status !== 2 || !got.stderr.split('\n').includes(message) || got.stderr.includes(value)) return `char ${ch.codePointAt(0).toString(16)}`;
+          }
+          const empty = await runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1', '--skill-path', ''] }, c);
+          if (empty.status !== 2 || !empty.stderr.split('\n').includes(message)) return 'empty';
+          const mcp = await runCaseProcess({ args: ['--print-argv', '--runtime', 'claude', '--mode', 'review', '--model', 'placeholder-model-1', '--mcp-config', 'cap\u202emcp.json'] }, c);
+          if (mcp.status !== 2 || mcp.stderr.includes('must be a non-empty path without control characters')) return 'mcp scope';
+          return null;
+        },
+      },
+      {
+        name: 'skillpath-resolved-dir-rejected',
+        kind: 'logic',
+        exit: 2,
+        status: /^AIKIT-XAI status=usage /,
+        setup: (c) => {
+          c.real = path.join(c.tmp, 'skills', 'lens-a\u200b');
+          fs.mkdirSync(c.real, { recursive: true });
+          fs.writeFileSync(path.join(c.real, 'SKILL.md'), '---\nname: lens-a\n---\n# lens a\n');
+          c.link = path.join(c.tmp, 'lens-link');
+          fs.symlinkSync(c.real, c.link);
+          c.args = ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1', '--skill-path', c.link];
+          return null;
+        },
+        check: (r, c) => {
+          const stderr = r.stderr || '';
+          if (!stderr.split('\n').includes('cross-ai: --skill-path: the path holds a control character') || stderr.includes(c.real) || stderr.includes('lens-a\u200b')) return 'resolved dir';
+          return null;
+        },
+      },
+      {
+        name: 'skillpath-name-control',
+        kind: 'logic',
+        args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1', '--skill-name', 'lens-a\u2028'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage /,
+        check: (r) => (r.stderr || '').split('\n').includes('cross-ai: --skill-name must match ^[a-z0-9][a-z0-9-]{0,63}$') ? null : 'name message',
+      },
+      {
+        name: 'skillpath-pure-control-set',
+        kind: 'logic',
+        pure: () => {
+          const fx = JSON.parse(fs.readFileSync(PROMPT_CONTROL_FIXTURE, 'utf8'));
+          const cp = (e) => parseInt(e[0], 16);
+          if (!fx.rejected.length || !fx.accepted.length) return 'fixture empty';
+          for (const e of fx.rejected) if (!PROMPT_CONTROL_RE.test('a' + String.fromCodePoint(cp(e)) + 'b')) return `rejected ${e[0]}`;
+          for (const e of fx.accepted) if (PROMPT_CONTROL_RE.test('a' + String.fromCodePoint(cp(e)) + 'b')) return `accepted ${e[0]}`;
+          const expected = new Set(fx.rejected.map(cp));
+          const actual = new Set();
+          for (let code = 0; code <= 0x10ffff; code++) {
+            if (code >= 0xd800 && code <= 0xdfff) continue;
+            if (PROMPT_CONTROL_RE.test(String.fromCodePoint(code))) actual.add(code);
+          }
+          if (actual.size !== 87) return `count ${actual.size}`;
+          for (const code of new Set([...actual, ...expected])) {
+            if (actual.has(code) !== expected.has(code)) return `set differs ${code.toString(16).toUpperCase()}`;
+          }
+          if (CONTROL_CHAR_RE.test('\u202e') || !CONTROL_CHAR_RE.test('\u0085')) return 'old set';
+          return null;
         },
       },
       {

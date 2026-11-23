@@ -1,0 +1,9 @@
+# Loop 39 round 1 fixes: ai-kit-spec-config
+
+decide.py row: next-round (5 high findings, round 1); the findings are fixed here and the skill is judged again in round 2.
+
+- D8-1 (referee-one, high): the no-discovery decision for a pending roster outside the approved target now holds for the whole run: no later `fetch-model-catalog` (cli-model-selection.md item 3 skipped, no retry for an empty catalog); the owner's model ids go in with `confirm-catalog-entry` (cli.py:791-820 reads no roster); with no catalog file there is no roster-safe proposal path, so the run stops before any write. File: skills/ai-kit-spec-config/SKILL.md (Step 1.5).
+- D8-2 (referee-one, high): the quota section no longer depends on the raw read finding entries: the merged probe-key set is always listed first; an empty set skips the probe with each raw-read key reported `available: unknown`. File: skills/ai-kit-spec-config/references/check-only.md.
+- D8-3 (referee-one, high): when a pending old roster lies outside the target the owner approved, neither `trust-local` form runs; the file stays written but untrusted and the owner gets the command for after agreeing to that migration. File: skills/ai-kit-spec-config/SKILL.md (Step 4, trust).
+- D8-4 (referee-one, high): an entry with no `command` of its own that fills a user-config command is shown with that user entry's `command` text beside its own fields, role and key; when none can be shown the file stays untrusted and the role and key are named. File: skills/ai-kit-spec-config/SKILL.md (Step 4, trust preview).
+- D8-5 (referee-one, high): a `cannot be passed` effort refusal names no levels (lane_effort.py:174-175), so the re-ask offers Step 2's levels for that model without the refused one; an out-of-list refusal offers the levels it names; no effort is always a choice; a changed or removed effort drops `effort_source`. File: skills/ai-kit-spec-config/SKILL.md (Step 4, effort refusal).

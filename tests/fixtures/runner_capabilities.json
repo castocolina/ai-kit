@@ -1,0 +1,24 @@
+{
+  "_note": "SPEC R3: expected capability values per lane from the final argv (39-02). <SKILL> and <MCP> are filled by the reader with a fixture skill directory and a 0600 MCP file.",
+  "argv_max_bytes": 102119,
+  "lanes": [
+    {"runtime":"claude","mode":"review","model":"placeholder-model-1","extra":[],"capabilities":{"write":"unknown","shell":"unknown","skills":"unknown","mcp":"unknown","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"claude","mode":"exec","model":"placeholder-model-1","extra":[],"capabilities":{"write":"unknown","shell":"unknown","skills":"unknown","mcp":"unknown","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"codex","mode":"review","model":"placeholder-model-1","extra":[],"capabilities":{"write":"none","shell":"unknown","skills":"unknown","mcp":"unknown","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"codex","mode":"exec","model":"placeholder-model-1","extra":[],"capabilities":{"write":"full","shell":"yes","skills":"unknown","mcp":"unknown","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"copilot","mode":"review","model":"placeholder-model-1","extra":[],"capabilities":{"write":"none","shell":"no","skills":"unknown","mcp":"unknown","prompt":{"channel":"argv","max_bytes":102119}}},
+    {"runtime":"copilot","mode":"exec","model":"placeholder-model-1","extra":[],"capabilities":{"write":"unknown","shell":"unknown","skills":"unknown","mcp":"unknown","prompt":{"channel":"argv","max_bytes":102119}}},
+    {"runtime":"cursor","mode":"review","model":"placeholder-model-1","extra":[],"capabilities":{"write":"none","shell":"unknown","skills":"unknown","mcp":"unknown","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"cursor","mode":"exec","model":"placeholder-model-1","extra":[],"capabilities":{"write":"unknown","shell":"yes","skills":"unknown","mcp":"unknown","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"opencode","mode":"review","model":"fake/placeholder-model-1","extra":[],"capabilities":{"write":"unknown","shell":"unknown","skills":"unknown","mcp":"unknown","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"opencode","mode":"exec","model":"fake/placeholder-model-1","extra":[],"capabilities":{"write":"unknown","shell":"unknown","skills":"unknown","mcp":"unknown","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"pi","mode":"review","model":"fake/placeholder-model-1","extra":[],"capabilities":{"write":"none","shell":"no","skills":"none","mcp":"none","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"pi","mode":"exec","model":"fake/placeholder-model-1","extra":[],"capabilities":{"write":"unknown","shell":"unknown","skills":"none","mcp":"unknown","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"pi","mode":"review","model":"fake/placeholder-model-1","extra":["--skill-path","<SKILL>"],"capabilities":{"write":"none","shell":"no","skills":"path","mcp":"none","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"pi","mode":"exec","model":"fake/placeholder-model-1","extra":["--skill-path","<SKILL>"],"capabilities":{"write":"unknown","shell":"unknown","skills":"path","mcp":"unknown","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"claude","mode":"review","model":"placeholder-model-1","extra":["--skill-path","<SKILL>"],"capabilities":{"write":"unknown","shell":"unknown","skills":"unknown","mcp":"unknown","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"claude","mode":"review","model":"placeholder-model-1","extra":["--mcp-config","<MCP>"],"capabilities":{"write":"unknown","shell":"unknown","skills":"unknown","mcp":"call_file","prompt":{"channel":"stdin","max_bytes":null}}},
+    {"runtime":"copilot","mode":"review","model":"placeholder-model-1","extra":["--mcp-config","<MCP>"],"capabilities":{"write":"none","shell":"no","skills":"unknown","mcp":"call_file","prompt":{"channel":"argv","max_bytes":102119}}},
+    {"runtime":"codex","mode":"exec","model":"placeholder-model-1","extra":["--codex-sandbox","workspace-write"],"capabilities":{"write":"workspace","shell":"unknown","skills":"unknown","mcp":"unknown","prompt":{"channel":"stdin","max_bytes":null}}}
+  ]
+}

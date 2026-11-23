@@ -51,8 +51,9 @@ _STATUS_PREFIX = "AIKIT-XAI "
 PREVIEW_TIMEOUT_S = 30
 MODEL_ID_PREFIX = "cross-ai: model-id "
 SETTING_LINE_RE = re.compile(
-    r"^cross-ai: setting (?P<name>[a-z_]+)=\S* (?P<state>applied|ignored|unknown)"
+    r"^cross-ai: setting (?P<name>[a-z_]+)=(?P<value>\S*) (?P<state>applied|ignored|unknown)"
     r"(?: reason=(?P<reason>[a-z_]+))?"
+    r"(?: form=(?P<form>[a-z]+))?"
 )
 
 _NO_NODE_LINE = "ai-kit-spec: subprocess dispatch needs Node (node not found on PATH)"
@@ -82,6 +83,10 @@ class RunnerSpec(NamedTuple):
     escalate_model: bool = False
     # D-23: ai-kit calls host by default; the runner's own default stays none.
     host: str | None = "auto"
+    # SPEC R4 amendment: lens skills and the run-scoped MCP file this lane is started with.
+    skill_paths: tuple[str, ...] = ()
+    skill_names: tuple[str, ...] = ()
+    mcp_config: str | None = None
 
     @property
     def role(self) -> str:
@@ -230,6 +235,11 @@ def runner_flags(spec: RunnerSpec) -> list[str]:
             flags += ["--codex-sandbox", spec.codex_sandbox or "workspace-write"]
     elif spec.runtime == "cursor" and spec.mode == "review" and spec.cursor_mode:
         flags += ["--cursor-mode", spec.cursor_mode]
+    # SPEC R4 amendment: after every existing flag, so a spec without them stays byte-equal.
+    for name, path in zip(spec.skill_names, spec.skill_paths, strict=True):
+        flags += ["--skill-name", name, "--skill-path", path]
+    if spec.mcp_config is not None:
+        flags += ["--mcp-config", spec.mcp_config]
     return flags
 
 

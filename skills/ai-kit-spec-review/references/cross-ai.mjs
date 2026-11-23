@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=11 sha256=UNSTAMPED
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=12 sha256=UNSTAMPED
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v11).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v12).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
@@ -1757,6 +1757,9 @@ const CLAUDE_EXEC_FORMULA_RECORD = null;
 const MCP_SERVER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const SKILL_PROSE = { label: { state: 'verified', source: 'runner: the SKILL.md text inlined before the prompt (stdin, or the copilot -p argument)' } };
 function skillsNone(source) { return { name: { form: null, label: { state: 'unknown', source } }, path: { flag: null, label: { state: 'unknown', source } }, prose: SKILL_PROSE }; }
+// SPEC R3 (D-02): what a final argv lets a lane do. tools: allow and deny flags, the tool names that are a shell or write files; facts: a flag run a recorded help line explains. Labels only quote tests/fixtures/cli_help/<host>/help.txt.
+const CODEX_SANDBOX_LABEL = { state: 'verified', source: 'codex 0.170.0 --help 2026-11-21: "-s, --sandbox <SANDBOX_MODE> Select the sandbox policy to use when executing model-generated shell commands [possible values: read-only, workspace-write, danger-full-access]"' };
+const CODEX_BYPASS_LABEL = { state: 'verified', source: 'codex 0.170.0 --help 2026-11-21: "--dangerously-bypass-approvals-and-sandbox Skip all confirmation prompts and execute commands without sandboxing"' };
 const RUNTIMES = {
   cursor: {
     bins: ['cursor-agent', 'agent'],
@@ -1780,6 +1783,7 @@ const RUNTIMES = {
       skills: skillsNone('cursor-agent 2026.11.13 help 2026-11-21: no skill form'),
       context: { kind: 'bracket', key: 'context', valueKind: 'label', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--model <model>" with the bracket example "[context=1m,effort=high,fast=false]"; meaning per model unverified' } },
       session: { style: 'minted', resumeFlag: '--resume', label: { state: 'unverified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--resume [chatId] Select a session to resume"; resume not live-probed' } },
+      capabilities: { tools: null, facts: [{ run: ['--mode', 'ask'], field: 'write', value: 'none', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "ask: Q&A style for explanations and questions (read-only)"' } }, { run: ['--mode', 'plan'], field: 'write', value: 'none', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "plan: read-only/planning (analyze, propose plans, no edits)"' } }, { run: ['--force'], field: 'shell', value: 'yes', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "-f, --force Force allow commands unless explicitly denied"' } }], label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21 (tests/fixtures/cli_help/cursor/)' } },
       effort: { kind: 'id-bracket', key: 'effort', label: { state: 'verified', source: 'cursor-agent 2026.11.13 --help 2026-11-21: "--model <model>" with the bracket example "[context=1m,effort=high,fast=false]"' } },
       provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
     },
@@ -1805,6 +1809,7 @@ const RUNTIMES = {
       skills: skillsNone('opencode 2.3.2 help 2026-11-21: no skill form'),
       context: { kind: 'none', valueKind: null, label: { state: 'unknown', source: 'opencode 2.3.2 run --help 2026-11-21: no context form' } },
       session: { style: 'minted', resumeFlag: '--session', label: { state: 'unverified', source: 'opencode 2.3.2 run --help 2026-11-21: "Session ID to continue, or to create if it does not exist"; caller-chosen id shapes unverified (a ses_ id was accepted live on 2026-11-16)' } },
+      capabilities: { tools: null, facts: [], label: { state: 'unknown', source: 'opencode 2.3.2 help 2026-11-21: no recorded help line states the write reach, a shell tool or MCP for the run flags' } },
       effort: { kind: 'id-suffix', key: '#', label: { state: 'verified', source: 'opencode 2.3.2 run --help 2026-11-21: "Model to use in the format provider/model#variant"' } },
       provider: { kind: 'id-prefix', label: { state: 'verified', source: 'opencode 2.3.2 run --help 2026-11-21: "Model to use in the format provider/model#variant"' } },
     },
@@ -1834,6 +1839,7 @@ const RUNTIMES = {
       skills: { name: { form: null, reason: 'mode_forbids', label: { state: 'unknown', source: 'pi 1.5.2 help 2026-11-21: no load-by-name form; the formulas pass --no-skills' } }, path: { flag: '--skill', label: { state: 'verified', source: 'pi 1.5.2 help 2026-11-21: "--skill <path> Load a skill file or directory (can be used multiple times)"' } }, prose: SKILL_PROSE },
       context: { kind: 'none', valueKind: null, label: { state: 'unknown', source: 'pi 1.5.2 --help 2026-11-21: no context form' } },
       session: { style: 'chosen', flag: '--session-id', label: { state: 'unverified', source: 'pi 1.5.2 --help 2026-11-21: "--session-id <id> Use the current directory existing session with the ID, creating it otherwise"; resume not live-probed' } },
+      capabilities: { tools: { allow: ['--tools'], deny: ['--exclude-tools'], shell: ['bash'], write: ['edit', 'write'], label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--tools, -t <tools> Comma-separated allowlist of tool names or patterns (*) to enable" and "Only +name/-name entries add to or remove from the defaults"' } }, facts: [{ run: ['--no-mcp'], field: 'mcp', value: 'none', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--no-mcp Disable built-in MCP support: no servers connect and no MCP tools"' } }, { run: ['--no-skills'], field: 'skills', value: 'none', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--no-skills, -ns Disable skills discovery and loading"' } }, { run: ['--no-tools'], field: 'shell', value: 'no', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--no-tools, -nt Disable all tools by default (built-in and extension)"' } }, { run: ['--no-tools'], field: 'write', value: 'none', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--no-tools, -nt Disable all tools by default (built-in and extension)"' } }], label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21 (tests/fixtures/cli_help/pi/)' } },
       effort: { kind: 'flag', flag: '--thinking', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--thinking <level> Set thinking level: off, minimal, low, medium, high, xhigh, max"' } },
       provider: { kind: 'id-prefix', label: { state: 'verified', source: 'pi 1.5.2 --help 2026-11-21: "--model <pattern> Model pattern or ID (supports provider/id and optional :<thinking>)"' } },
     },
@@ -1868,6 +1874,7 @@ const RUNTIMES = {
       skills: skillsNone('codex 0.170.0 help 2026-11-21: no skill form'),
       context: { kind: 'config', key: 'model_context_window', valueKind: 'tokens', label: { state: 'verified', source: 'codex 0.170.0 exec --help 2026-11-21: "-c, --config <key=value>"; a zero-token config parse rejected a non-integer model_context_window as "expected i64" (2026-11-16); its effect on a model window is unverified' } },
       session: { style: 'minted', resumeFlag: null, noResume: ['review', 'sandbox'], label: { state: 'unverified', source: 'codex 0.170.0 exec --help 2026-11-21: "resume Resume a previous session by id"; exec resume has no read-only sandbox form; resume not live-probed' } },
+      capabilities: { tools: null, facts: [{ run: ['--sandbox', 'read-only'], field: 'write', value: 'none', label: CODEX_SANDBOX_LABEL }, { run: ['--sandbox', 'workspace-write'], field: 'write', value: 'workspace', label: CODEX_SANDBOX_LABEL }, { run: ['--sandbox', 'danger-full-access'], field: 'write', value: 'full', label: CODEX_SANDBOX_LABEL }, { run: ['--dangerously-bypass-approvals-and-sandbox'], field: 'write', value: 'full', label: CODEX_BYPASS_LABEL }, { run: ['--dangerously-bypass-approvals-and-sandbox'], field: 'shell', value: 'yes', label: CODEX_BYPASS_LABEL }], label: { state: 'verified', source: 'codex 0.170.0 --help 2026-11-21 (tests/fixtures/cli_help/codex/)' } },
       effort: { kind: 'config', key: 'model_reasoning_effort', label: { state: 'verified', source: 'codex 0.170.0 exec --help 2026-11-21: "-c, --config <key=value>"; model_reasoning_effort is the runner\'s existing codex effort key' } },
       provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
     },
@@ -1899,6 +1906,7 @@ const RUNTIMES = {
       skills: { name: { form: '/<name>', label: { state: 'unverified', source: 'claude 2.1.330 help 2026-11-21: "Skills still resolve via /skill-name" appears only in the bare-mode text' } }, path: { flag: '--add-dir', label: { state: 'unverified', source: 'claude 2.1.330 help 2026-11-21: "--add-dir <directories...> More directories Claude can access" names no skill loading' } }, prose: SKILL_PROSE },
       context: { kind: 'id-suffix', valueKind: null, label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: no model-context flag; the [1m] model suffix is not in the help' } },
       session: { style: 'minted', resumeFlag: '--resume', label: { state: 'unverified', source: 'claude 2.1.330 --help 2026-11-21: "-r, --resume [value] Resume a conversation by session ID or name"; resume not live-probed' } },
+      capabilities: { tools: { allow: ['--tools'], deny: ['--disallowedTools', '--disallowed-tools'], variadic: true, shell: ['Bash'], write: ['Edit', 'Write', 'NotebookEdit'], label: { state: 'verified', source: 'claude 2.1.330 --help 2026-11-21: "--tools <tools...> Built-in tools to make available: "" for none, "default" for the default set, or tool names (e.g. "Bash,Edit,Read")" and "--disallowedTools, --disallowed-tools <tools...> Comma or space-separated list of tool names to deny"' } }, facts: [], label: { state: 'verified', source: 'claude 2.1.330 --help 2026-11-21 (tests/fixtures/cli_help/claude/); --permission-mode lists plan and bypassPermissions without saying what they allow' } },
       effort: { kind: 'flag', flag: '--effort', label: { state: 'verified', source: 'claude 2.1.330 --help 2026-11-21: "--effort <level> Effort level for the current session (low, medium, high, xhigh, max)"' } },
       provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
     },
@@ -1929,6 +1937,7 @@ const RUNTIMES = {
       skills: { name: { form: null, label: { state: 'unverified', source: 'copilot 1.0.112 skill help 2026-11-21: discovery roots only, no load-by-name form' } }, path: { flag: '--add-dir', root: '.github/skills', label: { state: 'unverified', source: 'copilot 1.0.112 help 2026-11-21: "--add-dir <directory> Allow file access to a directory and load its .github/skills" as trusted configuration; layout effect untested' } }, prose: SKILL_PROSE },
       context: { kind: 'flag', flag: '--context', valueKind: 'enum', values: ['default', 'long_context'], label: { state: 'verified', source: 'copilot 1.0.112 --help 2026-11-21: "--context <tier> Set the context window tier (overrides persisted setting) [possible values: default, long_context]"' } },
       session: { style: 'chosen', flag: '--session-id', label: { state: 'unverified', source: 'copilot 1.0.112 --help 2026-11-21: "--session-id <id> Resume an existing session or task by ID, or set the UUID for a new session"; resume not live-probed' } },
+      capabilities: { tools: { allow: ['--available-tools'], deny: ['--excluded-tools', '--deny-tool'], variadic: true, shell: ['bash', 'shell'], write: ['create', 'edit', 'apply_patch', 'write'], label: { state: 'verified', source: 'copilot 1.0.112 --help 2026-11-21: "--available-tools [<tools>...] Only these tools will be available to the model", "--excluded-tools [<tools>...] These tools will not be available to the model" and "--deny-tool [<tools>...] Tools the CLI does not have permission to use"' } }, facts: [], label: { state: 'verified', source: 'copilot 1.0.112 --help 2026-11-21 (tests/fixtures/cli_help/copilot/)' } },
       effort: { kind: 'flag', flag: '--reasoning-effort', label: { state: 'verified', source: 'copilot 1.0.112 --help 2026-11-21: "--reasoning-effort <level> Set the reasoning effort level; supported levels depend on the model"' } },
       provider: { kind: 'none', label: { state: 'unknown', source: 'no provider part in the model id form' } },
     },
@@ -2125,6 +2134,57 @@ function planSettings(row, role, call) {
   for (const name of SETTING_NAMES) SETTING_HANDLERS[name]?.(plan, row, role, call);
   for (const entry of plan.report) if (entry.proof === 'model') entry.proof = { slot: plan.model };
   return plan;
+}
+
+// SPEC R3 (D-02): pure; no fs, env, spawn or clock. A fact the final argv does not show stays unknown; role is the D-02 signature's (the argv already reflects the mode).
+const CAP_UNKNOWN = Object.freeze({ value: 'unknown', label: Object.freeze({ state: 'unknown', source: 'not shown by the final argv' }) });
+// The wire label is a fresh {state, source} object, the shape of the row forms' labels (39-07 validates exactly that).
+function capLabel(label) { return { state: label.state, source: label.source }; }
+// value null: a missing or dash-led operand, a malformed use (never an empty list); operand: the index the separate value occupies, never read as a flag.
+function flagUses(argv, flag) { const out = []; argv.forEach((el, i) => { if (el.startsWith(`${flag}=`)) out.push({ value: el.slice(flag.length + 1), joined: true }); else if (el === flag) { const next = argv[i + 1]; out.push({ value: next === undefined || next.startsWith('-') ? null : next, joined: false, operand: next === undefined ? undefined : i + 1 }); } }); return out; }
+// SPEC R3 encoding edge: --flag=value matches the two-element run; an element that is a tool flag's operand is not a flag. shortcut: an option outside the row's tool flags whose operand spells a fact flag is read as that flag; the formulas never produce one (paths are absolute, argvPromptElement keeps a prompt off a leading dash), only CONFIG.extraArgs could; upgrade if a row gains such an option.
+function factAt(argv, run, operands) { return argv.some((el, i) => !operands.has(i) && ((run.length === 2 && el === `${run[0]}=${run[1]}`) || run.every((v, j) => argv[i + j] === v))); }
+function toolListCaps(tools, uses) {
+  const used = [...new Set(uses.map((u) => u.flag))];
+  if (!used.length) return null;
+  const known = { state: tools.label.state, source: `from argv ${used.join(' ')}: ${tools.label.source}` };
+  const out = (v) => (v === null ? null : { value: v, label: v === 'unknown' ? { state: 'unknown', source: `from argv ${used.join(' ')}: the tool list does not decide this (a missing operand, a repeated, variadic, pattern, default or +/- entry)` } : capLabel(known) });
+  if (uses.some((u) => u.value === null) || (tools.variadic && uses.some((u) => !u.joined))) return { shell: out('unknown'), write: out('unknown') };
+  const split = (v) => v.split(/[\s,]+/).filter((e) => e !== '');
+  const allowValues = [...new Set(uses.filter((u) => tools.allow.includes(u.flag)).map((u) => u.value))];
+  const denied = uses.filter((u) => tools.deny.includes(u.flag)).flatMap((u) => split(u.value));
+  const left = (names) => names.filter((n) => tools.shell.includes(n) && !denied.includes(n));
+  let shell = null, write = null;
+  if (allowValues.length > 1) shell = 'unknown';
+  else if (allowValues.length === 1) { const entries = split(allowValues[0]);
+    if (entries.some((e) => /^[+-]/.test(e) || e === 'default')) shell = 'unknown';
+    else if (entries.includes('*')) shell = left(tools.shell).length ? 'yes' : 'no';
+    else if (entries.some((e) => e.includes('*'))) shell = 'unknown';
+    else { shell = left(entries).length ? 'yes' : 'no'; if (shell === 'no' && !entries.some((e) => tools.write.includes(e) && !denied.includes(e))) write = 'none'; } }
+  else if (!left(tools.shell).length) shell = 'no';
+  if (shell === 'no' && write === null && tools.write.every((w) => denied.includes(w))) write = 'none';
+  return { shell: out(shell), write: out(write) };
+}
+function laneCapabilities(row, role, argv, report) {
+  const prompt = row && row.argvPrompt ? { channel: 'argv', max_bytes: ARGV_PROMPT_MAX - Buffer.byteLength(`${RESUME_MSG}\n\n`) } : { channel: 'stdin', max_bytes: null };
+  const caps = { write: CAP_UNKNOWN, shell: CAP_UNKNOWN, skills: CAP_UNKNOWN, mcp: CAP_UNKNOWN };
+  if (!row || row.argvFile) { for (const k of Object.keys(caps)) caps[k] = { value: 'unknown', label: { state: 'unknown', source: 'argv file lane: declared by --argv-file' } }; return { ...caps, prompt }; }
+  const form = row.forms?.capabilities || { tools: null, facts: [] };
+  const uses = form.tools ? [...form.tools.allow, ...form.tools.deny].flatMap((f) => flagUses(argv, f).map((u) => ({ ...u, flag: f }))) : [];
+  const operands = new Set(uses.filter((u) => u.operand !== undefined).map((u) => u.operand));
+  const set = {};
+  for (const f of form.facts || []) { if (!factAt(argv, f.run, operands)) continue; const prev = set[f.field];
+    if (!prev) set[f.field] = { value: f.value, label: capLabel(f.label), flag: f.run[0] };
+    else if (prev.value !== f.value) set[f.field] = { value: 'unknown', label: { state: 'unknown', source: `${prev.flag} and ${f.run[0]} disagree in the final argv; no recorded help says which wins` }, flag: prev.flag }; }
+  for (const [k, v] of Object.entries(set)) caps[k] = { value: v.value, label: v.label };
+  const listed = form.tools ? toolListCaps(form.tools, uses) : null;
+  for (const k of ['shell', 'write']) { if (!listed?.[k]) continue;
+    caps[k] = set[k] && set[k].value !== listed[k].value ? { value: 'unknown', label: { state: 'unknown', source: 'a mode flag and the tool list disagree in the final argv; no recorded help says which wins' } } : listed[k]; }
+  const applied = (name, f) => (report || []).some((e) => e.name === name && e.state === 'applied' && (f === undefined || e.form === f));
+  if (applied('skill', 'path')) caps.skills = { value: 'path', label: capLabel({ state: row.forms.skills.path.label.state, source: `from argv ${row.forms.skills.path.flag}: applied skill setting form=path` }) };
+  else if (applied('skill', 'name')) caps.skills = { value: 'discovery', label: capLabel({ state: row.forms.skills.name.label.state, source: 'from argv: applied skill setting form=name' }) };
+  if (applied('mcp')) caps.mcp = { value: 'call_file', label: capLabel({ state: row.forms.mcp.label.state, source: `from argv ${row.forms.mcp.flag}: applied mcp setting` }) };
+  return { ...caps, prompt };
 }
 
 const MODEL_SLOT_FLAGS = ['--model', '-m'];
@@ -6487,11 +6547,11 @@ function loadSkills(o) {
   for (const [at, item] of o.skillArgs.entries()) {
     if (item.flag !== '--skill-path') continue;
     const shown = redactSecrets(item.value.replace(/[\x00-\x1f\x7f-\x9f]/g, ''));
-    if (CONTROL_CHAR_RE.test(item.value)) throw new Error('--skill-path: the path holds a control character');
+    if (PROMPT_CONTROL_RE.test(item.value)) throw new Error('--skill-path: the path holds a control character');
     let dir;
     try { dir = fs.realpathSync(path.resolve(process.cwd(), item.value)); if (!fs.statSync(dir).isDirectory()) throw new Error(); }
     catch { throw new Error(`--skill-path ${shown}: no such directory`); }
-    if (CONTROL_CHAR_RE.test(dir)) throw new Error('--skill-path: the path holds a control character');
+    if (PROMPT_CONTROL_RE.test(dir)) throw new Error('--skill-path: the path holds a control character');
     if (skills.some((s) => s.path === dir)) continue;
     const file = path.join(dir, 'SKILL.md');
     if (!fs.existsSync(file)) throw new Error(`--skill-path ${shown}: no SKILL.md in the directory`);
@@ -6615,6 +6675,8 @@ const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 // C0, DEL and C1 control characters.
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f-\x9f]/;
+// SPEC R6/R8 (D-13): the prompt-value control set, equal to ai_kit_spec.prompt_guard.is_control_char (shared fixture tests/fixtures/prompt_control_chars.json); used by the skill flags only.
+const PROMPT_CONTROL_RE = /[\p{Cc}\p{Zl}\p{Zp}\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/u;
 
 function parseArgs(argv) {
   const o = {
@@ -6691,10 +6753,10 @@ function parseArgs(argv) {
     else if (a === '--escalate-model') o.escalateModel = true;
     else if (a === '--session-id') { o.sessionId = v(); if (!SESSION_ID_RE.test(o.sessionId)) throw new Error(`${a} must match ${SESSION_ID_RE.source}`); }
     else if (a === '--host') { o.host = v(); if (!['auto', 'none'].includes(o.host)) throw new Error('--host must be auto or none'); }
-    else if (a === '--skill-name') { const n = v(); if (!SKILL_NAME_RE.test(n)) throw new Error(`${a} must match ${SKILL_NAME_RE.source}`); o.skillNames.push(n); o.skillArgs.push({ flag: a, value: n }); }
+    else if (a === '--skill-name') { const n = v(); if (PROMPT_CONTROL_RE.test(n) || !SKILL_NAME_RE.test(n)) throw new Error(`${a} must match ${SKILL_NAME_RE.source}`); o.skillNames.push(n); o.skillArgs.push({ flag: a, value: n }); }
     else if (['--skill-path', '--mcp-config', '--argv-file'].includes(a)) {
       const p = v();
-      if (p === '' || CONTROL_CHAR_RE.test(p)) throw new Error(`${a} must be a non-empty path without control characters`);
+      if (p === '' || (a === '--skill-path' ? PROMPT_CONTROL_RE : CONTROL_CHAR_RE).test(p)) throw new Error(`${a} must be a non-empty path without control characters`);
       if (a === '--skill-path') { o.skillPaths.push(p); o.skillArgs.push({ flag: a, value: p }); }
       else if (a === '--mcp-config') o.mcpConfig = p;
       else o.argvFile = p;
@@ -7049,6 +7111,7 @@ async function main(argv) {
       confirmReport(plan.report, argvOut, composePrompt(skillPlan.promptPrefix, null, '<prompt>', ''), o.mode);
       for (const line of reportLines(plan.report)) log(line);
       for (const line of skillBlockLines(plan.report)) log(line);
+      log(`cross-ai: capabilities ${JSON.stringify(laneCapabilities(rt, o.mode, argvOut, plan.report))}`);
       logExecLabel(name, rt, o.mode);
       liveSettings.report = plan.report;
       liveSettings.sessionId = rt.argvFile ? plan.sessionId : (o.sessionId && sessionShown(o.sessionId) ? o.sessionId : null);
@@ -7324,6 +7387,7 @@ export {
   CLI_NAME_RE,
   CONFIG,
   CONTEXT_RE,
+  CONTROL_CHAR_RE,
   CURSOR_MODEL_ID,
   EXEC_PREAMBLE,
   FINDING_CODES,
@@ -7342,6 +7406,7 @@ export {
   PATTERNS,
   PI_MODEL_ID,
   PLAN_ID_RE,
+  PROMPT_CONTROL_RE,
   RESUME_MSG,
   RETRY_DEFAULTS,
   ROW_CLASSES,
@@ -7402,6 +7467,7 @@ export {
   killGroup,
   ladderNext,
   ladderStop,
+  laneCapabilities,
   launcherVerified,
   launcherGroupAlive,
   liveCheck,

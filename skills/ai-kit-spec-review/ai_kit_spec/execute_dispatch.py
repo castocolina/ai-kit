@@ -3,10 +3,10 @@ target framework's own config-write/hook indirection (e.g. GSD's workflow.cross_
 which only exists to tell GSD's OWN execute-phase step what to shell out to, and only fires
 after a whole GSD-specific config round-trip). This module IS the dispatch: it composes the
 exec guidance (model-selection override, incremental progress, honest failure reporting,
-tool/MCP guidance, and -- for every runtime the OS does not confine -- an explicit
-soft-confinement instruction) and runs one candidate through the cross-AI runner in exec mode
-(D-11). A native (runtime is None) candidate is never routed here -- it has no subprocess to
-dispatch at all; the caller executes it in-process.
+the lane's capability block (capability_block.compose_for_lane), whose soft-confinement
+sentence follows the lane's write capability) and runs one candidate through the cross-AI
+runner in exec mode (D-11). A native (runtime is None) candidate is never routed here -- it has
+no subprocess to dispatch at all; the caller executes it in-process.
 
 The runner runs every exec CLI with full permissions except codex, which runs under
 `--codex-sandbox workspace-write` (D-27). That sandbox still allows writes to /tmp and
@@ -18,27 +18,32 @@ from collections.abc import Callable
 from typing import NamedTuple
 
 from ai_kit_spec import runner_facts
+from ai_kit_spec.capability_block import (
+    ComposeResult,
+    ComposeSeams,
+    LaneRefused,
+    LaneRequest,
+    cleanup,
+    compose_for_lane,
+    lane_spec,
+    with_block,
+)
 from ai_kit_spec.commands import execute_cli_error
 from ai_kit_spec.detection import runtime_id
 from ai_kit_spec.dispatch_guidance import build_dispatch_reinforcement_guidance
 from ai_kit_spec.runner_dispatch import (
     EXEC_NOTES,
-    OS_SANDBOXED_EXEC,
     RunnerSeams,
     RunnerSpec,
     run_runner,
     spec_with_effort,
     stderr_print,
 )
-from ai_kit_spec.tooling_guidance import (
-    build_tooling_guidance,
-    resolve_shared_tooling_reference_path,
-)
 
 
 def build_soft_confinement_guidance(target_dir: str) -> str:
     """Prompt guidance for a runtime the runner does not OS-confine (everything outside
-    OS_SANDBOXED_EXEC). Neither cursor nor opencode nor pi has a flag that genuinely confines
+    the OS sandbox). Neither cursor nor opencode nor pi has a flag that genuinely confines
     writes, so the only mitigation is telling the dispatched CLI, explicitly, that target_dir
     is the only place it may write. This is guidance, not a security boundary."""
     return (
@@ -53,7 +58,8 @@ class ExecuteSeams(NamedTuple):
     runner_fn: Callable = run_runner
     runner_seams: RunnerSeams = RunnerSeams()
     print_fn: Callable[[str], None] = stderr_print
-    build_tooling_guidance_fn: Callable[..., str] = build_tooling_guidance
+    compose_fn: Callable[..., ComposeResult] = compose_for_lane
+    compose_seams: ComposeSeams = ComposeSeams()
     build_reinforcement_fn: Callable[..., str] = build_dispatch_reinforcement_guidance
     build_soft_confinement_fn: Callable[[str], str] = build_soft_confinement_guidance
 
@@ -67,34 +73,34 @@ class ExecuteDispatchSpec(NamedTuple):
     tool_availability: dict | None = None
     agents_tooling_path: object = None
     code_index_registered: bool = False
+    files: tuple | None = ()
 
 
-def build_execute_guidance(spec: ExecuteDispatchSpec, seams: ExecuteSeams) -> str:
-    """The one composer of the exec guidance: reinforcement (with the format block), tooling
-    guidance, and soft confinement for every runtime the OS does not confine.
+def build_execute_guidance(
+    spec: ExecuteDispatchSpec, seams: ExecuteSeams,
+) -> tuple[ComposeResult, str]:
+    """Prefix the reinforcement and task with the lane's capability block.
 
-    The runner runs every exec CLI with full permissions except codex under `--codex-sandbox
-    workspace-write`, which still allows writes to /tmp and $TMPDIR. Soft confinement is prompt
-    guidance, not a security boundary."""
+    Soft confinement rides the block for write full or unknown; without --files (no block, no
+    preview) the write reach is unknown, so the sentence stays, as before phase 39.
+    """
     candidate = spec.candidate
-    runtime = candidate["runtime"]
-    sections = [
-        seams.build_reinforcement_fn(
-            f"{runtime}, model {candidate['model']}", spec.format_block
-        )
-    ]
-    tool_guidance = seams.build_tooling_guidance_fn(
-        runtime,
-        spec.tool_availability or {},
-        spec.agents_tooling_path,
-        spec.code_index_registered,
-        shared_reference_path=resolve_shared_tooling_reference_path(),
+    reinforcement = seams.build_reinforcement_fn(
+        f"{candidate['runtime']}, model {candidate['model']}", spec.format_block
     )
-    if tool_guidance:
-        sections.append(tool_guidance)
-    if runtime not in OS_SANDBOXED_EXEC:
-        sections.append(seams.build_soft_confinement_fn(spec.target_dir))
-    return "\n\n".join(sections)
+    text = reinforcement + "\n\n" + spec.prompt
+    if not spec.prompt.strip():
+        return ComposeResult(), spec.prompt
+    if spec.files is None:
+        soft = seams.build_soft_confinement_fn(spec.target_dir)
+        return ComposeResult(), "\n\n".join((reinforcement, soft, spec.prompt))
+    composed = seams.compose_fn(
+        LaneRequest(candidate["runtime"], candidate["model"], "execute", spec.target_dir,
+                    _runner_spec(candidate, spec),
+                    soft_confinement=seams.build_soft_confinement_fn(spec.target_dir)),
+        text, spec.files, seams.runner_seams.env_fn(), seams.compose_seams,
+    )
+    return composed, text
 
 
 def _runner_spec(candidate: dict, spec: ExecuteDispatchSpec) -> RunnerSpec:
@@ -136,11 +142,18 @@ def dispatch_execute(
     note = EXEC_NOTES.get(candidate["runtime"])
     if note:
         active.print_fn(note)
-    result = active.runner_fn(
-        _runner_spec(candidate, spec),
-        build_execute_guidance(spec, active) + "\n\n" + spec.prompt,
-        active.runner_seams,
-    )
+    composed, text = build_execute_guidance(spec, active)
+    try:
+        if composed.refusal:
+            raise LaneRefused(composed.refusal)
+        if composed.window is not None and composed.window["value"] is None:
+            active.print_fn(f"ai-kit-spec: window for {candidate['runtime']}/{candidate['model']}: "
+                            f"unknown ({composed.window['note'] or composed.window['label']}); "
+                            "not capped")
+        result = active.runner_fn(lane_spec(_runner_spec(candidate, spec), composed),
+                                  with_block(composed.block, text), active.runner_seams)
+    finally:
+        cleanup(composed)
     return {
         "runtime": candidate["runtime"],
         "model": candidate["model"],

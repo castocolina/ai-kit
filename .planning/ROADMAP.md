@@ -126,8 +126,9 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 37: Shared runner options and session ids** - One runner for GSD cross-AI and ai-kit lanes, with per-call settings and resumable sessions (completed 2026-11-21)
 - [x] **Phase 38: Runner hardening and run safety** - Idle watchdog, the Phase 25 cleanup, a run lock with a tree baseline, and a plan-versus-commits check before done (completed 2026-11-22)
 - [x] **Phase 38.1: Runner error classification and retry policy (INSERTED)** - Wider error catalogue, stdout limit matching, router cooldowns and the owner's retry policy (completed 2026-11-23)
-- [ ] **Phase 39: Lane capability blocks and lens skills** - Each lane is told only the tools it really has; lens skills reach reviewers
+- [x] **Phase 39: Lane capability blocks and lens skills** - Each lane is told only the tools it really has; lens skills reach reviewers (completed 2026-11-23)
 - [ ] **Phase 39.1: Remove the grok runtime (INSERTED)** - The grok CLI runtime leaves detection, command building, the runner table, profiles, docs and tests; its models stay reachable through opencode, pi and cursor-agent *(inserted 2026-11-19, owner decision)*
+- [ ] **Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)** - The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks *(inserted 2026-11-23, owner decision)*
 - [ ] **Phase 40: Resilient review sized by jev** - A failing lane no longer ends a review; jev sizes and classifies
 - [ ] **Phase 41: Superpowers adapter refactor with spec-config handoff** - One resume path, one stop path, session-model fallback, complete executor briefs
 - [ ] **Phase 42: Code review after execution and jev-picked executors** - Implementation is reviewed in a capped loop; jev picks the executor and lane transport
@@ -973,10 +974,32 @@ Plans:
   1. One role-keyed table of the skills (and MCP servers where a host allows it) present on each host is rescanned every run and read by review, execute and curated-config; an optional config-time jev step sorts an unknown skill into a role, and the owner confirms each sort.
   2. Each lane's prompt carries a capability block built from its final argv (read-only or write, shell or not, the tools found on the child's PATH, codebase-memory-mcp only when its binary is on that PATH (it replaced codegraph in Phase 32.5)); a lane without a shell is told about no shell tool.
   3. Lens skills present in the environment (the ponytail family, reducing-entropy, naming-analyzer, simplify, impeccable for UI) reach reviewers by path, and file-editing lenses run as a pass after approval; a lens is inlined where the lane cannot load it by path (Claude built-ins, pi through an allow-listed `--skill`). *(amended 2026-11-16, 39 D-10, D-11: live facts: pi 1.5.2's own docs say explicit `--skill` paths still load under `--no-skills`, so pi is the one verified by-path host; claude, copilot and cursor-agent have an `--add-dir` flag whose effect on a read-only lane is unverified until the execute-start spike, so they inline; a Claude built-in such as `simplify` has no file anywhere and cannot be inlined, so only a native lane of its host runs it and every other lane gets a named note; the file-editing pass after approval is opt-in and off by default, needs owner confirmation)*
+     *(amended 2026-11-23, 39-SPEC "Live facts added 2026-11-23": Phase 37 shipped the runner's skill and MCP flags, so lens delivery rides --skill-name and --skill-path, the MCP pick writes a run-scoped --mcp-config file, and the runner template goes 11 to 12 in the phase's last code wave; the owner confirmed the default-off file-editing pass with a diff the owner accepts, OWNER-DECISIONS-2026-11-16.md:52-54, so criterion 3's owner-confirmation clause is settled)*
   4. A prompt larger than a lane's known context window (the lane's own runtime's value from the Phase 35 catalog, or a per-(runtime, model) override in `[models]`; *amended 2026-11-16, 35 D-09*) is refused for that lane with a named reason and never trimmed; an unknown window is not capped and shows as unknown; a value embedded in a prompt (file list, lens path) with a control character, or a path outside the repository or skill roots, is rejected, each covered by a fixture. *(added 2026-11-16, GSD lane-handling study)*
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation. *(amended 2026-11-07, 32.1 D-01: `ai-kit-spec-review`, below the bar at the Phase 32 baseline (75.2 C), was deferred here from batch 32.2; it reaches the bar, with its Markdown scenarios converted to new-shape evals and with tests, in whichever of Phases 39-40 first changes its SKILL.md, and no later than Phase 40's close)* *(amended 2026-11-20, 36 plan time: Phase 36 changes `ai-kit-spec-review`'s SKILL.md first and brings it to the bar in loop 36; this phase keeps that bar with no regression beyond judge variation, and brings it there only if Phase 36 recorded it below the bar after three rounds)*
 
-**Plans**: TBD
+**Plans**: 19/19 plans complete in 13 waves *(planned 2026-11-23; the two runner plans 39-02 and 39-05 run one after the other; the live runner copy is re-rendered only by 39-17; 39-18, the judge loop, and 39-19, the closing gate with the final `make test`, are orchestrator actions)*
+
+Plans:
+- [x] 39-01-PLAN.md (wave 1): shared skill table module, roles, seed file `references/skill-roles.json`, `[skills.roles]` reader
+- [x] 39-02-PLAN.md (wave 1): runner `laneCapabilities` and the `cross-ai: capabilities` line, row capability forms in `--describe`
+- [x] 39-03-PLAN.md (wave 2): embedded-value validator, refusal reasons, shared control-character fixture
+- [x] 39-04-PLAN.md (wave 2): per-host skill and MCP-name scan, `skill-table` command
+- [x] 39-05-PLAN.md (wave 3): runner skill flags checked against the validator's control-character set
+- [x] 39-06-PLAN.md (wave 4): token estimate, window accessor, refusal record and exit 65
+- [x] 39-07-PLAN.md (wave 3): skill and MCP flags through `RunnerSpec`, lane facts parsed from `--print-argv`
+- [x] 39-08-PLAN.md (wave 3): `classify-skills` (jev advisory), `confirm-skill-role`, one config folder lock
+- [x] 39-09-PLAN.md (wave 4): curated-config `skill_roles`, the derived lens visibility, its propose-and-confirm commands
+- [x] 39-10-PLAN.md (wave 4): the capability block builder and the summary line
+- [x] 39-11-PLAN.md (wave 5): lens selection, pre-checks and budget, the MCP pick and its run-scoped file
+- [x] 39-12-PLAN.md (wave 6): dispatch wiring, pre-spawn refusal, `capability-block` command
+- [x] 39-13-PLAN.md (wave 7): one builder for three entry points, spec-config summary lines, adapter refusal catch
+- [x] 39-14-PLAN.md (wave 8): opt-in after-approval edit pass, `edit-lens-pass`
+- [x] 39-15-PLAN.md (wave 9): spec-review SKILL.md, references and doc-contract tests
+- [x] 39-16-PLAN.md (wave 10): spec-config sorting step, config docs, READMEs, dated cross-phase notes
+- [x] 39-17-PLAN.md (wave 11): template 11 to 12, live copy re-rendered, shard times re-recorded
+- [x] 39-18-PLAN.md (wave 12): judge loop for the changed skills (orchestrator action)
+- [x] 39-19-PLAN.md (wave 13): closing gate: dated-note check, scans, `make test` (orchestrator action)
 
 ### Phase 39.1: Remove the grok runtime (INSERTED)
 
@@ -989,6 +1012,25 @@ Plans:
   2. A config that still names the grok runtime gets one clear message naming the replacement runtimes and the re-save command, and a lane that names it is reported as removed and never run.
   3. The "grok is not a target" notes of Phases 36, 37 and 38.1 are superseded by this removal, and the pending todo "Cursor subagents pinned to non-fast composer-2.5 and grok" is re-read: its grok half (a model, not the runtime) is kept or dropped explicitly.
   4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
+**Plans**: TBD
+
+### Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)
+
+**Goal**: The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks. *(inserted 2026-11-23, owner decision; no SPEC yet, the SPEC step finalizes the criteria below)*
+**Depends on**: Phase 39
+**Requirements**: none yet (the SPEC step defines them)
+**Success Criteria** (what must be TRUE; seeded from the 2026-11-23 requirement candidates, the SPEC step finalizes them):
+  1. Each file is committed on the branch of the lowest open unit that owns it: a phase's own SPEC, CONTEXT and log on its unit; a cross-phase amendment on the amended phase's branch; REQUIREMENTS, ROADMAP, STATE and the goal file on the lowest open unit; the units above are restacked after each phase step. Test: an eval over three phases where the third amends the first ends with the amendment on the first unit, visible on all three, and no restack conflict.
+  2. A read-only where-am-I step runs at setup and before each phase: current branch, stack order with unit states, and the branch holding each phase's documents; it never edits the stack record. Test: a doc-contract test pins the step; an eval checks the printed fields.
+  3. Every later step that reads or writes phase N's files first runs `fold.py start --phase N` (reuse and checkout) and `fold.py guard --phase N`; the goal-prompt rails say the same for planning or executing an earlier phase. Test: an eval "plan the first phase after the chain" reads nothing from the top branch.
+  4. The end report states the branch the checkout is left on (the lowest phase of the range), the stack order with tips, which branch holds each phase's documents, the goal file's path and branch, and every `unit flow off` line. Test: a doc-contract test pins the fields.
+  5. Before the first `start`, the run stops with a reason when GSD's `git.branching_strategy` is not `none`, or when HEAD is an unrecorded branch with commits the trunk lacks; the agent moves no branch and edits no record. Test: two fixture repos, each refused with its reason.
+  6. The fold tool restacks the units above after a plain commit on a lower unit (no fold rewrite, no push), offers a read-only all-units view, and names a stale parent unit instead of `no_trunk`. Test: fixture-repo tests for each, with non-vacuity cases.
+  7. A recipe table in a spec-discuss reference maps each refusal or symptom (`ref_mismatch`, `wrong_parent`, `plan_not_carried`, `branch_missing`, stale unit, GSD branching on, unrecorded HEAD branch, inserted phase below open units, paused restack) to the next step. Test: a doc-contract test checks every listed reason appears with an action.
+  8. The changed SKILL.md files meet the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
+**Requirement candidates (captured 2026-11-23, owner request)**: spec-discuss branch strategy for stacked units. No v2.0 phase edits `ai-kit-gsd-spec-discuss` today; inserted as this phase on 2026-11-23, owner decision. Source: `.planning/todos/pending/2026-11-23-spec-discuss-branch-strategy-after-the-chain.md`.
 
 **Plans**: TBD
 
@@ -1292,7 +1334,7 @@ Plans:
 
 ## Progress
 
-**Execution Order:** 28 → 29 → 29.1 → 30 → 30.1 → 30.2 → 31 → 32 → 32.1 → 32.2 → 32.3 → 32.4 → 33 → ... → 38 → 38.1 → 39 → 39.1 → ... → 45 → 45.1 → 46 → 47 → 47.1 → 47.2 → 48 → ... → 54
+**Execution Order:** 28 → 29 → 29.1 → 30 → 30.1 → 30.2 → 31 → 32 → 32.1 → 32.2 → 32.3 → 32.4 → 33 → ... → 38 → 38.1 → 39 → 39.1 → 39.2 → ... → 45 → 45.1 → 46 → 47 → 47.1 → 47.2 → 48 → ... → 54
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -1316,7 +1358,7 @@ Plans:
 | 37. Shared runner options and session ids | 26/26 | Complete    | 2026-11-21 |
 | 38. Runner hardening and run safety | 27/27 | Complete    | 2026-11-22 |
 | 38.1. Runner error classification and retry policy | 14/14 | Complete    | 2026-11-23 |
-| 39. Lane capability blocks and lens skills | 0/TBD | Not started | - |
+| 39. Lane capability blocks and lens skills | 19/19 | Complete    | 2026-11-23 |
 | 40. Resilient review sized by jev | 0/TBD | Not started | - |
 | 41. Superpowers adapter refactor with spec-config handoff | 0/TBD | Not started | - |
 | 42. Code review after execution and jev-picked executors | 0/TBD | Not started | - |
@@ -1375,24 +1417,6 @@ open note in `.planning/todos/pending/2026-11-06-low-risk-review-and-judge-notes
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
-
-### Phase 999.21: The cross-AI runner removes the temp directories it creates (ABSORBED 2026-11-16)
-
-**Goal:** [Captured for future planning] Every run of the cross-AI runner
-(`skills/ai-kit-spec-review/references/cross-ai.mjs`, `makeTemp`) leaves an empty `cross-ai-*` directory, and
-an indexed run an empty `xai-idx-*` directory, in the system temp folder; Phase 32's review and judge runs left
-about 100 of them in a few hours. The runner removes each temp directory it created when the run ends, on
-success, failure, timeout and signal alike, keeping any file it is told to keep elsewhere, and a runner
-self-test case proves that a run leaves no new entry in its temp folder. The rendered project copy follows
-through the template sync. Likely home: Phase 38 (runner hardening). Found 2026-11-07 at the Phase 32
-close-out; until then the orchestrator moves the leftovers into the repository's `tmp/`.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-**Absorbed by:** Phase 38 criterion 5 (live 2026-11-16: the code was fixed in c535683, 2026-11-14; the proof case is what remains).
 
 ### Phase 999.22: The headless installer links agents, not only skills (BACKLOG)
 
@@ -1488,25 +1512,6 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 **Absorbed by:** HOOK-04 (Phase 48).
-
-#### Phase 999.5: Idle watchdog for the cross-AI runner (ABSORBED 2026-11-07)
-
-**Goal:** [Captured for future planning] The Phase 18 cross-AI runner
-(`.planning/scripts/cross-ai.mjs`, rendered from the ai-kit-spec-review template) kills the
-child's process group only at the overall deadline (outer `workflow.cross_ai_timeout` minus the
-D-29 margin). A child that hangs without output burns the whole window. Add an opt-in idle
-watchdog: kill the process group after N seconds with no stdout/stderr growth, then exit with the
-existing status vocabulary (a `retry-later` or `fallback` action, never a new exit class). It needs
-a self-test case and a default that is safe for slow, quiet models. Deferred by 18 D-43
-(RUN-46, 2026-10-15): not required by SPEC R5/D-27, and the runner is the largest new code in
-Phase 18.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-**Absorbed by:** RUN-03 (Phase 38).
 
 #### Phase 999.7: Cursor project-level subagent linking (ABSORBED 2026-11-07)
 
@@ -1626,50 +1631,6 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 **Absorbed by:** DEF-04 (Phase 32.4).
-
-#### Phase 999.12: Runner and adapter cleanup after the Phase 25 reviews (ABSORBED 2026-11-07)
-
-**Goal:** [Captured for future planning] Cut what the Phase 25 code and ponytail reviews
-(`25-REVIEW.md`) found unneeded or duplicated, with no behavior change:
-- one "confirmed router" rule shared by Python's catalog `fallback_quota` and curated-config's
-  `is_router`/`router_confirmed`/execute;
-- a `quota_cycle` class from superpowers' `classify_dispatch_failure`, instead of three shell
-  JSON parses in its SKILL;
-- `plan_io.py` calls gsd-core's `buildAgentSkillsBlock` instead of re-implementing its
-  skill-resolution rules;
-- dead `runCli` state, the live-detection plumbing and the clamp helpers (IN-01, IN-03);
-- the runner's embedded self-test harness (about 3,300 lines) moves to a sibling file that
-  rendered copies do not carry;
-- the lower user `cross_ai_timeout` is restored on cleanup (WR-05).
-
-Success criteria when promoted: each change keeps the runner self-test, `make test` and
-`make validate` green, and the template still renders a pristine copy.
-**Requirements:** (none yet)
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-**Absorbed by:** RUN-04 (Phase 38).
-
-#### Phase 999.13: Register workflow.cross_ai_retry with gsd-core so config-set accepts it (ABSORBED 2026-11-07)
-
-**Goal:** [Captured for future planning] Ship a gsd-core capability manifest that registers
-`workflow.cross_ai_retry.*`, so `config-set workflow.cross_ai_retry.<key>` validates and writes the
-key instead of the owner hand-editing `.planning/config.json` (Phase 25.1 D-02). Starting evidence
-(25.1-RESEARCH.md Q2): gsd-core 1.17.0 composes federated capability config keys from
-`capability.json` manifests under `$GSD_HOME/.gsd/capabilities/<id>/` (global) or
-`<project>/.gsd/capabilities/<id>/` (project); a project-scope capability needs a consent record
-keyed to the project's realpath and its bundle hash, or it stays discovered-but-inactive. Open:
-the exact manifest fields, whether a list-typed key such as `hard_waits_s` is accepted, the
-global versus project scope choice and the consent gate.
-**Requirements:** (none yet)
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-**Absorbed by:** superseded by CFG-03 (Phase 33): gsd-core rejects non-GSD keys, so the retry settings move into ai-kit's own config (REQUIREMENTS.md Out of Scope).
 
 #### Phase 999.14: Install ai-kit skills as real copies through the skills CLI, synced across hosts (ABSORBED 2026-11-07)
 
@@ -1824,3 +1785,100 @@ actually run instead of skipping on a gsd-core line outside `GSD_CORE_PREFIXES`.
 `AGENT_TO_PHASE_TYPE` are value-equal to the 1.16.0 fixture; the prefix allowlist became a minimum-version
 rule (`GSD_CORE_MIN_VERSION`, 1.16.0 or newer runs), so a gsd-core upgrade runs the guard and a real
 incompatibility fails it. `check-dogfood` reports `3 attempted, 3 executed, 0 skipped`.
+
+#### Phase 999.21: The cross-AI runner removes the temp directories it creates (DONE 2026-11-23)
+
+**Goal:** [Captured for future planning] Every run of the cross-AI runner
+(`skills/ai-kit-spec-review/references/cross-ai.mjs`, `makeTemp`) leaves an empty `cross-ai-*` directory, and
+an indexed run an empty `xai-idx-*` directory, in the system temp folder; Phase 32's review and judge runs left
+about 100 of them in a few hours. The runner removes each temp directory it created when the run ends, on
+success, failure, timeout and signal alike, keeping any file it is told to keep elsewhere, and a runner
+self-test case proves that a run leaves no new entry in its temp folder. The rendered project copy follows
+through the template sync. Likely home: Phase 38 (runner hardening). Found 2026-11-07 at the Phase 32
+close-out; until then the orchestrator moves the leftovers into the repository's `tmp/`.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+**Delivered by:** Phase 38 criterion 5 (completed 2026-11-22, 38-VERIFICATION.md SC5 and R10): the code was
+fixed in c535683 (2026-11-14); the self-test case `temp-dirs-gone` now proves that an ok run, a failed run and
+a signalled run leave no `cross-ai-*` or `xai-idx-*` entry in the temp folder, and it passes.
+
+#### Phase 999.5: Idle watchdog for the cross-AI runner (DONE 2026-11-23)
+
+**Goal:** [Captured for future planning] The Phase 18 cross-AI runner
+(`.planning/scripts/cross-ai.mjs`, rendered from the ai-kit-spec-review template) kills the
+child's process group only at the overall deadline (outer `workflow.cross_ai_timeout` minus the
+D-29 margin). A child that hangs without output burns the whole window. Add an opt-in idle
+watchdog: kill the process group after N seconds with no stdout/stderr growth, then exit with the
+existing status vocabulary (a `retry-later` or `fallback` action, never a new exit class). It needs
+a self-test case and a default that is safe for slow, quiet models. Deferred by 18 D-43
+(RUN-46, 2026-10-15): not required by SPEC R5/D-27, and the runner is the largest new code in
+Phase 18.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+**Delivered by:** RUN-03 (Phase 38, completed 2026-11-22, 38-VERIFICATION.md R1 and R2): the opt-in
+`--idle-timeout <seconds|default>` watchdog (default 900 s, judged) ends a silent lane's process group as a
+timed-out attempt in the existing retry ladder, an execute lane's idle clock resets when the tree or commits
+change, and the self-test cases idle-silent-ended, idle-slow-quiet-default and poll-* pass.
+
+#### Phase 999.12: Runner and adapter cleanup after the Phase 25 reviews (DONE 2026-11-23)
+
+**Goal:** [Captured for future planning] Cut what the Phase 25 code and ponytail reviews
+(`25-REVIEW.md`) found unneeded or duplicated, with no behavior change:
+- one "confirmed router" rule shared by Python's catalog `fallback_quota` and curated-config's
+  `is_router`/`router_confirmed`/execute;
+- a `quota_cycle` class from superpowers' `classify_dispatch_failure`, instead of three shell
+  JSON parses in its SKILL;
+- `plan_io.py` calls gsd-core's `buildAgentSkillsBlock` instead of re-implementing its
+  skill-resolution rules;
+- dead `runCli` state, the live-detection plumbing and the clamp helpers (IN-01, IN-03);
+- the runner's embedded self-test harness (about 3,300 lines) moves to a sibling file that
+  rendered copies do not carry;
+- the lower user `cross_ai_timeout` is restored on cleanup (WR-05).
+
+Success criteria when promoted: each change keeps the runner self-test, `make test` and
+`make validate` green, and the template still renders a pristine copy.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+**Delivered by:** RUN-04 (Phase 38, completed 2026-11-22, 38-VERIFICATION.md R6 to R10): one confirmed-router
+rule (`model_heuristics.router_statement`), the `quota_cycle` class, the self-test harness moved to
+`cross-ai-selftest.mjs` (rendered copies do not carry it), `plan_io.py` calling gsd-core's
+`buildAgentSkillsBlock`, and the dead `watchChunk` state removed (`clampCapS` and `clampAttemptTimeout` are live
+and stay). The lower-timeout restore became a visible, tested before and after in the plan entry (38 D-17 to
+D-22: its skill was removed in Phase 31).
+
+#### Phase 999.13: Register workflow.cross_ai_retry with gsd-core so config-set accepts it (DONE 2026-11-23)
+
+**Goal:** [Captured for future planning] Ship a gsd-core capability manifest that registers
+`workflow.cross_ai_retry.*`, so `config-set workflow.cross_ai_retry.<key>` validates and writes the
+key instead of the owner hand-editing `.planning/config.json` (Phase 25.1 D-02). Starting evidence
+(25.1-RESEARCH.md Q2): gsd-core 1.17.0 composes federated capability config keys from
+`capability.json` manifests under `$GSD_HOME/.gsd/capabilities/<id>/` (global) or
+`<project>/.gsd/capabilities/<id>/` (project); a project-scope capability needs a consent record
+keyed to the project's realpath and its bundle hash, or it stays discovered-but-inactive. Open:
+the exact manifest fields, whether a list-typed key such as `hard_waits_s` is accepted, the
+global versus project scope choice and the consent gate.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+**Delivered by:** superseded by CFG-03 (Phase 33, 33-VERIFICATION.md truth 7): gsd-core rejects non-GSD keys, so
+no capability manifest was shipped; the runner reads `[runner.retry]` from ai-kit's own config (project over
+user) and migrates the GSD block once, with 60 retry, TOML and migration self-test cases passing.

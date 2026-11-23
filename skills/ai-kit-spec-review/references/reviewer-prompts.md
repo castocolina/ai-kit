@@ -44,7 +44,7 @@ with the ### Status: line. Do not edit any file under review.
 
 Use VERBATIM as the delegated agent's prompt, substituting only `<CHECKLIST_SKILL_MD>`,
 `<DOC_PATHS>`, `<ARCHETYPE>`, `<FRAMEWORK_PROFILE_PATH>`, `<CODEBASE_ROOT>`, `<GROUNDING_DOCS>`,
-`<SHARED_TOOLING_PATH>` and `<TOOL_AVAILABILITY_JSON>` (Step 0.7 point 0). When
+`<SHARED_TOOLING_PATH>` and `<LENS_LINES>` (Step 0.7 point 0; `<LENS_LINES>` below). When
 `CHECKLIST_SKILL_MD` does not exist (a partial install) and the host has a skill-invocation
 tool, replace Step 1's sentence with "Invoke the `ai-kit-spec-review-checklist` skill and follow
 it exactly"; with neither, STOP — the checklist is not installed.
@@ -66,12 +66,12 @@ archetype checklists.
 
 Step 2b: The orchestrator has also pre-resolved this machine's tooling facts:
 - SHARED_TOOLING_PATH = <SHARED_TOOLING_PATH>
-- TOOL_AVAILABILITY = <TOOL_AVAILABILITY_JSON>
-Read SHARED_TOOLING_PATH for this repo's confirmed tool preferences and apply them during your
-own grounding work (prefer rg/fd/bat/sd/eza and codebase-memory-mcp's search_graph and trace_path where confirmed available,
-over broad reads/legacy tools). TOOL_AVAILABILITY is the authoritative map of which of those
-tools are actually installed here — it is what the checklist's legacy-tool-usage rule is gated
-on, so never flag a legacy invocation whose modern replacement is not `true` in it.
+- TOOL_AVAILABILITY = {}
+- LENS LINES: <LENS_LINES>
+Read SHARED_TOOLING_PATH for this repo's tool preferences. TOOL_AVAILABILITY is empty: this
+dispatch makes no tool claim, so the checklist's legacy-tool-usage rule flags no legacy
+invocation. Apply each skill the LENS LINES name as an advisory lens, loading it by name only
+if your host provides it (unverified); a lens never changes what you review.
 
 Step 3: Read every file under review fresh from disk:
 <DOC_PATHS>
@@ -101,3 +101,5 @@ Step 6: Emit the report following the skill's output template strictly. Record `
 
 Do not assume any context outside what you read. Do not edit any file under review.
 ```
+
+`<LENS_LINES>` is the stdout of `python3 "$TOOLS_PY" capability-block --runtime <the session's own runtime id> --model <the session model id> --role review --native --cwd <CODEBASE_ROOT> --files <each DOC_PATHS entry>` (the same lens selection the subprocess lanes get, lens lines only), or `none` when `TOOLS_PY` is missing (a partial install) or the command exits non-zero (quote its stderr in the surface message).

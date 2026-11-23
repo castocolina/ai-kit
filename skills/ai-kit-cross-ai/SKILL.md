@@ -56,7 +56,7 @@ Settings come from the owner's lane configuration or the calling skill's decisio
 | `--skill-path <dir>`, `--skill-name <name>` (repeatable) | a directory holding `SKILL.md`; a skill installed on that host | `skill` |
 | `--mcp-config <file>` | a run-scoped JSON file | `mcp` |
 
-Two more flags print facts and call no model: `--print-argv` prints the argv, the settings lines and `cross-ai: model-id <id>`; `--describe` prints one JSON object with the setting names, reasons and states, every status with its exit (`statuses`), every finding code with its result (`findings`), the supervision flags (`supervision_flags`) and, per runtime, its formulas, listing command, session style and each form with its source label (`host.available` says whether herdr is usable). Read `--describe` before naming a setting a host may not take.
+Two more flags print facts and call no model: `--print-argv` prints the argv, the settings lines, `cross-ai: model-id <id>` and one `cross-ai: capabilities <JSON>` line (what the final argv lets the lane do: `write`, `shell`, `skills` and `mcp`, each `{value, label}`, and `prompt` `{channel, max_bytes}`); `--describe` prints one JSON object with the setting names, reasons and states, every status with its exit (`statuses`), every finding code with its result (`findings`), the supervision flags (`supervision_flags`) and, per runtime, its formulas, listing command, session style and each form with its source label (`host.available` says whether herdr is usable). Read `--describe` before naming a setting a host may not take.
 
 ### Supervision flags
 
@@ -82,7 +82,7 @@ Resolve one runner path, `$RUNNER`, before any check: the project copy
 of the sibling `ai-kit-spec-review` skill (`skills/ai-kit-spec-review/references/cross-ai.mjs` in
 an ai-kit checkout); stop when neither exists. Use that same `$RUNNER` for the header check and
 in every launch, preview and re-invocation. Before the first launch in a project, check its
-line-2 header (`sed -n 2p "$RUNNER"`): this contract needs `template=11` or later. A lower template, or a `cross-ai.mjs.new` waiting beside it, is not this
+line-2 header (`sed -n 2p "$RUNNER"`): this contract needs `template=12` or later. A lower template, or a `cross-ai.mjs.new` waiting beside it, is not this
 contract: stop and route the owner to `ai-kit-gsd-curated-config` `ensure-runner`.
 
 The prompt always goes on stdin; the runner has no prompt flag. For copilot the runner itself
@@ -101,7 +101,12 @@ foreground pattern.
 When the request does not settle the role, stop before launching and ask; never default to
 `execute`, which selects the write-capable contract.
 
-The role confines the child, not the runner. Every launching call (not `--print-argv`,
+The role picks each runtime's own restriction for the child (opencode's `plan` agent, for
+example); it is not a sandbox. The `cross-ai: capabilities` line can report write, shell or MCP
+reach as `unknown`, and a review's git tree check finds checkout changes only after the call: it
+neither prevents them nor sees paths outside the checkout. A review whose child must not write
+needs containment verified on that host before the launch, or the isolated checkout below.
+Nothing confines the runner itself. Every launching call (not `--print-argv`,
 `--describe`, `--classify-only`, `--sweep` or the `--blocked-*` flags) first runs the one-time migration of a legacy
 `workflow.cross_ai_retry` block in a GSD `config.json`, and of the user
 `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json`, into ai-kit's `config.toml`, and rewrites
@@ -226,7 +231,7 @@ Before the runtime starts, the runner prints one stderr line per setting the cal
 cross-ai: setting <name>=<value> <state> [reason=<code>]
 ```
 
-A skill line adds `form=<name|path|prose>` when it applies; an MCP line names one server. Values are redacted and lose control characters. `--print-argv` prints the same lines and `cross-ai: model-id <id>` (the id the runtime receives) with no model call. A setting the call does not name prints nothing.
+A skill line adds `form=<name|path|prose>` when it applies; an MCP line names one server. Values are redacted and lose control characters. `--print-argv` prints the same lines, `cross-ai: model-id <id>` (the id the runtime receives) and the `cross-ai: capabilities` line with no model call. A setting the call does not name prints nothing.
 
 The names, in print order: `model`, `provider`, `role`, `effort`, `context`, `session`, `escalate_runtime`, `escalate_model`, `host`, `skill`, `mcp`.
 

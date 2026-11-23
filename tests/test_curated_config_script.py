@@ -83,7 +83,7 @@ class TestRender(unittest.TestCase):
         # C-WR-04/PT-07: plans stamp TEMPLATE_VERSION; readiness is a floor at or below it.
         shipped = cross_ai_script.template_version(self.template)
         self.assertEqual(cross_ai.TEMPLATE_VERSION, shipped)
-        self.assertEqual(shipped, 11)
+        self.assertEqual(shipped, 12)
         self.assertEqual(cross_ai_script._READY_TEMPLATE, 9)
         self.assertLessEqual(cross_ai_script._READY_TEMPLATE, shipped)
 

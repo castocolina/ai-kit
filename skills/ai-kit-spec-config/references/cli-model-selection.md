@@ -39,7 +39,7 @@ variable.
    single-provider-CLI candidate from ranking):
    ```bash
    python3 "$TOOLS_PY" fetch-model-catalog --runtimes-json "$RUNTIMES_JSON" \
-     --catalog-path "$CATALOG_JSON" --cwd "$(pwd)" --if-stale \
+     --catalog-path "$CATALOG_JSON" --cwd "<project root>" --if-stale \
      [--extra-candidate <cli>:<model-id> ...] > "$SCRATCH/fetch-model-catalog-result.json"
    ```
    `--if-stale` here gates the models.dev/Artificial Analysis NETWORK calls only — candidate

@@ -9,21 +9,26 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from ai_kit_spec import (
+    capability_block,
     catalog_cmds,
     catalog_fetch,
     config_migrate,
     config_status,
+    edit_pass,
     effort_probe,
     jev_names,
     lane_effort,
     lane_settings,
     optional_sources,
+    prompt_guard,
     propose_cmds,
     provider_check,
     role_orders,
     routing,
     runner_facts,
     secret_shapes,
+    skill_classify,
+    skill_table,
     toml_splice,
     trust,
     usability,
@@ -33,6 +38,7 @@ from ai_kit_spec.cache import (
     cache_read_json,
     cache_write_json,
 )
+from ai_kit_spec.capability_block import LaneRefused
 from ai_kit_spec.catalog_attribution import attribution_lines, catalog_sources
 from ai_kit_spec.catalog_build import (
     CatalogSources,
@@ -53,6 +59,7 @@ from ai_kit_spec.config_io import (
     DEFAULT_POLICY,
     ConfigError,
     cfg_combine,
+    cfg_folder_lock,
     cfg_lanes_table,
     cfg_lanes_view,
     cfg_local_path,
@@ -421,6 +428,11 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
                              help="e.g. GSD's own real SUMMARY.md shape -- omit for a dispatch "
                                   "mode whose caller already knows its own output convention")
     p_dispatch.add_argument("--tool-availability-json", default=None)
+    p_dispatch.add_argument("--files", nargs="*", default=None,
+                            help="every path the prompt embeds; validated; without it no "
+                                 "capability block is built (a stderr note says so); pass --files "
+                                 "with no "
+                                 "value for none")
     p_dispatch.add_argument("--agents-tooling-path", default=None)
     p_dispatch.add_argument("--code-index-registered", action="store_true")
     p_dispatch.add_argument(
@@ -449,6 +461,9 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
         "--timeout-tiers", required=True,
         help="comma-separated seconds, e.g. '600,1200,1800' -- escalation order")
     p_dispatch_reviewer.add_argument("--tool-availability-json", default=None)
+    p_dispatch_reviewer.add_argument(
+        "--files", nargs="*", default=None,
+        help="paths embedded in the prompt; omit for no block, or pass --files with no values")
     p_dispatch_reviewer.add_argument("--agents-tooling-path", default=None)
     p_dispatch_reviewer.add_argument(
         "--cwd", default=None,
@@ -488,6 +503,10 @@ def _build_parser() -> argparse.ArgumentParser:
     catalog_cmds.register_parsers(sub)
     propose_cmds.register_parsers(sub)
     config_status.register_parsers(sub)
+    capability_block.register_parsers(sub)
+    edit_pass.register_parsers(sub)
+    skill_table.register_parsers(sub)
+    skill_classify.register_parsers(sub)
     return parser
 
 def _cmd_cache_path(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -1019,6 +1038,14 @@ def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
         print(f"render-toml: {problem}", file=sys.stderr)
     if problems:
         return 1
+    if not args.out:
+        return _render_and_publish(args, config, env)
+    # The read-modify-publish holds the folder lock confirm-skill-role takes for [skills.roles].
+    with cfg_folder_lock(args.out):
+        return _render_and_publish(args, config, env)
+
+
+def _render_and_publish(args: argparse.Namespace, config, env: dict) -> int:
     existing, doc = _checked_target(args.out) if args.out else ("", {})
     if args.out:
         refusal = _render_toml_refusal(args.out, doc, args.replace)
@@ -1249,8 +1276,12 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
     if args.format_block_file:
         with open(args.format_block_file, encoding="utf-8") as f:
             format_block = f.read()
-    tool_availability = (json.loads(args.tool_availability_json)
-                          if args.tool_availability_json else {})
+    if args.tool_availability_json is not None:
+        print("ai-kit-spec: --tool-availability-json is ignored: the capability block resolves "
+              "tools on the lane's own PATH", file=sys.stderr)
+    if args.files is None:
+        print("ai-kit-spec: no capability block built: no --files given "
+              "(pass --files to get the lane's capability block)", file=sys.stderr)
     candidate = {"runtime": rid, "model": args.model, "effort": args.effort,
                  "service_tier": args.service_tier}
     try:
@@ -1261,11 +1292,15 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
                 args.target_dir,
                 args.timeout,
                 format_block=format_block,
-                tool_availability=tool_availability,
+                tool_availability={},
                 agents_tooling_path=args.agents_tooling_path,
                 code_index_registered=args.code_index_registered,
+                files=None if args.files is None else tuple(args.files),
             )
         )
+    except LaneRefused as exc:
+        print(json.dumps(exc.record, sort_keys=True), file=sys.stderr)
+        return prompt_guard.REFUSED_EXIT
     except ValueError as exc:
         print(f"dispatch-execute: {exc}", file=sys.stderr)
         return 1
@@ -1293,20 +1328,29 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
         with open(args.prompt_file, encoding="utf-8") as f:
             prompt = f.read()
     timeout_tiers = [int(t) for t in args.timeout_tiers.split(",") if t.strip()]
-    tool_availability = (json.loads(args.tool_availability_json)
-                          if args.tool_availability_json else {})
+    if args.tool_availability_json is not None:
+        print("ai-kit-spec: --tool-availability-json is ignored: the capability block resolves "
+              "tools on the lane's own PATH", file=sys.stderr)
+    if args.files is None:
+        print("ai-kit-spec: no capability block built: no --files given "
+              "(pass --files to get the lane's capability block)", file=sys.stderr)
     try:
         result = deps.dispatch_reviewer_fn(
             ReviewerDispatchSpec(
                 reviewers[args.index],
                 prompt,
                 timeout_tiers,
-                tool_availability,
+                {},
                 args.agents_tooling_path,
                 cwd=args.cwd,
+                files=None if args.files is None else tuple(args.files),
             ),
-            seams=ReviewerSeams(runner_tiers_fn=deps.runner_tiers_fn, custom_fn=deps.custom_fn),
+            seams=ReviewerSeams(runner_tiers_fn=deps.runner_tiers_fn, custom_fn=deps.custom_fn,
+                                compose_seams=capability_block.DEFAULT_SEAMS),
         )
+    except LaneRefused as exc:
+        print(json.dumps(exc.record, sort_keys=True), file=sys.stderr)
+        return prompt_guard.REFUSED_EXIT
     except ValueError as exc:
         # Deliberately no "### Status:" substring -- same fail-closed convention
         # render-command uses: a malformed reviewer entry (bad/missing command template,
@@ -1320,6 +1364,18 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
         return result["returncode"] if result["returncode"] is not None else 1
     print(json.dumps(result))
     return 0
+
+def _capability_key(args, rid, extra, deps) -> str:
+    knobs = {**(extra if isinstance(extra, dict) else {}),
+             **({"effort": args.effort} if args.effort is not None else {})}
+    entry = {"model": args.model, "command": args.reviewer_command, "key": args.key,
+             "extra": knobs}
+    if rid is not None:
+        entry["runtime"] = rid
+    rt, model, text = capability_block.lane_summary(
+        entry, "review", os.getcwd(), deps.env_fn(), capability_block.DEFAULT_SEAMS)
+    return f"capability {rt}/{model} review: {text}"
+
 
 def _cmd_check_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     extra = json.loads(args.extra_json) if args.extra_json else {}
@@ -1344,6 +1400,7 @@ def _cmd_check_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
             key, problem = usability.record_usability(args.catalog_path, rid, args.model, record)
             result["usability"] = {"recorded": key is not None, "key": key,
                                    "problem": problem, "state": record["state"]}
+    result["capability"] = _capability_key(args, rid, extra, deps)
     for field in ("detail", "reason"):
         value = result.get(field)
         if isinstance(value, str):
@@ -1377,6 +1434,10 @@ _COMMANDS = {
     **catalog_cmds.COMMANDS,
     **propose_cmds.COMMANDS,
     **config_status.COMMANDS,
+    **capability_block.COMMANDS,
+    **edit_pass.COMMANDS,
+    **skill_table.COMMANDS,
+    **skill_classify.COMMANDS,
 }
 
 def _dispatch(argv: list, deps: CliDeps) -> int:

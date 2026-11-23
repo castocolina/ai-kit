@@ -2,7 +2,8 @@
 
 Read this only when `--check-only` was passed. It reports reviewer availability and stops: no
 config write, no runtimes snapshot, no trust record. `$TOOLS_PY`, `$CLI_PROFILES_DIR` and
-`$SCRATCH` are the literal paths SKILL.md Step 0 printed.
+`$SCRATCH` are the literal paths SKILL.md Step 0 printed, and `<project root>` is the one path
+Step 0 resolved (`./.aikit/config.toml` below means `<project root>/.aikit/config.toml`).
 
 Report which CLIs are installed (Step 1's `detect-runtimes` output). Then read the target config
 file (the user `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml` if `--global` was passed, else
@@ -10,11 +11,14 @@ file (the user `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml` if `--global` 
 legacy `cli`) with its role, if it exists. (This is a raw on-disk read only, not `cfg_resolve`'s merged view.) When that
 config.toml has no `[lanes]` table and an old `review-spec.toml` sits beside it, report that the old roster migrates on
 the next command that reads it, and list its `[[reviewers]]` entries (read-only).
-If any entries exist, their **quota availability** is the core purpose of `--check-only`, but the
+Whatever the raw read found (none in this file can still mean lanes in the other layer), the
+lanes' **quota availability** is the core purpose of `--check-only`, but the
 probe is a live call to each CLI, so check write risk first, exactly as SKILL.md Step 2.5 does,
 over exactly the keys `probe-quota` will spawn for. That set comes from the merged view (project
-over user) and both roles' orders, not the raw read above, so list it first. This snippet makes the same resolve and
-route calls `probe-quota` makes before it probes, with no model call and no write:
+over user) and both roles' orders, not the raw read above, so always list it first. This snippet makes the same resolve and
+route calls `probe-quota` makes before it probes, with no model call and no write. When it prints
+an empty list, nothing would be probed: say so, report each raw-read key as `available: unknown`
+with the reasons the edge cases below list, and skip to the stale-provider report:
 
 ```bash
 python3 -c "
@@ -24,7 +28,7 @@ from ai_kit_spec import routing
 from ai_kit_spec.cli import CliDeps, _probe_lanes, _route_reviewers
 from ai_kit_spec.config_io import cfg_resolve
 deps = CliDeps()
-config = cfg_resolve('$(pwd)', deps.env_fn(), migrate=False)
+config = cfg_resolve('<project root>', deps.env_fn(), migrate=False)
 lanes = _probe_lanes(config, 'both')
 routes = _route_reviewers(config, deps, persist=False, lanes=lanes)
 keys = routing.probe_keys([e['key'] for e in lanes], routes)
@@ -50,7 +54,7 @@ stale-provider report below. On yes, or when every printed entry is confirmed re
 was printed), probe using a throwaway path:
 
 ```bash
-python3 "$TOOLS_PY" probe-quota --cwd "$(pwd)" --role both --no-save-runtimes --no-migrate --quota-path "$SCRATCH/quota.json"
+python3 "$TOOLS_PY" probe-quota --cwd "<project root>" --role both --no-save-runtimes --no-migrate --quota-path "$SCRATCH/quota.json"
 ```
 
 `probe-quota` makes live probe calls to each configured CLI (same mechanism as dispatch time),
@@ -59,7 +63,7 @@ but "no writes" means nothing is persisted to ai-kit's caches or config: the thr
 `probe-quota`'s routing step from writing the runtimes cache (a cold or stale cache is rebuilt in
 memory only, and a targeted refresh is never written back). `--no-migrate` reads an old roster read-only: it is used in memory, `migration pending` is printed, and nothing is written.
 
-`--role both` probes the review order, then each execute lane not already listed (the execute order first, then the other execute lanes the execute selector can still pick), once per key. A key that names different lanes in the review and execute roles is probed as its review lane, and `probe-quota` prints one line naming the key and saying its execute lane is not probed; relay that line and suggest renaming one of the two lanes. A lane marked `usage_limited = true` is probed like any other. Quota records are reused for an hour only within one quota file; this check passes a throwaway `--quota-path`, so every `--check-only` run spends one probe per probed lane, including part of a usage-limited lane's allowance.
+`--role both` probes the review order, then each execute lane not already listed (the execute order first, then the other execute lanes the execute selector can still pick), once per key. A key that names different lanes in the review and execute roles is probed as its review lane, and `probe-quota` prints one line naming the key and saying its execute lane is not probed; relay that line and suggest renaming one of the two lanes. Report such a key per role: its review lane takes the probed `available` value, and its execute lane is `available: unknown (not probed — the key names a different review lane)`, even though the key appears in the output. A lane marked `usage_limited = true` is probed like any other. Quota records are reused for an hour only within one quota file; this check passes a throwaway `--quota-path`, so every `--check-only` run spends one probe per probed lane, including part of a usage-limited lane's allowance.
 
 `probe-quota` has no `--local`/`--global` flag — it always runs the full `cfg_resolve` merge, so
 output holds the keys printed above, from both local and global configs. Report each probed
@@ -82,7 +86,7 @@ Then run the stale-provider report (read-only; exits 0 whatever it finds, so it 
 check):
 
 ```bash
-python3 "$TOOLS_PY" check-providers --cwd "$(pwd)"
+python3 "$TOOLS_PY" check-providers --cwd "<project root>"
 ```
 
 Show its lines to the user as they are. A `warning:` line is a finding to relay, not an error.

@@ -19,14 +19,6 @@ from . import gsd_catalog, host
 
 # Always fullmatch: re.match with "$" also accepts a trailing newline (C-IN-01).
 SKILL_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
-PONYTAIL_SKILLS = (
-    "ponytail",
-    "ponytail-audit",
-    "ponytail-debt",
-    "ponytail-gain",
-    "ponytail-help",
-    "ponytail-review",
-)
 DESCRIPTION_MAX = 300
 CONNECT_TIMEOUT_S = 1.5
 URL_NOTE = "reachable, not verified as System One"
@@ -290,19 +282,32 @@ def scan_skills(
     return entries
 
 
-def ponytail_visibility(skills_roots: dict, home: str) -> dict[str, list[str]]:
-    """Per-host ponytail skill names under each host's global skills root only: Claude
-    plugin skills are not counted here (they are ``skills`` rows with ``root_kind: plugin``)."""
+def _ponytail_family(name: str) -> bool:
+    return name == "ponytail" or name.startswith("ponytail-")
+
+
+def _root_names(root: str, home: str, table) -> list[str]:
+    if table is not None:
+        return [row["name"] for row in table.root_rows(root, "global", [], {})]
+    return [e["name"] for e in scan_root(root, "global", root, home)]
+
+
+def ponytail_visibility(skills_roots: dict, home: str, table=None) -> dict[str, list[str]]:
+    """Per-host ponytail names in gsd-core's global roots, derived from the shared table.
+
+    Claude plugin skills are not counted (their ``root_kind`` is ``plugin``). Without
+    the review package's skill_table, this skill's own listing answers (SPEC R10, D-15).
+    """
     out: dict[str, list[str]] = {h: [] for h in host.HOSTS}
     if not isinstance(skills_roots, dict):
         return out
-    pony_set = set(PONYTAIL_SKILLS)
     for host_name in host.HOSTS:
         root = skills_roots.get(host_name)
         if not isinstance(root, str) or not root:
             continue
-        found = {e["name"] for e in scan_root(root, "global", root, home) if e["name"] in pony_set}
-        out[host_name] = sorted(found)
+        out[host_name] = sorted(
+            {name for name in _root_names(root, home, table) if _ponytail_family(name)}
+        )
     return out
 
 
