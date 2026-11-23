@@ -363,7 +363,7 @@ class TestSpecConfigStep(unittest.TestCase):
         for index in auth_lines:
             self.assertTrue(never < index < section_end, lines[index])
 
-    def test_skill_evals_have_the_nineteen_cases(self):
+    def test_skill_evals_have_the_twenty_one_cases(self):
         with open(EVALS_JSON, encoding="utf-8") as handle:
             data = json.load(handle)
         self.assertEqual(
@@ -388,6 +388,8 @@ class TestSpecConfigStep(unittest.TestCase):
                 "precise-zero-price-data-use-yes",
                 "edge-zero-price-data-use-declined",
                 "edge-migration-deleted-unless-keep-backup",
+                "edge-sort-skills-jev-absent",
+                "edge-sort-proposal-is-advisory",
             ],
         )
 

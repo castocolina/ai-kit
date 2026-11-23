@@ -77,6 +77,7 @@ installed."
 - **Never translate literal identifiers** — `purpose` values (REVIEW/EXECUTE), model ids, catalog keys, CLI/runtime names, and field labels stay in their literal, invariant form regardless of what language the rest of this conversation is in. Narrate and explain in the user's own language, but never garble an identifier a user or this skill needs to match against config values by translating it.
 - **Never run `trust-local` (the trusting form) without the user's explicit yes** — not even for the `./.aikit/config.toml` this wizard just wrote. Show `trust-local --cwd <project root> --show` first so the user consents after seeing each reviewer's argv; until then a file with a command-bearing entry (defined at Step 4) has its whole `[lanes]` table inactive.
 - **Never let the proposal's order stand as the owner's pick** — jev or the scorer only orders the shortlist; no lane configuration is written before the owner confirms the review set and the execute set.
+- **Never write a skill role the owner did not confirm** — `classify-skills` only proposes, and its jev answer is advisory; `confirm-skill-role` runs once per role the owner confirmed.
 - **Never ask a wizard question in a herdr pane or of another agent** — every question goes to the owner in the owner's own session.
 - **Never write a lane whose data-use confirmation was declined or skipped**, and never default an unknown data-use note to a safe value.
 - **Never set `usage_limited`, `escalate_runtime` or `escalate_model` without the owner's explicit yes** — no price, name, ranking or default turns one on.
@@ -142,6 +143,32 @@ listing-less runtime's model id (or `auto`) instead.
 Run the catalog flow and **MANDATORY read** [`references/catalog.md`](references/catalog.md).
 Show the `catalog-report` output and its attribution lines verbatim, then continue to Step 2.
 The review and execute proposal is Step 2.2's `propose-lanes` run over this catalog.
+
+### Step 1.6 — Sort unknown skills (optional)
+
+Offer this step once and run it only after the owner agrees; skip it when the owner declines or no
+question can be asked. It never runs during a review or an execute run.
+
+```bash
+python3 "$TOOLS_PY" classify-skills --cwd <project root>
+```
+
+The command is read-only. It prints one `unsorted <name> hosts=<hosts>` line per addressable
+unsorted skill of the shared role table (a skill whose name the runner cannot address gets a `not offered <name> hosts=<hosts> reason=<reason>` line instead and no proposal) and, when jev is present, at most one `proposal <name> role=<role> confidence=<c> advisory`
+line per skill (jev sees only the skill's name and the first 300 characters of its description).
+With jev absent it prints `jev absent: nothing proposed`; after a low or missing answer the skill
+has no proposal. Say so and offer the closed roles yourself. MCP servers are never sent to jev. A
+proposal is advice: ask the owner about each skill and note each role the owner confirms. Write
+nothing yet: once Step 2.1 has resolved and announced the write target, run for each confirmed
+role
+
+```bash
+python3 "$TOOLS_PY" confirm-skill-role --name <skill> --role <role> --cwd <project root>
+```
+
+with `--global` in place of `--cwd <project root>` when the target is the user file. Each call
+writes one `[skills.roles]` entry, labeled `user-stated`, which beats the seed row; a name the
+command refuses stays unsorted.
 
 ### Step 2 — Ask
 
@@ -265,7 +292,7 @@ python3 "$TOOLS_PY" check-reviewer --key <candidate-key> --model <model-id> \
   --vendor <vendor> --runtime <id> --catalog-path <catalog> \
   [--extra-json '<json>']
 ```
-Pass `--catalog-path <catalog>` to `check-reviewer` so the result is recorded as the pair's usability.
+Pass `--catalog-path <catalog>` to `check-reviewer` so the result is recorded as the pair's usability. For a review lane, show its `capability` string beside the result: what that lane's final argv lets it do, from the review-role dry run, without starting the lane. For every saved lane, review and execute alike, Step 4 shows the `capability <runtime>/<model> <role>: <summary>` lines `config-status` prints (read-only, no probe needed).
 A custom entry (no `runtime`) is tested the same way with `--command '<template>'` instead of
 `--runtime`. This makes one real call through the runner or the custom launcher (the same
 mechanism `probe-quota` uses later) and prints `{"available": bool, "detail": "..."}`. If
@@ -374,6 +401,8 @@ the whole written file (stdout adds one trailing newline, so compare with `diff`
 `cmp`).
 
 ### Step 4 — Report
+
+Run `python3 "$TOOLS_PY" config-status --cwd <project root>` (read-only, no probe) and show each `capability <runtime>/<model> <role>: <summary>` line it prints: one per lane of an `active` roster, review and execute lanes alike, in config order. A `pending` or `none` roster prints no capability line: say that the capability view appears once the roster is active. On a non-zero exit, quote its stderr and say the capability view is unavailable. When Step 1.6 ran, also list each role it wrote (`confirmed <name> role=<role>`), each confirm that failed with its stderr (an earlier confirm stays written), and each skill left unsorted.
 
 **First, check the printed exit status.** Anything but `render-toml exit 0` means the
 write is not confirmed (a rejected config can end in a traceback, with no `WARNING:` line;

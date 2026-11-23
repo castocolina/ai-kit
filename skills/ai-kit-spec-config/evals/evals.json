@@ -199,6 +199,26 @@
         "Says the old roster migrates first and is deleted after the value check unless the owner picks the keep answer",
         "Passes --replace to render-toml, and --keep-backup only on the keep answer"
       ]
+    },
+    {
+      "id": "edge-sort-skills-jev-absent",
+      "prompt": "Set up my lanes and sort my unknown skills too; jev is not installed and classify-skills lists two unsorted skills, lens-a and other-a.",
+      "expected_output": "Runs classify-skills, says no proposal exists because jev is absent, offers the closed roles itself and runs confirm-skill-role only for a role the owner confirms.",
+      "files": [],
+      "assertions": [
+        "Shows lens-a and other-a with no proposal and offers the closed roles",
+        "Runs confirm-skill-role only for a skill whose role the owner confirmed"
+      ]
+    },
+    {
+      "id": "edge-sort-proposal-is-advisory",
+      "prompt": "Set up my lanes and sort my unknown skills too; classify-skills prints proposal lens-a role=review_lens confidence=0.91 advisory, and I answer no to that role.",
+      "expected_output": "Treats the proposal as advice, asks before writing, and writes no [skills.roles] entry for lens-a after the owner's no.",
+      "files": [],
+      "assertions": [
+        "Asks the owner before any write and calls the proposal advisory",
+        "Runs no confirm-skill-role for lens-a after the owner's no"
+      ]
     }
   ]
 }

@@ -14,6 +14,7 @@ REPO = Path(__file__).resolve().parent.parent
 DISPATCH = REPO / "skills/ai-kit-spec-review/references/cross-ai-dispatch.md"
 RUNNER_MD = REPO / "skills/ai-kit-gsd-curated-config/references/runner.md"
 README = REPO / "README.md"
+DESIGN = REPO / "docs/config/design.md"
 CLAUDE_PROFILE = REPO / "skills/ai-kit-spec-review/references/cli-profiles/claude.md"
 SPEC_CONFIG_SKILL = REPO / "skills/ai-kit-spec-config/SKILL.md"
 TEMPLATE = REPO / "skills/ai-kit-spec-review/references/cross-ai.mjs"
@@ -174,6 +175,48 @@ def table_names(text, header):
         assert match is not None
         names.append(match.group(1))
     return names
+
+
+class SpecConfigAndConfigDocs(unittest.TestCase):
+    def test_sorting_step_has_both_paths_and_the_confirm(self):
+        sec = section_text(SPEC_CONFIG_SKILL.read_text(encoding="utf-8"),
+                           "### Step 1.6 — Sort unknown skills (optional)", stop=("## ", "### "))
+        for value in ("classify-skills --cwd", "advisory", "jev absent: nothing proposed",
+                      "addressable", "Step 2.1", "confirm-skill-role --name", "--global",
+                      "[skills.roles]", "user-stated", "never runs", "only after the owner agrees"):
+            self.assertIn(value, sec)
+
+    def test_capability_line_is_role_specific(self):
+        self.assertIn("review-role dry run", SPEC_CONFIG_SKILL.read_text(encoding="utf-8"))
+
+    def test_step_four_runs_config_status(self):
+        sec = section_text(SPEC_CONFIG_SKILL.read_text(encoding="utf-8"),
+                           "### Step 4 — Report", stop=("## ", "### "))
+        for value in ("config-status --cwd <project root>",
+                      "capability <runtime>/<model> <role>: <summary>", "pending",
+                      "non-zero exit", "an earlier confirm stays written"):
+            self.assertIn(value, sec)
+
+    def test_never_list_forbids_an_unconfirmed_sort(self):
+        self.assertIn("**Never write a skill role the owner did not confirm**",
+                      SPEC_CONFIG_SKILL.read_text(encoding="utf-8"))
+
+    def test_design_doc_names_every_sortable_role_and_the_keys(self):
+        text = DESIGN.read_text(encoding="utf-8")
+        for value in ("[skills.roles]", "edit_lens_pass", "[[models.context]]", "exit 65"):
+            self.assertIn(value, text)
+        for role in review_module("skill_table").ROLES:
+            if role != "unsorted":
+                self.assertIn(f"`{role}`", text)
+
+    def test_readme_rows_name_the_block_and_the_sorter(self):
+        text = README.read_text(encoding="utf-8")
+        for value in ("capability block", "classify-skills", "confirm-skill-role"):
+            self.assertIn(value, text)
+
+    def test_new_text_names_no_model(self):
+        for path in (SPEC_CONFIG_SKILL, DESIGN, README):
+            self.assertEqual(scan_text(str(path), path.read_text(encoding="utf-8")), [])
 
 
 class LaneCapabilitySkillTables(unittest.TestCase):

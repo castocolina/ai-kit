@@ -974,10 +974,11 @@ Plans:
   1. One role-keyed table of the skills (and MCP servers where a host allows it) present on each host is rescanned every run and read by review, execute and curated-config; an optional config-time jev step sorts an unknown skill into a role, and the owner confirms each sort.
   2. Each lane's prompt carries a capability block built from its final argv (read-only or write, shell or not, the tools found on the child's PATH, codebase-memory-mcp only when its binary is on that PATH (it replaced codegraph in Phase 32.5)); a lane without a shell is told about no shell tool.
   3. Lens skills present in the environment (the ponytail family, reducing-entropy, naming-analyzer, simplify, impeccable for UI) reach reviewers by path, and file-editing lenses run as a pass after approval; a lens is inlined where the lane cannot load it by path (Claude built-ins, pi through an allow-listed `--skill`). *(amended 2026-11-16, 39 D-10, D-11: live facts: pi 1.5.2's own docs say explicit `--skill` paths still load under `--no-skills`, so pi is the one verified by-path host; claude, copilot and cursor-agent have an `--add-dir` flag whose effect on a read-only lane is unverified until the execute-start spike, so they inline; a Claude built-in such as `simplify` has no file anywhere and cannot be inlined, so only a native lane of its host runs it and every other lane gets a named note; the file-editing pass after approval is opt-in and off by default, needs owner confirmation)*
+     *(amended 2026-11-23, 39-SPEC "Live facts added 2026-11-23": Phase 37 shipped the runner's skill and MCP flags, so lens delivery rides --skill-name and --skill-path, the MCP pick writes a run-scoped --mcp-config file, and the runner template goes 11 to 12 in the phase's last code wave; the owner confirmed the default-off file-editing pass with a diff the owner accepts, OWNER-DECISIONS-2026-11-16.md:52-54, so criterion 3's owner-confirmation clause is settled)*
   4. A prompt larger than a lane's known context window (the lane's own runtime's value from the Phase 35 catalog, or a per-(runtime, model) override in `[models]`; *amended 2026-11-16, 35 D-09*) is refused for that lane with a named reason and never trimmed; an unknown window is not capped and shows as unknown; a value embedded in a prompt (file list, lens path) with a control character, or a path outside the repository or skill roots, is rejected, each covered by a fixture. *(added 2026-11-16, GSD lane-handling study)*
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation. *(amended 2026-11-07, 32.1 D-01: `ai-kit-spec-review`, below the bar at the Phase 32 baseline (75.2 C), was deferred here from batch 32.2; it reaches the bar, with its Markdown scenarios converted to new-shape evals and with tests, in whichever of Phases 39-40 first changes its SKILL.md, and no later than Phase 40's close)* *(amended 2026-11-20, 36 plan time: Phase 36 changes `ai-kit-spec-review`'s SKILL.md first and brings it to the bar in loop 36; this phase keeps that bar with no regression beyond judge variation, and brings it there only if Phase 36 recorded it below the bar after three rounds)*
 
-**Plans**: 15/19 plans executed in 13 waves *(planned 2026-11-23; the two runner plans 39-02 and 39-05 run one after the other; the live runner copy is re-rendered only by 39-17; 39-18, the judge loop, and 39-19, the closing gate with the final `make test`, are orchestrator actions)*
+**Plans**: 16/19 plans executed in 13 waves *(planned 2026-11-23; the two runner plans 39-02 and 39-05 run one after the other; the live runner copy is re-rendered only by 39-17; 39-18, the judge loop, and 39-19, the closing gate with the final `make test`, are orchestrator actions)*
 
 Plans:
 - [x] 39-01-PLAN.md (wave 1): shared skill table module, roles, seed file `references/skill-roles.json`, `[skills.roles]` reader
@@ -995,7 +996,7 @@ Plans:
 - [x] 39-13-PLAN.md (wave 7): one builder for three entry points, spec-config summary lines, adapter refusal catch
 - [x] 39-14-PLAN.md (wave 8): opt-in after-approval edit pass, `edit-lens-pass`
 - [x] 39-15-PLAN.md (wave 9): spec-review SKILL.md, references and doc-contract tests
-- [ ] 39-16-PLAN.md (wave 10): spec-config sorting step, config docs, READMEs, dated cross-phase notes
+- [x] 39-16-PLAN.md (wave 10): spec-config sorting step, config docs, READMEs, dated cross-phase notes
 - [ ] 39-17-PLAN.md (wave 11): template 11 to 12, live copy re-rendered, shard times re-recorded
 - [ ] 39-18-PLAN.md (wave 12): judge loop for the changed skills (orchestrator action)
 - [ ] 39-19-PLAN.md (wave 13): closing gate: dated-note check, scans, `make test` (orchestrator action)
@@ -1357,7 +1358,7 @@ Plans:
 | 37. Shared runner options and session ids | 26/26 | In Progress | - |
 | 38. Runner hardening and run safety | 27/27 | Complete    | 2026-11-22 |
 | 38.1. Runner error classification and retry policy | 14/14 | In Progress | - |
-| 39. Lane capability blocks and lens skills | 15/19 | In Progress | - |
+| 39. Lane capability blocks and lens skills | 16/19 | In Progress | - |
 | 40. Resilient review sized by jev | 0/TBD | Not started | - |
 | 41. Superpowers adapter refactor with spec-config handoff | 0/TBD | Not started | - |
 | 42. Code review after execution and jev-picked executors | 0/TBD | Not started | - |
