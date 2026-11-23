@@ -1,0 +1,11 @@
+[lanes.policy]
+mode = "single"
+
+[lanes.policy.review]
+ladder = ["review-primary"]
+
+[[lanes.review]]
+key = "review-primary"
+runtime = "opencode"
+model = "fake/placeholder-model-1"
+purpose = "review"

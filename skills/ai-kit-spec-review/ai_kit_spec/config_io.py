@@ -2,7 +2,7 @@ import os
 import shlex
 import sys
 
-from ai_kit_spec import config_migrate, toml_splice, trust
+from ai_kit_spec import config_migrate, lane_effort, lane_settings, role_orders, toml_splice, trust
 from ai_kit_spec.detection import RUNTIMES, runtime_id
 
 try:
@@ -358,6 +358,16 @@ def cfg_parse_toml_bytes(raw: bytes, path: str) -> dict:
 _VARIANT_FIELDS = ("runtime", "command")
 
 
+def _drop_model_bound(base: dict, local: dict) -> None:
+    """Drop settings for the old pair when a local entry changes or restates its variant."""
+    moved = (any(local.get(field) is not None for field in _VARIANT_FIELDS)
+             or ("model" in local and local["model"] != base.get("model")))
+    if moved:
+        for name in lane_settings.MODEL_BOUND:
+            if name not in local:
+                base.pop(name, None)
+
+
 def cfg_merge_reviewers(global_list: list, local_list: list) -> list:
     """Merge [[reviewers]] by key: local fields override/extend matching
     global entries; local-only keys are appended; global-only keys are
@@ -365,13 +375,14 @@ def cfg_merge_reviewers(global_list: list, local_list: list) -> list:
     A malformed entry with no `key` at all is silently skipped (never
     raises) — matches cfg_load_toml's "never raises on bad input"
     contract: one hand-written mistake in the roster must not crash
-    the whole orchestrator."""
+    the whole orchestrator. Model-bound settings are dropped first when the pair changes."""
     global_list = [r for r in global_list if "key" in r]
     local_list = [r for r in local_list if "key" in r]
     by_key = {r["key"]: dict(r) for r in global_list}
     for r in local_list:
         key = r["key"]
         if key in by_key:
+            _drop_model_bound(by_key[key], r)
             by_key[key].update(r)
             if any(r.get(field) is not None for field in _VARIANT_FIELDS):
                 for field in _VARIANT_FIELDS:
@@ -488,7 +499,8 @@ def _migrate(path: str, env: dict, warn_fn, project: bool) -> str:
     trust_bytes_fn = (lambda lanes: cfg_project_trust_bytes(lanes, env)) if project else None
     try:
         return config_migrate.migrate_layer(path, warn_fn=warn_fn, trust_dir=trust_dir,
-                                            trust_bytes_fn=trust_bytes_fn)
+                                            trust_bytes_fn=trust_bytes_fn,
+                                            keep_backup=config_migrate.keep_backup_from_env(env))
     except config_migrate.LegacyRosterError as exc:
         raise ConfigError(exc.path, exc.message) from exc
 
@@ -679,12 +691,30 @@ def _combine_role(local_view: dict, global_view: dict, role: str, local_only: bo
     return merged
 
 
+def _combine_roles(local_view: dict, global_view: dict, local_only: bool, policy: dict,
+                   emit_warn) -> dict:
+    """Each role's merged lanes and order (36 D-04).
+
+    It prints one warning per role whose usage_limited lanes have no selectable lane to fall
+    back to (36 D-17).
+    """
+    review = _combine_role(local_view, global_view, "review", local_only)
+    execute = _combine_role(local_view, global_view, "execute", local_only)
+    result = {"review": review, "execute": execute,
+              "orders": role_orders.role_orders(policy, {"review": review, "execute": execute},
+                                                emit_warn)}
+    for line in lane_settings.fallback_warnings({"review": review, "execute": execute},
+                                                result["orders"]):
+        emit_warn(line)
+    return result
+
+
 def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None,
                 migrate: bool = True) -> dict:
     """Combine an already-trusted (or empty) project [lanes] table with the user layer, honoring
     the local `strategy`. Shared by cfg_resolve and `trust-local --show`, so the consent display
     renders the same merged entries dispatch would run. Returns the flat `reviewers` view plus the
-    `review` and `execute` lists (D-24)."""
+    `review` and `execute` lists (D-24), and `orders`, each role's priority order (36 D-04)."""
     emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
     # A local-only project never consults the user file, so it is never read (B-WR-01).
     local_only = bool(local) and local.get("strategy") == "local-only"
@@ -697,12 +727,8 @@ def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None,
     _emit_legacy_note(cfg_global_path(env), global_notes, emit_warn)
     _emit_legacy_note(f"merged lanes ({local_path or 'local'}, {cfg_global_path(env)})",
                       notes, emit_warn)
-    return {
-        "policy": policy,
-        "reviewers": merged,
-        "review": _combine_role(local_view, global_view, "review", local_only),
-        "execute": _combine_role(local_view, global_view, "execute", local_only),
-    }
+    return {"policy": policy, "reviewers": merged,
+            **_combine_roles(local_view, global_view, local_only, policy, emit_warn)}
 
 
 _VALID_PURPOSE = {"review", "execute", "both"}
@@ -719,7 +745,10 @@ def _validate_pair_fields(entry: dict, key) -> str | None:
     runtime = entry.get("runtime")
     if "runtime" in entry and runtime is not None:
         if not isinstance(runtime, str) or runtime not in _RUNNER_RUNTIMES:
-            return f"{key}: 'runtime' must be one of {_RUNNER_RUNTIMES}"
+            known = isinstance(runtime, str) and runtime in RUNTIMES
+            reason = "has no runner formula" if known else "is not in the runtime table"
+            return (f"{key}: runtime {runtime!r} {reason}; "
+                    "store a custom `command` lane instead (no 'runtime')")
         model = entry.get("model")
         if "model" not in entry or not isinstance(model, str) or model == "":
             return f"{key}: an entry with a 'runtime' needs a non-empty 'model'"
@@ -749,8 +778,9 @@ def _validate_pair_fields(entry: dict, key) -> str | None:
 def validate_reviewer_fields(entry: dict) -> str | None:
     """The roster-side sibling of model_catalog.validate_catalog_entry (design spec
     2026-09-02 Section 5: "enforced in both render-toml and the new fetch-model-catalog
-    subcommand"). Checks purpose/is_router/fallback_quota when present, then the pair rules:
-    a table runtime needs a model, a command is custom-only, a pinned model needs a runtime."""
+    subcommand"). Checks purpose/is_router/fallback_quota, then effort, lane settings and pair
+    rules: a table runtime needs a model, a command is custom-only, and a pinned model needs a
+    runtime."""
     key = entry.get("key", "<unknown>")
     # WR-03 fix: a dict-valued field must not reach the writer as a quoted TOML string (e.g. a
     # hand-edited `extra = { timeout_tiers = [...] }`, a known constraint of this schema), so
@@ -776,7 +806,9 @@ def validate_reviewer_fields(entry: dict) -> str | None:
     for field in ("is_router", "fallback_quota"):
         if field in entry and not isinstance(entry[field], bool):
             return f"{key}: '{field}' must be a boolean"
-    return _validate_pair_fields(entry, key)
+    return (lane_effort.effort_problem(entry)
+            or lane_settings.validate_lane_settings(entry, key)
+            or _validate_pair_fields(entry, key))
 
 
 def _cfg_partition_reviewers(reviewers: list) -> tuple[list, list, set]:
@@ -784,7 +816,7 @@ def _cfg_partition_reviewers(reviewers: list) -> tuple[list, list, set]:
     valid_reviewers = []
     dropped_keys = set()
     for r in reviewers:
-        reason = validate_reviewer_fields(r)
+        reason = validate_reviewer_fields(r) or lane_settings.write_problem(r)
         if reason:
             rejections.append(reason)
             if "key" in r:
@@ -798,9 +830,12 @@ def _cfg_render_reviewers(entries: list) -> tuple[list, list[str]]:
     """The two load steps, in the same order, so a write holds only the new form.
 
     A stored route is NOT dropped here: save rejects it, so the entry stays intact for
-    validate_reviewer_fields to refuse. Load drops it instead."""
+    validate_reviewer_fields to refuse. Load drops it instead. The lane settings' display lines
+    are cleaned before validation (36 D-16, D-23)."""
     reviewers, notes = normalize_legacy_reviewers(entries)
     reviewers, inferred = infer_legacy_native(reviewers)
+    reviewers = [lane_settings.normalise_lane_settings(entry) if isinstance(entry, dict) else entry
+                 for entry in reviewers]
     return reviewers, notes + inferred
 
 
@@ -809,25 +844,23 @@ _RENAMED_REVIEWERS = (
     "(each entry's purpose picks its role: review, execute or both)"
 )
 _LADDER_COMMENT_HEAD = "# Priority fallback order"
+_FLAT_LADDER_NOTE = ("ai-kit-spec: render-toml: the flat policy ladder is written as one order "
+                     "per role ([lanes.policy.review], [lanes.policy.execute])")
 
 
-def _ladder_comment_lines(policy: dict) -> list[str]:
-    """The generated comment above [lanes.policy] that names the fallback order; none for an empty
-    ladder."""
-    ladder = policy.get("ladder") or []
+def _ladder_comment_lines(role: str, ladder: list, double: bool) -> list[str]:
+    """The generated comment above a role table naming its fallback order."""
     if not ladder:
         return []
-    lines = ["# Priority fallback order (first available reviewer wins the"]
-    if policy.get("mode") == "double":
-        lines.append("# primary slot; double mode also seats an independent secondary):")
-    else:
-        lines.append("# primary slot):")
-    lines.extend(f"#   {number}. {key}" for number, key in enumerate(ladder, 1))
-    return lines
+    tail = ("# primary slot; double mode also seats an independent secondary):"
+            if double and role == "review" else "# primary slot):")
+    return [f"{_LADDER_COMMENT_HEAD}, {role} lanes (first available wins the", tail,
+            *(f"#   {number}. {lane_settings.clean_note(str(key))}"
+              for number, key in enumerate(ladder, 1))]
 
 
-def _refresh_ladder_comment(text: str, policy: dict) -> str:
-    """Keep the generated fallback-order comment above [lanes.policy] in step with its ladder.
+def _refresh_ladder_comment(text: str, path: tuple, generated_lines: list) -> str:
+    """Keep the generated fallback-order comment above the table at `path` in step with its ladder.
 
     The contiguous comment lines directly above the header are the generated block when the first
     one starts with _LADDER_COMMENT_HEAD: the block is replaced by the lines for the ladder now
@@ -835,7 +868,7 @@ def _refresh_ladder_comment(text: str, policy: dict) -> str:
     own comment there is left alone. Comments never change a parsed value."""
     blocks = toml_splice.split_blocks(text)
     index = next((number for number, block in enumerate(blocks)
-                  if not block.array and block.path == ("lanes", "policy")), None)
+                  if not block.array and block.path == path), None)
     if index is None:
         return text
     block = blocks[index]
@@ -843,7 +876,7 @@ def _refresh_ladder_comment(text: str, policy: dict) -> str:
     if lead and not lead[0].startswith(_LADDER_COMMENT_HEAD):
         return text
     newline = "\r\n" if "\r\n" in text else "\n"
-    generated = [line + newline for line in _ladder_comment_lines(policy)]
+    generated = [line + newline for line in generated_lines]
     if generated == lead:
         return text
     rewritten = [*generated, *block.lines[block.lead:]]
@@ -853,21 +886,68 @@ def _refresh_ladder_comment(text: str, policy: dict) -> str:
     return "".join(lines)
 
 
-def _cfg_lanes_policy(policy, dropped_keys: set, rejections: list) -> dict | None:
-    """The policy as written: its ladder without the rejected entries; None when there is none."""
+def _refresh_ladder_comments(text: str, policy: dict) -> str:
+    """Refresh generated comments for the policy and its role tables."""
+    text = _refresh_ladder_comment(text, ("lanes", "policy"), [])
+    for role in role_orders.ROLES:
+        table = policy.get(role)
+        if not isinstance(table, dict):
+            table = {}
+        text = _refresh_ladder_comment(text, ("lanes", "policy", role),
+                                       _ladder_comment_lines(role, table.get("ladder") or [],
+                                                             policy.get("mode") == "double"))
+    return text
+
+
+def _ladder_drops(source: list, keep: set, dropped: set) -> tuple[list, list]:
+    rejected = sorted({key for key in source if isinstance(key, str) and key in dropped})
+    unknown = sorted({key if isinstance(key, str) else repr(key) for key in source
+                      if not (isinstance(key, str) and (key in keep or key in dropped))})
+    return rejected, unknown
+
+
+def _report_drops(label: str, noun: str, drops: tuple, rejections: list) -> None:
+    rejected, unknown = drops
+    if rejected:
+        rejections.append(
+            f"{label}: dropped dangling reference(s) to rejected lane key(s) {rejected}")
+    if unknown:
+        rejections.append(f"{label}: dropped key(s) naming no {noun} {unknown}")
+
+
+def _role_source(role: str, raw, legacy: list, rejections: list) -> tuple[dict, list]:
+    """Return the role table's other keys and source order, or the legacy order."""
+    if raw is None:
+        return {}, legacy
+    if not isinstance(raw, dict) or not isinstance(raw.get("ladder"), list):
+        rejections.append(f"policy.{role}: needs a table with a 'ladder' list; not written")
+        return {}, []
+    return {k: v for k, v in raw.items() if k != "ladder"}, raw["ladder"]
+
+
+def _cfg_lanes_policy(policy, dropped_keys: set, rejections: list, role_keys: dict) -> dict | None:
+    """Write flat keys and nonempty per-role orders, filtering rejected and unknown lanes."""
     if not policy:
         return None
-    raw_ladder = policy.get("ladder") or []
-    dangling = dropped_keys & set(raw_ladder)
-    if dangling:
-        rejections.append(
-            f"policy.ladder: dropped dangling reference(s) to rejected reviewer key(s) "
-            f"{sorted(dangling)}"
-        )
-    written = dict(policy)
-    if "ladder" in written:
-        written["ladder"] = [key for key in raw_ladder if key not in dropped_keys]
-    return written
+    legacy = policy.get("ladder", [])
+    if not isinstance(legacy, list):
+        rejections.append("policy.ladder: not a list; not written")
+        legacy = []
+    if legacy:
+        print(_FLAT_LADDER_NOTE, file=sys.stderr)
+        _report_drops("policy.ladder", "lane", _ladder_drops(
+            legacy, role_keys["review"] | role_keys["execute"], dropped_keys), rejections)
+    written = {k: v for k, v in policy.items() if k != "ladder" and k not in role_orders.ROLES}
+    for role in role_orders.ROLES:
+        extra, source = _role_source(role, policy.get(role), legacy, rejections)
+        if policy.get(role) is not None:
+            _report_drops(f"policy.{role}.ladder", f"{role} lane",
+                          _ladder_drops(source, role_keys[role], dropped_keys), rejections)
+        ladder = list(dict.fromkeys(key for key in source
+                                    if isinstance(key, str) and key in role_keys[role]))
+        if ladder:
+            written[role] = {**extra, "ladder": ladder}
+    return written or None
 
 
 def _current_lanes(text: str) -> dict:
@@ -878,6 +958,30 @@ def _current_lanes(text: str) -> dict:
                            "render-toml target")
 
 
+def _splice_policy(text: str, old, policy: dict) -> str:
+    """Splice flat policy keys and role tables, removing obsolete or inline roles."""
+    old = old if isinstance(old, dict) else {}
+    flat, roles = role_orders.split_policy(policy)
+    headed = {block.path[2] for block in toml_splice.split_blocks(text)
+              if not block.array and len(block.path) == 3 and block.path[:2] == ("lanes", "policy")}
+    gone = tuple(name for name in old if name not in flat
+                 and not (name in role_orders.ROLES and name in headed))
+    if flat or gone:
+        text = toml_splice.set_table(text, ("lanes", "policy"), flat, remove=gone)
+    for role in role_orders.ROLES:
+        path = ("lanes", "policy", role)
+        if role in roles:
+            own = old.get(role) if role in headed else {}
+            if not isinstance(own, dict):
+                own = {}
+            text = toml_splice.set_table(
+                text, path, roles[role],
+                remove=tuple(name for name in own if name not in roles[role]))
+        elif role in headed:
+            text = toml_splice.remove_table(text, path)
+    return text
+
+
 def _splice_roster(text: str, current: dict, parts: dict) -> str:
     """The roster parts spliced into the text one table or array at a time (D-08)."""
     strategy, policy = parts["strategy"], parts["policy"]
@@ -886,13 +990,12 @@ def _splice_roster(text: str, current: dict, parts: dict) -> str:
     elif "strategy" in current:
         text = toml_splice.set_table(text, ("lanes",), {}, remove=("strategy",))
     if policy is not None:
-        gone = tuple(name for name in current.get("policy", {}) if name not in policy)
-        text = toml_splice.set_table(text, ("lanes", "policy"), policy, remove=gone)
+        text = _splice_policy(text, current.get("policy"), policy)
     elif "policy" in current:
         text = toml_splice.remove_table(text, ("lanes", "policy"))
     text = toml_splice.set_array(text, ("lanes", "review"), parts["review"] or [])
     text = toml_splice.set_array(text, ("lanes", "execute"), parts["execute"] or [])
-    return _refresh_ladder_comment(text, policy or {})
+    return _refresh_ladder_comments(text, policy or {})
 
 
 def _expected_lanes(current: dict, parts: dict) -> dict:
@@ -906,14 +1009,23 @@ def _expected_lanes(current: dict, parts: dict) -> dict:
     return lanes
 
 
+def _written_fallback_warnings(policy, review: list, execute: list) -> list[str]:
+    """The reader's no-fallback lines for the roster as written, in its written order."""
+    tables = policy or {}
+    orders = {role: tables[role]["ladder"] if isinstance(tables.get(role), dict) else []
+              for role in role_orders.ROLES}
+    return lane_settings.fallback_warnings({"review": review, "execute": execute}, orders)
+
+
 def cfg_render_lanes(config: dict, existing_text: str = "") -> str:
     """Set the [lanes] roster to `config` in config.toml text; every other byte is kept (D-08).
 
     `config` is {"strategy"?, "policy"?, "lanes": [entry, ...]}. Each entry's `purpose` picks its
     role (D-24). Entries are normalised and validated as before: a rejected one is dropped with a
-    WARNING line on stderr. Only the roster parts are spliced: `strategy`, [lanes.policy] and the
-    [[lanes.review]] / [[lanes.execute]] arrays. Raises ValueError for a JSON still keyed
-    'reviewers', and ConfigError when existing_text is not valid TOML."""
+    WARNING line on stderr. Only the roster parts are spliced: `strategy`, [lanes.policy] flat
+    keys, [lanes.policy.review] and [lanes.policy.execute] orders, and the role arrays.
+    Usage-limited lanes without a fallback are written and get the reader's warning (36 D-17).
+    Raises ValueError for a JSON still keyed 'reviewers', and ConfigError for invalid TOML."""
     if "reviewers" in config:
         raise ValueError(_RENAMED_REVIEWERS)
     entries, notes = _cfg_render_reviewers(config.get("lanes", []))
@@ -924,7 +1036,9 @@ def cfg_render_lanes(config: dict, existing_text: str = "") -> str:
     review, execute = config_migrate.split_by_purpose(valid)
     parts = {
         "strategy": config.get("strategy"),
-        "policy": _cfg_lanes_policy(config.get("policy"), dropped, rejections),
+        "policy": _cfg_lanes_policy(config.get("policy"), dropped, rejections,
+                                    {"review": {entry.get("key") for entry in review},
+                                     "execute": {entry.get("key") for entry in execute}}),
         "review": review or None,
         "execute": execute or None,
     }
@@ -935,6 +1049,8 @@ def cfg_render_lanes(config: dict, existing_text: str = "") -> str:
     if rejections:
         print(f"WARNING: {len(rejections)} issue(s) found and NOT written: {'; '.join(rejections)}",
               file=sys.stderr)
+    for line in _written_fallback_warnings(parts["policy"], review, execute):
+        print(line, file=sys.stderr)
     return text
 
 

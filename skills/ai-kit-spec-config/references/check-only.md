@@ -13,7 +13,7 @@ the next command that reads it, and list its `[[reviewers]]` entries (read-only)
 If any entries exist, their **quota availability** is the core purpose of `--check-only`, but the
 probe is a live call to each CLI, so check write risk first, exactly as SKILL.md Step 2.5 does,
 over exactly the keys `probe-quota` will spawn for. That set comes from the merged view (project
-over user), not the raw read above, so list it first. This snippet makes the same resolve and
+over user) and both roles' orders, not the raw read above, so list it first. This snippet makes the same resolve and
 route calls `probe-quota` makes before it probes, with no model call and no write:
 
 ```bash
@@ -21,25 +21,28 @@ python3 -c "
 import json, sys
 sys.path.insert(0, '$(dirname "$TOOLS_PY")')
 from ai_kit_spec import routing
-from ai_kit_spec.cli import CliDeps, _route_reviewers
+from ai_kit_spec.cli import CliDeps, _probe_lanes, _route_reviewers
 from ai_kit_spec.config_io import cfg_resolve
 deps = CliDeps()
 config = cfg_resolve('$(pwd)', deps.env_fn(), migrate=False)
-routes = _route_reviewers(config, deps, persist=False)
-keys = routing.probe_keys(config.get('policy', {}).get('ladder', []), routes)
-by_key = {e.get('key'): e for e in config.get('reviewers', []) if isinstance(e, dict)}
-print(json.dumps([{'key': k, 'runtime': by_key[k].get('runtime'), 'custom': 'command' in by_key[k]}
+lanes = _probe_lanes(config, 'both')
+routes = _route_reviewers(config, deps, persist=False, lanes=lanes)
+keys = routing.probe_keys([e['key'] for e in lanes], routes)
+by_key = {e['key']: e for e in lanes}
+print(json.dumps([{'key': k, 'runtime': by_key[k].get('runtime'), 'model': by_key[k].get('model', ''), 'command': by_key[k].get('command'), 'custom': 'command' in by_key[k]}
                   for k in keys if k in by_key]))
 "
 ```
 
 For each printed entry with a `runtime`, read `read_only` from `$CLI_PROFILES_DIR/<runtime>.md`
 (only those profiles). An entry whose profile says `read_only: unconfirmed`, a runtime with no
-profile (pi today) and a custom entry (`custom: true`) all run with the CLI's normal write permissions
-against the working tree; the throwaway paths below keep ai-kit's caches clean, not the tree. When
-any such entry exists, use `AskUserQuestion` before any live call: "Note: `<keys>` have no
-confirmed read-only invocation — the quota probe runs them with their normal write permissions
-against your working tree. Run the probe now, or skip it?" — with "skip the probe" first/default.
+profile (pi today) and a custom entry (`custom: true`) all run with the CLI's normal write permissions.
+The probe starts each from a private temporary directory, not the working tree, but nothing confines
+those permissions to it; the throwaway paths below keep ai-kit's caches clean, not your files. When
+any such entry exists, use `AskUserQuestion` before any live call: "Note: `<key>` (`<model>` through `<runtime>` or `<command>`) have no
+confirmed read-only invocation — the quota probe runs them from a private temporary directory with
+their normal write permissions, which nothing confines to that directory. Run the probe now, or skip it?" — with "skip the probe" first/default.
+List every such entry with the model and command the snippet printed, so the owner sees the exact lane the probe runs.
 `probe-quota` cannot probe a subset, so the answer covers the whole probe. On skip, run no
 `probe-quota` call and report every raw-read and printed key as
 `available: unknown (not probed — the write-risk probe was declined)`, then continue with the
@@ -47,7 +50,7 @@ stale-provider report below. On yes, or when every printed entry is confirmed re
 was printed), probe using a throwaway path:
 
 ```bash
-python3 "$TOOLS_PY" probe-quota --cwd "$(pwd)" --no-save-runtimes --no-migrate --quota-path "$SCRATCH/quota.json"
+python3 "$TOOLS_PY" probe-quota --cwd "$(pwd)" --role both --no-save-runtimes --no-migrate --quota-path "$SCRATCH/quota.json"
 ```
 
 `probe-quota` makes live probe calls to each configured CLI (same mechanism as dispatch time),
@@ -56,6 +59,8 @@ but "no writes" means nothing is persisted to ai-kit's caches or config: the thr
 `probe-quota`'s routing step from writing the runtimes cache (a cold or stale cache is rebuilt in
 memory only, and a targeted refresh is never written back). `--no-migrate` reads an old roster read-only: it is used in memory, `migration pending` is printed, and nothing is written.
 
+`--role both` probes the review order, then each execute lane not already listed (the execute order first, then the other execute lanes the execute selector can still pick), once per key. A key that names different lanes in the review and execute roles is probed as its review lane, and `probe-quota` prints one line naming the key and saying its execute lane is not probed; relay that line and suggest renaming one of the two lanes. A lane marked `usage_limited = true` is probed like any other. Quota records are reused for an hour only within one quota file; this check passes a throwaway `--quota-path`, so every `--check-only` run spends one probe per probed lane, including part of a usage-limited lane's allowance.
+
 `probe-quota` has no `--local`/`--global` flag — it always runs the full `cfg_resolve` merge, so
 output holds the keys printed above, from both local and global configs. Report each probed
 `key`'s `available` boolean, and mark a probed key missing from the raw-read listing
@@ -63,10 +68,10 @@ output holds the keys printed above, from both local and global configs. Report 
 
 Three edge cases: (1) if `--global` was passed but a local config with `strategy = "local-only"`
 exists, the merge returns only local entries, shadowing the global keys the raw read listed; (2)
-`probe-quota` only probes keys reachable from `policy.ladder`; (3) a project file whose command-bearing lanes are untrusted is
+`probe-quota` probes a review lane only when the review order names it (`[lanes.policy.review]` `ladder`, or a shared `[lanes.policy]` `ladder` read for the review lanes), and every execute lane; (3) a project file whose command-bearing lanes are untrusted is
 ignored entirely (stderr prints `ignoring untrusted project-local config`), so none of its keys
 are probed. For any raw-read key with no match in probe output, report `available: unknown (not
-probed — absent from policy.ladder, shadowed by local-only strategy, the local config is
+probed — a review lane absent from the review order, shadowed by local-only strategy, the local config is
 untrusted, a native/session-default entry that is never externally probed, or a permanent skip
 route the probe output names)` rather than silently dropping it or guessing. When the untrusted
 line appears, relay it and print the `trust-local --cwd <project root> --show` command for the

@@ -13,7 +13,7 @@ digraph review_spec {
     "Read EFFECTIVE_REPORT_PATH" [shape=box];
     "Parse Status line" [shape=diamond];
     "Approved" [shape=box, style=filled, fillcolor=lightgreen];
-    "Issues Found?" [shape=diamond];
+    "Revisions authorized?" [shape=diamond];
     "Iter < cap?" [shape=diamond];
     "Resolve route per archetype" [shape=diamond];
     "Step 3a generic fixer" [shape=box];
@@ -31,10 +31,10 @@ digraph review_spec {
     "Dispatch reviewer(s) (fresh)" -> "Read EFFECTIVE_REPORT_PATH";
     "Read EFFECTIVE_REPORT_PATH" -> "Parse Status line";
     "Parse Status line" -> "Approved" [label="Approved"];
-    "Parse Status line" -> "Issues Found?" [label="Issues Found"];
-    "Issues Found?" -> "Iter < cap?" [label="yes"];
-    "Issues Found?" -> "Surface to user" [label="no"];
-    "Iter < cap?" -> "Resolve route per archetype" [label="yes"];
+    "Parse Status line" -> "Iter < cap?" [label="Issues Found"];
+    "Iter < cap?" -> "Revisions authorized?" [label="yes"];
+    "Revisions authorized?" -> "Resolve route per archetype" [label="yes, or the user says yes when asked"];
+    "Revisions authorized?" -> "Surface to user" [label="no (findings surfaced)"];
     "Iter < cap?" -> "Cap reached" [label="no"];
 
     "Resolve route per archetype" -> "Step 3a generic fixer" [label="direct edit"];

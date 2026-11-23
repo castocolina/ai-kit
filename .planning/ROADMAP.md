@@ -122,7 +122,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 33: One config design** - One neutral config.toml per layer with role-keyed lanes; review-spec.toml and the retry block migrate on their own; no foreign keys, runs without GSD *(rewritten 2026-11-14, owner decisions)* (completed 2026-11-15)
 - [x] **Phase 34: jev backends by host and Laya calibration** - jev picks its backend per host from ai-kit's config; Laya measured against its floor (completed 2026-11-16)
 - [x] **Phase 35: Model discovery and catalog** - spec-config lists every model on every host with honest source, usability and tier labels (completed 2026-11-20)
-- [ ] **Phase 36: spec-config as the hub** - Every spec skill chains spec-config; reviewers and executors kept apart with opt-in escalation
+- [x] **Phase 36: spec-config as the hub** - Every spec skill chains spec-config; reviewers and executors kept apart with opt-in escalation (completed 2026-11-21)
 - [ ] **Phase 37: Shared runner options and session ids** - One runner for GSD cross-AI and ai-kit lanes, with per-call settings and resumable sessions
 - [ ] **Phase 38: Runner hardening and run safety** - Idle watchdog, the Phase 25 cleanup, a run lock with a tree baseline, and a plan-versus-commits check before done
 - [ ] **Phase 38.1: Runner error classification and retry policy (INSERTED)** - Wider error catalogue, stdout limit matching, router cooldowns and the owner's retry policy
@@ -739,11 +739,64 @@ Plans:
   4. Each role has its own priority order (`[lanes.policy.review]` and `[lanes.policy.execute]`), only the chosen lanes are written, an effort is offered only from known levels or after one accepted test call and is never dropped silently, and an escalation flag is written only on an explicit yes. *(added 2026-11-16, 36 D-04 to D-06, owner observations items 3 and 4 and the 2026-10-29 lane todo)*
   5. No lane is refused because of a runtime-table flag: `review_only` no longer refuses in routing, execute selection or `dispatch-execute`, and a missing runner formula refuses with its own named reason. *(added 2026-11-16, 36 D-08, owner directive that a table never decides)*
   6. After a verified migration the old roster file is deleted unless the owner keeps a backup, and spec-config run with no way to ask prints its pending decisions and writes nothing. *(added 2026-11-16, 36 D-10, D-11, owner observation items 5 and the headless note; the backup default needs owner confirmation)*
-  7. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+  7. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation. *(amended 2026-11-20, 36 plan time: the SKILL.md files this phase changes materially are `ai-kit-spec-config`, `ai-kit-spec-review` and `ai-kit-spec-execute-superpowers`, all three judged in loop 36; `ai-kit-spec-review`, below the bar at the Phase 32 baseline (75.2 C) and deferred to Phases 39-40, reaches the bar in this phase, the first that changes its SKILL.md since, with its Markdown scenarios converted to new-shape evals)*
   8. A zero-price model can be selected in spec-config (its own group in the proposal, with its price source), the owner's yes writes a `usage_limited` flag on the lane and nothing else does, a role holding only usage-limited lanes gets an alternative proposed or an explicit-none warning, and the wizard's questions and written file are identical with and without herdr. *(added 2026-11-16, re-run 2, 36 D-15 to D-19, owner directive on free models and herdr hosting)* *(amended 2026-11-16, free-lane pool study, 36 D-20 to D-22, PROVISIONAL, needs owner confirmation: the flag is written with the lane's pool (provider plus free tier); a flagged lane's fallback is the first lane of the role that is neither flagged nor in the same pool; the wizard warns that other free models of the same provider share one pool. Source: `.planning/research/2026-11-16-opencode-free-models.md`, where the shared pool is reported by users and not confirmed by a maintainer)*
   9. When the owner selects a free model that is not known to be local, the wizard shows its data-use note (`zero_retention`, `may_be_kept_or_trained` or `unknown`, with source, read date and a verified or reported label, unknown never defaulted to a safe value) and asks the owner to confirm sending project content to that lane; a yes records the note and the confirmation beside the lane, a no or a skip writes no lane. *(added 2026-11-16, free-lane pool study, 36 D-23, HUB-10, PROVISIONAL, needs owner confirmation: the decline path and the closed value list; the research note finds only four listed free models zero-retention, so project code may reach a third party)*
 
-**Plans**: TBD
+**Plans**: 29/29 plans complete in 11 waves *(planned 2026-11-20; plan 36-29 is an orchestrator action: the judge loop for the three skills)*
+**Wave 1**
+- [x] 36-01-PLAN.md (wave 1): stub every new test module and regenerate the test listing
+- [x] 36-02-PLAN.md (wave 1): planning amendments (R13, pool and data-use decisions D-20 to D-23, grok exclusion, review skill joins the judge bar)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 36-03-PLAN.md (wave 2): `config-status` command with the optional `--role`
+- [x] 36-04-PLAN.md (wave 2): per-role orders, reader side
+- [x] 36-05-PLAN.md (wave 2): effort forms, offered levels and write-time validation (`lane_effort.py`)
+- [x] 36-06-PLAN.md (wave 2): proposal pool and groups (`lane_pool.py`)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 36-07-PLAN.md (wave 3): price, pool key and data-use record (`lane_price.py`, `lane_data_use.py`)
+- [x] 36-08-PLAN.md (wave 3): runner exec-formula mirror, advice text and drift test
+- [x] 36-09-PLAN.md (wave 3): proposal order, jev scores with the stability rule (`lane_order.py`)
+- [x] 36-10-PLAN.md (wave 3): migration deletes the old roster by default, `--keep-backup`, role-correct review routing
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [x] 36-11-PLAN.md (wave 4): lane settings validators and the writer-only free-lane check (`lane_settings.py`)
+- [x] 36-12-PLAN.md (wave 4): route `no_formula` replaces `review_only`
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [x] 36-13-PLAN.md (wave 5): `propose-lanes` command
+- [x] 36-14-PLAN.md (wave 5): execute selection, save message and no-seed-refusal test
+- [x] 36-15-PLAN.md (wave 5): referee rule in the hardcoding guard
+- [x] 36-16-PLAN.md (wave 5): review skill no-config chain
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [x] 36-17-PLAN.md (wave 6): lane readers (`lane_escalation`, `lane_usage_limit`, `lane_fallback`) and fallback warning
+- [x] 36-18-PLAN.md (wave 6): effort form wired into dispatch, probe and previews
+- [x] 36-19-PLAN.md (wave 6): execute adapter no-config chain
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [x] 36-20-PLAN.md (wave 7): per-role orders, writer side
+- [x] 36-21-PLAN.md (wave 7): effort probe, `check-reviewer --effort`, write-time effort refusal
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [x] 36-22-PLAN.md (wave 8): `probe-quota --role`
+- [x] 36-23-PLAN.md (wave 8): wizard JSON example test and herdr identity test
+- [x] 36-24-PLAN.md (wave 8): wizard question flow and free-lane references
+
+**Wave 9** *(blocked on Wave 8 completion)*
+- [x] 36-25-PLAN.md (wave 9): spec-config SKILL.md skeleton, headless stop, config-file reference
+
+**Wave 10** *(blocked on Wave 9 completion)*
+- [x] 36-26-PLAN.md (wave 10): spec-config evals
+- [x] 36-27-PLAN.md (wave 10): review and adapter evals
+- [x] 36-28-PLAN.md (wave 10): README, design record, AGENTS.md wording and the `review_only` scan
+
+**Wave 11** *(blocked on Wave 10 completion)*
+- [x] 36-29-PLAN.md (wave 11): judge loop for the three skills (orchestrator action)
+
+**Cross-cutting constraints:** <!-- gsd:generated -->
+- SPEC R2 empty edge: an empty or unrecognised answer to the ask means `stop`; there is no default yes
 
 ### Phase 37: Shared runner options and session ids
 
@@ -807,7 +860,7 @@ Plans:
   2. Each lane's prompt carries a capability block built from its final argv (read-only or write, shell or not, the tools found on the child's PATH, codebase-memory-mcp only when its binary is on that PATH (it replaced codegraph in Phase 32.5)); a lane without a shell is told about no shell tool.
   3. Lens skills present in the environment (the ponytail family, reducing-entropy, naming-analyzer, simplify, impeccable for UI) reach reviewers by path, and file-editing lenses run as a pass after approval; a lens is inlined where the lane cannot load it by path (Claude built-ins, pi through an allow-listed `--skill`). *(amended 2026-11-16, 39 D-10, D-11: live facts: pi 1.5.2's own docs say explicit `--skill` paths still load under `--no-skills`, so pi is the one verified by-path host; claude, copilot and cursor-agent have an `--add-dir` flag whose effect on a read-only lane is unverified until the execute-start spike, so they inline; a Claude built-in such as `simplify` has no file anywhere and cannot be inlined, so only a native lane of its host runs it and every other lane gets a named note; the file-editing pass after approval is opt-in and off by default, needs owner confirmation)*
   4. A prompt larger than a lane's known context window (the lane's own runtime's value from the Phase 35 catalog, or a per-(runtime, model) override in `[models]`; *amended 2026-11-16, 35 D-09*) is refused for that lane with a named reason and never trimmed; an unknown window is not capped and shows as unknown; a value embedded in a prompt (file list, lens path) with a control character, or a path outside the repository or skill roots, is rejected, each covered by a fixture. *(added 2026-11-16, GSD lane-handling study)*
-  5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation. *(amended 2026-11-07, 32.1 D-01: `ai-kit-spec-review`, below the bar at the Phase 32 baseline (75.2 C), was deferred here from batch 32.2; it reaches the bar, with its Markdown scenarios converted to new-shape evals and with tests, in whichever of Phases 39-40 first changes its SKILL.md, and no later than Phase 40's close)*
+  5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation. *(amended 2026-11-07, 32.1 D-01: `ai-kit-spec-review`, below the bar at the Phase 32 baseline (75.2 C), was deferred here from batch 32.2; it reaches the bar, with its Markdown scenarios converted to new-shape evals and with tests, in whichever of Phases 39-40 first changes its SKILL.md, and no later than Phase 40's close)* *(amended 2026-11-20, 36 plan time: Phase 36 changes `ai-kit-spec-review`'s SKILL.md first and brings it to the bar in loop 36; this phase keeps that bar with no regression beyond judge variation, and brings it there only if Phase 36 recorded it below the bar after three rounds)*
 
 **Plans**: TBD
 
@@ -838,7 +891,7 @@ Plans:
   3. jev picks the reviewer and one or two lanes for a plan from files touched, complexity, task count and category, on top of deterministic signals (security, data, irreversible operations), and the review log shows why.
   4. Before a review or judge round each chosen lane is pinged; a fake blocked lane is replaced from the owner's order, the round continues with at least one lane, and the log records which lanes judged.
   6. A superpowers plan fixture without an explicit fold step at its end gets a spec-review finding, and the same plan with the step gets none. *(added 2026-11-03, 29 D-03)*
-  5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation. *(amended 2026-11-07, 32.1 D-01: `ai-kit-spec-review` reaches the bar with new-shape evals and tests by this phase's close if Phase 39 did not bring it there)*
+  5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation. *(amended 2026-11-07, 32.1 D-01: `ai-kit-spec-review` reaches the bar with new-shape evals and tests by this phase's close if Phase 39 did not bring it there)* *(amended 2026-11-20, 36 plan time: Phase 36 brings it to the bar first; this phase keeps it with no regression beyond judge variation, or brings it there if neither Phase 36 nor Phase 39 did)*
   7. Lane pings run at once, each with its own timeout, and every ping or lane failure records a reason from one closed list; a test fails when a key is added or removed without the list changing. *(added 2026-11-16, GSD lane-handling study)*
   8. A review in which a lane was replaced, failed or never resolved is reported partial with the lanes that judged, never as a clean run, and one lane's failure never cancels another lane's result (fake lanes cover each case). *(added 2026-11-16, GSD lane-handling study)*
 
@@ -1145,7 +1198,7 @@ Plans:
 | 33. One config design | 12/12 | Complete    | 2026-11-15 |
 | 34. jev backends by host and Laya calibration | 10/10 | Complete    | 2026-11-16 |
 | 35. Model discovery and catalog | 28/28 | Complete    | 2026-11-20 |
-| 36. spec-config as the hub | 0/TBD | Not started | - |
+| 36. spec-config as the hub | 29/29 | Complete    | 2026-11-21 |
 | 37. Shared runner options and session ids | 0/TBD | Not started | - |
 | 38. Runner hardening and run safety | 0/TBD | Not started | - |
 | 38.1. Runner error classification and retry policy | 0/TBD | Not started | - |

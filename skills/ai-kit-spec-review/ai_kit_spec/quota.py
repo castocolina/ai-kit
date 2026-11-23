@@ -10,6 +10,7 @@ from ai_kit_spec.cache import cache_base
 from ai_kit_spec.commands import ResolvedReviewer, render_reviewer_command
 from ai_kit_spec.config_io import _KNOWN_REVIEWER_FIELDS
 from ai_kit_spec.execute_selection import purpose_matches
+from ai_kit_spec.role_orders import role_order
 from ai_kit_spec.runner_dispatch import (
     CustomSpec,
     RunnerResult,
@@ -122,7 +123,8 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
                        warn_fn=lambda msg: print(msg, file=sys.stderr)) -> list:
     """The full policy decision. Returns 1 or 2 ResolvedReviewer entries;
     dispatch mechanics are the caller's concern (review-spec/SKILL.md's
-    Step 1), this only decides WHO.
+    Step 1), this only decides WHO. The ladder is the review order and the entries are the review
+    lanes (role_orders.role_order; 36 D-04).
 
     Narrows `ladder` to purpose in {"review", "both", None} first
     (2026-09-02 design, spec Section 7) -- falls back to the full ladder if
@@ -167,8 +169,9 @@ def resolve_reviewers(config: dict, quota: dict, source_vendor: str, cross_ai: b
         return [NO_CONFIG_FALLBACK]
     policy = config.get("policy", {})
     mode = policy.get("mode", "single")
-    ladder = policy.get("ladder", [])
-    reviewers = config.get("reviewers", [])
+    ladder = role_order(config, "review")
+    reviewers = (config["review"] if isinstance(config.get("review"), list)
+                 else config.get("reviewers", []))
     ladder, fell_back = _filter_ladder_by_purpose(reviewers, ladder, "review")
     if fell_back:
         warn_fn("ai-kit-spec-review: no reviewer entry matches purpose='review' in the "

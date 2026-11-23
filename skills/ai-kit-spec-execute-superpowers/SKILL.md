@@ -96,14 +96,13 @@ The loader only assigns, never `source`s or `eval`s, so quotes, `$` and backtick
 
 ## Step 1: Load the plan under subagent-driven-development, unmodified
 
-First probe that `superpowers:subagent-driven-development` loads through the host's skill
-mechanism; if not, STOP and tell the user (nothing to delegate to). Follow its own Setup exactly
-(workspace, ledger, plan read, pre-flight scan). `$CWD`, `$PLAN_FILE`, `$TASK_N`, and `$BRIEF_FILE`
-are values it already holds at each task's implementer dispatch — read them, never invent them.
+First probe that `superpowers:subagent-driven-development` loads through the host's skill mechanism; if not, STOP and tell the user (nothing to delegate to). Follow its own Setup exactly (workspace, ledger, plan read, pre-flight scan). `$CWD`, `$PLAN_FILE`, `$TASK_N`, and `$BRIEF_FILE` are values it already holds at each task's implementer dispatch — read them, never invent them.
+
+**No-config check, before the start step: MANDATORY: read [`references/config-check.md`](references/config-check.md) in full and run its block 1 once per plan.** It runs `config-status`, asks the owner at most once when no lanes exist (run ai-kit-spec-config now, run once on the session model, or stop) before any commit moves, and records `CONFIG_CHECK=` in the plan's scalar file so a resumed run never asks again (a fresh start checks again). Do NOT load it at any other point.
 
 Before the first task, start the plan's unit: **MANDATORY: read [`references/start-step.md`](references/start-step.md) in full and run its block once** (`fold.py start --plan`; it handles every refusal). superpowers' planning skills commit the spec and plan before this step; `start` carries those local-only commits onto the unit branch, so they stay in its PR and below `FOLD_BASE`: each commit that touches the plan file or the spec on the plan's `**Spec:**` line, even a spec committed on its own. The plan already exists when this skill runs, so this skill never briefs a plan writer and never runs `fold.py boundary --next` (see NEVER): that command rewrites the same `.aikit/brief/SKILL.md` as `unit: next`, replacing the wave brief the start block just wrote for this unit, and without `--repo` it writes into whatever checkout the shell is in. A project that briefs its superpowers plan writer does that before the plan exists, from its own instruction file.
 
-After the Task paths block prints `SCALARS`, record the start commit once (later tasks keep it):
+After the Task paths block prints `SCALARS`, record the start commit once (later tasks keep it, and Step 5 clears it once the unit is folded, so a later run of the same plan records its own):
 `[ -n "$FOLD_BASE" ] || printf 'FOLD_BASE=%s\n' "$(git -C "$CWD" rev-parse HEAD)" | tee -a "$SCALARS"`;
 after a yes to running without the unit flow, also `printf 'UNIT_FLOW=0\n' | tee -a "$SCALARS"`.
 If the plan's last `### Task` does not name `ai-kit-commit-fold`, add a final todo `Fold the plan's commits (ai-kit-commit-fold)` to subagent-driven-development's task list; never edit the plan file.
@@ -150,7 +149,7 @@ The state is three sets (permanent exclusions, this wave's tried keys, the deriv
 resumable-state file, read `references/state-management.md` in full** — it names every variable,
 its initial and resume values, and the exact resumable-state bash.
 
-Step 2 runs once per task, before its first dispatch, and again only for a resume without a pinned `injection_json`, a trust-local yes, or the Rounds 4–5 re-resolution (Step 3). A restored `injection_json` is pinned: it re-dispatches unchanged at any `$FIX_ROUND`. Fix rounds 1–3 reuse the task's `$INJECTION_JSON` unchanged.
+Step 2 runs once per task, before its first dispatch, and again only for a resume without a pinned `injection_json`, a trust-local yes, or the Rounds 4–5 re-resolution (Step 3). A restored `injection_json` is pinned: it re-dispatches unchanged at any `$FIX_ROUND`. Fix rounds 1–3 reuse the task's `$INJECTION_JSON` unchanged. **Session-model mode:** when the scalar `CONFIG_CHECK` is `once` or `notice`, run block 3 of `references/config-check.md` in place of the `resolve-injection` block for every task (it writes `$RUN_DIR/INJECTION_JSON.json` with mode `native` and an empty key, runtime and model, and records `INJECTION_MODE=native`); the rest of Step 2 and Step 3 run unchanged, so the task dispatches natively with `model` omitted (the session model).
 
 **Resume check — before any resolution** (a re-invoke starts here with no memory; the task-paths
 block printed `RESUME_FOUND`). `RESUME_FOUND=0`: run "Seed a new task" in
@@ -216,7 +215,7 @@ The (runtime, model) pair contract and the native-versus-subprocess routing are 
 
 **At the start of every fix round, in either mode, increment `$FIX_ROUND` and set
 `ESCALATION_ANCHOR_KEY="$LAST_DISPATCHED_KEY"` first** (block below; new rounds only, never on a resume,
-a re-invoke that kept its scalars or a Step-2 re-entry, which keep the round and anchor, yet at 4 or more still take the floor below). Rounds 1–3 keep `$INJECTION_JSON` and skip Step 2. A failed dispatch gets no same-round re-dispatch.
+a re-invoke that kept its scalars or a Step-2 re-entry, which keep the round and anchor, yet at 4 or more still take the floor below). Rounds 1–3 keep `$INJECTION_JSON` and skip Step 2. A failed dispatch gets no same-round re-dispatch. Run the block below only at a new round: a restored `$FIX_ROUND` already counts the round, so the resume path never runs it and goes straight to `references/escalation.md`'s resolve block.
 
 **Rounds 4–5 capability escalation (`external_cli`, and `native` on every host but Claude Code).**
 At `$FIX_ROUND >= 4` after the increment, or restored at 4 or more by a resume with no pinned
@@ -226,10 +225,10 @@ the round and before computing `$ESCALATION_EXCLUDE_JSON`**: the floor is relati
 `$ESCALATION_ANCHOR_KEY` (the dispatch that got stuck), never to the key Step 2 just picked, and is
 applied before the round's dispatch, never after a failed one. An empty anchor, or one missing from
 `ladder_keys`, dispatches nothing: STOP and ask the owner ("An empty or unknown anchor never
-dispatches"). Do NOT load it at rounds 1–3.
+dispatches"). Do NOT load it at rounds 1–3. In session-model mode rounds 4–5 run on the session model with no ladder escalation and no model bump; the escalation rule above applies to every other mode.
 
 ```bash
-FIX_ROUND=$((FIX_ROUND + 1)); ESCALATION_ANCHOR_KEY="$LAST_DISPATCHED_KEY"
+FIX_ROUND=$((FIX_ROUND + 1)); ESCALATION_ANCHOR_KEY="$LAST_DISPATCHED_KEY"  # new round only, never on a resume
 printf 'FIX_ROUND=%s\nESCALATION_ANCHOR_KEY=%s\n' "$FIX_ROUND" "$ESCALATION_ANCHOR_KEY" | tee -a "$SCALARS"
 ```
 
@@ -272,9 +271,9 @@ Dispatch steps, the **Classify** step (`ok`, `quota`, `real_error`) and, inside 
 - **`"real_error"`** — stop for the owner with the pinned state written.
 
 **Exec confinement** (reasoning: `references/design-notes.md`). Codex runs under
-`--codex-sandbox workspace-write` (writes stay in the target dir plus `/tmp` and `$TMPDIR`; `.git`
-writes unverified). Every other exec target has full permissions, and its stay-in-the-target-dir
-guidance is not a boundary. `claude` is review-only and never runs here. pi exec is verified by the
+`--codex-sandbox workspace-write` (writes stay in the target dir plus `/tmp`, `$TMPDIR` and any writable root the owner's codex
+configuration adds, so this is not an unconditional boundary; `.git` writes unverified). Every other exec target has full permissions, and its stay-in-the-target-dir
+guidance is not a boundary. `claude` has no exec formula in the runner, so a `claude` lane runs here only as a native Claude Code alias on a Claude Code host (otherwise route `no_formula`). pi exec is verified by the
 runner's hermetic self-test only and live verification is still open (stderr prints that note); a copilot target gets a similar note:
 unverified error rows, all tools allowed, the task prompt visible on argv. **Node:** subprocess dispatch needs Node 24 (GSD's declared floor; older versions untested). The runner fails closed as `dispatch_unavailable` (a `real_error` stop) only when `node` is absent; an older Node may crash, and that crash is a `real_error` of the pair, never a reason to switch pairs.
 
@@ -287,7 +286,7 @@ skill's scope ends at Step 3 until Step 5 and never touches review, adjudication
 
 ## Step 5: Fold the finished plan (after the final review, before the finishing step)
 
-**MANDATORY: read [`references/fold-step.md`](references/fold-step.md) in full and run its block once the final whole-branch review passes.** The block runs `fold.py checkpoint --plan "$PLAN_FILE" --base "$FOLD_BASE" --final` (the unit's last checkpoint, with the fold step's range kept), then `fold.py ready --plan "$PLAN_FILE"`. A refusal stops the run and shows the report; never move the branch by hand. superpowers' finishing step does not merge, push or open a PR for this unit: ai-kit's unit flow does, and pushes only with push consent. A plan run inline, without this skill, runs the same three commands from the fold skill's `references/adapter-guide.md`.
+**MANDATORY: read [`references/fold-step.md`](references/fold-step.md) in full and run its block once the final whole-branch review passes.** The block runs `fold.py checkpoint --plan "$PLAN_FILE" --base "$FOLD_BASE" --final` (the unit's last checkpoint, with the fold step's range kept), then `fold.py ready --plan "$PLAN_FILE"`. A refusal stops the run and shows the report; never move the branch by hand. When the last report's outcome is `done` or `nothing to do`, clear the run's start scalars, `printf 'FOLD_BASE=\nUNIT_FLOW=\n' | tee -a "$SCALARS"`, so the next run of this plan records its own; any other outcome keeps them for the re-run. superpowers' finishing step does not merge, push or open a PR for this unit: ai-kit's unit flow does, and pushes only with push consent. A plan run inline, without this skill, runs the same three commands from the fold skill's `references/adapter-guide.md`. When the scalar `CONFIG_CHECK` is `once` or `notice`, print its notice line from `references/config-check.md` again after the fold block.
 
 ## Close the session wake
 

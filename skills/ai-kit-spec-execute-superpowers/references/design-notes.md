@@ -27,8 +27,8 @@ call; every other host runs only its session default natively). `external_cli` m
 through the supervised runner, including a route of `unverified`: the model list was unavailable,
 so neither side checks the model before the CLI runs. A custom entry (a `command` and no
 `runtime`) is the one exception to that runner path, and only in review: exec mode never runs
-it (`purpose = "execute"` makes `resolve-injection` exit 2; otherwise it is skipped as
-`review_only`). In review the fixed-argv custom launcher runs it on the same
+it (`purpose = "execute"` makes `resolve-injection` exit 2; otherwise it is skipped with route
+`no_formula`: that launcher runs in review mode only). In review the fixed-argv custom launcher runs it on the same
 supervision core.
 
 ## Why `$INJECTION_KEY`, never `$INJECTION_RUNTIME`, goes into exclusions
@@ -76,10 +76,11 @@ is itself a declaration, and reads a missing or conflicting declaration as `BLOC
 ## Why exec confinement differs by runtime
 
 Codex runs under `--codex-sandbox workspace-write`, so its writes stay inside the target dir plus
-`/tmp` and `$TMPDIR`, which workspace-write always allows; whether `.git` is writable under that
-sandbox is unverified. Every other exec target runs with full permissions and gets only the
-soft-confinement sentence, which is guidance, not a boundary. `claude` is review-only and never an
-exec target. pi exec uses the runner's pi formula, verified by its hermetic self-test only until
+`/tmp` and `$TMPDIR`, which workspace-write always allows, and any writable root the owner's codex
+configuration adds (the sandbox is therefore not an unconditional boundary); whether `.git` is
+writable under that sandbox is unverified. Every other exec target runs with full permissions and gets only the
+soft-confinement sentence, which is guidance, not a boundary. `claude` has no exec formula in the runner, so it is an
+exec target only as a native Claude Code alias on a Claude Code host (otherwise route `no_formula`). pi exec uses the runner's pi formula, verified by its hermetic self-test only until
 live verification, which is still open.
 
 ## Why `--timeout 1800` is a fixed constant

@@ -31,7 +31,7 @@ again this run, though the line repeats on every later resolution. Never trust u
   It, not `all_auth_failures`, is the gate. `reasons` holds `"quota"`, `"auth"`,
   `"billing_or_access"`, `"capacity"`, `"git_timeout"`, `"timeout"`, `"configuration"`,
   `"dispatch_unavailable"`, `"real_error"`, `"no_usable_dispatch"` (a prior wave's permanent
-  failure), or a skip-route name (`"bad_model"`, `"review_only"`, `"not_installed"`,
+  failure), or a skip-route name (`"bad_model"`, `"no_formula"`, `"not_installed"`,
   `"no_inventory"`, `"unknown_runtime"`, `"no_model"`; never picked). Only `"quota"` is worth
   waiting for.
   - **`any_quota_recoverable == False`** — no candidate is eligible for automatic quota recovery

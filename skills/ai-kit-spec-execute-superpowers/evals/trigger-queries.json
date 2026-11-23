@@ -18,5 +18,7 @@
   {"query": "configure which cross-AI reviewers ai-kit should use for plan review in this repo", "should_trigger": false},
   {"query": "check my remaining model quota across the CLIs before the big run tomorrow", "should_trigger": false},
   {"query": "fold the GSD plan 07-02 into logical commits with ai-kit-commit-fold", "should_trigger": false},
-  {"query": "squash my feature branch into one commit before I rebase it onto main", "should_trigger": false}
+  {"query": "squash my feature branch into one commit before I rebase it onto main", "should_trigger": false},
+  {"query": "run my superpowers plan under subagent-driven-development even though no cross-AI lanes are set up yet", "should_trigger": true},
+  {"query": "set up the cross-AI execute lanes for this repo before I run any plan at all", "should_trigger": false}
 ]

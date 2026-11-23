@@ -44,6 +44,7 @@ LOCAL_ROSTER = (
     'runtime = "codex"\n'
     'purpose = "execute"\n'
 )
+CHANGED = LOCAL_ROSTER.replace('model = "m1"', 'model = "m9"').encode("utf-8")
 COMMAND_ROSTER = (
     "[[reviewers]]\n"
     'key = "x"\n'
@@ -64,6 +65,7 @@ def canonical_bytes(lanes: dict, user_command_keys: frozenset = frozenset()) -> 
 
 class MigrationCase(unittest.TestCase):
     """One temporary project (.aikit/), user folder (XDG ai-kit) and trust store per test."""
+    keep_backup = True  # the rename meaning of the 33-05 tests; TestDefaultDelete sets False
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -77,6 +79,18 @@ class MigrationCase(unittest.TestCase):
         self.user_config = os.path.join(self.user, "config.toml")
         self.user_old = os.path.join(self.user, "review-spec.toml")
         self.warnings = []
+        self.real_read = config_migrate._read_bytes
+
+    def counting_reader(self, writes: dict):
+        """Inject a write on a specified read."""
+        counts = {}
+
+        def reader(path):
+            counts[path] = counts.get(path, 0) + 1
+            if path in writes and counts[path] == writes[path][0]:
+                self.write_bytes(path, writes[path][1])
+            return self.real_read(path)
+        return reader
 
     def write(self, path: str, text: str) -> None:
         self.write_bytes(path, text.encode("utf-8"))
@@ -95,6 +109,7 @@ class MigrationCase(unittest.TestCase):
             return handle.read()
 
     def migrate(self, config: str | None = None, **kwargs) -> str:
+        kwargs.setdefault("keep_backup", self.keep_backup)
         return config_migrate.migrate_layer(
             config or self.local_config, warn_fn=self.warnings.append, **kwargs)
 
@@ -120,6 +135,163 @@ class MigrationCase(unittest.TestCase):
 
     def stamp(self, path: str):
         return self.read_bytes(path), os.stat(path).st_mtime_ns
+
+
+class TestDefaultDelete(MigrationCase):
+    keep_backup = False
+
+    def test_verified_migration_deletes_the_old_file(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        self.assertEqual(self.migrate(), "migrated")
+        self.assertFalse(any(n.startswith(os.path.basename(self.local_old))
+                             for n in os.listdir(self.project)))
+        self.assertEqual(self.lanes(self.local_config), self.expected_lanes(LOCAL_ROSTER))
+        self.assertEqual(len(self.warnings), 1)
+        for text in ("the old file was deleted", self.local_old, self.local_config):
+            self.assertIn(text, self.warnings[0])
+
+
+    def leftovers(self):
+        return [n for n in os.listdir(self.project)
+                if n.startswith(os.path.basename(self.local_old) + ".")]
+
+    def racing_link(self, before=None, after=None):
+        real = os.link
+        calls = []
+        def link(source, destination):
+            first = not calls
+            calls.append(destination)
+            if first and before:
+                before(source, destination)
+            real(source, destination)
+            if first and after:
+                after(source, destination)
+        return link
+
+    def test_keep_backup_keeps_the_renamed_copy(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        self.assertEqual(self.migrate(keep_backup=True), "migrated")
+        self.assertEqual(self.read_bytes(self.local_old + ".migrated"), LOCAL_ROSTER.encode())
+        self.assertEqual(len(self.warnings), 1)
+        self.assertIn("the old file is now", self.warnings[0])
+
+    def test_failed_value_check_deletes_nothing(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        error = LegacyRosterError(self.local_old, "migration check failed")
+        with mock.patch.object(config_migrate, "_check_new_text", side_effect=error), \
+                self.assertRaises(LegacyRosterError):
+            self.migrate()
+        self.assertEqual(self.read(self.local_old), LOCAL_ROSTER)
+        self.assertFalse(os.path.exists(self.local_config))
+        self.assertEqual(self.leftovers(), [])
+
+    def test_old_file_changed_before_the_guard_is_left_in_place(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        reader = self.counting_reader({self.local_old: (2, CHANGED)})
+        with mock.patch.object(config_migrate, "_read_bytes", side_effect=reader):
+            self.assertEqual(self.migrate(), "deferred")
+        self.assertIn("changed during its migration", self.warnings[-1])
+        self.assertEqual(self.read_bytes(self.local_old), CHANGED)
+        self.assertEqual(self.leftovers(), [])
+
+    def test_failed_link_finishes_on_the_next_run(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        with mock.patch.object(config_migrate.os, "link", side_effect=OSError("not supported")):
+            self.assertEqual(self.migrate(), "migrated")
+        self.assertIn("could not delete the old file", self.warnings[-1])
+        self.assertEqual(self.read(self.local_old), LOCAL_ROSTER)
+        self.assertEqual(self.lanes(self.local_config), self.expected_lanes(LOCAL_ROSTER))
+        self.assertEqual(self.migrate(), "completed")
+        self.assertFalse(os.path.exists(self.local_old))
+        self.assertEqual(self.leftovers(), [])
+
+    def test_failed_cleanup_warns_instead_of_raising(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        with mock.patch.object(config_migrate.os, "remove", side_effect=OSError("busy")):
+            self.assertEqual(self.migrate(), "migrated")
+        self.assertIn("could not", self.warnings[-1])
+        self.assertTrue(any("second name" in warning for warning in self.warnings))
+
+    def test_no_free_name_keeps_the_old_file(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        with mock.patch.object(config_migrate.os, "link", side_effect=FileExistsError):
+            self.assertEqual(self.migrate(), "migrated")
+        self.assertIn("no free name", self.warnings[-1])
+        self.assertEqual(self.read(self.local_old), LOCAL_ROSTER)
+
+    def test_existing_retiring_file_is_never_overwritten(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        foreign = self.local_old + config_migrate.RETIRING_SUFFIX
+        self.write_bytes(foreign, b"foreign")
+        self.assertEqual(self.migrate(), "migrated")
+        self.assertEqual(self.read_bytes(foreign), b"foreign")
+        self.assertFalse(os.path.exists(self.local_old))
+        self.assertEqual(self.leftovers(), [os.path.basename(foreign)])
+
+    def test_competing_destination_at_link_time_is_never_overwritten(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        def before(_source, destination):
+            self.write_bytes(destination, b"foreign")
+        with mock.patch.object(config_migrate.os, "link", side_effect=self.racing_link(before)):
+            self.assertEqual(self.migrate(), "migrated")
+        foreign = self.local_old + config_migrate.RETIRING_SUFFIX
+        self.assertEqual(self.read_bytes(foreign), b"foreign")
+        self.assertFalse(os.path.exists(self.local_old))
+        self.assertEqual(self.leftovers(), [os.path.basename(foreign)])
+
+    def test_failed_remove_keeps_the_linked_copy(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        real = os.remove
+        def remove(path):
+            if path.endswith(config_migrate.RETIRING_SUFFIX):
+                raise OSError("busy")
+            real(path)
+        with mock.patch.object(config_migrate.os, "remove", side_effect=remove):
+            self.assertEqual(self.migrate(), "migrated")
+        dest = self.local_old + config_migrate.RETIRING_SUFFIX
+        self.assertIn("could not delete", self.warnings[-1])
+        self.assertIn(dest, self.warnings[-1])
+        self.assertFalse(os.path.exists(self.local_old))
+        self.assertEqual(self.read_bytes(dest), LOCAL_ROSTER.encode())
+
+    def test_old_file_changed_before_the_link_is_left_in_place(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        def before(source, _destination):
+            self.write_bytes(source, CHANGED)
+        with mock.patch.object(config_migrate.os, "link", side_effect=self.racing_link(before)):
+            self.assertEqual(self.migrate(), "deferred")
+        self.assertIn("changed during its migration", self.warnings[-1])
+        self.assertEqual(self.read_bytes(self.local_old), CHANGED)
+        self.assertEqual(self.leftovers(), [])
+
+    def test_old_path_replaced_after_the_link_is_left_in_place(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        def after(source, _destination):
+            scratch = os.path.join(self.project, "replacement")
+            self.write_bytes(scratch, CHANGED)
+            os.replace(scratch, source)
+        with mock.patch.object(config_migrate.os, "link",
+                               side_effect=self.racing_link(after=after)):
+            self.assertEqual(self.migrate(), "deferred")
+        self.assertEqual(self.read_bytes(self.local_old), CHANGED)
+        self.assertEqual(self.leftovers(), [])
+
+    def test_completed_run_deletes_the_old_file(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        self.write(self.local_config, config_migrate.migrate_text(LOCAL_ROSTER))
+        self.assertEqual(self.migrate(), "completed")
+        self.assertFalse(os.path.exists(self.local_old))
+        self.assertEqual(self.leftovers(), [])
+
+    def test_keep_backup_from_env_reads_only_the_value_one(self):
+        self.write(self.local_old, LOCAL_ROSTER)
+        self.assertEqual(config_migrate.KEEP_BACKUP_ENV, "AI_KIT_KEEP_MIGRATION_BACKUP")
+        self.assertTrue(config_migrate.keep_backup_from_env({config_migrate.KEEP_BACKUP_ENV: "1"}))
+        for value in ("0", "true", ""):
+            self.assertFalse(config_migrate.keep_backup_from_env(
+                {config_migrate.KEEP_BACKUP_ENV: value}))
+        self.assertFalse(config_migrate.keep_backup_from_env({}))
+        self.assertEqual(self.migrate(), "migrated")
 
 
 class TestTracer(MigrationCase):
@@ -391,21 +563,6 @@ class TestInterruptions(MigrationCase):
 
 
 class TestConcurrency(MigrationCase):
-    def setUp(self):
-        super().setUp()
-        self.real_read = config_migrate._read_bytes
-
-    def counting_reader(self, writes: dict):
-        """A _read_bytes that writes `writes[path] = (read number, bytes)` on that read of path."""
-        counts = {}
-
-        def reader(path):
-            counts[path] = counts.get(path, 0) + 1
-            if path in writes and counts[path] == writes[path][0]:
-                self.write_bytes(path, writes[path][1])
-            return self.real_read(path)
-
-        return reader
 
     def test_write_before_the_publish_is_rebuilt_from_fresh_bytes(self):
         self.write(self.local_old, LOCAL_ROSTER)

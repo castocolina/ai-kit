@@ -12,9 +12,15 @@ from ai_kit_spec import (
     catalog_cmds,
     catalog_fetch,
     config_migrate,
+    config_status,
+    effort_probe,
     jev_names,
+    lane_effort,
+    lane_settings,
     optional_sources,
+    propose_cmds,
     provider_check,
+    role_orders,
     routing,
     secret_shapes,
     toml_splice,
@@ -64,6 +70,7 @@ from ai_kit_spec.detection import (
     LOOPBACK_URLOPEN,
     RUNTIMES,
     OpencodeSeams,
+    advice_line,
     build_runtimes_snapshot,
     cache_runtimes_path,
     detect_current_runtime,
@@ -113,6 +120,7 @@ from ai_kit_spec.runner_dispatch import (
     run_custom_command,
     run_runner,
     run_runner_tiers,
+    spec_with_effort,
 )
 from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 from ai_kit_spec.vendor import infer_vendor_from_model
@@ -165,6 +173,7 @@ class CliDeps(NamedTuple):
     fetch_arena_fn: Callable[..., Any] = fetch_arena
     popen_fn: Callable[..., Any] = subprocess.Popen  # the opencode 2.x image probe server
     urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN  # its loopback API call
+    score_judge_fn: Callable[..., Any] = jev_names.score_judge
 
     def probe_seams(self) -> ProbeSeams:
         """The runner and launcher a probe or a quota refresh spawns through."""
@@ -275,6 +284,12 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
         help="read an old roster read-only and report the pending migration instead of "
              "migrating it (the --check-only flow)")
 
+    p_quota.add_argument(
+        "--role", choices=["review", "execute", "both"], default="review",
+        help="which role's lanes to probe: review (default, the review flow), execute, or both "
+             "(the review order, then execute lanes not already listed; the --check-only flow); "
+             "execute probes its order first, then its other lanes")
+
     p_resolve = sub.add_parser("resolve-reviewers")
     p_resolve.add_argument("--cwd", required=True)
     p_resolve.add_argument("--quota-path", required=True)
@@ -283,12 +298,20 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
 
 
 
+_EFFORT_HELP = ("the lane's effort level: codex gets --codex-effort; pi, cursor and opencode "
+                "carry it in the model id (:level, [effort=...], #variant); any other runtime "
+                "passes nothing and prints an 'ignored:' line naming the reason")
+
+
 def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
     p_merge = sub.add_parser("merge-reports")
     p_merge.add_argument("--doc-paths", required=True)
     p_merge.add_argument("reports", nargs="+", help="key=path/to/report.md")
 
     p_toml = sub.add_parser("render-toml")
+    p_toml.add_argument("--catalog-path", default=None, help="model catalog for the effort check")
+    p_toml.add_argument("--runtimes-json", default=None,
+                        help="runtimes snapshot for the effort check")
     p_toml.add_argument(
         "--json-config", required=True, help="path to a JSON file shaped like the TOML config"
     )
@@ -303,6 +326,11 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
         "--replace", action="store_true",
         help="allow --out to replace an existing file (only after the user approved it)",
     )
+
+    p_toml.add_argument(
+        "--keep-backup", action="store_true",
+        help=f"keep a migrated old roster as a .migrated copy (default: deleted after the value "
+             f"check; same as {config_migrate.KEEP_BACKUP_ENV}=1)")
 
     p_render = sub.add_parser("render-command")
     p_render.add_argument("--reviewers-json", required=True,
@@ -332,7 +360,7 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
     p_build_cmd = sub.add_parser("build-command")
     p_build_cmd.add_argument("--runtime", "--cli", dest="runtime", required=True,
                               help="runtime id, e.g. opencode, cursor")
-    p_build_cmd.add_argument("--effort", default=None)
+    p_build_cmd.add_argument("--effort", default=None, help=_EFFORT_HELP)
     p_build_cmd.add_argument("--service-tier", default=None)
     p_build_cmd.add_argument("--mode", default=None,
                               help="cursor only: 'plan' or 'ask' (both read-only); "
@@ -369,10 +397,7 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
                                   "-- a native candidate executes in-process and never reaches "
                                   "this subcommand at all")
     p_dispatch.add_argument("--model", required=True)
-    p_dispatch.add_argument("--effort", default=None,
-                             help="structural param a builder may or may not use, same as "
-                                  "build-command's own --effort -- codex's execute builder "
-                                  "honors it, others silently ignore it")
+    p_dispatch.add_argument("--effort", default=None, help=_EFFORT_HELP)
     p_dispatch.add_argument("--service-tier", default=None)
     p_dispatch.add_argument("--target-dir", required=True)
     p_dispatch.add_argument("--prompt-file", required=True,
@@ -439,6 +464,9 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
                           help="custom entry only (never with --runtime): the command template")
     p_check.add_argument("--extra-json", default=None,
                           help="JSON object of extra {placeholder} fields the template needs")
+    p_check.add_argument("--effort", default=None,
+                         help="probe effort with the test call; stores nothing; "
+                              "never with --catalog-path")
     p_check.add_argument(
         "--catalog-path", default=None,
         help="record the result as runtimes[<runtime>].usability of this catalog (35 D-10)",
@@ -454,6 +482,8 @@ def _build_parser() -> argparse.ArgumentParser:
     _register_report_parsers(sub)
     _register_dispatch_parsers(sub)
     catalog_cmds.register_parsers(sub)
+    propose_cmds.register_parsers(sub)
+    config_status.register_parsers(sub)
     return parser
 
 def _cmd_cache_path(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -792,25 +822,87 @@ def _cmd_apply_heuristic_correction(args: argparse.Namespace, deps: CliDeps) -> 
     print(json.dumps({"applied": True, "model_id": args.model_id}))
     return 0
 
+def _role_lanes(config: dict, names: tuple) -> list:
+    """Lanes from named roles, first key wins; fall back to the flat view if absent."""
+    if not any(isinstance(config.get(name), list) for name in names):
+        return [e for e in config.get("reviewers", [])
+                if isinstance(e, dict) and isinstance(e.get("key"), str)]
+    lanes, seen = [], set()
+    for name in names:
+        entries = config.get(name)
+        if isinstance(entries, list):
+            for entry in entries:
+                if (isinstance(entry, dict) and isinstance(entry.get("key"), str)
+                        and entry["key"] not in seen):
+                    seen.add(entry["key"])
+                    lanes.append(entry)
+    return lanes
+
+
+def _probe_role_keys(config: dict, role: str) -> list:
+    """One role's selectable keys (review: its order; execute: its order, then its other lanes),
+    or review then unique execute keys for both."""
+    names = ("review", "execute") if role == "both" else (role,)
+    keys = []
+    for name in names:
+        order = role_orders.role_order(config, name)
+        if name == "execute":
+            order = [lane["key"] for lane in lane_settings.selectable_lanes(
+                "execute", _role_lanes(config, ("execute",)), order)]
+        for key in order:
+            if key not in keys:
+                keys.append(key)
+    return keys
+
+
+def _probe_lanes(config: dict, role: str) -> list:
+    """Probe role lanes in order; both prefers review, including usage-limited lanes."""
+    review = {e["key"]: e for e in _role_lanes(config, ("review",))}
+    execute = {e["key"]: e for e in _role_lanes(config, ("execute",))}
+    first, second = (execute, review) if role == "execute" else (review, execute)
+    lanes = []
+    for key in _probe_role_keys(config, role):
+        entry = first.get(key) or second.get(key)
+        if entry is None:
+            continue
+        if (role == "both" and key in review and key in execute
+                and tuple(review[key].get(k) for k in ("runtime", "model", "command"))
+                != tuple(execute[key].get(k) for k in ("runtime", "model", "command"))):
+            print(f"ai-kit-spec: key '{key}' names different lanes in the review and execute "
+                  "roles; the execute lane is not probed (rename one of them)", file=sys.stderr)
+        lanes.append(entry)
+    return lanes
+
+
 def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
     config = cfg_resolve(args.cwd, deps.env_fn(), migrate=not args.no_migrate)
-    routes = _route_reviewers(config, deps, persist=not args.no_save_runtimes)
-    ladder = routing.probe_keys(config.get("policy", {}).get("ladder", []), routes)
+    lanes = _probe_lanes(config, args.role)
+    routes = _route_reviewers(config, deps, persist=not args.no_save_runtimes, lanes=lanes)
+    ladder = routing.probe_keys([entry["key"] for entry in lanes], routes)
     existing = cache_read_json(args.quota_path) or {}
     updated = refresh_quota_cache(
-        config, ladder, existing, QUOTA_TTL_SECONDS, seams=deps.probe_seams(),
+        {**config, "reviewers": lanes}, ladder, existing, QUOTA_TTL_SECONDS,
+        seams=deps.probe_seams(),
     )
     cache_write_json(args.quota_path, updated)
     print(json.dumps(updated))
     return 0
 
-def _route_reviewers(config: dict, deps: CliDeps, persist=True) -> dict[str, str]:
-    """Route every configured reviewer and say why each skipped or unchecked one lost."""
+def _review_lanes(config: dict) -> list:
+    lanes = config.get("review")
+    return lanes if isinstance(lanes, list) else config.get("reviewers", [])
+
+
+def _route_reviewers(config: dict, deps: CliDeps, persist=True,
+                     lanes: list | None = None) -> dict[str, str]:
+    """Route supplied lanes, or review lanes by default."""
+    if lanes is None:
+        lanes = _review_lanes(config)
     env = deps.env_fn()
     seams = RuntimesSeams(deps.which_fn, deps.run_fn, deps.popen_fn, deps.urlopen_fn)
     routes = routing.route_all(
-        config.get("reviewers", []), routing.host_context("review", env, seams, persist))
-    by_key = {entry.get("key"): entry for entry in config.get("reviewers", [])
+        lanes, routing.host_context("review", env, seams, persist))
+    by_key = {entry.get("key"): entry for entry in lanes
               if isinstance(entry, dict)}
     for key, decision in routes.items():
         if decision in routing.SKIP_ROUTES:
@@ -892,10 +984,33 @@ def _render_toml_refusal(out: str, doc: dict, replace: bool) -> str | None:
     return None
 
 
+def _effort_write_problems(config: dict, env: dict, catalog_path: str | None,
+                           runtimes_path: str | None) -> list[str]:
+    """36 D-05 / SPEC R4: refuse unlisted or unpassable efforts, not unknown support."""
+    lanes = config.get("lanes")
+    if not isinstance(lanes, list):
+        return []
+    return lane_effort.write_problems(
+        lanes, cache_read_json(catalog_path or cache_catalog_path(env)),
+        cache_read_json(runtimes_path or cache_runtimes_path(env)))
+
+
 def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
     env = deps.env_fn()
+    if args.keep_backup:
+        env = {**env, config_migrate.KEEP_BACKUP_ENV: "1"}
     with open(args.json_config, encoding="utf-8") as f:
         config = json.load(f)
+    for path in (args.catalog_path, args.runtimes_json):
+        if path and cache_read_json(path) is None:
+            print(f"render-toml: cannot read {path}", file=sys.stderr)
+            return 2
+    problems = (_effort_write_problems(config, env, args.catalog_path, args.runtimes_json)
+                if isinstance(config, dict) else [])
+    for problem in problems:
+        print(f"render-toml: {problem}", file=sys.stderr)
+    if problems:
+        return 1
     existing, doc = _checked_target(args.out) if args.out else ("", {})
     if args.out:
         refusal = _render_toml_refusal(args.out, doc, args.replace)
@@ -919,15 +1034,35 @@ def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
     print(rendered)
     return 0
 
+def _display_spec(entry: dict) -> RunnerSpec:
+    # No config here: the entry's own tiers, else the default policy's first tier.
+    timeout = resolve_timeout_tiers(entry, DEFAULT_POLICY)[0]
+    # A resolve-reviewers row carries `extra`; a raw config entry keeps its knobs top-level.
+    extra = entry["extra"] if "extra" in entry else to_resolved(entry).extra
+    return review_spec(entry["runtime"], entry.get("model", ""), extra, timeout)
+
+
+def _preview_notes(entry: dict) -> list[str]:
+    if not entry.get("runtime"):
+        command = entry.get("command")
+        if entry.get("effort") is None or (isinstance(command, str) and "{effort}" in command):
+            return []
+        return [lane_effort.NO_RUNTIME_IGNORED]
+    notes = []
+    ignored = _display_spec(entry).ignored
+    if ignored:
+        notes.append(ignored)
+    advice = advice_line(entry["runtime"])
+    if advice is not None:
+        notes.append(f"advice for {entry['runtime']}: {advice}")
+    return notes
+
+
 def _display_argv(entry: dict, prompt: str, which_fn) -> list[str]:
     """The argv a review would run: the runner's for a table runtime (the prompt goes on
     stdin, never into argv), the custom argv otherwise."""
     if entry.get("runtime"):
-        # No config here: the entry's own tiers, else the default policy's first tier.
-        timeout = resolve_timeout_tiers(entry, DEFAULT_POLICY)[0]
-        # A resolve-reviewers row carries `extra`; a raw config entry keeps its knobs top-level.
-        extra = entry["extra"] if "extra" in entry else to_resolved(entry).extra
-        spec = review_spec(entry["runtime"], entry.get("model", ""), extra, timeout)
+        spec = _display_spec(entry)
         node = which_fn("node") or "node"
         return build_runner_argv(spec, resolve_cross_ai_template_path() or "<runner>", node)
     resolved = to_resolved(entry)
@@ -942,6 +1077,8 @@ def _cmd_render_command(args: argparse.Namespace, deps: CliDeps) -> int:
     try:
         # argv display: a JSON array, never a shell string, and never the prompt for a runtime
         print(json.dumps(_display_argv(reviewers[args.index], prompt, deps.which_fn)))
+        for note in _preview_notes(reviewers[args.index]):
+            print(f"render-command: {note}", file=sys.stderr)
     except ValueError as exc:
         # Deliberately no "### Status:" substring — same fail-closed
         # convention as merge-reports: review-spec/SKILL.md's existing
@@ -1025,13 +1162,14 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
     rid = runtime_id(args.runtime)
     row = RUNTIMES.get(rid)
     if row is not None and row.runner:
-        spec = RunnerSpec(
-            rid, "{model}", "review", 600,
-            effort=args.effort, service_tier=args.service_tier,
-            cursor_mode=args.mode if rid == "cursor" else None,
-        )
+        spec = spec_with_effort(rid, "{model}", "review", 600, {
+            "effort": args.effort, "service_tier": args.service_tier,
+            "cursor_mode": args.mode if rid == "cursor" else None,
+        })
         argv = build_runner_argv(spec, "<runner>", "node")
         print(json.dumps({"kind": "runner", "argv": argv}))
+        if spec.ignored:
+            print(f"build-command: {spec.ignored}", file=sys.stderr)
         print(f"build-command: a config.toml lane stores runtime and model for {rid}; "
               f"the runner builds this argv at dispatch", file=sys.stderr)
         return 0
@@ -1155,10 +1293,21 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
 
 def _cmd_check_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     extra = json.loads(args.extra_json) if args.extra_json else {}
+    if args.catalog_path and (args.effort is not None or
+                              (isinstance(extra, dict) and "effort" in extra)):
+        print("check-reviewer: an effort probe cannot be combined with --catalog-path",
+              file=sys.stderr)
+        return 2
     rid = None if args.runtime is None else runtime_id(args.runtime)
     resolved = ResolvedReviewer(key=args.key, model=args.model, vendor=args.vendor,
                                  runtime=rid, command=args.reviewer_command, extra=extra)
-    result = probe_reviewer_quota(resolved, seams=deps.probe_seams())
+    if args.effort is not None:
+        outcome = effort_probe.probe_effort(
+            resolved, args.effort, now_iso()[:10], deps.probe_seams())
+        result = dict(outcome.pop("probe") or {})
+        result["effort_probe"] = outcome
+    else:
+        result = probe_reviewer_quota(resolved, seams=deps.probe_seams())
     if args.catalog_path and rid:
         record = usability.record_for(result, rid, now_iso())
         if record is not None:
@@ -1196,6 +1345,8 @@ _COMMANDS = {
     "dispatch-reviewer": _cmd_dispatch_reviewer,
     "check-reviewer": _cmd_check_reviewer,
     **catalog_cmds.COMMANDS,
+    **propose_cmds.COMMANDS,
+    **config_status.COMMANDS,
 }
 
 def _dispatch(argv: list, deps: CliDeps) -> int:

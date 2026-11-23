@@ -24,6 +24,7 @@ from ai_kit_spec.cache import cache_read_json
 from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.error_classifier import classify_error, reason_for_status
+from ai_kit_spec.lane_effort import effort_form
 from ai_kit_spec.model_catalog import cache_catalog_path, split_catalog_meta
 from ai_kit_spec.routing import strip_model_suffix
 from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
@@ -94,6 +95,19 @@ class RunnerSpec(NamedTuple):
     cursor_mode: str | None = None
     codex_sandbox: str | None = None  # the sandbox mode; None is workspace-write
     route: str | None = None  # a confirmed catalog route; None defers to the runner
+    # An effort the runtime cannot take: the line run_runner prints (36 D-05).
+    ignored: str | None = None
+
+
+def spec_with_effort(runtime: str, model: str, mode: str, timeout_s: int,
+                     knobs: dict) -> RunnerSpec:
+    """Compose effort before constructing the spec so trailer checks see the runner's id."""
+    form = effort_form(runtime, model, knobs.get("effort"))
+    return RunnerSpec(
+        runtime, form.model, mode, timeout_s, cwd=knobs.get("cwd"),
+        effort=form.flags[1] if form.flags else None, service_tier=knobs.get("service_tier"),
+        cursor_mode=knobs.get("cursor_mode"), ignored=form.ignored,
+    )
 
 
 def review_spec(runtime: str, model: str, extra: dict | None, timeout_s: int,
@@ -101,10 +115,10 @@ def review_spec(runtime: str, model: str, extra: dict | None, timeout_s: int,
     """One review-mode spec from an entry's per-candidate knobs (`extra`). The probe, the
     review and the argv display all build theirs here, so they never disagree."""
     knobs = extra or {}
-    return RunnerSpec(
-        runtime, model, "review", timeout_s, cwd=cwd, effort=knobs.get("effort"),
-        service_tier=knobs.get("service_tier"), cursor_mode=knobs.get("cursor_mode"),
-    )
+    return spec_with_effort(runtime, model, "review", timeout_s, {
+        "cwd": cwd, "effort": knobs.get("effort"), "service_tier": knobs.get("service_tier"),
+        "cursor_mode": knobs.get("cursor_mode"),
+    })
 
 
 class RunnerResult(NamedTuple):
@@ -583,6 +597,9 @@ def _runner_reason(result: RunnerResult, spec: RunnerSpec, seams: RunnerSeams) -
 def run_runner(spec: RunnerSpec, prompt: str, seams: RunnerSeams | None = None) -> RunnerResult:
     """Runs one candidate through the runner template. No node or template fails closed."""
     active = seams or RunnerSeams()
+    # Before the node check: no path drops a set effort without a line (SPEC R4).
+    if spec.ignored:
+        active.print_fn(f"ai-kit-spec: {spec.ignored}")
     node = active.which_fn("node")
     if not node:
         return _unavailable([], _NO_NODE_LINE, active)

@@ -3,7 +3,8 @@
 This is the only Python module that names review-spec.toml and review-spec-trust (D-10). It imports
 only trust and toml_splice from ai_kit_spec, so it cannot form an import cycle with the config
 reader. An old roster is copied, never merged: its values land under `[lanes]` in config.toml,
-the new file is re-read and compared, and only then is the old file renamed to `*.migrated`.
+the new file is re-read and compared, and only then is the old file deleted, or renamed to
+`*.migrated` when the owner keeps a backup (KEEP_BACKUP_ENV, render-toml --keep-backup; 36 D-10).
 """
 
 import os
@@ -14,6 +15,8 @@ from ai_kit_spec import toml_splice, trust
 LEGACY_NAME = "review-spec.toml"
 LEGACY_TRUST_DIR = "review-spec-trust"
 MIGRATED_SUFFIX = ".migrated"
+RETIRING_SUFFIX = ".retiring"
+KEEP_BACKUP_ENV = "AI_KIT_KEEP_MIGRATION_BACKUP"
 _ATTEMPTS = 2
 _REFUSED_INLINE = ("[[reviewers]] written as an inline array is not migrated; "
                    "rewrite it as [[reviewers]] tables")
@@ -53,6 +56,11 @@ def pending(new_path: str):
     """The old roster path while a migration is still pending, else None."""
     old = legacy_path(new_path)
     return old if os.path.isfile(old) else None
+
+
+def keep_backup_from_env(env: dict) -> bool:
+    """True when the owner keeps a *.migrated backup; only the value "1" keeps it (36 D-10)."""
+    return env.get(KEEP_BACKUP_ENV) == "1"
 
 
 def revoke_legacy_trust(new_path: str, trust_dir: str) -> int:
@@ -340,8 +348,8 @@ def _retired_name(old: str) -> str:
     return target
 
 
-def _retire_old(old: str, new_path: str, raw: bytes, state: str, warn_fn) -> str:
-    """Rename the old roster to `*.migrated` only while its bytes equal the snapshot (C1-6)."""
+def _retire_guard(old: str, new_path: str, raw: bytes, state: str, warn_fn) -> str | None:
+    """Snapshot guard shared by both retire paths (C1-6)."""
     now = _read_bytes(old)
     if now is None:
         return state
@@ -349,6 +357,14 @@ def _retire_old(old: str, new_path: str, raw: bytes, state: str, warn_fn) -> str
         warn_fn(f"ai-kit-spec: {old} changed during its migration to {new_path}; the old file is "
                 "kept (the new roster wins; remove or rename the old file)")
         return "deferred"
+    return None
+
+
+def _keep_old(old: str, new_path: str, raw: bytes, state: str, warn_fn) -> str:
+    """Rename the old roster to *.migrated while its bytes equal the snapshot."""
+    stop = _retire_guard(old, new_path, raw, state, warn_fn)
+    if stop is not None:
+        return stop
     target = _retired_name(old)
     try:
         os.rename(old, target)
@@ -360,12 +376,79 @@ def _retire_old(old: str, new_path: str, raw: bytes, state: str, warn_fn) -> str
     return state
 
 
+def _link_free(old: str, suffix: str) -> str | None:
+    """Reserve a free name beside old by hard-linking it; never overwrites."""
+    for number in range(100):
+        name = old + suffix if number == 0 else f"{old}{suffix}.{number}"
+        try:
+            os.link(old, name)
+            return name
+        except FileExistsError:
+            continue
+        except OSError:
+            return None
+    return None
+
+
+def _remove_retired(old: str, new_path: str, retiring: str, state: str, warn_fn) -> str:
+    try:
+        os.remove(retiring)
+    except OSError as exc:
+        warn_fn(f"ai-kit-spec: migrated {old} to {new_path} but could not delete {retiring} "
+                f"({exc}); it holds the old roster, remove it by hand")
+    else:
+        warn_fn(f"ai-kit-spec: migrated {old} to {new_path}; the old file was deleted "
+                f"(set {KEEP_BACKUP_ENV}=1 or pass render-toml --keep-backup to keep a "
+                f"{MIGRATED_SUFFIX} copy)")
+    return state
+
+
+def _discard_link(path: str, warn_fn) -> None:
+    try:
+        os.remove(path)
+    except OSError as exc:
+        warn_fn(f"ai-kit-spec: could not remove {path} ({exc}); it is a second name of the "
+                "old roster, remove it by hand")
+
+
+def _delete_old(old: str, new_path: str, raw: bytes, state: str, warn_fn) -> str:
+    """Link, verify and unlink (36 D-10); a swap between samefile and unlink is not caught."""
+    stop = _retire_guard(old, new_path, raw, state, warn_fn)
+    if stop is not None:
+        return stop
+    dest = _link_free(old, RETIRING_SUFFIX)
+    if dest is None:
+        warn_fn(f"ai-kit-spec: migrated {old} to {new_path} but could not delete the old file "
+                "(no free name or no hard link beside it); the next run tries again, and if "
+                "this repeats remove it by hand or keep it with render-toml --keep-backup")
+        return state
+    try:
+        same = os.path.samefile(old, dest)
+    except FileNotFoundError:
+        same = False
+    if _read_bytes(dest) != raw or not same:
+        _discard_link(dest, warn_fn)
+        warn_fn(f"ai-kit-spec: {old} changed during its migration to {new_path}; the old file is "
+                "kept (the new roster wins; remove or rename the old file)")
+        return "deferred"
+    try:
+        os.remove(old)
+    except OSError as exc:
+        _discard_link(dest, warn_fn)
+        warn_fn(f"ai-kit-spec: migrated {old} to {new_path} but could not delete the old file "
+                f"({exc}); the next run finishes it")
+        return state
+    return _remove_retired(old, new_path, dest, state, warn_fn)
+
+
 def migrate_layer(new_path: str, *, warn_fn, trust_dir: str | None = None,
-                  trust_bytes_fn=None) -> str:
+                  trust_bytes_fn=None, keep_backup: bool = False) -> str:
     """Migrate the old roster beside new_path into its config.toml; returns the status.
 
-    "none": no old roster. "migrated": the lanes are published and the old file is renamed.
-    "completed": config.toml already held the old roster's lanes; only the rename was left.
+    "none": no old roster. "migrated": the lanes are published and the old file is deleted
+    (renamed to `*.migrated` with keep_backup).
+    "completed": config.toml already held the old roster's lanes; only the delete (or rename)
+    was left.
     "kept-new": config.toml holds other lanes, so the new roster wins and the old file is kept.
     "deferred": a concurrent write interrupted the run; the old file is kept.
 
@@ -388,4 +471,5 @@ def migrate_layer(new_path: str, *, warn_fn, trust_dir: str | None = None,
             return "deferred"
         if trust_dir is not None and trust_bytes_fn is not None:
             _carry_trust(old, new_path, raw, trust_dir, trust_bytes_fn(expected))
-    return _retire_old(old, new_path, raw, state, warn_fn)
+    retire = _keep_old if keep_backup else _delete_old
+    return retire(old, new_path, raw, state, warn_fn)

@@ -156,7 +156,8 @@ class TestLaneRoles(_LayerCase):
         entry = resolved["execute"][0]
         self.assertEqual(entry["model"], "p")
         self.assertEqual(entry["runtime"], "codex")
-        self.assertEqual(entry["effort"], "low")
+        # effort is model-bound (36 contract item 6): it was set for model u, so it is dropped
+        self.assertNotIn("effort", entry)
 
 
 class TestTrustRule(_LayerCase):
@@ -255,6 +256,7 @@ class TestMigrationThroughResolve(_LayerCase):
         return legacy, raw
 
     def test_trusted_legacy_roster_resolves_its_command_after_migration(self):
+        self.env[config_migrate.KEEP_BACKUP_ENV] = "1"
         legacy, raw = self._legacy_custom()
         trust.record_trust(config_migrate.legacy_trust_dir(self.store),
                            os.path.realpath(legacy), raw)
@@ -264,6 +266,15 @@ class TestMigrationThroughResolve(_LayerCase):
         self.assertEqual(self.keys(resolved["review"]), ["c"])
         self.assertIn("command", resolved["review"][0])
         self.assertEqual(self.untrusted_warnings(), [])
+
+    def test_verified_migration_deletes_the_old_roster_by_default(self):
+        legacy = self.write(config_migrate.legacy_path(self.project_path()),
+                            b'[[reviewers]]\nkey = "d"\nruntime = "codex"\n'
+                            b'model = "placeholder-model-1"\n')
+        self.assertEqual(self.keys(self.resolve()["review"]), ["d"])
+        self.assertFalse(os.path.exists(legacy))
+        self.assertFalse(os.path.exists(legacy + ".migrated"))
+        self.assertTrue(any("the old file was deleted" in w for w in self.warnings))
 
     def test_untrusted_legacy_roster_entry_is_absent(self):
         self._legacy_custom()
@@ -403,6 +414,49 @@ class TestReadOnlyMode(_LayerCase):
         self.assertFalse(os.path.exists(self.user_path()))
 
 
+class TestProbeQuotaReviewOrder(_LayerCase):
+    def test_probe_quota_probes_the_shared_ladders_review_lanes(self):
+        self.write(self.user_path(),
+                   b'[lanes.policy]\nladder = ["r1", "e1", "r2"]\n'
+                   b'[[lanes.review]]\nkey = "r1"\nmodel = "placeholder-model-1"\n'
+                   b'command = "placeholder-cli-1 {model}"\n'
+                   b'[[lanes.review]]\nkey = "r2"\nmodel = "placeholder-model-2"\n'
+                   b'command = "placeholder-cli-1 {model}"\n'
+                   b'[[lanes.execute]]\nkey = "e1"\nmodel = "placeholder-model-3"\n'
+                   b'command = "placeholder-cli-1 {model}"\n')
+        seen = []
+        def rec(spec, prompt, seams):
+            seen.append(spec.key)
+            return _probe_ok()
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = cli.main(["probe-quota", "--cwd", self.cwd, "--quota-path",
+                             os.path.join(self.root, "quota.json"), "--no-save-runtimes"],
+                            runner_fn=rec, custom_fn=rec, env_fn=lambda: dict(self.env),
+                            **NO_RUNTIMES)
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, ["r1", "r2"])
+
+    def test_resolve_reviewers_routes_a_shared_key_by_its_review_lane(self):
+        self.write(self.user_path(),
+                   b'[lanes.policy.review]\nladder = ["k"]\n'
+                   b'[[lanes.review]]\nkey = "k"\nmodel = "placeholder-model-1"\n'
+                   b'command = "placeholder-cli-1 {model}"\n')
+        self.write(self.project_path(),
+                   b'[[lanes.execute]]\nkey = "k"\nruntime = "codex"\n'
+                   b'model = "placeholder-model-6"\n')
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = cli.main(["resolve-reviewers", "--cwd", self.cwd, "--cross-ai",
+                             "--quota-path", os.path.join(self.root, "quota.json")],
+                            env_fn=lambda: dict(self.env), **NO_RUNTIMES)
+        self.assertEqual(code, 0)
+        rows = json.loads(out.getvalue())
+        self.assertEqual(len(rows), 1)
+        for key, value in (("key", "k"), ("model", "placeholder-model-1"),
+                           ("command", "placeholder-cli-1 {model}"), ("route", "custom")):
+            self.assertEqual(rows[0][key], value)
+
+
 class TestTrustLocalNothingToTrust(_LayerCase):
     def test_runtime_only_lanes_have_nothing_to_trust(self):
         self.write(self.project_path(),
@@ -444,6 +498,8 @@ class TestTrustLocalOneRead(_LayerCase):
 
 class TestTrustLocalRevokeLegacy(_LayerCase):
     def test_revoke_before_first_migration_stays_revoked(self):
+        self.env[config_migrate.KEEP_BACKUP_ENV] = "1"
+        os.environ[config_migrate.KEEP_BACKUP_ENV] = "1"
         legacy = config_migrate.legacy_path(self.project_path())
         raw = ('[[reviewers]]\nkey = "c"\nmodel = "m"\ncommand = '
                + json.dumps(sys.executable + " -c pass {model}") + "\n").encode()
@@ -471,7 +527,7 @@ class TestLaneWriter(unittest.TestCase):
     (D-08, D-24; SPEC R3, R9). It is pure text: no path, HOME or cwd is involved."""
 
     ROSTER = {
-        "policy": {"mode": "single", "ladder": ["a", "b", "c"]},
+        "policy": {"mode": "single", "review": {"ladder": ["a", "b", "c"]}},
         "lanes": [
             {"key": "a", "runtime": "codex", "model": "m1"},
             {"key": "b", "runtime": "codex", "model": "m2"},
@@ -484,13 +540,14 @@ class TestLaneWriter(unittest.TestCase):
         "  max_attempts   =  3\n"
         "[foo]\n"
         "bar = 1\n"
-        "# Priority fallback order (first available reviewer wins the\n"
+        "[lanes.policy]\n"
+        'mode = "single"\n'
+        "# Priority fallback order, review lanes (first available wins the\n"
         "# primary slot):\n"
         "#   1. a\n"
         "#   2. b\n"
         "#   3. c\n"
-        "[lanes.policy]\n"
-        'mode = "single"\n'
+        "[lanes.policy.review]\n"
         'ladder = ["a", "b", "c"]\n'
         "[[lanes.review]]\n"
         'key = "a"\nruntime = "codex"\nmodel = "m1"\n'
@@ -527,7 +584,8 @@ class TestLaneWriter(unittest.TestCase):
     def test_empty_existing_text_gives_only_the_lanes_tables(self):
         parsed = tomllib.loads(config_io.cfg_render_lanes(self.ROSTER, ""))
         self.assertEqual(set(parsed), {"lanes"})
-        self.assertEqual(parsed["lanes"]["policy"], {"mode": "single", "ladder": ["a", "b", "c"]})
+        self.assertEqual(parsed["lanes"]["policy"],
+                         {"mode": "single", "review": {"ladder": ["a", "b", "c"]}})
         self.assertEqual([e["key"] for e in parsed["lanes"]["review"]], ["a", "b", "c"])
 
     def test_reviewers_json_key_is_refused(self):
@@ -547,7 +605,8 @@ class TestLaneWriter(unittest.TestCase):
             text = config_io.cfg_render_lanes(config, "")
         parsed = tomllib.loads(text)["lanes"]
         self.assertEqual([e["key"] for e in parsed["review"]], ["a"])
-        self.assertEqual(parsed["policy"]["ladder"], ["a"])
+        self.assertEqual(parsed["policy"]["review"]["ladder"], ["a"])
+        self.assertNotIn("ladder", parsed["policy"])
         self.assertIn("WARNING: 2 issue(s) found and NOT written", err.getvalue())
         self.assertIn("'route' is decided per run", err.getvalue())
 
@@ -573,27 +632,28 @@ class TestLaneWriter(unittest.TestCase):
         self.assertEqual(parsed["strategy"], "local-only")
         self.assertEqual([e["key"] for e in parsed["review"]], ["a", "b", "c"])
 
-    def test_first_write_puts_the_generated_ladder_block_above_the_policy(self):
-        config = {"policy": {"mode": "single", "ladder": ["a", "b"]},
-                  "lanes": [{"key": "a", "runtime": "codex", "model": "m1"},
-                            {"key": "b", "runtime": "codex", "model": "m2"}]}
+    def test_first_write_puts_the_generated_ladder_block_above_the_role_table(self):
+        config = {"policy": {"mode": "single", "review": {"ladder": ["a", "b"]}},
+                  "lanes": [{"key": "a", "runtime": "codex", "model": "placeholder-model-1"},
+                            {"key": "b", "runtime": "codex", "model": "placeholder-model-2"}]}
         text = config_io.cfg_render_lanes(config, "")
-        self.assertIn("# Priority fallback order (first available reviewer wins the\n"
-                      "# primary slot):\n#   1. a\n#   2. b\n[lanes.policy]\n", text)
-        config["policy"]["ladder"] = ["b", "a"]
+        self.assertIn("# Priority fallback order, review lanes (first available wins the\n"
+                      "# primary slot):\n#   1. a\n#   2. b\n[lanes.policy.review]\n", text)
+        config["policy"]["review"]["ladder"] = ["b", "a"]
         reordered = config_io.cfg_render_lanes(config, text)
-        self.assertIn("#   1. b\n#   2. a\n[lanes.policy]\n", reordered)
+        self.assertIn("#   1. b\n#   2. a\n[lanes.policy.review]\n", reordered)
         changed = self._changed(text, reordered)
         self.assertTrue(changed)
         self.assertTrue(all("#" in line or "ladder" in line for line in changed))
 
-    def test_user_comment_above_the_policy_is_kept_and_no_block_is_added(self):
-        existing = ('# my note\n[lanes.policy]\nmode = "single"\nladder = ["a"]\n'
-                    '[[lanes.review]]\nkey = "a"\nruntime = "codex"\nmodel = "m1"\n')
-        config = {"policy": {"mode": "single", "ladder": ["a"]},
-                  "lanes": [{"key": "a", "runtime": "codex", "model": "m1"}]}
+    def test_user_comment_above_a_role_table_is_kept_and_no_block_is_added(self):
+        existing = ('# my note\n[lanes.policy.review]\nladder = ["a"]\n'
+                    '[[lanes.review]]\nkey = "a"\nruntime = "codex"\n'
+                    'model = "placeholder-model-1"\n')
+        config = {"policy": {"review": {"ladder": ["a"]}},
+                  "lanes": [{"key": "a", "runtime": "codex", "model": "placeholder-model-1"}]}
         text = config_io.cfg_render_lanes(config, existing)
-        self.assertTrue(text.startswith("# my note\n[lanes.policy]\n"))
+        self.assertTrue(text.startswith("# my note\n[lanes.policy.review]\n"))
         self.assertNotIn("# Priority fallback order", text)
 
 
@@ -660,7 +720,7 @@ class TestRenderTomlCli(_LayerCase):
     def test_legacy_roster_beside_the_target_migrates_with_replace(self):
         legacy = self.write(config_migrate.legacy_path(self.project_path()),
                             b'[[reviewers]]\nkey = "old"\nruntime = "codex"\nmodel = "m"\n')
-        code, err = self._render(self.project_path(), "--replace")
+        code, err = self._render(self.project_path(), "--replace", "--keep-backup")
         self.assertEqual(code, 0)
         self.assertIn("migrated", err)
         self.assertEqual(_read(legacy + ".migrated"),
@@ -668,6 +728,19 @@ class TestRenderTomlCli(_LayerCase):
         self.assertFalse(os.path.exists(legacy))
         parsed = config_io.cfg_load_toml(self.project_path())
         self.assertEqual([e["key"] for e in parsed["lanes"]["review"]], ["a"])
+
+    def test_legacy_roster_migrates_with_replace_and_deletes_by_default(self):
+        os.environ.pop(config_migrate.KEEP_BACKUP_ENV, None)
+        legacy = self.write(config_migrate.legacy_path(self.project_path()),
+                            b'[[reviewers]]\nkey = "old"\nruntime = "codex"\n'
+                            b'model = "placeholder-model-1"\n')
+        code, err = self._render(self.project_path(), "--replace")
+        self.assertEqual(code, 0)
+        self.assertFalse(os.path.exists(legacy))
+        self.assertFalse(os.path.exists(legacy + ".migrated"))
+        self.assertIn("the old file was deleted", err)
+        self.assertEqual(self.keys(config_io.cfg_load_toml(self.project_path())['lanes']['review']),
+                         ["a"])
 
     def test_broken_target_is_exit_2_and_stays_byte_equal(self):
         target = self.project_path()

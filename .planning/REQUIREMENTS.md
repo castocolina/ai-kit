@@ -207,7 +207,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### spec-config as the hub
 
-- [ ] **HUB-01**: An `ai-kit-spec-*` skill that starts with no config chains spec-config; a missing spec-config
+- [x] **HUB-01**: An `ai-kit-spec-*` skill that starts with no config chains spec-config; a missing spec-config
   fails with a message naming the fix; `--no-cross-ai` still runs on the session model with no config.
 - [x] **HUB-02**: spec-config discovers providers and models on claude, opencode, pi, cursor, codex and copilot, and
   records per model where it was listed from and a separate usability state (verified with date, rejected with the
@@ -227,7 +227,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   different runtimes, and Phase 39's prompt-size check reads the runtime's value)*
 - [x] **HUB-04**: The cheap-execution ranking still yields candidates although Artificial Analysis returns its coding
   and agentic indexes as null.
-- [ ] **HUB-05**: The config separates reviewers from executors, each with priorities, effort per model and opt-in
+- [x] **HUB-05**: The config separates reviewers from executors, each with priorities, effort per model and opt-in
   runtime and model escalation flags (off by default); an effort is passed only when the model supports it (detected
   per model), in the runtime's own form, and is never dropped silently (today only codex receives it).
   *(amended 2026-11-14, 33 D-03: reviewers are `[[lanes.review]]` and executors `[[lanes.execute]]` in
@@ -242,7 +242,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   fallback is the first lane of the role that is neither flagged nor in the same pool, and the wizard warns that other free
   models of the same provider share the pool; source `.planning/research/2026-11-16-opencode-free-models.md`)*
 - [x] **HUB-06**: spec-config flags stale entries (removed models, providers no longer configured).
-- [ ] **HUB-07**: jev ranks candidates and the user picks; by default the ranking proposes flagship-class models for
+- [x] **HUB-07**: jev ranks candidates and the user picks; by default the ranking proposes flagship-class models for
   review and coding-class models for execution; no skill, rail or default hardcodes a referee name.
   *(amended 2026-11-14, owner decision: from the classified catalog, spec-config proposes a coding set and a
   review set separately and the user confirms each before anything is written; nothing is labelled review by
@@ -259,7 +259,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   data and examples only, each marked, and never decides. *(added 2026-11-16, owner rule; 35 D-16 to D-18: the guard
   is position-based, tests for the bare-id hosts use invented structure-only placeholders (needs owner confirmation),
   and Phase 36's hardcoded-referee test is the same guard family)*
-- [ ] **HUB-10**: When the owner selects a free (zero-price) model that is not known to be local, spec-config shows the model's
+- [x] **HUB-10**: When the owner selects a free (zero-price) model that is not known to be local, spec-config shows the model's
   data-use note before anything else about the lane: `zero_retention`, `may_be_kept_or_trained` or `unknown`, with a display
   line, its source, the date it was read and a label (`verified` only for the vendor's own documentation page read in that run,
   else `reported`); an unreadable or silent source shows `unknown` and never defaults to a safe value, and no shipped list decides.
@@ -1086,16 +1086,16 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | CFG-04 | Phase 33 | Complete |
 | CFG-05 | Phase 33 | Complete |
 | CFG-06 | Phase 33 | Complete |
-| HUB-01 | Phase 36 | Pending |
+| HUB-01 | Phase 36 | Complete |
 | HUB-02 | Phase 35 | Complete |
 | HUB-03 | Phase 35 | Complete |
 | HUB-04 | Phase 32.2 | Complete |
-| HUB-05 | Phase 36 | Pending |
+| HUB-05 | Phase 36 | Complete |
 | HUB-06 | Phase 35 | Complete |
-| HUB-07 | Phase 36 | Pending |
+| HUB-07 | Phase 36 | Complete |
 | HUB-08 | Phase 35 | Complete |
 | HUB-09 | Phase 35 | Complete |
-| HUB-10 | Phase 36 | Pending |
+| HUB-10 | Phase 36 | Complete |
 | REV-01 | Phase 40 | Pending |
 | REV-02 | Phase 40 | Pending |
 | REV-03 | Phase 39 | Pending |

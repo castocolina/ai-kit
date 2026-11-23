@@ -308,10 +308,11 @@ class TestRouting(unittest.TestCase):
             (_entry(None, ""), "opencode", "review", listed, "native"),
             (_entry("claude", "opus"), "claude", "review", listed, "native"),
             (_entry("claude", "claude-opus-5-5"), "claude", "review", listed, "subprocess"),
-            (_entry("claude", "claude-opus-5-5"), "claude", "exec", listed, "review_only"),
+            (_entry("claude", "claude-opus-5-5"), "claude", "exec", listed, "no_formula"),
+            (_entry("claude", CLAUDE_MODEL_ALIASES[0]), "claude", "exec", listed, "native"),
             (_entry("opencode", "zen/x"), "opencode", "review", listed, "subprocess"),
             (_entry("claude", "opus"), "codex", "review", listed, "subprocess"),
-            (_entry("claude", "opus"), "codex", "exec", listed, "review_only"),
+            (_entry("claude", "opus"), "codex", "exec", listed, "no_formula"),
             (_entry("codex", "gpt-x"), "unknown", "review", listed, "subprocess"),
             (_entry("grok", "grok-4"), "opencode", "review", _inventory(["grok"], {}),
              "no_inventory"),
@@ -328,13 +329,34 @@ class TestRouting(unittest.TestCase):
             ({"key": "k", "command": "mycli {model}", "model": "m"}, "claude", "review",
              listed, "custom"),
             ({"key": "k", "command": "mycli {model}", "model": "m"}, "claude", "exec",
-             listed, "review_only"),
+             listed, "no_formula"),
             ({"key": "k", "runtime": ["codex"], "model": "gpt-x"}, "claude", "review",
              listed, "unknown_runtime"),
         ]
         for entry, host, mode, inventory, expected in cases:
             with self.subTest(entry=entry, host=host, mode=mode):
                 self.assertEqual(self._route(entry, host, mode, inventory), expected)
+
+    def test_skip_note_names_the_missing_formula(self):
+        expected = "ai-kit-spec: skipping reviewer k: route bad_model"
+        self.assertEqual(routing.skip_note("reviewer k", "bad_model"), expected)
+        self.assertEqual(routing.skip_note("reviewer k", "bad_model", "claude"), expected)
+        self.assertEqual(
+            routing.skip_note("k for execution", "no_formula", "claude"),
+            "ai-kit-spec: skipping k for execution: route no_formula: the runner has no "
+            "exec formula for claude (cross-ai.mjs RUNTIMES.claude.exec is null, read 2026-11-20)",
+        )
+        self.assertEqual(
+            routing.skip_note("k for execution", "no_formula"),
+            "ai-kit-spec: skipping k for execution: route no_formula: "
+            "a custom command lane runs in review mode only",
+        )
+        self.assertIn("no_formula", routing.SKIP_ROUTES)
+        self.assertNotIn("review" + "_only", routing.SKIP_ROUTES)
+        listed = _inventory(["opencode", "codex", "claude"], {})
+        entry = routing.RouteInput("claude", CLAUDE_MODEL_ALIASES[1])
+        for _ in range(2):
+            self.assertEqual(routing.route(entry, "codex", "exec", listed), "no_formula")
 
     def test_merged_custom_entry_routes_custom(self):
         from ai_kit_spec.config_io import cfg_combine

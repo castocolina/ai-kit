@@ -81,12 +81,12 @@
     {
       "number": "35",
       "name": "Model discovery and catalog",
-      "status": "complete"
+      "status": "in_progress"
     },
     {
       "number": "36",
       "name": "spec-config as the hub",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "37",
@@ -201,8 +201,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (plan phase 36)",
-    "reason": "Phase 17 of 40 — needs a plan"
+    "label": "Advance to the next step (verify)",
+    "reason": "Phase 16 of 40 · 40% · ready to verify"
   },
-  "updated_at": "2026-11-20T23:00:55.130Z"
+  "updated_at": "2026-11-21T09:20:23.799Z"
 }

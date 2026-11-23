@@ -39,8 +39,7 @@
   "ai-kit-spec-review": {
    "batch": "32.2",
    "last_v4": null,
-   "old_score": {"value": "old 99/120 PASS, 2026-10-25, phase 25.1", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"},
-   "deferred": {"text": "Phases 39-40", "source": ".planning/ROADMAP.md:520"}
+   "old_score": {"value": "old 99/120 PASS, 2026-10-25, phase 25.1", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
   },
   "ai-kit-spec-review-checklist": {
    "batch": "32.2",

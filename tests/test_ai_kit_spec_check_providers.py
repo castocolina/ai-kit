@@ -28,6 +28,16 @@ CHECK_ONLY_MD = os.path.join(
     _REPO_ROOT, "skills", "ai-kit-spec-config", "references", "check-only.md"
 )
 EVALS_JSON = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-config", "evals", "evals.json")
+NEW_FLOW_PHRASES = (
+    ("edge-no-way-to-ask-stops-after-detection",
+     "ai-kit-spec-config cannot ask here; no config, cache or trust record was written."),
+    ("precise-per-role-orders", "[lanes.policy.review]"),
+    ("edge-claude-effort-not-asked", "no effort flag for"),
+    ("precise-escalation-only-with-two-lanes", "stored and informational; no run reads them yet"),
+    ("precise-zero-price-data-use-yes", "data_use_confirmed"),
+    ("edge-zero-price-data-use-declined", "writes no lane"),
+    ("edge-migration-deleted-unless-keep-backup", "--keep-backup"),
+)
 UNCONFIRMED = (
     " (unconfirmed: config file only; built-in, login and environment providers not checked)"
 )
@@ -353,7 +363,7 @@ class TestSpecConfigStep(unittest.TestCase):
         for index in auth_lines:
             self.assertTrue(never < index < section_end, lines[index])
 
-    def test_skill_evals_have_the_twelve_cases(self):
+    def test_skill_evals_have_the_nineteen_cases(self):
         with open(EVALS_JSON, encoding="utf-8") as handle:
             data = json.load(handle)
         self.assertEqual(
@@ -371,8 +381,31 @@ class TestSpecConfigStep(unittest.TestCase):
                 "edge-router-alias-assumed",
                 "edge-declined-runtime-never-presented",
                 "edge-migrate-only-runs-no-setup",
+                "edge-no-way-to-ask-stops-after-detection",
+                "precise-per-role-orders",
+                "edge-claude-effort-not-asked",
+                "precise-escalation-only-with-two-lanes",
+                "precise-zero-price-data-use-yes",
+                "edge-zero-price-data-use-declined",
+                "edge-migration-deleted-unless-keep-backup",
             ],
         )
+
+    def test_new_flow_evals_quote_the_skill_text(self):
+        with open(EVALS_JSON, encoding="utf-8") as handle:
+            cases = {case["id"]: case for case in json.load(handle)["evals"]}
+        with open(SKILL_MD, encoding="utf-8") as handle:
+            text = handle.read()
+        refs = os.path.join(os.path.dirname(SKILL_MD), "references")
+        for name in sorted(os.listdir(refs)):
+            if name.endswith(".md"):
+                with open(os.path.join(refs, name), encoding="utf-8") as handle:
+                    text += "\n" + handle.read()
+        self.assertIn("once per chosen model", text)
+        for case_id, phrase in NEW_FLOW_PHRASES:
+            with self.subTest(case_id=case_id, phrase=phrase):
+                self.assertTrue(any(phrase in item for item in cases[case_id]["assertions"]))
+                self.assertIn(phrase, text)
 
     def test_write_risk_ask_comes_before_the_live_test(self):
         # Judge loop 33 finding D6: the read_only: unconfirmed ask must precede check-reviewer.

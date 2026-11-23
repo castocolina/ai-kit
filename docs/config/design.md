@@ -35,13 +35,22 @@ Phase 33 creates `[lanes]` and `[runner]`. The other tables are documented here 
 fills each; the runner reads only `[runner]` and `[runner.retry*]` through its TOML-subset reader.
 
 - `[lanes]`: `strategy` (`global-merge` by default, or `local-only`). The policy keys sit in
-  `[lanes.policy]`: `mode`, `ladder`, `timeout_tiers`. Phase 36 adds per-role ladders.
+  `[lanes.policy]`: `mode` and `timeout_tiers`. A legacy flat `ladder` there loads as each role's
+  order, filtered to that role's lanes, with a note, and the next write replaces it.
+- `[lanes.policy.review]` and `[lanes.policy.execute]`: `ladder`, each role's priority order (lane
+  keys, first available wins). A role with no lane gets no table; the project layer's role table
+  replaces the user's for that role. `config-status` reports whether either layer holds a lane
+  (`active`, `pending` or `none`) and writes nothing; `propose-lanes` ranks catalog models per
+  purpose and writes nothing.
 - `[[lanes.review]]`: one entry per review lane. Keys: `key`, `model`, `vendor`, `runtime`, `command`,
-  `purpose`, `effort`, `service_tier`, `task_affinity`, `context_limit`, `is_router`,
-  `fallback_quota`, and flat extra keys. Legacy `cli` and `native_runtime` load in memory only, and
-  `route` is refused on save. Phase 36 adds selection and escalation keys.
+  `purpose`, `effort`, `effort_source`, `service_tier`, `task_affinity`, `context_limit`, `is_router`,
+  `fallback_quota`, `escalate_runtime`, `escalate_model`, `usage_limited`, `usage_limit_note`, `pool`,
+  the data-use record (`data_use`, `data_use_line`, `data_use_source`, `data_use_read`,
+  `data_use_label`, `data_use_confirmed`), and flat extra keys. The escalation and usage-limit flags
+  are written only when true and the data-use record only with the owner's yes; no run reads the
+  flags yet. Legacy `cli` and `native_runtime` load in memory only, and `route` is refused on save.
 - `[[lanes.execute]]`: one entry per execute (coding) lane, with the same entry keys. A lane is never
-  shared between the two roles. Phase 36 fills selection.
+  shared between the two roles; the wizard writes only the lanes the owner chose for each role.
 - `[runner]`: `migrated_from`, the list of legacy sources the runner has migrated (written by the
   runner's one-time migration). Phase 33.
 - `[runner.retry]`: `base_s`, `factor`, `max_retries`, `session_resets`, `hard_waits_s`. Phase 38.1
@@ -129,7 +138,7 @@ tests read this table and fail when a location has no row, has two rows, or has 
 | --- | --- | --- | --- |
 | `.aikit/config.toml` | project | `config.toml`: `[lanes]`, `[runner]`, `[runner.retry]` | the project layer of ai-kit's one config file |
 | `.aikit/flow.json` | project | separate: unit-flow settings and consent | the unit flow's own file, absorbed with commit-fold later |
-| `.aikit/review-spec.toml` | project | migration source for `[lanes]` in `.aikit/config.toml`; renamed `.migrated` | migrated on the first roster read |
+| `.aikit/review-spec.toml` | project | migration source for `[lanes]` in `.aikit/config.toml`; deleted after the value check by default (a changed file stays under its name; a failed final removal leaves a `.retiring` copy to remove by hand), or renamed `.migrated` with `AI_KIT_KEEP_MIGRATION_BACKUP=1` | migrated on the first roster read |
 | `.planning/config.json` | project, GSD's file | migration source for `workflow.cross_ai_retry` into `[runner.retry]`; `workflow.cross_ai_timeout` stays GSD's | another tool's schema (D-17); the runner migrates the legacy block once |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/claude-statusline.toml` | user | separate: status-line tool | written and patched by the status-line wizard and doctor |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cursor-statusline.toml` | user | separate: status-line tool | written and patched by the status-line wizard and doctor |
@@ -141,7 +150,7 @@ tests read this table and fail when a location has no row, has two rows, or has 
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json` | user | migration source for `[runner.retry]` in the user `config.toml`; renamed `cross-ai.json.migrated` | migrated once by the runner |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/jev-consent.json` | user | separate: consent | bound to a backend host |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/review-spec-trust` | user | migration source for `config-trust` | a trusted record is carried by the migration |
-| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/review-spec.toml` | user | migration source for `[lanes]` in the user `config.toml` | migrated on the first roster read |
+| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/review-spec.toml` | user | migration source for `[lanes]` in the user `config.toml`; deleted after the value check by default (a changed file stays under its name; a failed final removal leaves a `.retiring` copy to remove by hand), or renamed `.migrated` with `AI_KIT_KEEP_MIGRATION_BACKUP=1` | migrated on the first roster read |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env` | user | separate: credential | never merged into a settings file |
 | `${XDG_CACHE_HOME:-~/.cache}/ai-kit/spec/model-catalog.json` | cache | separate: cache | machine-written data, `_meta` reserved |
 
@@ -153,8 +162,8 @@ Settings locations ai-kit owns (section 1 of the scratch inventory, refreshed). 
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `.aikit/config.toml` | project | TOML | the tables in Tables | `_cmd_render_toml` (`skills/ai-kit-spec-review/ai_kit_spec/cli.py:797`) through `cfg_render_lanes` (`config_io.py:909`) and `cfg_write_toml` (`config_io.py:941`); the migrations (`config_migrate.py:360`, `cross-ai.mjs:3827`) | `cfg_resolve` (`config_io.py:614`), `cfg_combine` (`config_io.py:682`), `resolveRetry` (`cross-ai.mjs:3516`); `jev_table` (`jev_config.py:621`) | yes: `toml_splice.publish` (`toml_splice.py:780`) | yes: a splice changes only the lines it owns |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml` | user | TOML | the tables in Tables | the same writers, with the user target chosen by `cfg_migrate_target` (`config_io.py:512`); jev-fast-decision's `config_set` (`jev_config.py:663`) writes only `[jev]` | `cfg_global_path` (`config_io.py:291-293`), `resolveRetry` (`cross-ai.mjs:3528-3529`); `jev_table` (`jev_config.py:621`) | yes | yes |
-| `.aikit/review-spec.toml` | project | TOML (old) | the old roster keys, copied under `[lanes]` | none after the migration | `legacy_path` (`config_migrate.py:42`), `migrate_layer` (`config_migrate.py:363`) | the old file is renamed to `.migrated` | the old file is kept as the `.migrated` copy |
-| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/review-spec.toml` | user | TOML (old) | the old roster keys, copied under `[lanes]` | none after the migration | `migrate_layer` (`config_migrate.py:363`) | renamed to `.migrated` | kept in the `.migrated` copy |
+| `.aikit/review-spec.toml` | project | TOML (old) | the old roster keys, copied under `[lanes]` | none after the migration | `legacy_path` (`config_migrate.py:42`), `migrate_layer` (`config_migrate.py:363`) | the old file is deleted after the value check by default (a changed file stays under its name; a failed final removal leaves a `.retiring` copy to remove by hand), or renamed to `.migrated` with the keep switch | only in the `.migrated` copy, when kept |
+| `${XDG_CONFIG_HOME:-~/.config}/ai-kit/review-spec.toml` | user | TOML (old) | the old roster keys, copied under `[lanes]` | none after the migration | `migrate_layer` (`config_migrate.py:363`) | deleted after the value check by default (a changed file stays under its name; a failed final removal leaves a `.retiring` copy to remove by hand), or renamed to `.migrated` with the keep switch | only in the `.migrated` copy, when kept |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config-trust/` | user | JSON, one file per trusted content | `path`, `sha256`, `trusted_at` | `record_trust` (`trust.py:49`) through `cache_write_json` (`cache.py:23`) | `is_trusted` (`trust.py:39`), `revoke_trust` (`trust.py:61`) | yes (`cache_write_bytes`) | n/a (generated) |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/review-spec-trust/` | user | JSON (old) | the old record keys | none after the migration | `legacy_trust_dir` (`config_migrate.py:47`), `revoke_legacy_trust` (`config_migrate.py:58`) | n/a | n/a |
 | `${XDG_CONFIG_HOME:-~/.config}/ai-kit/claude-statusline.toml` | user | TOML | `[segments]`, `[[line]]`, `[palette]`, `[ramp.*]`, `[git]`, `[external]` | `save_statusline_config` (`tools/setup.py:3098`) through `write_toml_preserving` (`tools/setup.py:818`); recovery `_recover_incompatible_config` (`tools/setup.py:3471`) | `cfg_load_toml` (`tools/common_config.py:288`) | yes: `os.replace` (`tools/setup.py:862`); recovery publishes by `os.replace` (`tools/setup.py:3512`) after a `.bak` copy (`tools/setup.py:3500`) | yes: surgical patches keep other bytes |
@@ -189,6 +198,11 @@ These settings have no file home, except the jev overrides that sit above a `[je
 - `GSD_PATH_JEV_DEADLINE_SECONDS` (`jev_review.py:2053`).
 - The status-line override names: `CC_AI_KIT_CONFIG_FILE` and `AI_KIT_CURSOR_CONFIG_FILE` take the
   host's env prefix (`tools/common_config.py:281`).
+- `AI_KIT_KEEP_MIGRATION_BACKUP`: `1` keeps an old `review-spec.toml` as `review-spec.toml.migrated`
+  after its migration; unset or any other value deletes it once the migration's value check passes
+  (by default; a file that changed during the run stays under its name, named in a warning, and a failed
+  final migration removal leaves a `review-spec.toml.retiring` copy to remove by hand) (`keep_backup_from_env`, `config_migrate.py:61`). `render-toml --keep-backup` sets it
+  for one write.
 
 ## Other tools' files
 

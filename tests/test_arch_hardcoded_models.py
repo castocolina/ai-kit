@@ -1,5 +1,5 @@
 """35 D-16..D-18 / HUB-09: position-based guard against hardcoded provider and model names, \
-with a baseline that only shrinks. Arch group."""
+with a baseline that only shrinks; 36 R8 adds the referee rule (REFEREE_RX). Arch group."""
 
 import collections
 import json
@@ -72,6 +72,15 @@ AA_SHAPE_KNOWN = {
 }
 
 
+# 36 R8: an unmarked lane alias (router-env/<x>) or referee name (referee-<x>) outside tests/ is the
+# owner's config, never shipped text. tests/ is exempt wholesale: a line scan cannot tell a pi or
+# opencode case apart. The model-example: marker exempts doc, comment, docstring and example lines.
+REFEREE_RX = re.compile(
+    r"router-env/[A-Za-z0-9](?:[\w.:#-]*\w)?"
+    r"|(?<![\w-])referee-[a-z0-9](?:[\w-]*[a-z0-9])?"
+)
+
+
 def _modelish(value: str) -> bool:
     return bool(re.search(r"[A-Za-z]", value)) and bool(re.search(r"[-./0-9:]", value))
 
@@ -131,6 +140,12 @@ def _seedrow_hits(line: str) -> list[tuple[str, str]]:
     return hits
 
 
+def _referee_hits(path: str, line: str) -> list[tuple[str, str]]:
+    if path.startswith("tests/"):
+        return []
+    return [("referee", value) for value in REFEREE_RX.findall(line)]
+
+
 def _marker_exempt(path: str, line: str, in_docstring: bool) -> bool:
     return (
         path.endswith(DOC_SUFFIXES)
@@ -163,7 +178,10 @@ def scan_text(path: str, text: str) -> list[tuple[int, str, str]]:
         if path.endswith(".py") and quotes % 2:
             in_docstring = not in_docstring
         line_in_docstring = path.endswith(".py") and (in_docstring or quotes > 0)
-        hits = _keyval_hits(line) + _flag_hits(line) + _slash_hits(line) + _seedrow_hits(line)
+        hits = (
+            _keyval_hits(line) + _flag_hits(line) + _slash_hits(line)
+            + _seedrow_hits(line) + _referee_hits(path, line)
+        )
         if seed_depth > 0:
             hits.extend(_continuation_hits(line, seed_kind))
             seed_depth += _balance(line)
@@ -418,7 +436,7 @@ class TestHardcodedModelsNonVacuity(unittest.TestCase):
         ]
         for text in clean:
             with self.subTest(text=text):
-                self.assertEqual([], scan_text("x.py", text))
+                self.assertEqual([], scan_text("tests/x.py", text))
 
     def test_marker_covers_two_lines_only(self):
         text = '# model-example: ok\nx = 1\nmodel = "qqmodel-7"'
@@ -536,6 +554,66 @@ class TestHardcodedModelsNonVacuity(unittest.TestCase):
                     self.assertTrue(
                         any(problem.startswith(prefix) for problem in problems), problems
                     )
+
+
+class TestRefereeRuleNonVacuity(unittest.TestCase):
+    def test_unmarked_alias_in_a_default_fails(self):
+        self.assertEqual(
+            [(1, "referee", "router-env/x")],
+            scan_text("skills/a.py", 'DEFAULT_ALIAS = "router-env/x"'),
+        )
+
+    def test_alias_outside_tests_is_a_referee_hit(self):
+        self.assertEqual(
+            [(1, "referee", "router-env/x")], scan_text("skills/x.py", 'model = "router-env/x"')
+        )
+
+    def test_unmarked_alias_in_a_skill_fails(self):
+        self.assertEqual(
+            [(1, "referee", "router-env/x")],
+            scan_text("skills/s/SKILL.md", "Use router-env/x here."),
+        )
+
+    def test_marker_covers_its_own_region_only(self):
+        text = "<!-- model-example: router-env/x -->\nrouter-env/x\nrouter-env/y"
+        self.assertEqual([(3, "referee", "router-env/y")], scan_text("skills/s/SKILL.md", text))
+
+    def test_test_files_are_exempt(self):
+        self.assertEqual([], scan_text("tests/test_x.py", 'model = "router-env/x"'))
+
+    def test_new_violating_file_fails(self):
+        self.assertEqual(
+            ["new violation: skills/new.md:1 referee router-env/x"],
+            baseline_problems(
+                {"skills/new.md": [(1, "referee", "router-env/x")]},
+                {"schema": 2, "files": []},
+                {"skills/new.md"},
+            ),
+        )
+
+    def test_cleaned_file_fails_until_its_entry_goes(self):
+        baseline = {
+            "schema": 2,
+            "files": [
+                {"path": "skills/c.md", "cleaned_by": "36", "hits": ["referee router-env/x"]}
+            ],
+        }
+        self.assertEqual(
+            ["fixed, remove from baseline: skills/c.md"],
+            baseline_problems({}, baseline, {"skills/c.md"}),
+        )
+
+    def test_bare_referee_name_fails(self):
+        self.assertEqual(
+            [(1, "referee", "referee-one")], scan_text("skills/c.json", '{"lane": "referee-one"}')
+        )
+
+    def test_prefix_constant_and_alias_tail_forms(self):
+        self.assertEqual([], scan_text("skills/a.py", 'ROUTER_PREFIX = "router-env/"'))
+        self.assertEqual(
+            [(1, "referee", "router-env/my-referee-one")],
+            scan_text("skills/a.md", "router-env/my-referee-one."),
+        )
 
 
 if __name__ == "__main__":

@@ -92,7 +92,8 @@ class TestLegacyLoad(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as stream:
                 stream.write(text)
             env = {"HOME": home, "XDG_CONFIG_HOME": xdg,
-                   "XDG_CACHE_HOME": os.path.join(root, "cache")}
+                   "XDG_CACHE_HOME": os.path.join(root, "cache"),
+                   "AI_KIT_KEEP_MIGRATION_BACKUP": "1"}
             from ai_kit_spec.cache import cache_write_json
             from ai_kit_spec.detection import RUNTIMES_SCHEMA_VERSION, cache_runtimes_path
             cache_write_json(
@@ -331,7 +332,8 @@ class TestLegacyForms(unittest.TestCase):
         # B-WR-04: a runner-less row is never saved as a pinned pair.
         mapped, notes = normalize_legacy_entry({"key": "g", "cli": "grok", "model": "grok-4"})
         self.assertIn("build-command --runtime grok", notes[0])
-        self.assertIn("'runtime' must be", validate_reviewer_fields(mapped) or "")
+        self.assertIn("has no runner formula; store a custom `command` lane instead (no 'runtime')",
+                      validate_reviewer_fields(mapped) or "")
 
     def test_native_runtime_unknown_keeps_an_explicit_runtime(self):
         # B-WR-05: the new-form field wins over a stale legacy one.
@@ -431,7 +433,7 @@ class TestLegacyNotes(unittest.TestCase):
 class TestLegacyAdapters(unittest.TestCase):
     def test_superpowers_keeps_the_stored_runtime_for_the_route_walk(self):
         # 18.1-10: assembly no longer masks a host-selectable alias. Both hosts keep the stored
-        # runtime; routing decides native vs review_only per call.
+        # runtime; routing decides native vs no_formula per call.
         from ai_kit_spec_superpowers.dispatch_injection import assemble_candidates
 
         entry, _ = normalize_legacy_entry(
@@ -558,7 +560,8 @@ class TestSaveSide(unittest.TestCase):
         for case in cases:
             self.assertIn(case["key"], warning)
             self.assertNotIn(f'key = "{case["key"]}"', rendered)
-        self.assertIn("ladder = []", rendered)
+        self.assertNotIn("ladder", rendered)
+        self.assertNotIn("[lanes.policy", rendered)
         # Render migrates a runtime-less pinned model before validating, so the reject
         # is checked on the validator directly.
         pinned = validate_reviewer_fields({"key": "pinned", "model": "opus"})

@@ -21,6 +21,7 @@ from ai_kit_spec.execute_selection import (
     screen_execute_clis,
 )
 from ai_kit_spec.quota import entry_reason, resolve_ladder_pick
+from ai_kit_spec.role_orders import role_order
 from ai_kit_spec.routing import (
     SKIP_ROUTES,
     Inventory,
@@ -105,7 +106,7 @@ class QuotaExhaustedError(RuntimeError):
       - "timeout": the probe itself hung/timed out -- a broken invocation, not a rate limit.
       - "configuration": a missing/malformed command template -- a config problem.
       - "dispatch_unavailable": the CLI binary itself could not be invoked (OSError).
-      - a route name (bad_model, review_only, not_installed, no_inventory, unknown_runtime,
+      - a route name (bad_model, no_formula, not_installed, no_inventory, unknown_runtime,
         no_model): the per-call route walk skipped this candidate. Permanent, like every reason
         below except "quota" -- waiting never changes which host this process runs on or which
         model a runtime lists.
@@ -163,9 +164,9 @@ def compute_resume_exclusions(tried: list, reasons: dict, prior_excluded_keys: l
 
 
 def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tuple:
-    """Reads the SAME shared candidate roster that the GSD flow's assemble_candidates reads
-    (the flat view of config.toml's [lanes] roles, D-24) -- the "superpowers has no config
-    surface" constraint (Global Constraints) is about a superpowers-specific config file like
+    """Reads the execute lanes of config.toml (36 D-04), falling back to the flat view only when
+    the resolved dict has no execute list. The "superpowers has no config surface" constraint
+    (Global Constraints) is about a superpowers-specific config file like
     GSD's .planning/config.json, which genuinely doesn't exist; it is not about this shared
     roster, which every ai-kit-spec-execute-* adapter reads identically. Duplicated here (not
     imported from the GSD flow's adapter) to keep the two sibling adapters independent -- neither
@@ -174,7 +175,7 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
     `KeyError`."""
     resolved = cfg_resolve_fn(cwd, env)
     candidates = []
-    for r in resolved.get("reviewers", []):
+    for r in resolved.get("execute", resolved.get("reviewers", [])):
         if "key" not in r:
             continue
         candidates.append({
@@ -185,7 +186,7 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
             "purpose": r.get("purpose"),
             "effort": r.get("effort"), "service_tier": r.get("service_tier"),
         })
-    top_n_keys = resolved.get("policy", {}).get("ladder", [])
+    top_n_keys = role_order(resolved, "execute")
     return candidates, top_n_keys
 
 
@@ -277,7 +278,7 @@ def compute_ladder_keys(request: BuildInjectionRequest, routes=None) -> list:
     """CRITICAL finding (Rounds 4-5 capability escalation): the FULL ordered candidate-key list
     -- via the SAME narrowing/ranking build_dispatch_injection itself walks (_narrow_and_rank,
     above) -- turned into keys via candidates_to_ladder. Deliberately NOT `list(top_n_keys)`: a
-    candidate ranked here but absent from `top_n_keys` (policy.ladder's own configured keys)
+    candidate ranked here but absent from `top_n_keys` (the execute order's configured keys)
     still gets a real, ordered (last-ranked) position, so a caller computing "every candidate
     ranked strictly above the stuck one" (Task 4's SKILL.md escalation rule) never silently misses
     an out-of-ladder candidate the live walk could actually have picked.
@@ -317,7 +318,8 @@ def _skip_route(candidate: dict, decision: str, tried: list, reasons: dict) -> N
     """A skip route is permanent: recorded under the route name, never picked, one stderr line."""
     tried.append(candidate["key"])
     reasons[candidate["key"]] = decision
-    print(skip_note(f"{candidate['key']} for execution", decision), file=sys.stderr)
+    print(skip_note(f"{candidate['key']} for execution", decision, candidate.get("runtime")),
+          file=sys.stderr)
 
 
 def _walk_ladder_for_injection(

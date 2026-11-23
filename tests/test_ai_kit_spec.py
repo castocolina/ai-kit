@@ -346,13 +346,13 @@ class TestRenderAndWriteToml(unittest.TestCase):
         import tomllib
 
         config = {
-            "policy": {"mode": "double", "ladder": ["a", "b"]},
+            "policy": {"mode": "double", "review": {"ladder": ["a"]}},
             "lanes": [{"key": "a", "model": "m1", "vendor": "openai"}],
         }
         rendered = cfg_render_lanes(config)
         parsed = tomllib.loads(rendered)
         self.assertEqual(parsed["lanes"]["policy"]["mode"], "double")
-        self.assertEqual(parsed["lanes"]["policy"]["ladder"], ["a", "b"])
+        self.assertEqual(parsed["lanes"]["policy"]["review"]["ladder"], ["a"])
         self.assertEqual(parsed["lanes"]["review"][0]["key"], "a")
 
     def test_write_toml_creates_parent_dirs(self):
@@ -405,17 +405,19 @@ class TestRenderAndWriteToml(unittest.TestCase):
     def test_ladder_renders_as_priority_fallback_comment(self):
         rendered = cfg_render_lanes(
             {
-                "policy": {"mode": "double", "ladder": ["codex-gpt", "sonnet-native"]},
-                "lanes": [],
+                "policy": {"mode": "double", "review": {"ladder": ["a", "b"]}},
+                "lanes": [{"key": "a", "runtime": "codex", "model": "placeholder-model-1"},
+                          {"key": "b", "runtime": "codex", "model": "placeholder-model-2"}],
             }
         )
-        self.assertIn("# Priority fallback order", rendered)
-        self.assertIn("#   1. codex-gpt", rendered)
-        self.assertIn("#   2. sonnet-native", rendered)
+        self.assertIn("# Priority fallback order, review lanes", rendered)
+        self.assertIn("#   1. a", rendered)
+        self.assertIn("#   2. b", rendered)
+        self.assertIn("double mode also seats an independent secondary", rendered)
         import tomllib
 
         parsed = tomllib.loads(rendered)  # comment must not break parsing
-        self.assertEqual(parsed["lanes"]["policy"]["ladder"], ["codex-gpt", "sonnet-native"])
+        self.assertEqual(parsed["lanes"]["policy"]["review"]["ladder"], ["a", "b"])
 
     @unittest.skipIf(tomllib is None, "tomllib not available on this interpreter")
     def test_empty_ladder_renders_no_priority_comment(self):
@@ -426,8 +428,9 @@ class TestRenderAndWriteToml(unittest.TestCase):
     def test_single_mode_ladder_comment_omits_secondary_clause(self):
         rendered = cfg_render_lanes(
             {
-                "policy": {"mode": "single", "ladder": ["codex-gpt", "sonnet-native"]},
-                "lanes": [],
+                "policy": {"mode": "single", "review": {"ladder": ["a", "b"]}},
+                "lanes": [{"key": "a", "runtime": "codex", "model": "placeholder-model-1"},
+                          {"key": "b", "runtime": "codex", "model": "placeholder-model-2"}],
             }
         )
         self.assertIn("# Priority fallback order", rendered)
@@ -548,8 +551,8 @@ class TestRenderAndWriteToml(unittest.TestCase):
                 config_io.cfg_trust_store_dir({"HOME": d}), os.path.realpath(path), raw
             )
             resolved = config_io.cfg_resolve(d, {"HOME": d})
-            self.assertNotIn("bad", resolved["policy"]["ladder"])
-            self.assertIn("good", resolved["policy"]["ladder"])
+            self.assertNotIn("bad", resolved["orders"]["review"])
+            self.assertIn("good", resolved["orders"]["review"])
 
 
 class TestCacheCatalogPath(unittest.TestCase):
@@ -5245,21 +5248,18 @@ class TestDispatchExecute(unittest.TestCase):
 
 
 class TestExecuteCliError(unittest.TestCase):
-    def test_execute_error_message_names_the_supported_clis(self):
-        # execute_cli_error is the pre-spawn screen every CLI calls first.
-        claude = commands.execute_cli_error("claude")
-        grok = commands.execute_cli_error("grok")
-        self.assertEqual(
-            claude,
-            f"'claude' cannot be an execution CLI; supported execute CLIs: "
-            f"{', '.join(commands.SUPPORTED_EXECUTE_CLIS)}",
-        )
-        self.assertIsNotNone(claude)
-        self.assertIsNotNone(grok)
-        assert claude is not None and grok is not None
-        self.assertIn("codex, copilot, cursor, opencode, pi", claude)
-        self.assertIn("codex, copilot, cursor, opencode, pi", grok)
-        self.assertIsNotNone(commands.execute_cli_error("nonexistent-cli"))
+    def test_execute_error_message_names_the_formula_fact(self):
+        self.assertEqual(commands.execute_cli_error("claude"),
+                         "'claude' has no exec formula in the runner (route no_formula): "
+                         "cross-ai.mjs RUNTIMES.claude.exec is null, read 2026-11-20")
+        self.assertEqual(commands.execute_cli_error("grok"),
+                         "'grok' has no exec formula in the runner (route no_formula): "
+                         "cross-ai.mjs RUNTIMES has no entry for this runtime")
+        self.assertEqual(commands.execute_cli_error("nonexistent-cli"),
+                         "'nonexistent-cli' is not a runtime in the table; store it as a "
+                         "custom `command` lane (custom lanes run in review mode only)")
+        self.assertIsNone(commands.execute_cli_error("codex"))
+        self.assertIsNone(commands.execute_cli_error("cursor-agent"))
 
 
 class TestExecuteCliRejection(unittest.TestCase):
@@ -5297,11 +5297,19 @@ class TestExecuteCliRejection(unittest.TestCase):
         return code, buf.getvalue()
 
     def test_dispatch_execute_rejects_claude_grok_and_case_variant(self):
+        expected = {
+            "claude": "ai-kit-spec: 'claude' has no exec formula in the runner (route no_formula)",
+            "grok": "ai-kit-spec: 'grok' has no exec formula in the runner (route no_formula)",
+            "Claude": "ai-kit-spec: 'Claude' is not a runtime in the table",
+        }
         for cli_name in ("claude", "grok", "Claude"):
             with self.subTest(cli=cli_name):
                 code, stderr = self._rejected_dispatch_run(cli_name)
                 self.assertEqual(code, 2)
-                self.assertIn("codex, copilot, cursor, opencode, pi", stderr)
+                self.assertIn(expected[cli_name], stderr)
+                if cli_name != "grok":
+                    self.assertNotIn("review_only", stderr)
+                    self.assertNotIn("review-only", stderr)
 
     def test_rejection_is_idempotent_across_reruns(self):
         # D-15: nothing is written before the check, so a rejected executor fails identically
@@ -5346,17 +5354,15 @@ class TestExecuteLadderScreen(unittest.TestCase):
         # entry means "no preference" and survives.
         self.assertEqual({c["key"] for c in result}, {"untagged"})
 
-    def test_purpose_none_claude_entry_is_skipped_with_a_warning(self):
+    def test_purpose_none_claude_entry_passes_the_screen(self):
         warnings = []
         candidates = [
             {"key": "cla", "runtime": "claude", "model": "m"},
             {"key": "oc", "runtime": "opencode", "model": "m"},
         ]
         result = self._screen(candidates, warn_fn=warnings.append)
-        self.assertEqual([c["key"] for c in result], ["oc"])
-        self.assertEqual(len(warnings), 1)
-        self.assertIn("cla", warnings[0])
-        self.assertIn("codex, copilot, cursor, opencode, pi", warnings[0])
+        self.assertEqual([c["key"] for c in result], ["cla", "oc"])
+        self.assertEqual(warnings, [])
 
     def test_purpose_both_grok_entry_is_skipped_with_a_warning(self):
         warnings = []
@@ -5366,12 +5372,20 @@ class TestExecuteLadderScreen(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIn("gk", warnings[0])
 
-    def test_purpose_execute_claude_entry_raises_value_error(self):
+    def test_purpose_execute_claude_entry_passes_the_screen(self):
         candidates = [{"key": "cla", "runtime": "claude", "model": "m", "purpose": "execute"}]
-        with self.assertRaises(ValueError) as ctx:
+        result = self._screen(candidates, warn_fn=lambda _msg: self.fail("must not warn"))
+        self.assertEqual([c["key"] for c in result], ["cla"])
+
+    def test_purpose_execute_out_of_table_runtime_raises(self):
+        candidates = [{"key": "p1", "runtime": "placeholder-cli-1",
+                       "model": "placeholder-model-1", "purpose": "execute"}]
+        with self.assertRaises(execute_selection.ExecuteSelectionError) as ctx:
             self._screen(candidates, warn_fn=lambda _msg: self.fail("must raise, not warn"))
-        self.assertIn("codex, copilot, cursor, opencode, pi", str(ctx.exception))
-        self.assertIn("cla", str(ctx.exception))
+        self.assertEqual(str(ctx.exception),
+                         "reviewer 'p1' sets purpose = \"execute\": 'placeholder-cli-1' is not "
+                         "a runtime in the table; store it as a custom `command` lane "
+                         "(custom lanes run in review mode only)")
 
     def test_custom_command_is_dropped_and_execute_purpose_raises(self):
         warnings = []
