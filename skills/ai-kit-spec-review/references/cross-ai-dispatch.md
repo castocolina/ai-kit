@@ -64,21 +64,14 @@ Runs once per invocation, after Step 0.6.
    dispatched, and this iteration surfaces via whatever entries remain (or
    `NO_CONFIG_FALLBACK` if none do).
 
-   Also call `detect-tools`, cached the same way `ai-kit-spec-config`'s own
-   Step 1 does it — but since this orchestrator has no long-lived cache
-   file for tool availability today, call it fresh each run (cheap — a
-   handful of `which` calls, no network, no TTL logic needed):
-   ```bash
-   if [ -f "$TOOLS_PY" ]; then
-     TOOL_AVAILABILITY_JSON="$(python3 "$TOOLS_PY" detect-tools)"
-   else
-     TOOL_AVAILABILITY_JSON='{}'
-   fi
-   ```
-   Record `TOOL_AVAILABILITY_JSON` as this run's literal tool-availability
-   JSON string, substituted into every later `--tool-availability-json`
-   reference and into the native prompt. When `TOOLS_PY` is missing, use `{}`
-   (no modern tool confirmed, so the checklist flags no legacy invocation).
+   Tools are not detected here. Each subprocess lane's block names the tools
+   found on the PATH of that lane's exact child environment, resolved by
+   `dispatch-reviewer` at dispatch time (the parent's PATH can differ from
+   the child's); `--tool-availability-json` is no longer passed (an old
+   caller's value is ignored with a note naming the flag). A native lane
+   gets no tool claims: its prompt carries `TOOL_AVAILABILITY = {}` and
+   only the lens names. `detect-tools` stays for `ai-kit-spec-config`'s
+   setup-time report.
 1. Build an IDENTIFIABLE temp-dir name before creating it — a bare `mktemp -d`
    (`/tmp/tmp.XXXXXXXXXX`) is indistinguishable from any other process's temp dir once
    several review runs (or fix rounds within one run, or concurrent runs across projects)
@@ -221,12 +214,19 @@ inline the prompt via `{prompt}` rather than reading stdin, so guidance composed
 would never reach them, and pre-rendering the argv yourself bypasses the single split point
 (templates become argv the way a shell splits words; `{prompt}` is one argument with no extra
 quoting; shell operators, `$`, and backticks in a template are rejected with an error naming the
-reviewer). There is likewise **no** `--code-index-registered` flag to compute: `dispatch-reviewer`
-runs the same `check_cbm_registered` check (a read of the host's config files) itself whenever the entry has a `runtime`
-(the same internal-resolution pattern the execute family's `prepare-tooling` already uses), so the
-orchestrator never has to evaluate it. `$SHARED_TOOLING_PATH` and `$TOOL_AVAILABILITY_JSON` are
-surfaced to the reviewer as named `SHARED_TOOLING_PATH = …` / `TOOL_AVAILABILITY = …` lines at
-the top of the composed prompt.
+reviewer). There is no code-index or tool-map flag to compute: `dispatch-reviewer` builds the lane's
+capability block itself from the lane's runner dry run and its child PATH, including the code
+index route, and validates the `--files` values before the spawn: every document, grounding,
+checklist and framework-profile path the prompt embeds, one argument per path (the checklist
+and framework profile lie in the installed skill's directory, a skill root). Without `--files`
+the prompt is sent with no capability block and stderr carries
+`ai-kit-spec: no capability block built: no --files given (pass --files to get the lane's capability block)`.
+In a labeled multi-worktree review the documents from another worktree are passed too: their
+worktree root counts as an allowed root for those document values only, and the block names them
+in the note `documents from other worktrees: <n> (<root>, ...)`; any other path outside the
+repository and the skill roots is still rejected (`path_outside_roots`). `$SHARED_TOOLING_PATH`
+and the tool map resolved on the child's PATH appear inside that block as the named
+`SHARED_TOOLING_PATH = …` / `TOOL_AVAILABILITY = …` lines (see [Lane capabilities](#lane-capabilities)).
 
 **Hosting.** With `--host auto` the runner runs the lane in a herdr tab when herdr is available
 (`HERDR_ENV=1` and `herdr` on PATH) and changes nothing else: the argv, the settings report,
@@ -269,6 +269,33 @@ print `### Status: Failure — <lanes>` naming the failed lane(s), or the missin
 (single mode) fail closed through Step 2's "No Status line" rule — never treat either outcome
 as Approved.
 
+## Lane capabilities
+
+`--print-argv` prints one stderr line `cross-ai: capabilities <JSON>` after the skill lines,
+computed from the lane's row, role and final argv (flags added by `extraArgs` included). Each of
+the first four fields is `{value, label}` with `label` an object `{state, source}` (`state` is
+`verified`, `unverified` or `unknown`), the same shape as the row forms `--describe` shows;
+`prompt` is `{channel, max_bytes}`. A fact the argv does not show is `unknown`, never a guess, and
+no value blocks a lane. An `--argv-file` lane reports each of the four fields `unknown`; on the Python side
+a non-zero exit, a missing line or an unparseable one reads as all `unknown`.
+
+| Field | Values |
+|---|---|
+| `write` | `none`, `workspace`, `full`, `unknown` |
+| `shell` | `yes`, `no`, `unknown` |
+| `skills` | `none`, `path`, `discovery`, `unknown` (what the host itself loads; the runner's prose blocks are read from the `form=prose` lines) |
+| `mcp` | `none`, `host_config`, `call_file`, `unknown` |
+| `prompt` | `channel` (`argv` or `stdin`) and `max_bytes` (the largest argv prompt the runner admits, or `null`) |
+
+The `CODE INDEX` section has three routes, first match wins, never two lines: the run-scoped MCP
+file this dispatch wrote, applied for this call ("enabled for this call"); a host config
+registration with `mcp` not `none`; then the CLI form when `shell` is not `no`. The run-scoped file
+holds only a `code_index` server whose seed row records a launch form and whose binary resolves on
+the child's PATH (`{"mcpServers": {<name>: {"command": <absolute path>, "args": [...]}}}`, mode
+0600, removed on every exit path); a server defined only in a host config is listed as present,
+not enabled. On a claude lane the run-scoped MCP file is passed with `--strict-mcp-config`, so it replaces the host's other MCP servers for that lane. Exit 65 is the dispatch's pre-spawn refusal (no lane spawned; the read-only runner dry
+run may have run); the runner itself never exits 65. A resumed lane exits 65 the same way.
+
 ## Pending lane (hard tier) — lifecycle and resume
 
 The case: exit 75 with `retry_after_s=` on the lane's last `AIKIT-XAI` line, whatever its route
@@ -291,14 +318,14 @@ router`) treats router billing, access and credential rows as quota.
      "$RUN_TMP_DIR/iter<N>-<key>-argv.json" python3 "$TOOLS_PY" dispatch-reviewer \
      --cwd <CODEBASE_ROOT> --reviewers-json "$RUN_TMP_DIR/reviewers.json" --index <index> \
      --prompt-file "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt" --timeout-tiers "$TIMEOUT_TIERS" \
-     --tool-availability-json "$TOOL_AVAILABILITY_JSON" --stdout-only
+     --files <each DOC_PATHS entry> <each GROUNDING_DOCS entry, if any> <CHECKLIST_SKILL_MD> <FRAMEWORK_PROFILE_PATH, unless none> --stdout-only
    python3 -c 'import json,sys; a=sys.argv[2:]; json.dump(dict(zip(a[::2], a[1::2])), open(sys.argv[1], "w"), indent=1)' \
      "$RUN_TMP_DIR/resume-<key>.json" iteration "<N>" key "<key>" index "<index>" \
      iteration_cap "<cap>" codebase_root "<CODEBASE_ROOT>" doc_paths "<DOC_PATHS>" \
      archetype "<ARCHETYPE>" framework_profile_path "<FRAMEWORK_PROFILE_PATH>" \
      grounding_docs "<GROUNDING_DOCS>" tools_py "$TOOLS_PY" \
      checklist_skill_md "$CHECKLIST_SKILL_MD" shared_tooling_path "$SHARED_TOOLING_PATH" \
-     tool_availability_json "$TOOL_AVAILABILITY_JSON" unavailable "<the Step 0.7 unavailable lines>" \
+     unavailable "<the Step 0.7 unavailable lines>" \
      sibling_key "<the sibling's key, or none>" \
      revisions_authorized "<yes, or no when the request asked only for a review or was unclear>"
    ```

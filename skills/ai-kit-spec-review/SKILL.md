@@ -156,9 +156,9 @@ downstream scope — and list any prerequisite gaps.
 
 Runs once per invocation, after Step 0.6. Before walking the cross-AI ladder, ask yourself: is cross-AI support actually installed and requested here, or does this invocation degrade cleanly to the session default (`--no-cross-ai`, or `ai-kit-spec.py` simply not present)? Answering that first avoids resolving quota/runtime state nobody asked for.
 
-**MANDATORY — READ ENTIRE FILE, on every run**: Before running any command below, read [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md) completely — it has the exact VERBATIM bash snippets, resolution order, and fail-closed rules for resolving `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `RUNTIMES_JSON`, `QUOTA_JSON`, `SHARED_TOOLING_PATH`, `TOOL_AVAILABILITY_JSON`, `RUN_TMP_DIR`, and ultimately `REVIEWER_LIST`. Do not attempt to reconstruct these from memory. `--no-cross-ai` does not skip it: points 0–2 (paths, tooling facts, `RUN_TMP_DIR`, the session-default list) are what Step 1's native dispatch substitutes and writes into; the flag skips only points 3–6. Do NOT load `references/cross-ai.mjs` for this step: the policy file describes the ladder, and the script is the runner, not instructions. Do NOT load `references/cli-profiles/`: those are per-CLI notes, read only when a named CLI's flags are in doubt.
+**MANDATORY — READ ENTIRE FILE, on every run**: Before running any command below, read [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md) completely — it has the exact VERBATIM bash snippets, resolution order, and fail-closed rules for resolving `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `RUNTIMES_JSON`, `QUOTA_JSON`, `SHARED_TOOLING_PATH`, `RUN_TMP_DIR`, and ultimately `REVIEWER_LIST`. Do not attempt to reconstruct these from memory. `--no-cross-ai` does not skip it: points 0–2 (paths, `RUN_TMP_DIR`, the session-default list) are what Step 1's native dispatch substitutes and writes into; the flag skips only points 3–6. Do NOT load `references/cross-ai.mjs` for this step: the policy file describes the ladder, and the script is the runner, not instructions. Do NOT load `references/cli-profiles/`: those are per-CLI notes, read only when a named CLI's flags are in doubt.
 
-Once resolved, `REVIEWER_LIST`, `RUN_TMP_DIR`, `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `SHARED_TOOLING_PATH`, and `TOOL_AVAILABILITY_JSON` are consumed by Step 1 below exactly as named.
+Once resolved, `REVIEWER_LIST`, `RUN_TMP_DIR`, `TOOLS_PY`, `CHECKLIST_SKILL_MD` and `SHARED_TOOLING_PATH` are consumed by Step 1 below exactly as named.
 
 **No-config check** (skipped with `--no-cross-ai`). Run `python3 "$TOOLS_PY" config-status --role review --cwd <CODEBASE_ROOT>` and read its first line.
 1. `active`: continue and ask nothing.
@@ -229,6 +229,71 @@ behalf. `--revoke` withdraws trust, even after the file was deleted.
   Without Node, the probe walk marks subprocess entries unavailable before dispatch (the stderr
   line starts `ai-kit-spec: subprocess dispatch needs Node`); a dispatch that hits it is a
   `dispatch_unavailable` Failure, never a session-default run.
+
+## Lane capability block, lenses and refusals
+
+A subprocess lane is told only what its own final argv allows. `dispatch-reviewer` and
+`dispatch-execute` read the lane's runner dry run (`--print-argv`: the `cross-ai: capabilities`
+line and the `setting skill=`, `setting mcp=` and `skill-block` lines), resolve tools against the
+PATH of the exact child environment, and prepend one block with these sections, in this order:
+`LANE`, `ACCESS`, `TOOLS`, `CODE INDEX`, `SKILLS`, `SETTINGS`. An `unknown` fact reads
+`unknown: make no assumption`; a lane without a shell is told about no shell tool. An execute lane whose `write` is `full` or `unknown` also gets the no-confinement sentence word for word (never write outside the working directory); a `workspace` or `none` lane gets none. A native lane
+gets no tool claims, only its lens names (see the native route). `capability-block --runtime <id>
+--model <id> --role <review|execute> [--files ...]` prints the same block without spawning the
+lane. On a claude lane the run-scoped MCP file is passed with `--strict-mcp-config`, so it replaces the host's other MCP servers for that lane. Field values and the code index routes: [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md#lane-capabilities).
+
+A skill's role comes from `[skills.roles]` (a sort the owner confirmed), then the seed file
+`references/skill-roles.json`, else `unsorted`; `skill-table` prints the per-host scan, which runs
+on every call.
+
+| Role | Meaning |
+|---|---|
+| `review_lens` | read-only advice lens, sent to review lanes |
+| `edit_lens` | lens that edits files, used only by the after-approval pass |
+| `ui_lens` | sent only when a `--files` value is a UI file |
+| `code_index` | code index server, enabled for a lane only from a seed launch form found on the child's PATH |
+| `decision_helper` | advisory decision helper |
+| `host_control` | terminal or host control |
+| `skill_judge` | skill reviewer |
+| `unsorted` | no seed row and no confirmed sort |
+
+Lenses ride the runner's `--skill-name` and `--skill-path` flags; its `setting skill=` line says the
+form used (`path` or `prose`). A lens that is not sent gets one note, and the base prompt is never cut:
+
+| Note | When |
+|---|---|
+| `built_in_no_file` | a host built-in with no file, for any lane but a native lane of that host |
+| `over_window` | it would push the prompt past the lane's window or argv cap; skipped whole |
+| `path_rejected` | its path fails the value check, or its body is not strict UTF-8, starts with a byte-order mark, exceeds 65,536 bytes or has no addressable name |
+| `not_present` | its `SKILL.md` is empty |
+| `host_cannot_load` | the runner reported it `ignored` |
+
+Last before the spawn, the dispatch checks every `--files` value, lens path and run file, and
+compares the prompt's estimate (UTF-8 bytes of the block, lens text and prompt divided by 4,
+rounded up, labeled estimated; the runner's preamble and the host's own system prompt are not
+counted) with the lane's known window (a `[[models.context]]` entry, then the catalog); without `--files` no block is built and nothing is
+checked, and stderr says so. A window is
+unknown, and never capped, when none is recorded, when the recorded value is not a positive
+integer, or when the lane applies a context form whose effect is unverified and no user value
+exists. A refusal spawns no lane, writes one JSON record `{"status": "refused", "reason": ...,
+"detail": ...}` to stderr and exits 65; Step 1 counts it as that lane's failure. Nothing is
+trimmed or rewritten.
+
+| Reason | When |
+|---|---|
+| `prompt_over_window` | the estimate exceeds the known window (equal passes) |
+| `value_control_char` | a value holds a control, bidirectional or zero-width character |
+| `path_outside_roots` | a path resolves outside the repository and every scanned skill root (a review document may also lie in its own worktree) |
+| `path_unresolvable` | a value is empty, not a string, or cannot be resolved |
+
+After-approval pass: an owner-started command, off unless `[review] edit_lens_pass = true`; the
+review loop never starts it and an unattended run never runs it. After an Approved outcome the
+owner may run `edit-lens-pass --cwd <CODEBASE_ROOT> --files <the approved files>`: it runs the
+present `edit_lens` skills on one execute lane whose `write` is `workspace` or `full` (at present only codex lanes report one: `full` for a plain codex lane, `workspace` with `--codex-sandbox workspace-write`; with no such lane it says so and runs nothing), prints the
+diff summary and leaves the edits uncommitted until `edit-lens-pass --cwd <CODEBASE_ROOT> --accept`
+or `--reject`. A rejection restores only the listed files the pass recorded; a file changed after
+the pass is left alone and named, and then the record is kept and the command exits 1. Edits
+outside the listed files are neither recorded nor restored: check `git status` before accepting.
 
 ## NEVER (hard landmines)
 
@@ -313,7 +378,7 @@ For each entry in `REVIEWER_LIST`:
        --index <this entry's reviewers.json index: 0 primary, 1 secondary> \
        --prompt-file "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt" \
        --timeout-tiers "$TIMEOUT_TIERS" \
-       --tool-availability-json "$TOOL_AVAILABILITY_JSON" \
+       --files <each DOC_PATHS entry> <each GROUNDING_DOCS entry, if any> <CHECKLIST_SKILL_MD> <FRAMEWORK_PROFILE_PATH, unless none> \
        --stdout-only \
        > "$RUN_TMP_DIR/iter<N>-<key>.md" \
        2> "$RUN_TMP_DIR/iter<N>-<key>.err"; echo "$?" > "$RUN_TMP_DIR/iter<N>-<key>.exit"
@@ -332,7 +397,7 @@ For each entry in `REVIEWER_LIST`:
      [pending lane (hard tier)](references/cross-ai-dispatch.md#pending-lane-hard-tier--lifecycle-and-resume)
      section (keep the slot, merge the sibling as single mode, write the resume files, no fixer).
      A bare exit 75 and any exit 69 (`auth`, `stopped=hard-waits`, `stopped=cap`, a refusal of a
-     stopped lane) are owner stops: quote the `.err` evidence lines verbatim and schedule nothing.
+     stopped lane) are owner stops: quote the `.err` evidence lines verbatim and schedule nothing. Exit 65 is the dispatch's own pre-spawn refusal (no lane spawned, see [Lane capability block, lenses and refusals](#lane-capability-block-lenses-and-refusals)): quote its stderr record verbatim and schedule nothing.
      Every nonzero exit except that hard tier deletes `iter<N>-<key>.md`, so Step 1.5 fails closed.
      **MANDATORY before handling a nonzero exit or deviating from either rule**: read the
      [Step 1 subprocess dispatch](references/cross-ai-dispatch.md#step-1-subprocess-dispatch--full-rationale-for-dispatch-reviewer)
@@ -479,3 +544,4 @@ one by hand once that review is done.
 - The ordered walk (Step 0.7) follows the owner's instruction "try A, then B, fall back to native
   only if both lack quota", quoted in `resolve_reviewers`' docstring in `ai_kit_spec/quota.py`
   for a ladder that listed its native entry; recorded on 2026-08-29.
+- The lane capability block, lens delivery, pre-spawn refusals and the after-approval pass follow the owner's directives recorded on 2026-11-16: a table is seed data and never decides, refuse and never trim, and the after-approval pass stays off unless the owner enables it.

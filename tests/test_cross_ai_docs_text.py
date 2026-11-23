@@ -1,5 +1,8 @@
 """37-22: pin runner documentation, hosting and marked-region adjacency (SPEC R11)."""
 
+import collections
+import importlib
+import json
 import re
 import sys
 import unittest
@@ -16,6 +19,10 @@ SPEC_CONFIG_SKILL = REPO / "skills/ai-kit-spec-config/SKILL.md"
 TEMPLATE = REPO / "skills/ai-kit-spec-review/references/cross-ai.mjs"
 ERROR_CLASSIFIER_DIR = REPO / "skills/ai-kit-spec-review"
 CURATED_SKILL = REPO / "skills/ai-kit-gsd-curated-config/SKILL.md"
+REVIEW_SKILL = REPO / "skills/ai-kit-spec-review/SKILL.md"
+SECTION = "## Lane capability block, lenses and refusals"
+PROMPTS = REPO / "skills/ai-kit-spec-review/references/reviewer-prompts.md"
+GUIDANCE = REPO / "skills/ai-kit-spec-review/references/tooling-guidance.md"
 SUPERVISION_FLAGS = ("--baseline", "--forbid", "--idle-timeout", "--plan-id", "--sweep")
 RUNNER_FLAGS = (
     "--role", "--effort", "--codex-effort", "--context", "--escalate-runtime",
@@ -135,6 +142,145 @@ class ReadmeAndProfileDocs(unittest.TestCase):
     def test_spec_config_effort_sentence_names_the_generic_flag(self):
         self.assertNotIn("the runner passes it as `--codex-effort`",
                          SPEC_CONFIG_SKILL.read_text(encoding="utf-8"))
+
+
+def review_module(name):
+    sys.path.insert(0, str(ERROR_CLASSIFIER_DIR))
+    try:
+        return importlib.import_module(f"ai_kit_spec.{name}")
+    finally:
+        sys.path.remove(str(ERROR_CLASSIFIER_DIR))
+
+
+def section_text(text, heading, stop=("## ",)):
+    assert heading in text
+    lines = text.splitlines()
+    start = lines.index(heading)
+    end = next((i for i in range(start + 1, len(lines))
+                if lines[i].startswith(stop)), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def table_names(text, header):
+    assert header in text
+    lines = text.splitlines()
+    names = []
+    for line in lines[lines.index(header) + 1:]:
+        if not line.startswith("|"):
+            break
+        if re.fullmatch(r"\|[-| ]+\|", line):
+            continue
+        match = re.fullmatch(r"`([^`]+)`", line.split("|")[1].strip())
+        assert match is not None
+        names.append(match.group(1))
+    return names
+
+
+class LaneCapabilitySkillTables(unittest.TestCase):
+    def test_roles_lock_code_seed_file_and_table(self):
+        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        st = review_module("skill_table")
+        self.assertEqual(table_names(sec, "| Role | Meaning |"), list(st.ROLES))
+        self.assertEqual(list(st.ROLES),
+                         json.loads(Path(st.SEED_PATH).read_text(encoding="utf-8"))["roles"])
+        for row in st.load_seed():
+            self.assertIn(row["role"], st.ROLES)
+            self.assertNotEqual(row["role"], "unsorted")
+
+    def test_refusal_reasons_table_equals_code_list(self):
+        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        self.assertEqual(table_names(sec, "| Reason | When |"),
+                         list(review_module("prompt_guard").REFUSAL_REASONS))
+
+    def test_lens_notes_table_equals_code_list(self):
+        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        self.assertEqual(table_names(sec, "| Note | When |"),
+                         list(review_module("lens_delivery").LENS_NOTES))
+
+    def test_each_item_has_exactly_one_row(self):
+        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        names = [name for header in ("| Role | Meaning |", "| Reason | When |", "| Note | When |")
+                 for name in table_names(sec, header)]
+        self.assertTrue(all(count == 1 for count in collections.Counter(names).values()))
+
+    def test_refusal_exit_is_documented(self):
+        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        self.assertIn(f"exits {review_module('prompt_guard').REFUSED_EXIT}", sec)
+
+    def test_block_sections_in_order(self):
+        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        line = next(line for line in sec.splitlines() if "`LANE`," in line)
+        self.assertEqual(re.findall(r"`([A-Z ]+)`", line),
+                         list(review_module("capability_block").SECTIONS))
+
+    def test_config_keys_and_commands_named(self):
+        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        for value in ("[skills.roles]", "[review] edit_lens_pass", "[[models.context]]",
+                      "capability-block", "skill-table", "edit-lens-pass --cwd", "--accept",
+                      "--reject", "never starts it", "changed after",
+                      "neither recorded nor restored",
+                      "replaces the host's other MCP servers for that lane"):
+            self.assertIn(value, sec)
+
+    def test_new_text_names_no_model(self):
+        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        self.assertEqual(scan_text(str(REVIEW_SKILL), sec), [])
+
+
+class LaneCapabilityReferences(unittest.TestCase):
+    def test_capabilities_fields_and_values(self):
+        sec = section_text(DISPATCH.read_text(encoding="utf-8"), "## Lane capabilities")
+        for phrase in ("cross-ai: capabilities", "`{value, label}`", "an object `{state, source}`",
+                       "`verified`, `unverified` or `unknown`", "`{channel, max_bytes}`"):
+            self.assertIn(phrase, sec)
+        self.assertNotIn("<state>: <source>", sec)
+        fields = {"write": ("none", "workspace", "full", "unknown"),
+                  "shell": ("yes", "no", "unknown"),
+                  "skills": ("none", "path", "discovery", "unknown"),
+                  "mcp": ("none", "host_config", "call_file", "unknown"),
+                  "prompt": ("argv", "stdin", "max_bytes")}
+        for field, values in fields.items():
+            line = next(line for line in sec.splitlines() if line.startswith(f"| `{field}` |"))
+            for value in values:
+                self.assertIn(f"`{value}`", line)
+
+    def test_point_zero_is_the_child_path_rule(self):
+        text = DISPATCH.read_text(encoding="utf-8")
+        self.assertIn("found on the PATH of that lane's exact child environment", text)
+        self.assertNotIn('python3 "$TOOLS_PY" detect-tools', text)
+
+    def test_dispatch_passes_files_not_the_parent_map(self):
+        skill, dispatch, prompts = (p.read_text(encoding="utf-8")
+                                    for p in (REVIEW_SKILL, DISPATCH, PROMPTS))
+        for text in (skill, dispatch, prompts):
+            self.assertNotIn("TOOL_AVAILABILITY_JSON", text)
+        for text in (skill, prompts):
+            self.assertNotIn("--tool-availability-json", text)
+        for text in (skill, dispatch):
+            self.assertIn("--files <each DOC_PATHS entry> <each GROUNDING_DOCS entry, if any> "
+                          "<CHECKLIST_SKILL_MD> <FRAMEWORK_PROFILE_PATH, unless none>", text)
+            for phrase in ("one worktree at a time", "inside CODEBASE_ROOT", "--files` is refused"):
+                self.assertNotIn(phrase, text)
+        self.assertIn("documents from other worktrees: <n> (<root>, ...)", dispatch)
+        self.assertIn("ai-kit-spec: no capability block built: no --files given "
+                      "(pass --files to get the lane's capability block)", dispatch)
+        self.assertIn("replaces the host's other MCP servers for that lane", dispatch)
+
+    def test_native_route_makes_no_tool_claim(self):
+        text = PROMPTS.read_text(encoding="utf-8")
+        for phrase in ("- TOOL_AVAILABILITY = {}", "- LENS LINES: <LENS_LINES>",
+                       "--role review --native --cwd <CODEBASE_ROOT>", "SHARED_TOOLING_PATH"):
+            self.assertIn(phrase, text)
+        self.assertNotIn("skill-table", text)
+
+    def test_guidance_reads_the_block(self):
+        text = GUIDANCE.read_text(encoding="utf-8")
+        self.assertIn("capability block", text)
+        self.assertIn("`CODE INDEX`", text)
+
+    def test_lane_reference_text_names_no_model(self):
+        for path in (DISPATCH, PROMPTS, GUIDANCE):
+            self.assertEqual(scan_text(str(path), path.read_text(encoding="utf-8")), [])
 
 
 class SupervisionDocsText(unittest.TestCase):
