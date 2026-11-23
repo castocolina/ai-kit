@@ -49,8 +49,19 @@ Preceded by the neutral fix 7f120c1 (`fix(39): child_path drops empty and relati
   entry lists rg when cwd is set" now expects no tool line; the parameter is `_cwd` (unused, kept for the positional callers).
 - Task 2's lane added only 8 of its 18 behavior tests (some merged: window over and unknown, lens delivered and skipped); a follow-up
   tests-only lane (854941f, a fourth commit of this plan) added the other nine, no product change.
-- `tests/test_compose_for_lane.py` patches `capability_block.guidance_paths` to `(None, None, ())` in `setUp` (not plan-named): the
-  expected blocks would otherwise depend on the checkout's shared tooling file.
+- Test names that differ from the plan's: `test_window_over_refuses` and `test_unknown_window_runs` are one test
+  `test_window_over_and_unknown` (both assertions kept: reason, `detail.window == 10`, the unknown window not capped on a 1,000,000-byte
+  prompt); `test_lens_skipped_not_lane_refused` and `test_lens_delivered_with_runner_name` are one test `test_lens_delivered_and_skipped`
+  (the skip case uses a fixed window of 250 tokens instead of "base estimate plus 10"; the delivered case checks the real path and that the
+  second preview received the lens spec); `test_missing_files_skips_preview` plus `test_missing_file_list_builds_no_block` split the D2
+  test; the old `test_code_index_registration_is_resolved_internally_not_asked_of_the_caller`,
+  `test_custom_entry_never_runs_the_registration_check` and `test_includes_tool_guidance_when_provided` were renamed as the plan says.
+- `test_native_lane_gets_lens_lines_only` uses a `pi` native request and asserts the lens line substring and no preview call, not the full
+  block equality with a `claude` request the plan names (weaker than planned; open item).
+- Synthetic pins in `tests/test_compose_for_lane.py` (not plan-named): `capability_block.guidance_paths` patched to `(None, None, ())` in
+  `setUp` (the expected blocks would otherwise depend on the checkout's shared tooling file), and `lens_delivery.mcp_pick` patched to a fake
+  pick in `test_mcp_dir_removed_when_publication_fails` (beside the plan-named `write_mcp_file` patch); `guidance_paths` never runs
+  unpatched in the new test modules.
 - Changed assertion outside the plan's list: `TestExecuteCliRejection.test_no_fact_never_refuses` (tests/test_ai_kit_spec.py) expected an
   empty stderr; it now expects the D2 no-block note (`dispatch-execute` without `--files`).
 - `tests/test_ai_kit_spec_superpowers.py` (not in the plan's files list; in Task 3's verify list, covered by the plan's catch-all rule):

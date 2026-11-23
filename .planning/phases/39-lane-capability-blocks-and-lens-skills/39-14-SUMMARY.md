@@ -40,4 +40,7 @@ router-env/my-coding), each status=ok on its first run (579 s, 408 s).
 - `_decision_lock` creates the record folder (mode 0700) when it is missing, so an `accept` or `reject` with nothing waiting leaves an empty
   folder under the state directory (open item for review).
 - Rejection rows from 39-03's validator carry `position`; `MSG_SKIPPED` is formatted from the row's `shown` and `reason` keys.
+- Test names the plan's truths and threat table cite that do not exist: `test_diff_summary_then_accept_hint` (its assertion, the diff lines
+  then the hint last, is in `test_reject_restores_non_utf8_bytes`) and `test_pending_record_blocks_a_second_run` (covered by
+  `test_second_pass_cannot_claim`).
 - Test pin: `skill_table.skill_roots` patched to the scratch root (plan-named). No other patch beyond the plan's `DEFAULT_PASS_SEAMS`.
