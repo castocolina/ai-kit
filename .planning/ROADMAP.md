@@ -125,7 +125,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [ ] **Phase 36: spec-config as the hub** - Every spec skill chains spec-config; reviewers and executors kept apart with opt-in escalation
 - [ ] **Phase 37: Shared runner options and session ids** - One runner for GSD cross-AI and ai-kit lanes, with per-call settings and resumable sessions
 - [x] **Phase 38: Runner hardening and run safety** - Idle watchdog, the Phase 25 cleanup, a run lock with a tree baseline, and a plan-versus-commits check before done (completed 2026-11-22)
-- [ ] **Phase 38.1: Runner error classification and retry policy (INSERTED)** - Wider error catalogue, stdout limit matching, router cooldowns and the owner's retry policy
+- [x] **Phase 38.1: Runner error classification and retry policy (INSERTED)** - Wider error catalogue, stdout limit matching, router cooldowns and the owner's retry policy (completed 2026-11-23)
 - [ ] **Phase 39: Lane capability blocks and lens skills** - Each lane is told only the tools it really has; lens skills reach reviewers
 - [ ] **Phase 39.1: Remove the grok runtime (INSERTED)** - The grok CLI runtime leaves detection, command building, the runner table, profiles, docs and tests; its models stay reachable through opencode, pi and cursor-agent *(inserted 2026-11-19, owner decision)*
 - [ ] **Phase 40: Resilient review sized by jev** - A failing lane no longer ends a review; jev sizes and classifies
@@ -945,7 +945,7 @@ Plans:
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
   6. A quota stop of a usage-limited lane (a free pool's `provider.free-limit` or a lane the caller names) writes a secret-free "blocked until" record in the runner's state directory, keyed by the lane's pool (provider plus tier) so lanes sharing a pool block together: now plus the stated `retryAfterMs` plus the 120 s margin of D-11 when stated, else now plus 24 hours, and a floor of 24 hours from the second consecutive failure after that time; a read-only query prints the record; `FreeTierError` is never retried and writes no record; a removed free model is `bad_model`, terminal, with no record; the captured free-limit event is a fixture. *(added 2026-11-16, 38.1 D-23 to D-27, free-lane pool study, PROVISIONAL, needs owner confirmation: the 24-hour floor against the stated reset, the second-failure rule, and the margin; source `.planning/research/2026-11-16-opencode-free-models.md`)*
 
-**Plans**: 14/14 plans executed in 14 waves *(planned 2026-11-22; runner plans run one after another; the live runner copy is re-rendered only by 38.1-12; 38.1-13, the judge loop, and 38.1-14, the closing gate with the final `make test`, are orchestrator actions; criterion 6 (RUN-14) is carried from unit 39's commit 0b925b7)*
+**Plans**: 14/14 plans complete in 14 waves *(planned 2026-11-22; runner plans run one after another; the live runner copy is re-rendered only by 38.1-12; 38.1-13, the judge loop, and 38.1-14, the closing gate with the final `make test`, are orchestrator actions; criterion 6 (RUN-14) is carried from unit 39's commit 0b925b7)*
 
 Plans:
 - [x] 38.1-01-PLAN.md (wave 1): class `bad_request` (exit 69), `--describe` `classes`, Python map and status drift test
@@ -1315,7 +1315,7 @@ Plans:
 | 36. spec-config as the hub | 29/29 | In Progress | - |
 | 37. Shared runner options and session ids | 26/26 | In Progress | - |
 | 38. Runner hardening and run safety | 27/27 | Complete    | 2026-11-22 |
-| 38.1. Runner error classification and retry policy | 14/14 | In Progress | - |
+| 38.1. Runner error classification and retry policy | 14/14 | Complete    | 2026-11-23 |
 | 39. Lane capability blocks and lens skills | 0/TBD | Not started | - |
 | 40. Resilient review sized by jev | 0/TBD | Not started | - |
 | 41. Superpowers adapter refactor with spec-config handoff | 0/TBD | Not started | - |
