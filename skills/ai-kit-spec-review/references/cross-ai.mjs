@@ -6547,11 +6547,11 @@ function loadSkills(o) {
   for (const [at, item] of o.skillArgs.entries()) {
     if (item.flag !== '--skill-path') continue;
     const shown = redactSecrets(item.value.replace(/[\x00-\x1f\x7f-\x9f]/g, ''));
-    if (CONTROL_CHAR_RE.test(item.value)) throw new Error('--skill-path: the path holds a control character');
+    if (PROMPT_CONTROL_RE.test(item.value)) throw new Error('--skill-path: the path holds a control character');
     let dir;
     try { dir = fs.realpathSync(path.resolve(process.cwd(), item.value)); if (!fs.statSync(dir).isDirectory()) throw new Error(); }
     catch { throw new Error(`--skill-path ${shown}: no such directory`); }
-    if (CONTROL_CHAR_RE.test(dir)) throw new Error('--skill-path: the path holds a control character');
+    if (PROMPT_CONTROL_RE.test(dir)) throw new Error('--skill-path: the path holds a control character');
     if (skills.some((s) => s.path === dir)) continue;
     const file = path.join(dir, 'SKILL.md');
     if (!fs.existsSync(file)) throw new Error(`--skill-path ${shown}: no SKILL.md in the directory`);
@@ -6675,6 +6675,8 @@ const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 // C0, DEL and C1 control characters.
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f-\x9f]/;
+// SPEC R6/R8 (D-13): the prompt-value control set, equal to ai_kit_spec.prompt_guard.is_control_char (shared fixture tests/fixtures/prompt_control_chars.json); used by the skill flags only.
+const PROMPT_CONTROL_RE = /[\p{Cc}\p{Zl}\p{Zp}\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/u;
 
 function parseArgs(argv) {
   const o = {
@@ -6751,10 +6753,10 @@ function parseArgs(argv) {
     else if (a === '--escalate-model') o.escalateModel = true;
     else if (a === '--session-id') { o.sessionId = v(); if (!SESSION_ID_RE.test(o.sessionId)) throw new Error(`${a} must match ${SESSION_ID_RE.source}`); }
     else if (a === '--host') { o.host = v(); if (!['auto', 'none'].includes(o.host)) throw new Error('--host must be auto or none'); }
-    else if (a === '--skill-name') { const n = v(); if (!SKILL_NAME_RE.test(n)) throw new Error(`${a} must match ${SKILL_NAME_RE.source}`); o.skillNames.push(n); o.skillArgs.push({ flag: a, value: n }); }
+    else if (a === '--skill-name') { const n = v(); if (PROMPT_CONTROL_RE.test(n) || !SKILL_NAME_RE.test(n)) throw new Error(`${a} must match ${SKILL_NAME_RE.source}`); o.skillNames.push(n); o.skillArgs.push({ flag: a, value: n }); }
     else if (['--skill-path', '--mcp-config', '--argv-file'].includes(a)) {
       const p = v();
-      if (p === '' || CONTROL_CHAR_RE.test(p)) throw new Error(`${a} must be a non-empty path without control characters`);
+      if (p === '' || (a === '--skill-path' ? PROMPT_CONTROL_RE : CONTROL_CHAR_RE).test(p)) throw new Error(`${a} must be a non-empty path without control characters`);
       if (a === '--skill-path') { o.skillPaths.push(p); o.skillArgs.push({ flag: a, value: p }); }
       else if (a === '--mcp-config') o.mcpConfig = p;
       else o.argvFile = p;
@@ -7385,6 +7387,7 @@ export {
   CLI_NAME_RE,
   CONFIG,
   CONTEXT_RE,
+  CONTROL_CHAR_RE,
   CURSOR_MODEL_ID,
   EXEC_PREAMBLE,
   FINDING_CODES,
@@ -7403,6 +7406,7 @@ export {
   PATTERNS,
   PI_MODEL_ID,
   PLAN_ID_RE,
+  PROMPT_CONTROL_RE,
   RESUME_MSG,
   RETRY_DEFAULTS,
   ROW_CLASSES,

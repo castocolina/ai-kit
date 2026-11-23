@@ -16,6 +16,7 @@ import {
   CLI_NAME_RE,
   CONFIG,
   CONTEXT_RE,
+  CONTROL_CHAR_RE,
   CURSOR_MODEL_ID,
   EXEC_PREAMBLE,
   FINDING_CODES,
@@ -33,6 +34,7 @@ import {
   PATTERNS,
   PI_MODEL_ID,
   PLAN_ID_RE,
+  PROMPT_CONTROL_RE,
   RESUME_MSG,
   RETRY_DEFAULTS,
   ROW_CLASSES,
@@ -163,6 +165,7 @@ import {
 } from './cross-ai.mjs';
 
 const CAPABILITIES_FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tests', 'fixtures', 'runner_capabilities.json');
+const PROMPT_CONTROL_FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tests', 'fixtures', 'prompt_control_chars.json');
 
 function codexPair(message) {
   return [
@@ -10285,6 +10288,78 @@ async function blackBoxSelfTest(listOnly = false) {
           if (cap('pi', ['--no-skills'], [{ name: 'skill', state: 'applied', form: 'path', value: 'lens-a' }]).skills.value !== 'path') return 'n';
           if (cap('claude', [], [{ name: 'skill', state: 'applied', form: 'prose', value: 'lens-a' }]).skills.value !== 'unknown') return 'o';
           if (!eq(cap('copilot', []).prompt, { channel: 'argv', max_bytes: ARGV_PROMPT_MAX - 281 })) return 'p';
+          return null;
+        },
+      },
+      {
+        name: 'skillpath-bidi-rejected',
+        kind: 'logic',
+        args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1', '--skill-path', 'skills/lens\u202ea'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage /,
+        check: async (r, c) => {
+          const message = 'cross-ai: --skill-path must be a non-empty path without control characters';
+          if (!(r.stderr || '').split('\n').includes(message) || (r.stderr || '').includes('cross-ai: capabilities ')) return 'bidi';
+          for (const ch of ['\u2028', '\u2029', '\u200b', '\u2066', '\ufeff', '\u0085']) {
+            const value = `skills/lens${ch}a`;
+            const got = await runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1', '--skill-path', value] }, c);
+            if (got.status !== 2 || !got.stderr.split('\n').includes(message) || got.stderr.includes(value)) return `char ${ch.codePointAt(0).toString(16)}`;
+          }
+          const empty = await runCaseProcess({ args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1', '--skill-path', ''] }, c);
+          if (empty.status !== 2 || !empty.stderr.split('\n').includes(message)) return 'empty';
+          const mcp = await runCaseProcess({ args: ['--print-argv', '--runtime', 'claude', '--mode', 'review', '--model', 'placeholder-model-1', '--mcp-config', 'cap\u202emcp.json'] }, c);
+          if (mcp.status !== 2 || mcp.stderr.includes('must be a non-empty path without control characters')) return 'mcp scope';
+          return null;
+        },
+      },
+      {
+        name: 'skillpath-resolved-dir-rejected',
+        kind: 'logic',
+        exit: 2,
+        status: /^AIKIT-XAI status=usage /,
+        setup: (c) => {
+          c.real = path.join(c.tmp, 'skills', 'lens-a\u200b');
+          fs.mkdirSync(c.real, { recursive: true });
+          fs.writeFileSync(path.join(c.real, 'SKILL.md'), '---\nname: lens-a\n---\n# lens a\n');
+          c.link = path.join(c.tmp, 'lens-link');
+          fs.symlinkSync(c.real, c.link);
+          c.args = ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1', '--skill-path', c.link];
+          return null;
+        },
+        check: (r, c) => {
+          const stderr = r.stderr || '';
+          if (!stderr.split('\n').includes('cross-ai: --skill-path: the path holds a control character') || stderr.includes(c.real) || stderr.includes('lens-a\u200b')) return 'resolved dir';
+          return null;
+        },
+      },
+      {
+        name: 'skillpath-name-control',
+        kind: 'logic',
+        args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1', '--skill-name', 'lens-a\u2028'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage /,
+        check: (r) => (r.stderr || '').split('\n').includes('cross-ai: --skill-name must match ^[a-z0-9][a-z0-9-]{0,63}$') ? null : 'name message',
+      },
+      {
+        name: 'skillpath-pure-control-set',
+        kind: 'logic',
+        pure: () => {
+          const fx = JSON.parse(fs.readFileSync(PROMPT_CONTROL_FIXTURE, 'utf8'));
+          const cp = (e) => parseInt(e[0], 16);
+          if (!fx.rejected.length || !fx.accepted.length) return 'fixture empty';
+          for (const e of fx.rejected) if (!PROMPT_CONTROL_RE.test('a' + String.fromCodePoint(cp(e)) + 'b')) return `rejected ${e[0]}`;
+          for (const e of fx.accepted) if (PROMPT_CONTROL_RE.test('a' + String.fromCodePoint(cp(e)) + 'b')) return `accepted ${e[0]}`;
+          const expected = new Set(fx.rejected.map(cp));
+          const actual = new Set();
+          for (let code = 0; code <= 0x10ffff; code++) {
+            if (code >= 0xd800 && code <= 0xdfff) continue;
+            if (PROMPT_CONTROL_RE.test(String.fromCodePoint(code))) actual.add(code);
+          }
+          if (actual.size !== 87) return `count ${actual.size}`;
+          for (const code of new Set([...actual, ...expected])) {
+            if (actual.has(code) !== expected.has(code)) return `set differs ${code.toString(16).toUpperCase()}`;
+          }
+          if (CONTROL_CHAR_RE.test('\u202e') || !CONTROL_CHAR_RE.test('\u0085')) return 'old set';
           return null;
         },
       },
