@@ -235,6 +235,9 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      proposal; with jev absent the command lists every unknown skill and proposes nothing; the confirm command writes one atomic
      `[skills.roles]` entry and a read of the file returns a role labeled `user-stated`; the item sent to the fake jev contains the
      name and description text and no path, key or config value (checked on the recorded request).
+   - *Amended 2026-11-23, plan fix pass (read in the code):* "read-only" means `classify-skills` writes no ai-kit config and no
+     skill file; the real jev client appends its own answer log under the state home (`jev_review.py:1937-1939`), which is jev's
+     record, not this command's write; tests use a fake jev and pin that no ai-kit config changes.
 
 3. **The runner prints each lane's capabilities from its final argv (REV-04)**: the facts a block needs are computed in the
    runner, in the same place and from the same planner that builds the argv.
@@ -267,6 +270,12 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      lens prose under copilot's argv cap. An unknown runtime cannot reach the line (the runner exits 2 before planning); the Python
      reader (R4) gives every field `unknown` for a non-zero exit, a missing line or an unparseable one, which covers the unknown
      runtime and an old rendered copy.
+   - *Amended 2026-11-23, plan fix pass (read in the code and the recorded help):* each field's `label` on the line is an object
+     `{state, source}`, the shape of the row forms' labels. pi's `--tools` takes names or patterns (`tests/fixtures/cli_help/pi/help.txt:37`;
+     its example `'mcp__radius__*'`, `:126`, names MCP tools only), so of the R3 boundary edge's "a wildcard is `yes`" only a bare `*`
+     gives `yes`; any other pattern gives `unknown`, never a guess. copilot review's `--disable-builtin-mcps` disables the built-in
+     servers only (`tests/fixtures/cli_help/copilot/help.txt:121-123`), so its `mcp` is `unknown`, not `none` (CONTEXT D-02's
+     "no MCP" for copilot review reads as unknown).
 
 4. **Each lane's prompt carries a capability block built from those facts (REV-04)**.
    - Current: `build_tooling_guidance` emits `SHARED_TOOLING_PATH`, `AGENTS_TOOLING_PATH`, a `TOOL_AVAILABILITY` JSON line from
@@ -327,6 +336,13 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      bytes whatever its form (a path form loads the file into the host's context too); prose bytes are the runner's block size,
      which a sync test pins equal to the runner's `skill-block bytes=`. Where the capabilities line says the prompt rides argv
      (`prompt.channel` `argv`), the loop also keeps the whole prompt under `prompt.max_bytes`, with the same `over_window` note.
+   - *Amended 2026-11-23, plan fix pass (read in the code):* the scan lists only skills on disk, and D-07 seeds `simplify` (a
+     built-in with no file) as `edit_lens`, so no scan row can carry it. Its seed row records `built_in: claude`, and lens selection
+     takes the role and the lane's native host: a built-in seed row of that role is delivered by name only to a native lane of the
+     recorded host (label unverified), else noted `built_in_no_file`; with `simplify` seeded `edit_lens`, that rule applies in the
+     R9 pass, and the acceptance case runs with the `edit_lens` role. The concurrency backstop "lens files are read once per
+     dispatch" holds for the Python side; the runner reads each `--skill-path` file again at the preview and at the launch
+     (`loadSkills`, `cross-ai.mjs:6495-6503`), a stated check-then-use limit like R8's.
 
 6. **A runner setting passes skill paths where a host has a form (REV-03, REV-04)**.
    - Current: the runner has no way to give a lane a skill path; pi review argv carries `--no-skills`.
@@ -380,6 +396,11 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      The refusal exit is 65 (free in `STATUS_TABLE`; 69 now also carries 38.1's `bad_request`). The disjointness test covers
      `SETTING_REASONS`, `ROW_CLASSES` and the `--describe` `classes` keys, `FINDING_CODES` and the lens notes. The runner's prose
      blocks are part of what is sent: the estimate counts them as R5's amendment says.
+   - *Amended 2026-11-23, plan fix pass (read in the code):* a context form can also ride in the model id: the runner prints a
+     `setting context=` line only when a context is requested (`cross-ai.mjs:2027-2029` returns first), and the dispatch never
+     requests one (`runner_dispatch.py:104-105`, `context=None`); so a lane model id that carries the row's bracket context form
+     counts as an applied context form for this check (39-06 `window_for`), which makes that lane's window `unknown` unless the user
+     stated one. That is conservative: it never refuses a lane.
 
 8. **A value embedded in a prompt that holds a control character or points outside the repository or skill roots is rejected
    (REV-04)**.
@@ -399,6 +420,18 @@ on unit 38.1's review fold; every line below was read in the code or run under a
      `--mcp-config` path the dispatch passes to the runner (the run-scoped MCP file lives under the run directory, which counts as
      inside the allowed roots only for that one value). The runner's own `CONTROL_CHAR_RE` is C0 and C1 only; R6's amendment widens
      the runner's skill checks to this set.
+   - *Amended 2026-11-23, plan fix pass (read in the code):* the agents-tooling guidance path resolves to the machine-level
+     `~/.agents/AGENTS-TOOLING.md` (`detection.resolve_agents_tooling_path`, `detection.py:1359-1365`), outside every repository and
+     skill root, so refusing a lane for it would refuse every lane on a normal machine. The two guidance paths
+     (`SHARED_TOOLING_PATH`, `AGENTS_TOOLING_PATH`) are composer-chosen context, not caller input: one that fails this validator is
+     not embedded, and its block line reads `<NAME>: omitted (<reason>)` with the reason from this list (R4's edge row "an absent
+     agents-tooling file omits its line"). Every caller-supplied value (document, plan, spec and file-list paths, a skill path, the
+     MCP file) that fails is refused for the lane under R7 (exit 65). Nothing is rewritten in either case. A labeled
+     multi-worktree review runs in the first document's worktree (spec-review SKILL.md:321-322), so a document in another worktree
+     lies outside the dispatch's repository root: as the edge row for a sibling checkout says, it is rejected
+     (`path_outside_roots`), never passed around the validator; the skill text tells the caller to review such a set one worktree
+     at a time. The checklist and framework-profile paths the review skill writes into its own prompt text lie in the installed
+     skill's directory, a skill root, and are passed in the file list like every other embedded path.
 
 9. **File-editing lenses run as an optional pass after approval (REV-03)**.
    - Current: no lens runs after a review; the review loop ends at approval.
@@ -426,6 +459,14 @@ on unit 38.1's review fold; every line below was read in the code or run under a
     - Acceptance: on a fixture home the derived `ponytail_visibility` equals the old output byte for byte; the inventory carries
       `skill_roles` for each host; a copilot fixture appears in `skill_roles` while `ponytail_visibility` keeps its five hosts;
       with the review package missing the inventory still builds and says so.
+    - *Amended 2026-11-23, plan fix pass (read in the code):* the old `ponytail_visibility` scans the skill roots GSD reports
+      (`skill_scan.py:293-306`; gsd-core maps codex to `~/.agents/skills`, `runtime-homes.cjs:509-534`), while `skill_roles` reads
+      ai-kit's own host roots, and the plugin names `ponytail-gain` and `ponytail-help` have no seed row; so byte-equal output is
+      reached by deriving the visibility from the shared module's root scan over GSD's roots with the name rule `ponytail` or
+      `ponytail-*` (39-09), not from the `skill_roles` field. With the whole review package missing, the inventory already stops at
+      `host.resolve_gsd_core` (`host.py:126-128`, `SIBLING_MISSING`) before any skill field is built, an existing behaviour this
+      phase does not change; the acceptance is met for the case this phase adds: the review package present without its
+      `skill_table` module leaves `skill_roles` absent with a warning and the inventory builds.
 
 11. **Review and execute share one builder and the spec-config flow shows it (REV-04, REV-05)**.
     - Current: spec-review and the execute adapter each call the guidance composer with their own arguments; the owner picking a
@@ -522,7 +563,7 @@ on unit 38.1's review fold; every line below was read in the code or run under a
 
 ## Edge Coverage
 
-**Coverage:** 64/64 applicable edges resolved · 0 unresolved (64 engine rows from `edge_floor.py floor`) *(amended 2026-11-23: R5 gained 2 engine rows marked `(added 2026-11-23 ...)`, 66/66)*
+**Coverage:** 64/64 applicable edges resolved · 0 unresolved (64 engine rows from `edge_floor.py floor`) *(amended 2026-11-23: R5 gained 2 engine rows and, in the plan fix pass, R7 gained 1, each marked `(added 2026-11-23 ...)`, 67/67)*
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -568,6 +609,7 @@ on unit 38.1's review fold; every line below was read in the code or run under a
 | encoding | R7 | ✅ covered | The estimate counts UTF-8 bytes divided by the constant, rounded up; multi-byte text counts its bytes, which under-counts dense scripts and is stated as the limit |
 | ordering | R7 | ✅ covered | The check runs after the block and lens text are composed and before the spawn; it is the last step so it sees the real prompt |
 | precision | R7 | ✅ covered | The estimate is an integer from `ceil(bytes / constant)`; the refusal detail prints estimate, window, label and the constant, so a reader sees the rounding rule |
+| concurrency | R7 | ✅ covered | Two lanes of one review get independent window checks, each from its own preview and model id; one lane's refusal never changes or cancels another (the two-lane acceptance test) (added 2026-11-23: R7's plan fix-pass note changed its text and its edge floor gained this row) |
 | adjacency | R8 | ✅ covered | A path equal to the repository root passes, a path that only shares a name prefix with a root (`repo-other`) is outside (compared by path components, not by string prefix) |
 | empty | R8 | ✅ covered | An empty or whitespace-only value, a non-string and a missing file list are rejected with a reason, never treated as "no files" silently |
 | encoding | R8 | ✅ covered | Control characters are matched by Unicode category and the listed code points after no normalization; a non-NFC name is compared as given (the filesystem decides equality) |

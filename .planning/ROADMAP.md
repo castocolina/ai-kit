@@ -984,7 +984,7 @@ Plans:
 - [ ] 39-03-PLAN.md (wave 2): embedded-value validator, refusal reasons, shared control-character fixture
 - [ ] 39-04-PLAN.md (wave 2): per-host skill and MCP-name scan, `skill-table` command
 - [ ] 39-05-PLAN.md (wave 3): runner skill flags checked against the validator's control-character set
-- [ ] 39-06-PLAN.md (wave 3): token estimate, window accessor, refusal record and exit 65
+- [ ] 39-06-PLAN.md (wave 4): token estimate, window accessor, refusal record and exit 65
 - [ ] 39-07-PLAN.md (wave 3): skill and MCP flags through `RunnerSpec`, lane facts parsed from `--print-argv`
 - [ ] 39-08-PLAN.md (wave 3): `classify-skills` (jev advisory) and `confirm-skill-role`
 - [ ] 39-09-PLAN.md (wave 3): curated-config `skill_roles` and the derived lens visibility
