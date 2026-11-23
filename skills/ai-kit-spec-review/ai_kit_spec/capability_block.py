@@ -257,15 +257,15 @@ def _access_section(lane: BlockInput) -> list[str]:
     return lines
 
 
-def child_path(path_value: str, cwd: str | None) -> str:
-    """Resolve PATH entries against the child's cwd, never the parent's."""
-    entries = []
-    for entry in path_value.split(os.pathsep):
-        if os.path.isabs(entry):
-            entries.append(entry)
-        elif cwd is not None:
-            entries.append(os.path.join(cwd, entry))
-    return os.pathsep.join(entries)
+def child_path(path_value: str, _cwd: str | None) -> str:
+    """Keep only the absolute entries of the child's PATH, never the parent's.
+
+    An empty or relative entry would find tools (and the MCP command) in the working
+    directory, so it is dropped: a missing or empty PATH finds nothing. `_cwd` stays in the
+    signature for the callers that pass the lane's cwd.
+    """
+    return os.pathsep.join(entry for entry in path_value.split(os.pathsep)
+                           if os.path.isabs(entry))
 
 
 def _tool_map(lane: BlockInput) -> dict:

@@ -25,9 +25,11 @@ from ai_kit_spec.capability_block import (
     BlockInput,
     LaneFacts,
     build_block,
+    child_path,
     summary_line,
     unknown_facts,
 )
+from ai_kit_spec.lens_delivery import mcp_pick
 from ai_kit_spec.tooling_guidance import _code_index_line
 
 
@@ -179,7 +181,8 @@ class TestBlockEdges(unittest.TestCase):
             self.assertEqual(self.section(no_path, "TOOLS"), ["TOOLS", NO_TOOL_LINE])
             relative = lane._replace(child_env={"PATH": "bin"})
             self.assertEqual(self.section(relative, "TOOLS"), ["TOOLS", NO_TOOL_LINE])
-            self.assertIn("PATH: fd, rg.", build_block(relative._replace(cwd=str(self.root))))
+            self.assertEqual(self.section(relative._replace(cwd=str(self.root)), "TOOLS"),
+                             ["TOOLS", NO_TOOL_LINE])
         path = str(self.root / "agents")
         self.assertIn("AGENTS_TOOLING_PATH = " + path, build_block(lane._replace(agents_path=path)))
         omitted = lane._replace(tooling_omitted=(("AGENTS_TOOLING_PATH", "path_outside_roots"),))
@@ -187,6 +190,27 @@ class TestBlockEdges(unittest.TestCase):
         self.assertNotIn("AGENTS_TOOLING_PATH = ", build_block(omitted))
         self.assertEqual(self.section(omitted._replace(facts=PI_FACTS), "TOOLS"),
                          ["TOOLS", NO_SHELL_LINE])
+
+    def test_empty_and_relative_path_entries_find_nothing_in_cwd(self):
+        cwd = self.root / "work"
+        cwd.mkdir()
+        sub = make_bin(cwd, ("rg", "codebase-memory-mcp"))
+        for name in ("rg", "codebase-memory-mcp"):
+            (cwd / name).write_text("#!/bin/sh\nexit 0\n")
+            (cwd / name).chmod(0o755)
+        lane = self.lane._replace(facts=PI_FACTS._replace(shell=fact("yes")), cwd=str(cwd))
+        for env in ({"HOME": str(self.root)}, {"PATH": ""}, {"PATH": os.pathsep},
+                    {"PATH": str(self.bin) + os.pathsep}, {"PATH": os.pathsep + str(self.bin)},
+                    {"PATH": "bin"}, {"PATH": "."}):
+            with self.subTest(env=env):
+                current = lane._replace(child_env=env)
+                self.assertEqual(self.section(current, "TOOLS"), ["TOOLS", NO_TOOL_LINE])
+                self.assertEqual(self.section(current, "CODE INDEX"),
+                                 ["CODE INDEX", NO_INDEX_LINE])
+                path = child_path(env.get("PATH") or "", str(cwd))
+                self.assertEqual(mcp_pick({"skills": [], "mcp": "unknown"}, path), [])
+        self.assertEqual(child_path(str(self.bin) + os.pathsep + "bin" + os.pathsep + str(sub),
+                                    str(cwd)), str(self.bin) + os.pathsep + str(sub))
 
     def test_pi_review_has_no_shell_tool(self):
         self.add_tool("rg")
