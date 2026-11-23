@@ -1,3 +1,5 @@
+import contextlib
+import fcntl
 import os
 import shlex
 import sys
@@ -1054,15 +1056,33 @@ def cfg_render_lanes(config: dict, existing_text: str = "") -> str:
     return text
 
 
+@contextlib.contextmanager
+def cfg_folder_lock(path: str):
+    """Exclusive folder lock for a config read-modify-write, shared by both writers.
+
+    No lock file is created.
+    """
+    folder = os.path.dirname(os.path.abspath(path))
+    os.makedirs(folder, exist_ok=True)
+    fd = os.open(folder, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 def cfg_write_toml(path: str, config: dict) -> None:
     """Write the roster into the config.toml at path through the splicer (D-08). A broken target is
     a ConfigError before anything is written; the publish is atomic."""
-    existing = ""
-    if os.path.exists(path):
-        raw = cfg_read_bytes(path)
-        cfg_parse_toml_bytes(raw, path)
-        existing = raw.decode("utf-8")
-    toml_splice.publish(path, cfg_render_lanes(config, existing))
+    with cfg_folder_lock(path):
+        existing = ""
+        if os.path.exists(path):
+            raw = cfg_read_bytes(path)
+            cfg_parse_toml_bytes(raw, path)
+            existing = raw.decode("utf-8")
+        toml_splice.publish(path, cfg_render_lanes(config, existing))
 
 
 def resolve_timeout_tiers(reviewer_entry: dict, policy: dict) -> list[int]:

@@ -7,9 +7,12 @@ import io
 import json
 import os
 import shutil
+import stat
+import subprocess
 import sys
 import tempfile
 import threading
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -17,7 +20,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "ai-kit-spec-review"))
 sys.path.insert(0, str(REPO))
-from ai_kit_spec import cli, config_io, skill_table
+from ai_kit_spec import cli, config_io, skill_classify, skill_table
 
 from tests.test_arch_hardcoded_models import scan_text
 
@@ -530,3 +533,331 @@ class TestScanMcp(unittest.TestCase):
         (claude / "lens-b").symlink_to(target, target_is_directory=True)
         self.assertEqual(skill_table.skill_roots(self.scan()),
                          sorted({os.path.realpath(agents), os.path.realpath(claude)}))
+
+
+def _jev_root(tmp):
+    root = Path(tmp) / "jevroot"
+    _write(str(root / "jev-fast-decision/scripts/jev_review.py"), "# fake client, never run\n")
+    return str(root)
+
+
+def _fake_jev(answers, calls):
+    def run(args, input=None, **kwargs):
+        calls.append((input, kwargs.get("cwd")))
+        assert input is not None
+        items = json.loads(input)["items"]
+        rows = {}
+        for item in items:
+            name = item["context"][len("Skill name: "):].split(".", 1)[0]
+            if name in answers:
+                rows[item["id"]] = {"decided_by": "fake", "fake": answers[name]}
+        return subprocess.CompletedProcess(args, 0, stdout=json.dumps({"items": rows}), stderr="")
+    return run
+
+
+class TestClassifyTracer(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.home = Path(self.temp.name) / "home"
+        self.project = Path(self.temp.name) / "project"
+        self.project.mkdir()
+        self.root = self.home / ".agents/skills"
+        self.skill("lens-a", "Reviews plans for flaws")
+        self.skill("other-a", "Misc helper")
+        self.calls = []
+        self.fake = _fake_jev({"lens-a": {"choice": "review_lens", "top": 0.9},
+                               "other-a": {"choice": "edit_lens", "top": 0.4,
+                                           "needs_fallback": True}}, self.calls)
+
+    def skill(self, name, description):
+        _write(str(self.root / name / "SKILL.md"), f"---\ndescription: {description}\n---\n")
+
+    def classify(self):
+        return skill_classify.classify({"HOME": str(self.home)}, str(self.project), run=self.fake,
+                                       own_root=_jev_root(self.temp.name))
+
+    def test_confident_and_low_answers(self):
+        self.assertEqual(self.classify(), {
+            "unsorted": [("lens-a", ["agents"]), ("other-a", ["agents"])],
+            "not_offered": [], "jev": "asked", "proposals": [("lens-a", "review_lens", 0.9)],
+        })
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(len(json.loads(self.calls[0][0])["items"]), 2)
+        self.assertEqual(self.calls[0][1], str(self.project))
+
+    def test_cli_lines(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = cli.main(["classify-skills", "--cwd", str(self.project)],
+                            env_fn=lambda: {"HOME": str(self.home)}, run_fn=self.fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(output.getvalue().splitlines(), [
+            "unsorted lens-a hosts=agents", "unsorted other-a hosts=agents",
+            "proposal lens-a role=review_lens confidence=0.90 advisory",
+        ])
+
+    def test_request_holds_name_and_description_only(self):
+        _write(str(self.home / ".claude.json"), json.dumps({"mcpServers": {
+            "srv-b": {"env": {"K": "fixture-secret-a"}},
+        }}))
+        self.classify()
+        request = self.calls[0][0]
+        items = json.loads(request)["items"]
+        for item in items:
+            self.assertEqual(set(item), {"id", "type", "instructions", "context", "criteria"})
+            self.assertEqual(set(item["criteria"]),
+                             set(skill_classify.PROPOSABLE) | {"none_of_these"})
+        self.assertEqual(items[0]["context"],
+                         "Skill name: lens-a. Description: Reviews plans for flaws")
+        for value in (str(self.home), str(self.project), "SKILL.md", "srv-b", "fixture-secret-a"):
+            self.assertNotIn(value, request)
+
+    def test_secret_in_description_redacted_and_unaddressable_listed(self):
+        token = "gh" + "p_" + "a" * 24
+        self.skill("lens-a", "uses key " + token)
+        self.skill("lens.x", "ignored")
+        self.skill(token, "ignored")
+        outside = Path(self.temp.name) / "outside/SKILL.md"
+        _write(str(outside), "---\ndescription: outside text\n---\n")
+        (self.root / "lens-b").mkdir()
+        (self.root / "lens-b/SKILL.md").symlink_to(outside)
+        result = self.classify()
+        request = self.calls[0][0]
+        contexts = [item["context"] for item in json.loads(request)["items"]]
+        self.assertIn("Skill name: lens-a. Description: uses key [redacted]", contexts)
+        self.assertIn("Skill name: lens-b.", contexts)
+        for value in (token, "lens.x", "outside text"):
+            self.assertNotIn(value, request)
+        self.assertEqual(result["not_offered"], [
+            ("[redacted]", ["agents"], "name_secret_shaped"),
+            ("lens.x", ["agents"], "name_not_addressable"),
+        ])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = cli.main(["classify-skills", "--cwd", str(self.project)],
+                            env_fn=lambda: {"HOME": str(self.home)}, run_fn=self.fake)
+        self.assertEqual(code, 0)
+        self.assertIn("not offered 'lens.x' hosts=agents reason=name_not_addressable",
+                      output.getvalue().splitlines())
+
+    def test_failed_client_stdout_is_not_a_proposal(self):
+        def fail(args, **kwargs):
+            proc = self.fake(args, **kwargs)
+            return subprocess.CompletedProcess(args, 1, stdout=proc.stdout, stderr="")
+        result = skill_classify.classify({"HOME": str(self.home)}, str(self.project), run=fail,
+                                         own_root=_jev_root(self.temp.name))
+        self.assertEqual(result["proposals"], [])
+
+
+class TestConfirmRole(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.home = Path(self.temp.name) / "home"
+        self.project = Path(self.temp.name) / "project"
+        self.project.mkdir()
+        self.path = self.project / ".aikit/config.toml"
+
+    def confirm(self, name="lens-a", role="review_lens", extra=()):
+        output, error = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
+            code = cli.main(["confirm-skill-role", "--name", name, "--role", role,
+                             "--cwd", str(self.project), *extra],
+                            env_fn=lambda: {"HOME": str(self.home)})
+        return code, output.getvalue(), error.getvalue()
+
+    def test_writes_one_entry_read_back_user_stated(self):
+        code, output, _ = self.confirm()
+        self.assertEqual(code, 0)
+        self.assertEqual(output, f"confirmed lens-a role=review_lens user-stated in {self.path}\n")
+        self.assertEqual(tomllib.loads(self.path.read_text()),
+                         {"skills": {"roles": {"lens-a": "review_lens"}}})
+        self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
+        roles = skill_table.user_roles(str(self.project), {"HOME": str(self.home)})
+        resolved = skill_table.resolve_role("lens-a", "skill", skill_table.load_seed(), roles)
+        self.assertEqual(resolved, ("review_lens", "user-stated"))
+
+    def test_two_confirms_both_survive(self):
+        original = "[lanes]\n# keep me\n"
+        _write(str(self.path), original)
+        self.assertEqual(self.confirm()[0], 0)
+        self.assertEqual(self.confirm("edit-a", "edit_lens")[0], 0)
+        text = self.path.read_text()
+        self.assertTrue(text.startswith(original))
+        self.assertEqual(tomllib.loads(text)["skills"]["roles"],
+                         {"lens-a": "review_lens", "edit-a": "edit_lens"})
+
+    def test_global_writes_user_layer(self):
+        self.assertEqual(self.confirm(extra=("--global",))[0], 0)
+        path = self.home / ".config/ai-kit/config.toml"
+        roles = tomllib.loads(path.read_text())["skills"]["roles"]
+        self.assertEqual(roles["lens-a"], "review_lens")
+        self.assertFalse(self.path.exists())
+
+    def test_invalid_name_and_role_refused(self):
+        code, _, error = self.confirm("lens a")
+        self.assertEqual(code, 2)
+        self.assertIn("confirm-skill-role: invalid skill name 'lens a'", error)
+        with self.assertRaises(SystemExit) as raised:
+            self.confirm(role="unsorted")
+        self.assertEqual(raised.exception.code, 2)
+        self.assertFalse(self.path.exists())
+
+    def test_linked_project_file_refused(self):
+        target = self.home / ".config/ai-kit/config.toml"
+        _write(str(target), "# user\n")
+        self.path.parent.mkdir()
+        self.path.symlink_to(target)
+        self.assertEqual(self.confirm()[0], 2)
+        self.assertEqual(target.read_text(), "# user\n")
+
+    def test_linked_aikit_folder_refused_and_mcp_name_accepted(self):
+        elsewhere = Path(self.temp.name) / "elsewhere"
+        elsewhere.mkdir()
+        self.path.parent.symlink_to(elsewhere, target_is_directory=True)
+        self.assertEqual(self.confirm()[0], 2)
+        self.assertFalse((elsewhere / "config.toml").exists())
+        self.path.parent.unlink()
+        self.assertEqual(self.confirm("srv.example", "code_index")[0], 0)
+
+    def test_overlapping_confirms_both_survive(self):
+        errors = []
+        for index in range(10):
+            barrier = threading.Barrier(2)
+            def worker(name, role, gate=barrier):
+                try:
+                    gate.wait()
+                    skill_classify.confirm_role(str(self.path), name, role)
+                except Exception as exc:
+                    errors.append(exc)
+            threads = [threading.Thread(target=worker, args=(f"lens-{index}-{suffix}", role))
+                       for suffix, role in (("a", "review_lens"), ("b", "edit_lens"))]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(len(tomllib.loads(self.path.read_text())["skills"]["roles"]), 20)
+
+    def test_broken_config_left_untouched(self):
+        _write(str(self.path), "[skills")
+        self.assertEqual(self.confirm()[0], 2)
+        self.assertEqual(self.path.read_bytes(), b"[skills")
+
+
+class TestClassifyEdges(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.home = Path(self.temp.name) / "home"
+        self.project = Path(self.temp.name) / "project"
+        self.project.mkdir()
+        self.root = self.home / ".agents/skills"
+        self.env = {"HOME": str(self.home)}
+        self.calls = []
+        self.jev = _jev_root(self.temp.name)
+        self.fake = _fake_jev({"lens-a": {"choice": "review_lens", "top": 0.95}}, self.calls)
+
+    def skill(self, name, description="fixture"):
+        _write(str(self.root / name / "SKILL.md"), f"---\ndescription: {description}\n---\n")
+
+    def classify(self, run=None, own_root=None):
+        return skill_classify.classify(self.env, str(self.project), run=run or self.fake,
+                                       own_root=own_root or self.jev)
+
+    def test_jev_absent_lists_all_proposes_nothing(self):
+        self.skill("lens-a")
+        self.skill("other-a")
+        nojev = Path(self.temp.name) / "nojev"
+        nojev.mkdir()
+        def fail(*args, **kwargs):
+            self.fail("jev was called")
+        result = self.classify(run=fail, own_root=str(nojev))
+        self.assertEqual(result["jev"], "absent")
+        self.assertEqual(result["unsorted"], [("lens-a", ["agents"]), ("other-a", ["agents"])])
+        self.assertEqual(result["proposals"], [])
+
+    def test_nothing_unsorted_no_jev_call(self):
+        self.skill("reducing-entropy")
+        def fail(*args, **kwargs):
+            self.fail("jev was called")
+        result = self.classify(run=fail)
+        self.assertEqual(result["unsorted"], [])
+        self.assertEqual(result["jev"], "not needed")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = cli.main(["classify-skills", "--cwd", str(self.project)],
+                            env_fn=lambda: self.env, run_fn=fail)
+        self.assertEqual(code, 0)
+        self.assertEqual(output.getvalue(), "no unsorted skills\n")
+
+    def test_seed_and_user_stated_not_offered(self):
+        for name in ("reducing-entropy", "lens-a", "other-a"):
+            self.skill(name)
+        _write(str(self.project / ".aikit/config.toml"),
+               '[skills.roles]\nlens-a = "review_lens"\n')
+        result = self.classify()
+        self.assertEqual(result["unsorted"], [("other-a", ["agents"])])
+        self.assertEqual(len(json.loads(self.calls[0][0])["items"]), 1)
+
+    def test_confirmed_skill_not_asked_again(self):
+        self.skill("other-a")
+        self.assertEqual(self.classify()["unsorted"], [("other-a", ["agents"])])
+        skill_classify.confirm_role(str(self.project / ".aikit/config.toml"),
+                                    "other-a", "edit_lens")
+        self.assertEqual(self.classify()["unsorted"], [])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_description_cleaned_and_cut(self):
+        self.skill("lens-a", "a\x07b" + "c" * 400)
+        self.classify()
+        items = json.loads(self.calls[-1][0])["items"]
+        self.assertEqual(items[0]["context"], "Skill name: lens-a. Description: ab" + "c" * 297)
+        self.skill("lens-a", "")
+        self.classify()
+        items = json.loads(self.calls[-1][0])["items"]
+        self.assertEqual(items[0]["context"], "Skill name: lens-a.")
+
+    def test_none_forced_and_failed_answers_propose_nothing(self):
+        for name in ("lens-a", "lens-b", "other-a"):
+            self.skill(name)
+        fake = _fake_jev({"lens-a": {"choice": "none_of_these", "top": 0.95},
+                          "lens-b": {"choice": "edit_lens", "top": 0.9, "forced": True}},
+                         self.calls)
+        self.assertEqual(self.classify(run=fake)["proposals"], [])
+        def timeout(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd="x", timeout=1)
+        self.assertEqual(self.classify(run=timeout)["proposals"], [])
+
+    def test_classify_writes_nothing(self):
+        self.skill("lens-a")
+        project = self.project / ".aikit/config.toml"
+        user = self.home / ".config/ai-kit/config.toml"
+        _write(str(project), "[lanes]\n# project\n")
+        _write(str(user), "[lanes]\n# user\n")
+        before = [path.read_bytes() for path in (project, user)]
+        self.assertEqual(self.classify()["proposals"], [("lens-a", "review_lens", 0.95)])
+        self.assertEqual([path.read_bytes() for path in (project, user)], before)
+        for path in (project, user):
+            self.assertNotIn("roles", tomllib.loads(path.read_text()).get("skills", {}))
+
+    def test_failed_client_proposes_nothing(self):
+        self.skill("lens-a")
+        def fail(args, **kwargs):
+            proc = self.fake(args, **kwargs)
+            return subprocess.CompletedProcess(args, 1, stdout=proc.stdout, stderr="")
+        self.assertEqual(self.classify(run=fail)["proposals"], [])
+
+    def test_broken_roles_config_stops_sorter(self):
+        self.skill("lens-a")
+        _write(str(self.project / ".aikit/config.toml"), "[skills.roles")
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = cli.main(["classify-skills", "--cwd", str(self.project)],
+                            env_fn=lambda: self.env, run_fn=self.fake)
+        self.assertEqual(code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_role_hints_cover_proposable(self):
+        self.assertEqual(set(skill_classify.ROLE_HINTS), set(skill_classify.PROPOSABLE))
+        self.assertNotIn("unsorted", skill_classify.PROPOSABLE)

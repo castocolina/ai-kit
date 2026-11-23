@@ -137,7 +137,7 @@ def _column_answer(item, row) -> tuple:
     return None, None, "no answer"
 
 
-def ask_items(entry: str, items: list, env, run=subprocess.run) -> dict:
+def ask_items(entry: str, items: list, env, run=subprocess.run, strict=False) -> dict:
     """Ask jev once per bounded batch; malformed, old and failed answers stay advisory."""
     answers = {}
     for group in _batches(items):
@@ -157,6 +157,9 @@ def ask_items(entry: str, items: list, env, run=subprocess.run) -> dict:
             continue
         if proc.returncode == 2 and "invalid choice" in (proc.stderr or ""):
             answers.update({item["id"]: (None, None, "old") for item in group})
+            continue
+        if strict and proc.returncode != 0:
+            answers.update({item["id"]: (None, None, "failed") for item in group})
             continue
         try:
             response = json.loads(proc.stdout)

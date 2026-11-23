@@ -14,7 +14,7 @@ from unittest import mock
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import cli, config_io, lane_settings
+from ai_kit_spec import cli, config_io, lane_settings, skill_classify
 
 
 def _lane(key, model, **extra):
@@ -40,6 +40,28 @@ def _render(config, existing=""):
 def _changed(before, after):
     return [line for line in difflib.ndiff(before.splitlines(), after.splitlines())
             if line.startswith(("- ", "+ "))]
+
+
+class TestConfigFolderLock(unittest.TestCase):
+    def test_confirm_and_render_toml_share_the_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "project", ".aikit", "config.toml")
+            with mock.patch.object(config_io, "cfg_folder_lock",
+                                   wraps=config_io.cfg_folder_lock) as lock:
+                skill_classify.confirm_role(path, "lens-a", "review_lens")
+                config_io.cfg_write_toml(path, {"lanes": LANES})
+                with open(path, "rb") as stream:
+                    parsed = tomllib.load(stream)
+                self.assertEqual(parsed["skills"]["roles"], {"lens-a": "review_lens"})
+                self.assertTrue(parsed["lanes"]["review"])
+                self.assertEqual(lock.call_count, 2)
+                config_io.cfg_write_toml(path, {"lanes": LANES})
+                skill_classify.confirm_role(path, "edit-a", "edit_lens")
+                with open(path, "rb") as stream:
+                    parsed = tomllib.load(stream)
+                self.assertEqual(parsed["skills"]["roles"],
+                                 {"lens-a": "review_lens", "edit-a": "edit_lens"})
+                self.assertTrue(parsed["lanes"]["review"])
 
 
 class TestRoleOrderWrite(unittest.TestCase):
