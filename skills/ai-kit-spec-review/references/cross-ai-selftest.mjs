@@ -94,6 +94,7 @@ import {
   killGroup,
   ladderNext,
   ladderStop,
+  laneCapabilities,
   launcherVerified,
   liveCheck,
   liveMatch,
@@ -160,6 +161,8 @@ import {
   which,
   writeCycleState,
 } from './cross-ai.mjs';
+
+const CAPABILITIES_FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tests', 'fixtures', 'runner_capabilities.json');
 
 function codexPair(message) {
   return [
@@ -10185,6 +10188,104 @@ async function blackBoxSelfTest(listOnly = false) {
           confirmReport(plan.report, ['-p', '--add-dir', '/x/proj'], composePrompt(plan.promptPrefix, null, 'p', ''));
           try { confirmReport(plan.report, ['-p', '--add-dir', '/x/proj'], 'p'); } catch { return null; }
           return 'missing prompt proof accepted';
+        },
+      },
+      {
+        name: 'cap-pi-review-line',
+        kind: 'logic',
+        args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const prefix = 'cross-ai: capabilities ';
+          const lines = (r.stderr || '').split('\n').filter((line) => line.startsWith(prefix));
+          if (lines.length !== 1) return `lines ${lines.length}`;
+          const caps = JSON.parse(lines[0].slice(prefix.length));
+          if (caps.write.value !== 'none' || caps.shell.value !== 'no' || caps.skills.value !== 'none' || caps.mcp.value !== 'none' || JSON.stringify(caps.prompt) !== JSON.stringify({ channel: 'stdin', max_bytes: null })) return `values ${JSON.stringify(caps)}`;
+          const stdout = (r.stdout || '').split('\n').filter((line) => line.length);
+          return stdout.length === 1 && stdout[0].split('\t').length === 3 ? null : 'stdout';
+        },
+      },
+      {
+        name: 'cap-print-argv-table',
+        kind: 'logic',
+        args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        setup: (c) => {
+          c.skillDir = makeSkill(c, 1);
+          c.mcpFile = path.join(c.tmp, 'cap-mcp.json');
+          fs.writeFileSync(c.mcpFile, JSON.stringify({ mcpServers: { 'placeholder-server-a': { command: 'placeholder-cmd' } } }), { mode: 0o600 });
+          return null;
+        },
+        check: async (_r, c) => {
+          const fixture = JSON.parse(fs.readFileSync(CAPABILITIES_FIXTURE, 'utf8'));
+          for (const lane of fixture.lanes) {
+            const extra = lane.extra.map((v) => v.replaceAll('<SKILL>', c.skillDir).replaceAll('<MCP>', c.mcpFile));
+            const desc = `${lane.runtime} ${lane.mode} ${extra.join(' ')}`;
+            const result = await runCaseProcess({ args: ['--print-argv', '--runtime', lane.runtime, '--mode', lane.mode, '--model', lane.model, ...extra] }, c);
+            if (result.status !== 0) return `${desc} exit ${result.status}`;
+            const prefix = 'cross-ai: capabilities ';
+            const lines = (result.stderr || '').split('\n').filter((line) => line.startsWith(prefix));
+            if (lines.length !== 1) return `${desc} lines ${lines.length}`;
+            const caps = JSON.parse(lines[0].slice(prefix.length));
+            if (JSON.stringify({ write: caps.write.value, shell: caps.shell.value, skills: caps.skills.value, mcp: caps.mcp.value, prompt: caps.prompt }) !== JSON.stringify(lane.capabilities)) return `${desc} got ${JSON.stringify(caps)}`;
+            for (const field of ['write', 'shell', 'skills', 'mcp']) {
+              const entry = caps[field], label = entry.label;
+              if (Object.keys(entry).sort().join(',') !== 'label,value' || !label || typeof label !== 'object' || Object.keys(label).sort().join(',') !== 'source,state' || !['verified', 'unverified', 'unknown'].includes(label.state) || typeof label.source !== 'string' || !label.source) return `${desc} label ${field}`;
+            }
+          }
+          return null;
+        },
+      },
+      {
+        name: 'cap-planted-tools-flip',
+        kind: 'logic',
+        args: ['--print-argv', '--runtime', 'pi', '--mode', 'review', '--model', 'fake/placeholder-model-1'],
+        config: { extraArgs: { pi: ['--tools', 'read,grep,find,ls,bash'] } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const prefix = 'cross-ai: capabilities ';
+          const line = (r.stderr || '').split('\n').find((v) => v.startsWith(prefix));
+          const caps = line ? JSON.parse(line.slice(prefix.length)) : null;
+          return caps && caps.shell.value === 'unknown' && caps.write.value === 'unknown' && caps.shell.label.state === 'unknown' && caps.shell.label.source.startsWith('from argv --tools') ? null : `flip ${JSON.stringify(caps)}`;
+        },
+      },
+      {
+        name: 'cap-pure-tool-lists',
+        kind: 'logic',
+        pure: () => {
+          const cap = (rt, argv, report = []) => laneCapabilities(RUNTIMES[rt], 'review', argv, report);
+          const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+          let c = cap('pi', ['--tools', '']); if (c.shell.value !== 'no' || c.write.value !== 'none') return 'a';
+          if (cap('pi', ['--tools', 'read,grep']).shell.value !== 'no') return 'b';
+          c = cap('pi', ['--tools', 'read,bash']); if (c.shell.value !== 'yes' || c.write.value !== 'unknown') return 'c';
+          if (cap('pi', ['--tools', 'read,*']).shell.value !== 'yes') return 'd';
+          if (cap('pi', ['--tools', '+bash']).shell.value !== 'unknown' || cap('claude', ['--tools', 'default']).shell.value !== 'unknown') return 'e';
+          if (cap('copilot', ['--available-tools=view,bash', '--excluded-tools=bash']).shell.value !== 'no') return 'f';
+          if (cap('pi', ['--tools', 'read', '--tools', 'bash']).shell.value !== 'unknown') return 'g';
+          c = cap('codex', []); if (c.write.value !== 'unknown' || c.shell.value !== 'unknown') return 'h';
+          c = laneCapabilities({ argvFile: true, forms: RUNTIMES.pi.forms }, 'review', ['--tools', 'bash', '--no-mcp'], []);
+          for (const field of ['write', 'shell', 'skills', 'mcp']) if (c[field].value !== 'unknown' || !eq(c[field].label, { state: 'unknown', source: 'argv file lane: declared by --argv-file' })) return 'i';
+          c = laneCapabilities({ forms: { capabilities: { tools: null, facts: [{ run: ['--placeholder-flag'], field: 'mcp', value: 'host_config', label: { state: 'unverified', source: 's' } }] } } }, 'review', ['--placeholder-flag'], []); if (c.mcp.value !== 'host_config') return 'j';
+          if (cap('pi', ['--tools=read, bash']).shell.value !== 'yes') return 'k';
+          c = cap('cursor', ['--force', '--mode', 'ask']); if (c.shell.value !== 'yes' || c.write.value !== 'none') return 'l';
+          c = laneCapabilities(RUNTIMES.codex, 'exec', ['--dangerously-bypass-approvals-and-sandbox', '--sandbox', 'read-only'], []); if (c.write.value !== 'unknown' || c.write.label.state !== 'unknown' || c.write.label.source !== '--sandbox and --dangerously-bypass-approvals-and-sandbox disagree in the final argv; no recorded help says which wins' || c.shell.value !== 'yes') return 'm';
+          if (cap('codex', ['--sandbox=read-only']).write.value !== 'none') return 'm2';
+          if (cap('pi', ['--tools', 'read,mcp__x__*']).shell.value !== 'unknown') return 'q';
+          c = cap('copilot', ['--available-tools', 'view', 'bash']); if (c.shell.value !== 'unknown' || c.write.value !== 'unknown') return 'r';
+          if (cap('copilot', ['--available-tools=view,shell']).shell.value !== 'yes') return 's';
+          if (cap('pi', ['--no-tools', '--tools', 'read,bash']).shell.value !== 'unknown') return 't';
+          c = cap('pi', ['--tools']); if (c.shell.value !== 'unknown' || c.write.value !== 'unknown') return 'u';
+          if (cap('copilot', ['--available-tools=bash,shell', '--deny-tool=shell']).shell.value !== 'yes') return 'v';
+          c = cap('claude', ['--tools=Bash,Read', '--disallowedTools=Bash']); if (c.shell.value !== 'no' || c.write.value !== 'none') return 'w';
+          c = cap('pi', ['--tools', '--no-mcp']); if (c.shell.value !== 'unknown' || c.mcp.value !== 'unknown') return 'x';
+          if (cap('copilot', ['--deny-tool=shell']).shell.value !== 'unknown') return 'y';
+          if (cap('pi', ['--no-skills'], [{ name: 'skill', state: 'applied', form: 'path', value: 'lens-a' }]).skills.value !== 'path') return 'n';
+          if (cap('claude', [], [{ name: 'skill', state: 'applied', form: 'prose', value: 'lens-a' }]).skills.value !== 'unknown') return 'o';
+          if (!eq(cap('copilot', []).prompt, { channel: 'argv', max_bytes: ARGV_PROMPT_MAX - 281 })) return 'p';
+          return null;
         },
       },
       {
