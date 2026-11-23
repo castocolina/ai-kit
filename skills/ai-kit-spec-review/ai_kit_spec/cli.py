@@ -14,6 +14,7 @@ from ai_kit_spec import (
     catalog_fetch,
     config_migrate,
     config_status,
+    edit_pass,
     effort_probe,
     jev_names,
     lane_effort,
@@ -502,6 +503,7 @@ def _build_parser() -> argparse.ArgumentParser:
     propose_cmds.register_parsers(sub)
     config_status.register_parsers(sub)
     capability_block.register_parsers(sub)
+    edit_pass.register_parsers(sub)
     skill_table.register_parsers(sub)
     skill_classify.register_parsers(sub)
     return parser
@@ -1424,6 +1426,7 @@ _COMMANDS = {
     **propose_cmds.COMMANDS,
     **config_status.COMMANDS,
     **capability_block.COMMANDS,
+    **edit_pass.COMMANDS,
     **skill_table.COMMANDS,
     **skill_classify.COMMANDS,
 }
