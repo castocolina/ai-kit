@@ -976,7 +976,28 @@ Plans:
   4. A prompt larger than a lane's known context window (the lane's own runtime's value from the Phase 35 catalog, or a per-(runtime, model) override in `[models]`; *amended 2026-11-16, 35 D-09*) is refused for that lane with a named reason and never trimmed; an unknown window is not capped and shows as unknown; a value embedded in a prompt (file list, lens path) with a control character, or a path outside the repository or skill roots, is rejected, each covered by a fixture. *(added 2026-11-16, GSD lane-handling study)*
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation. *(amended 2026-11-07, 32.1 D-01: `ai-kit-spec-review`, below the bar at the Phase 32 baseline (75.2 C), was deferred here from batch 32.2; it reaches the bar, with its Markdown scenarios converted to new-shape evals and with tests, in whichever of Phases 39-40 first changes its SKILL.md, and no later than Phase 40's close)* *(amended 2026-11-20, 36 plan time: Phase 36 changes `ai-kit-spec-review`'s SKILL.md first and brings it to the bar in loop 36; this phase keeps that bar with no regression beyond judge variation, and brings it there only if Phase 36 recorded it below the bar after three rounds)*
 
-**Plans**: TBD
+**Plans**: 19 plans in 13 waves *(planned 2026-11-23; the two runner plans 39-02 and 39-05 run one after the other; the live runner copy is re-rendered only by 39-17; 39-18, the judge loop, and 39-19, the closing gate with the final `make test`, are orchestrator actions)*
+
+Plans:
+- [ ] 39-01-PLAN.md (wave 1): shared skill table module, roles, seed file `references/skill-roles.json`, `[skills.roles]` reader
+- [ ] 39-02-PLAN.md (wave 1): runner `laneCapabilities` and the `cross-ai: capabilities` line, row capability forms in `--describe`
+- [ ] 39-03-PLAN.md (wave 2): embedded-value validator, refusal reasons, shared control-character fixture
+- [ ] 39-04-PLAN.md (wave 2): per-host skill and MCP-name scan, `skill-table` command
+- [ ] 39-05-PLAN.md (wave 3): runner skill flags checked against the validator's control-character set
+- [ ] 39-06-PLAN.md (wave 3): token estimate, window accessor, refusal record and exit 65
+- [ ] 39-07-PLAN.md (wave 3): skill and MCP flags through `RunnerSpec`, lane facts parsed from `--print-argv`
+- [ ] 39-08-PLAN.md (wave 3): `classify-skills` (jev advisory) and `confirm-skill-role`
+- [ ] 39-09-PLAN.md (wave 3): curated-config `skill_roles` and the derived lens visibility
+- [ ] 39-10-PLAN.md (wave 4): the capability block builder and the summary line
+- [ ] 39-11-PLAN.md (wave 5): lens selection, pre-checks and budget, the MCP pick and its run-scoped file
+- [ ] 39-12-PLAN.md (wave 6): dispatch wiring, pre-spawn refusal, `capability-block` command
+- [ ] 39-13-PLAN.md (wave 7): one builder for three entry points, spec-config summary lines, adapter refusal catch
+- [ ] 39-14-PLAN.md (wave 8): opt-in after-approval edit pass, `edit-lens-pass`
+- [ ] 39-15-PLAN.md (wave 9): spec-review SKILL.md, references and doc-contract tests
+- [ ] 39-16-PLAN.md (wave 10): spec-config sorting step, config docs, READMEs, dated cross-phase notes
+- [ ] 39-17-PLAN.md (wave 11): template 11 to 12, live copy re-rendered, shard times re-recorded
+- [ ] 39-18-PLAN.md (wave 12): judge loop for the changed skills (orchestrator action)
+- [ ] 39-19-PLAN.md (wave 13): closing gate: dated-note check, scans, `make test` (orchestrator action)
 
 ### Phase 39.1: Remove the grok runtime (INSERTED)
 
