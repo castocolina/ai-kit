@@ -770,7 +770,7 @@ class TestReviewerSlug(unittest.TestCase):
 
     def test_id_matches_the_legacy_name_and_unknown_names_are_none(self):
         self.assertEqual(cross_ai_build.reviewer_slug("cursor"), "cursor")
-        self.assertIsNone(cross_ai_build.reviewer_slug("grok"))
+        self.assertIsNone(cross_ai_build.reviewer_slug("placeholder-cli-1"))
         self.assertIsNone(cross_ai_build.reviewer_slug("codex"))
 
 
@@ -1153,13 +1153,13 @@ class TestApplyReviewCli(unittest.TestCase):
                 ]
                 self.assertEqual(json.loads(review_writes[0][4]), ["cursor"])
 
-    def test_grok_exits_2_and_lists_reviewer_slugs(self):
+    def test_unknown_cli_exits_2_and_lists_reviewer_slugs(self):
         run = make_fake_run([])
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             exit_code = cli.main(
                 ["apply-review", "--project-dir", "/fake/project",
-                 "--cli", "grok", "--model", "m"],
+                 "--cli", "placeholder-cli-1", "--model", "m"],
                 which_fn=_which_stub(),
                 run_fn=run,
                 env_fn=self.env_fn,

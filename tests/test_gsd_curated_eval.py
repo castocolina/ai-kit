@@ -1823,13 +1823,13 @@ class TestFixture(unittest.TestCase):
     def test_model_less_installed_rows_dropped(self):
         rts = {
             "clis": {
-                "grok": {"installed": True},
+                "placeholder-cli-1": {"installed": True},
                 "opencode": {"installed": True, "models": ["a/b"]},
                 "pi": {"installed": False},
             }
         }
         out = ev._drop_model_less_rows(rts)["clis"]
-        self.assertEqual(out["grok"], {"installed": False})
+        self.assertEqual(out["placeholder-cli-1"], {"installed": False})
         self.assertEqual(out["opencode"], {"installed": True, "models": ["a/b"]})
         self.assertEqual(out["pi"], {"installed": False})
 
@@ -1846,6 +1846,7 @@ class TestFixture(unittest.TestCase):
         args = argparse.Namespace(cwd=self._tmp, extra_candidate=[])
         deps = CliDeps(env_fn=lambda: env)
         raw = _load_raw_fixture_rows()
+        raw["clis"]["opencode"] = {"installed": True}
         spec_cli._discovered_catalog_candidates(  # pylint: disable=protected-access
             ev._drop_model_less_rows(raw), args, deps
         )

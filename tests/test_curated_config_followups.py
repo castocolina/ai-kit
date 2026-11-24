@@ -701,7 +701,7 @@ class TestFollowupsApprovalGate(unittest.TestCase):
             self.assertEqual(npx, [])
             self.assertEqual(effort, [])
 
-    def test_require_grok_rejected(self) -> None:
+    def test_require_unknown_runtime_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, config_path = _setup_scratch_project(tmp)
             fake = _tables_followups(config_path, env["HOME"])
@@ -720,7 +720,7 @@ class TestFollowupsApprovalGate(unittest.TestCase):
                     "--project-dir",
                     project,
                     "--require",
-                    "grok",
+                    "placeholder-cli-1",
                 ],
                 env,
                 fake,

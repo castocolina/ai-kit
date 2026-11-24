@@ -950,7 +950,7 @@ class TestScriptPseudoKeys(unittest.TestCase):
         cases = [
             ("script:cross-ai.model.claude", "some-model"),
             ("script:cross-ai.model.claude", "other"),
-            ("script:cross-ai.runtime", '["grok"]'),
+            ("script:cross-ai.runtime", '["placeholder-cli-1"]'),
             ("script:cross-ai.runtime", "[]"),
         ]
         with tempfile.TemporaryDirectory() as tmp:
@@ -990,7 +990,7 @@ class TestScriptPseudoKeys(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             inv_path, plan_path, _inv, _plan = self._setup_partial(tmp)
             raw = _read_bytes(plan_path)
-            for value in ("grok", "claude", "not-installed-id", '["pi"]', "[]"):
+            for value in ("placeholder-cli-1", "claude", "not-installed-id", '["pi"]', "[]"):
                 code, _, err = _run_plan_set(
                     plan_path, inv_path, "script:cross-ai.runtime", value
                 )

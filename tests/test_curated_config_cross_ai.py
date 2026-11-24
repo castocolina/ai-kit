@@ -124,15 +124,15 @@ class TestExecTargets(unittest.TestCase):
         targets = cross_ai.exec_targets(inv, "standard", prefer=("opencode", "pi"))
         self.assertEqual([t.cli for t in targets], ["opencode", "pi"])
 
-    def test_grok_installed_never_target(self):
+    def test_unknown_installed_runtime_never_target(self):
         inv = make_inventory(
             host="claude",
             candidates=[
-                exec_cand("m-grok", "grok"),
+                exec_cand("m-placeholder", "placeholder-cli-1"),
                 exec_cand("m-cursor", "cursor"),
             ],
         )
-        inv["installed_runtimes"] = ["grok", "cursor"]
+        inv["installed_runtimes"] = ["placeholder-cli-1", "cursor"]
         targets = cross_ai.exec_targets(inv, "standard")
         self.assertEqual([t.cli for t in targets], ["cursor"])
 
