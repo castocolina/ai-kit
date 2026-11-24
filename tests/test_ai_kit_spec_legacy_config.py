@@ -270,8 +270,8 @@ class TestLegacyForms(unittest.TestCase):
             (
                 {
                     "key": "e",
-                    "cli": "grok",
-                    "command": "grok -p {prompt} -m {model} --output-format plain",
+                    "cli": "placeholder-cli-1",
+                    "command": "my-cli -p {prompt} -m {model} --output-format plain",
                 },
                 None,
             ),

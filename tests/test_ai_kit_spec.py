@@ -5591,7 +5591,7 @@ class TestDispatchReviewer(unittest.TestCase):
                     "key": "grok-flagship",
                     "model": "grok-4.6",
                     "vendor": "xai",
-                    "command": "grok -p {prompt} -m {model}",
+                    "command": "my-cli -p {prompt} -m {model}",
                     "extra": {},
                 },
                 prompt="Read the checklist and review...",
@@ -5688,8 +5688,8 @@ class TestDispatchReviewer(unittest.TestCase):
                             "key": "grok-flagship",
                             "model": "grok-4.6",
                             "vendor": "xai",
-                            "cli": "grok",
-                            "command": "grok -p {prompt} -m {model}",
+                            "cli": "placeholder-cli-1",
+                            "command": "my-cli -p {prompt} -m {model}",
                             "extra": {},
                         }
                     ],
@@ -5726,7 +5726,7 @@ class TestDispatchReviewer(unittest.TestCase):
                 )
         self.assertEqual(code, 0)
         self.assertEqual(out.getvalue(), "### Status: Approved\n")
-        self.assertEqual(seen["entry"]["cli"], "grok")
+        self.assertEqual(seen["entry"]["cli"], "placeholder-cli-1")
 
     def test_dispatch_reviewer_cli_subcommand_reports_a_malformed_entry_cleanly(self):
         import io
@@ -5882,8 +5882,8 @@ class TestTimeoutTiers(unittest.TestCase):
                             "key": "grok-flagship",
                             "model": "grok-4.6",
                             "vendor": "xai",
-                            "cli": "grok",
-                            "command": "grok -p {prompt} -m {model}",
+                            "cli": "placeholder-cli-1",
+                            "command": "my-cli -p {prompt} -m {model}",
                             "extra": {},
                         }
                     ],

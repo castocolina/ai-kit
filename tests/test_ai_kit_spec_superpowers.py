@@ -497,7 +497,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
         # B-CR-01: a D-21 custom entry declared an executor is a config error (exit 2).
         candidates = [{
             "key": "g", "runtime": None, "model": "grok-4", "vendor": "xai",
-            "command": "grok -p {prompt} -m {model}", "purpose": "execute",
+            "command": "my-cli -p {prompt} -m {model}", "purpose": "execute",
             "task_affinity": None, "context_limit": None,
         }]
         out, stderr = io.StringIO(), io.StringIO()
@@ -809,11 +809,11 @@ class TestComputeResumeExclusions(unittest.TestCase):
 
     def test_prior_permanent_exclusions_are_preserved(self):
         result = dispatch_injection.compute_resume_exclusions(
-            tried=["grok/main"],
-            reasons={"grok/main": "no_usable_dispatch"},
+            tried=["fake-cli/main"],
+            reasons={"fake-cli/main": "no_usable_dispatch"},
             prior_excluded_keys=["codex/terra"],
         )
-        self.assertEqual(result, ["codex/terra", "grok/main"])
+        self.assertEqual(result, ["codex/terra", "fake-cli/main"])
 
     def test_round_trip_quota_recovery_makes_candidate_eligible_again(self):
         # The round-trip this CRITICAL finding requires: an all-quota-exhausted ladder computes a
