@@ -1093,7 +1093,7 @@ Plans:
 ### Phase 41: Superpowers adapter refactor with spec-config handoff
 
 **Goal**: The superpowers execute adapter has one resume path and one stop path, hands off to spec-config when unconfigured, and every executor brief carries the gates.
-**Depends on**: Phase 36, Phase 37
+**Depends on**: Phase 36, Phase 37, Phase 40 *(amended 2026-11-23, 41 D-07: the executor switch of EXE-09 reuses the flagged-lane switch module that Phase 40 builds)*
 **Requirements**: EXE-01, EXE-04, EXE-05, EXE-08, EXE-09 *(EXE-09 added 2026-11-16, free-lane pool study, PROVISIONAL)*
 **Code anchors**: `skills/ai-kit-spec-execute-superpowers/ai_kit_spec_superpowers/dispatch_injection.py` (`compute_resume_exclusions`, `dispatch_superpowers_task`, `classify_dispatch_failure`, `implementer_status`), `cli.py`, `ai-kit-spec-superpowers.py`; `ai_kit_spec/execute_dispatch.py`, `execute_selection.py`; executor brief template (file unknown until research); real-home guard `AI_KIT_REFUSE_REAL_HOME` in `tools/setup.py`; the runner's execute argv in `cross-ai.mjs` (`runCli`) and `ai_kit_spec/runner_dispatch.py` (`RunnerSpec`); new: before-and-after audit of real host-config modification times; docs: superpowers `SKILL.md` and `references/`
 **Success Criteria** (what must be TRUE):
