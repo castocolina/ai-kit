@@ -472,7 +472,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   prints a record; the caller (Phases 40 and 41) decides, the runner never switches lane. *(added 2026-11-16, free-lane pool
   study, 38.1 D-23 to D-27, PROVISIONAL, needs owner confirmation: whether the 24-hour floor or the stated reset wins, the
   second-failure rule and the margin; source `.planning/research/2026-11-16-opencode-free-models.md`)*
-- [ ] **RUN-15**: The grok CLI runtime is removed from detection, command building, the runner's runtime table, the CLI
+- [x] **RUN-15**: The grok CLI runtime is removed from detection, command building, the runner's runtime table, the CLI
   profiles, the docs and the tests, and a test fails when a runtime list, command builder or profile names it again. Grok
   models stay reachable as models of opencode, pi and cursor-agent. A config that still names the grok runtime gets one clear
   message naming the replacement runtimes and the re-save command. *(added 2026-11-19, owner decision, Phase 39.1: a rare
@@ -1136,7 +1136,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RUN-12 | Phase 37 | Complete |
 | RUN-13 | Phase 38 | Complete |
 | RUN-14 | Phase 38.1 | Complete |
-| RUN-15 | Phase 39.1 | Pending |
+| RUN-15 | Phase 39.1 | Complete |
 | RULE-01 | Phase 45 | Pending |
 | RULE-02 | Phase 45 | Pending |
 | RULE-03 | Phase 45.1 | Pending |
