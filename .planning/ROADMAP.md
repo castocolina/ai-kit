@@ -128,7 +128,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 38.1: Runner error classification and retry policy (INSERTED)** - Wider error catalogue, stdout limit matching, router cooldowns and the owner's retry policy (completed 2026-11-23)
 - [x] **Phase 39: Lane capability blocks and lens skills** - Each lane is told only the tools it really has; lens skills reach reviewers (completed 2026-11-23)
 - [x] **Phase 39.1: Remove the grok runtime (INSERTED)** - The grok CLI runtime leaves detection, command building, the runner table, profiles, docs and tests; its models stay reachable through opencode, pi and cursor-agent *(inserted 2026-11-19, owner decision)*
-- [ ] **Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)** - The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks *(inserted 2026-11-23, owner decision)*
+- [x] **Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)** - The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks *(inserted 2026-11-23, owner decision)*
 - [ ] **Phase 40: Resilient review sized by jev** - A failing lane no longer ends a review; jev sizes and classifies
 - [ ] **Phase 41: Superpowers adapter refactor with spec-config handoff** - One resume path, one stop path, session-model fallback, complete executor briefs
 - [ ] **Phase 42: Code review after execution and jev-picked executors** - Implementation is reviewed in a capped loop; jev picks the executor and lane transport
@@ -1045,18 +1045,18 @@ Plans:
 
 **Requirement candidates (captured 2026-11-23, owner request)**: spec-discuss branch strategy for stacked units. No v2.0 phase edits `ai-kit-gsd-spec-discuss` today; inserted as this phase on 2026-11-23, owner decision. Source: `.planning/todos/pending/2026-11-23-spec-discuss-branch-strategy-after-the-chain.md`.
 
-**Plans**: 2/10 plans executed
+**Plans**: 10/10 plans complete
 
 - [x] 39.2-01-PLAN.md (wave 1): tracer: `fold.py show --all`, the read-only all-units view (R7)
 - [x] 39.2-02-PLAN.md (wave 1): `branch_preflight.py`, the GSD branch-name and unrecorded-HEAD start-time checks (R5)
-- [ ] 39.2-03-PLAN.md (wave 2): `fold.py restack` restacks the units above a moved lower unit, locally, never pushed (R6)
-- [ ] 39.2-04-PLAN.md (wave 3): `start` refusals `stale_parent` and `unrecorded_head`, fold docs, evals and README row (R5, R8)
-- [ ] 39.2-05-PLAN.md (wave 4): `references/branches.md`: where-am-I shape, write steps, recipe table, end-report template (R1, R2, R4, R9)
-- [ ] 39.2-06-PLAN.md (wave 5): spec-discuss SKILL.md branch rules, ownership rule, end report, README row (R1-R5, R8, R9)
-- [ ] 39.2-07-PLAN.md (wave 6): seven spec-discuss evals (R1-R5, R8)
-- [ ] 39.2-08-PLAN.md (wave 6): goal-prompt rail line for going back to an earlier phase (R3)
-- [ ] 39.2-09-PLAN.md (wave 7): judge loop for the changed skills (orchestrator action, JDG-04)
-- [ ] 39.2-10-PLAN.md (wave 8): closing gate: installed-layout check, suites, ROADMAP tick (orchestrator action)
+- [x] 39.2-03-PLAN.md (wave 2): `fold.py restack` restacks the units above a moved lower unit, locally, never pushed (R6)
+- [x] 39.2-04-PLAN.md (wave 3): `start` refusals `stale_parent` and `unrecorded_head`, fold docs, evals and README row (R5, R8)
+- [x] 39.2-05-PLAN.md (wave 4): `references/branches.md`: where-am-I shape, write steps, recipe table, end-report template (R1, R2, R4, R9)
+- [x] 39.2-06-PLAN.md (wave 5): spec-discuss SKILL.md branch rules, ownership rule, end report, README row (R1-R5, R8, R9)
+- [x] 39.2-07-PLAN.md (wave 6): seven spec-discuss evals (R1-R5, R8)
+- [x] 39.2-08-PLAN.md (wave 6): goal-prompt rail line for going back to an earlier phase (R3)
+- [x] 39.2-09-PLAN.md (wave 7): judge loop for the changed skills (orchestrator action, JDG-04)
+- [x] 39.2-10-PLAN.md (wave 8): closing gate: installed-layout check, suites, ROADMAP tick (orchestrator action)
 
 ### Phase 40: Resilient review sized by jev
 
@@ -1408,7 +1408,7 @@ Open entries only. An entry a v2.0 requirement absorbs moves to **Absorbed into 
 (moved there 2026-11-07: 999.2, 999.5, 999.7 to 999.17 and 999.19), with the requirement and phase
 that track it. 999.6 stays open (secondary runtime); 999.20 (Claude extra-usage segment) was added
 2026-11-07, 999.21 (runner temp directories) at the Phase 32 close-out, and 999.22 (headless installer agents) at the
-32.1 discuss, 999.23 (the checklist's open judge notes) at the 32.2 close-out, and 999.24 (whether codebase-memory-mcp makes graphify redundant) at the 32.5 plan; 999.26 and 999.27 (two CLI checks behind skill-text limits) came from loop 39.1 round 3 on 2026-11-24; 999.30 to 999.33 (fold push stderr, `--checkpoint` with `--phase`, record re-sync after an outside push, glob-reached doc scans at commit) came from the phase 39.1 ship on 2026-11-24. The Playwright MCP Chrome path row in 999.1 is
+32.1 discuss, 999.23 (the checklist's open judge notes) at the 32.2 close-out, and 999.24 (whether codebase-memory-mcp makes graphify redundant) at the 32.5 plan; 999.26 and 999.27 (two CLI checks behind skill-text limits) came from loop 39.1 round 3 on 2026-11-24; 999.30 to 999.33 (fold push stderr, `--checkpoint` with `--phase`, record re-sync after an outside push, glob-reached doc scans at commit) came from the phase 39.1 ship on 2026-11-24; 999.34 (checkpoint and cascade publish a lower unit's unpushed commits) came from the phase 39.2 code-review fixes on 2026-11-24. The Playwright MCP Chrome path row in 999.1 is
 the FEAT-06 owner decision; the whole-tree layering suite once named 999.3 is ARCH-01 (Phase 52).
 Finished entries move to **Done** at the end of this section, with the date and what delivered them.
 
@@ -1588,6 +1588,16 @@ Plans:
 ### Phase 999.33: The commit-stage test selection reaches doc scans that read skill files through a glob (BACKLOG)
 
 **Goal:** [Captured for future planning] The staged-test mapper (`tools/staged_mapper.py`) selects, at commit, a test module that reaches a staged file only through a glob (for example `skills/*/SKILL.md` or `skills/*/references/*.md`), so a wording change in a skill file runs the doc scans that read it before push. Today this is a documented known limit (AGENTS.md Testing: such a test runs only at push). In the 39.1 ship (2026-11-24) `tests.test_config_callers` failed at push on SKILL.md and reference wording that the commit hook had passed, which cost a push round. The mapper resolves each test module's glob literals against the staged paths (or a declared glob list per module) and `python3 tools/staged_mapper.py --stats` reports the change in selectivity; a mapper test stages a skill file and shows the glob-reaching module selected. Found 2026-11-24 in the phase 39.1 ship.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.34: A consented checkpoint never publishes a lower unit's unpushed commits (BACKLOG)
+
+**Goal:** [Captured for future planning] Phase 39.2 made `start`'s catch-up keep an upper unit pending while an open unit below it is not pushed at its local tip, and stopped a restack from making a first push. `fold.py checkpoint` with push consent still pushes an upper unit's folded tip while the unit below holds plain, unfolded commits, so those commits reach the remote inside the upper branch; the cascade does the same when a middle unit is folded and the units above it are pushed. The 39.2 SPEC kept checkpoint behaviour out of scope. The checkpoint and the cascade apply the catch-up rule (hold the push, keep the tip pending, report the unit below that holds it), a fixture test with consent on shows the remote unchanged, and `references/unit-contract.md` states the rule once for all three paths. Found 2026-11-24 in the phase 39.2 code-review fixes (reading only, not run).
 **Requirements:** TBD
 **Plans:** 0 plans
 

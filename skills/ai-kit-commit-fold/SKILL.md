@@ -28,8 +28,11 @@ the same command yourself with `--mode inline`. The report's last line says whic
 ## Read the report
 
 The fold's report has five lines: the unit, the counts with the grouping source, the tree check, the
-backup tag and the outcome. A refusal changes nothing, so the branch stays where it was. Report the
-reason to the user and stop:
+backup tag and the outcome. A refusal changes nothing in the fold that refused, so its branch
+stays where that fold found it. `fold.py gsd --phase N` folds plan by plan: plans before the
+refused one may already be folded, each with its own report printed before the refusal. Relay
+every report in order, name the plans already folded, and never move the branch back to its
+pre-command tip. Report the reason to the user and stop:
 
 | Reason | What to tell the user |
 |--------|-----------------------|
@@ -58,7 +61,9 @@ JSON (`--unit FILE|-`) or by selector: `--phase N` for GSD, `--plan FILE` for su
   the unit's first commit. Re-running it on a recorded unit (a re-discuss) reuses an open, finished
   or ready unit, recreating a deleted branch at its recorded tip. A merged unit, or a finished or
   ready one whose branch cannot be reused, is reported with exit 0 and nothing changes; an open one
-  still refuses `wrong_parent` or `branch_missing`.
+  still refuses `wrong_parent` or `branch_missing`. Before it syncs, a new unit is refused
+  `stale_parent` or `unrecorded_head` (table below); its sync also restacks the units above a lower
+  unit that moved.
 - `fold.py guard <selector>`: read-only. It refuses `wrong_parent` when the unit's recorded parent
   tip is not the merge base of its branch and its parent.
 - `fold.py checkpoint <selector> [--checkpoint FILE|-] [--base REV] [--final]`: fold the
@@ -68,6 +73,9 @@ JSON (`--unit FILE|-`) or by selector: `--phase N` for GSD, `--plan FILE` for su
 - `fold.py ready <selector>`: mark the draft PR ready for review. It refuses `signal_order` before
   the unit is finished and `not_verified` until verification has passed.
 - `fold.py show <selector>`: read-only. Prints the unit's `state:` and `pr:`.
+- `fold.py show --all`: read-only. One line per recorded unit in stack order,
+  `unit <id> branch <branch> parent <parent> state <state> exists <yes|no> tip <sha12|none>`, or
+  `units: none`.
 - `fold.py boundary <selector> --point start|plan|wave` (or `--next` before a unit exists): refresh
   this checkout's codebase-memory-mcp index and graphify graph, then rewrite `.aikit/brief/SKILL.md`, the brief
   the next agents read. `start` runs it itself. It also adds `.aikit/` to `.git/info/exclude` and
@@ -79,8 +87,14 @@ The stack and settings commands:
 
 - `fold.py hotfix --target BRANCH --name SLUG`: start a hotfix unit from its target. It never joins
   the stack.
-- `fold.py restack [--continue [--note PATH=HOW ...] | --abort]`: finish or abort a paused restack.
-  See Cascade conflicts.
+- `fold.py restack [--continue [--note PATH=HOW ...] | --abort]`: after a plain commit on a lower
+  unit, restack the units above it onto the new tip in a local pass that pushes nothing, keeping
+  every unit's own commits; in that command a moved remote trunk is also rebased without a push, and
+  the next checkpoint or `start` catch-up under push consent pushes the pending tips, the catch-up
+  only above units pushed at their local tips (a restack never makes a unit's first push); with no
+  lower unit moved, a moved remote trunk is cascaded and pushed under push consent as before;
+  `restack --abort` restores every branch and the stack record as they were when the command
+  started; also finish or abort a paused restack. See Cascade conflicts.
 - `fold.py merge-chain [--until UNIT_ID | --unit-id HOTFIX_ID]`: merge the stack's PRs in order. See
   Hotfix and merge chain.
 - `fold.py settings show` and `fold.py settings set [--remote NAME] [--target BRANCH ...] [--gate "CMD" ...]`:
@@ -88,13 +102,18 @@ The stack and settings commands:
 - `fold.py consent grant [--add-exclude] | revoke | status`: push consent. See Push consent.
 
 A refusal stops the command. Steps it finished before the refusal (a catch-up push, a fold,
-earlier merges) stay done, and the report lists them. Next steps for the common reasons:
+earlier merges) stay done, but a refusal report shows only its `refused:` line, so it may not list
+them. Never infer from the report that an unlisted push or merge did not happen: before re-running,
+check the unit's local tip, remote tip and PR state read-only (`fold.py show --all`,
+`git ls-remote`, `fold.py show <selector>`). Next steps for the common reasons:
 
 | Reason | Next step |
 |--------|-----------|
 | `settings_not_ignored` | `.aikit/flow.json` is not ignored. Ask the owner: `fold.py consent grant --add-exclude`, or `.aikit/` in `.gitignore`. |
 | `no_remote` | The settings remote is not configured. Ask which remote (`fold.py settings set --remote NAME`), or work on without the flow. |
 | `no_trunk` | The target has no remote-tracking ref. `git fetch` the remote, then re-run. |
+| `stale_parent` | The newest unmerged unit's branch is gone. Show the owner the report and stop; never recreate the branch or edit the stack record by hand. |
+| `unrecorded_head` | HEAD is an unrecorded branch with commits the trunk lacks. Show the owner the listed commits and stop; the owner moves them or switches branch, then re-run `start`. |
 | `wrong_parent` | The branch left its recorded parent. Show the owner; never move it by hand. |
 | `stale_lease` | The remote branch moved since the flow's push. Show the owner; never force. |
 | `plan_not_carried` | Stop and show the owner the commands the report prints; never run them yourself. After the owner carries the commits, re-run `start`. |
@@ -123,7 +142,10 @@ where the host has one, otherwise do it yourself:
    sides' entries. Never edit a file outside the conflict list.
 2. Run `fold.py restack --continue --note <path>=<how>` once, with one `--note` per resolved file.
    If a file cannot be resolved with confidence, run `fold.py restack --abort` and report it.
-   A `bad_resolution` refusal keeps the stack paused: fix the files it names, then rerun `--continue`.
+   A `bad_resolution` refusal that names files keeps the stack paused: fix only those files, then
+   rerun `--continue`. One that names a branch which moved after the resolution was saved has
+   already restored every branch and cleared the paused state: report the restore to the owner and
+   ask before a new `restack`; never rerun `--continue` on the cleared state.
 3. Read the `gates:` line of the report: it names every gate that ran (a GSD project adds
    `gsd-tools validate health`).
 4. On a `no_gates` refusal the stack stays local and unpushed. Tell the owner to set a gate with

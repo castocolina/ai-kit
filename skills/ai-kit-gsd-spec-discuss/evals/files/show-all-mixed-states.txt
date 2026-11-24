@@ -1,0 +1,4 @@
+unit phase-20 branch gsd/phase-20-zero parent main state merged exists no tip none
+unit phase-21 branch gsd/phase-21-alpha parent main state ready exists yes tip 1111aaaa2222
+unit phase-22 branch gsd/phase-22-beta parent gsd/phase-21-alpha state open exists yes tip 3333bbbb4444
+unit phase-23 branch gsd/phase-23-gamma parent gsd/phase-22-beta state open exists yes tip 5555cccc6666

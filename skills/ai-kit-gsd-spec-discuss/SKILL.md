@@ -53,7 +53,9 @@ decided provisionally and shown at the end.
    workstream can also be active without the flag (`GSD_WORKSTREAM` or the session pointer),
    so take the paths from gsd-core, never from a fixed `.planning/`: the first phase's
    `init.phase-op` gives `state_path` and `phase_dir`; pass the parent of `phase_dir` to
-   `phase_range.py --phases-root`, and commit the `state_path` file.
+   `phase_range.py --phases-root`, and commit the `state_path` file. A roadmap phase with no
+   directory yet gives `phase_dir: null` and an `expected_phase_dir`: use the parent of
+   `expected_phase_dir` then. When neither is set, stop with the init output as the diagnostic.
 3. **Decision help (optional):** ask the `jev-fast-decision` skill and follow its SKILL.md for
    every gray area; it covers how to call it and any approval it needs. Not installed, an
    error, `needs_fallback` or no answer → your own reasoning decides (§3).
@@ -69,6 +71,32 @@ decided provisionally and shown at the end.
    confirms it.
 5. **Ask one question about the range**, only when needed (the run-mode ask in step 7 is
    separate): confirm or trim the proposed range.
+
+**Branch checks, right after the range is known and before the first `fold.py start`** (both paths;
+with an empty `FOLD_PY` skip them and say so). They run before step 6, because
+`query phase.mvp-mode` and every later GSD query may write a normalized legacy config back; steps 2
+and 4 may already have done so, which is GSD's own loader behaviour, not this skill's. First run the
+read-only where-am-I step of `references/branches.md`: it saves
+`python3 <FOLD_PY> show --all --repo <REPO>` to the run file `<tmp>-units.txt` (the same `<tmp>`
+prefix as step 4's `<tmp>.json`) and prints the current branch, the stack and the branch holding
+each phase's documents. Then run
+`python3 <S>/branch_preflight.py --repo <REPO> --gsd "<the resolved GSD command>" --fold-py <FOLD_PY> --phases <the range, comma-separated> --units <tmp>-units.txt`,
+adding ` --ws <name>` when the run is workstream-scoped (the §0 step 1 literals, never a shell
+variable; the resolved GSD command then also ends in `--ws=<name>`; with `--ws` the script refuses a
+phase directory that only the workstream holds, since the unit flow reads the root
+`.planning/phases`). Exit 1: show every `refused` line and stop the run; move no branch, edit no
+stack record, write no config. Exit 2: say the check could not run and stop. A `deferred <N>` line
+(phase N has no directory yet): write and start nothing now; note N as deferred and go on with
+steps 6 to 9, so the auto path's go-ahead (step 9) comes before any write or branch change. When
+the run reaches phase N in §1, after that go-ahead, in this order: create only the directory,
+`mkdir <REPO>/.planning/phases/<P>-<slug>`, with `<P>` the padded number and `<slug>` GSD's slug of
+the phase name in step 4's `<tmp>.json` (Cyrillic letters transliterated to ASCII first, as GSD and
+`branch_preflight.gsd_slug` do; lower case; every run of characters outside `a-z0-9` becomes one
+`-`; cut at 60 characters; no leading or trailing `-`), and write nothing in it; then the where-am-I
+step again, the script again for phase N, `start`, `guard` and the branch check of §1, then the
+first write. A second `deferred`, exit 1 or exit 2 stops the run; a project whose config sets
+`project_code` stops here (GSD prefixes its directory names, the unit flow does not).
+
 6. **Read MVP mode once, per phase:** the resolved GSD command `query phase.mvp-mode <N>`
    (`active` true → MVP branch). This one query is the single source for both the quality
    rule (§5) and the run-mode recommendation in step 7 — do not read `workflow.mvp_mode` a
@@ -99,22 +127,35 @@ Read and execute `<workflows>/spec-phase.md` end-to-end with arguments `N --auto
 or plain `N` (interactive path) (read the
 file; do not delegate to another skill — skill-to-skill calls are unreliable on some hosts).
 
-- Before the phase's first commit, run `fold.py start --phase <N>` as
+- Before each phase, run the where-am-I step again (`references/branches.md`); it is read-only and
+  never edits the stack record or moves a branch.
+- Before the workflow's first read or write of phase N's files, run `fold.py start --phase <N>` as
   `python3 <FOLD_PY> start --phase <N> --repo <REPO>` (the §0 step 1 literals). spec-phase has no
   hook point, so this skill starts the unit itself. Empty `FOLD_PY`: say so and continue on the
   current branch. Read the report:
+  - At the first refusal of any fold command, read `references/branches.md` and take its row's next
+    step; the rows below are the short form.
   - `refused no_trunk`: run `git -C <REPO> fetch` once, then re-run `start`. Same as the fold
     skill's next step for that reason.
   - Still `refused no_trunk`, or `refused no_remote`: blocks nothing (the work stays local). Append
     one ledger line `unit flow off for phase <N>: <reason>` (§4), print it, show it again in the
     end report, and continue on the current branch.
-  - `bad_checkpoint: phase dir not found` (a proposed phase has no directory yet; exit 2): the
-    spec workflow creates the phase directory before it commits. Let it create the directory
-    (uncommitted), then run `start` again; this does not stop the run. If that run still refuses,
-    handle it by the other rows.
+  - `refused stale_parent`: the newest unmerged unit's branch is gone. Show the report to the owner
+    and stop the whole run; never append a `unit flow off` ledger line for it and never recreate the
+    branch.
+  - `refused unrecorded_head`: HEAD is an unrecorded branch with commits the trunk lacks. Show the
+    listed commits to the owner and stop the whole run.
+  - `bad_checkpoint: phase dir not found` (a proposed phase has no directory yet; exit 2): create
+    only the directory as §0's branch checks say (`references/branches.md`; for a phase they
+    reported `deferred`, the where-am-I step and the script again come next), then run `start`
+    again; this does not stop the run. If that run still refuses, handle it by the other rows.
   - Any other refusal (`dirty_tree`, `wrong_parent`, `plan_not_carried`, ...), or a non-zero exit
     with no report: show the report and stop before any write: stop the whole run, since a later
     phase stacks on this one.
+- After `start` passes: `python3 <FOLD_PY> guard --phase <N> --repo <REPO>`, then
+  `git -C <REPO> branch --show-current` must print the branch of unit `phase-<padded N>` in a fresh
+  `python3 <FOLD_PY> show --all --repo <REPO>`; otherwise show both and stop the whole run. Only
+  then does the workflow read or write phase N's files.
 - An existing SPEC is reused, as the workflow does.
 - **Live-verify before you write a claim**: installed versions, real config keys, real CLI
   output in a scratch dir. A SPEC sentence from memory is a defect.
@@ -148,8 +189,9 @@ Where the workflow shows a trade-off table before a group, relay it as one heade
   settings.
 - One discuss commit per phase (spec-phase's own SPEC commit is the phase's spec-step commit, so a phase has two commits: the SPEC, then this one): write CONTEXT + DISCUSSION-LOG (**MANDATORY — read
   `references/log-formats.md` first**), then
-  the resolved GSD command `query commit "docs(NN): ..." --files <CONTEXT> <LOG> <every cross-phase amended
-  file>`. This commit **replaces** the workflow's `git_commit` step (skip it), and the single
+  the resolved GSD command `query commit "docs(NN): ..." --files <CONTEXT> <LOG>` on the phase's own
+  unit; an amended file of another phase, and a shared planning file, goes on its owning unit (§6).
+  This commit **replaces** the workflow's `git_commit` step (skip it), and the single
   end-of-range `state.record-session` **replaces** its per-phase `update_state` step (skip per
   phase, like `auto_advance`) — never commit or update STATE.md twice per phase.
 - jev and analyzer per path: in the interactive path the user answers the workflow's
@@ -186,10 +228,48 @@ the user asks for it; otherwise the user answers the workflow's prompts directly
 **Interactive relay (one subagent per phase).** On the interactive path a phase may run in its own subagent. The subagent verifies facts, drafts, and spawns the analyzer as a real subagent where the host nests subagents: Claude Code nests (a subagent may spawn subagents, three layers by default); opencode's default nesting depth is one and pi has no built-in subagents, so there the subagent runs the analyzer inline and says so. A subagent cannot ask the user: it stops and returns the owner's questions in batches of 2 to 5 for one phase (recommended option first, trade-offs as one header per option with pros and cons bullets, never a table). The orchestrator asks the owner and resumes the same subagent with the answers (Claude Code: `SendMessage` to the subagent's id or name; opencode documents continuing a child by its `sessionID`, unverified here). Where the host cannot resume a subagent, run the phase inline in the orchestrator and say so; never start a second subagent that re-derives the first one's work. A phase with no owner question runs to its commit without a stop. Read `references/relay-and-summary.md` before the first relay.
 
 After the range: the resolved GSD command `query state.record-session --stopped-at "..."
---resume-file <last CONTEXT>` and a separate `docs(state)` commit of the `state_path` file
-(§0 step 2). An early stop (a blocking question, §4, or any other stop after the unit flow started) runs the same `state.record-session` with the stop reason in `--stopped-at` (`--resume-file` only when a CONTEXT was written), with its own `docs(state)` commit, even when no phase was committed. A `start` refusal that stops the run (§1) stops before any write: no `state.record-session` and no commit; show the report and the stop reason instead.
+--resume-file <last CONTEXT>` and a `docs(state)` commit (step (4) below: the `state_path` file
+of §0 step 2 and the goal file, on the lowest open unit). An early stop (a blocking question, §4, or
+any other stop after the unit flow started) runs the same `state.record-session` with the stop
+reason in `--stopped-at` (`--resume-file` only when a CONTEXT was written), with its own
+`docs(state)` commit, even when no phase was committed. Both `docs(state)` commits, after the range
+and at an early stop, go on the lowest open unit (§6). **End of range, in this one order:** (1) with
+a prompt to prepare (the hand-off below), `start`, `guard` and the branch check of §1 for the top
+phase of the range, then render the goal file there without committing it: goal-prompt reads each
+phase's directory and SPEC from the checkout, and only the top unit holds every phase's documents (a
+`bad_checkpoint: phase dir not found` from a lower unit: create only that directory and re-run
+`start`, as §6 says); (2) `start`, `guard` and the branch check for the lowest open unit (a new goal
+file is untracked, and `start` checks tracked files only); (3) `state.record-session`; (4) one
+`docs(state)` commit of the `state_path` file and the goal file; (5) `restack`; (6)
+`start --phase <lowest>`, `guard` and the branch check; (7) a fresh where-am-I and the end report.
+With the unit flow off (a `unit flow off` ledger line, or an empty `FOLD_PY`) every `start`,
+`guard`, branch check and `restack` of this order is skipped and the report prints
+`checkout: <current branch> (unit flow off)`. A goal path that is already tracked (a re-render) is a
+modified tracked file: if step (2) refuses, show it to the owner and stop. A `start` refusal that
+stops the run (§1) stops before any write: no `state.record-session` and no commit; show the report
+and the stop reason instead.
 
-**Hand off to goal-prompt (auto path only).** After the range's `docs(state)` commit, prepare the autonomous-run prompt for the discussed range. Read the SKILL.md at the §0 step 1 `GOAL_MD` literal and follow it (no skill-to-skill call, as in §1). Supply its answers instead of its four questions: the work set is the discussed phases in numeric order, the target host is the current host, `native_execution` comes from this run's decisions (default false), mockups are none, and its optional owner run-rule fields are set only where a source states them. Commit the rendered file in its own `docs` commit, then end the run; stop earlier only on a blocker. Empty `GOAL_MD`: say goal-prompt is not installed and stop. A range in which no phase was discussed prepares no prompt and says so.
+**Hand off to goal-prompt (auto path only).** At step (1) of the end-of-range order above, prepare
+the autonomous-run prompt for the discussed range. Read the SKILL.md at the §0 step 1 `GOAL_MD`
+literal and follow it (no skill-to-skill call, as in §1). Supply its answers instead of its four
+questions: the work set is the discussed phases in numeric order, the target host is the current
+host, `native_execution` comes from this run's decisions (default false), mockups are none, and its
+optional owner run-rule fields are set only where a source states them. The rendered file is
+committed with STATE in step (4) of that order, on the lowest open unit (§6), then the run ends with
+the end report; stop earlier only on a blocker. Empty `GOAL_MD`: say goal-prompt is not installed
+and end the run with the end report. A range in which no phase was discussed prepares no prompt and
+says so.
+
+**End report.** End the run with the branch block of `references/branches.md`, five fields in this
+order: `checkout:` the branch the checkout is left on (the lowest phase's unit after step (6); with
+the unit flow off, `checkout: <current branch> (unit flow off)`); `stack:` with the `show --all`
+lines (order and tips); one `docs <N>:` line per phase naming the branch that holds its SPEC and
+CONTEXT; `goal file: <path> on <branch>` (or `goal file: none`); and `unit flow off:` with every
+such ledger line (or `unit flow off: none`). The values come from the fresh where-am-I after the
+final switch, never from memory. With an empty `FOLD_PY` the report still prints all five fields:
+`checkout:` the current branch, `stack: none (fold not installed)`, each `docs <N>:` the current
+branch, and `unit flow off: fold not installed`. With an empty `GOAL_MD`, or a range that prepared
+no prompt, `goal file: none` and the report is still printed.
 
 ## 3. Asking jev
 
@@ -234,10 +314,40 @@ the ledger at the end. Full matrix: `references/decision-table.md`.
 ## 6. Live facts and cross-phase amendments
 
 A fact found in phase K that contradicts phase J's SPEC/CONTEXT, `REQUIREMENTS.md` or
-`ROADMAP.md` amends them **in K's commit**, dated, with the markup in `log-formats.md`. Grep
+`ROADMAP.md` amends them, dated, with the markup in `log-formats.md`. Each file is committed on the
+branch of the lowest open unit that owns it, then the units above are restacked: J's SPEC and
+CONTEXT on J's unit; `REQUIREMENTS.md`, `ROADMAP.md`, STATE.md, todos, config and the goal file on
+the lowest open unit (the first line under `stack:` in the where-am-I output whose unit id starts
+with `phase-` and whose state is `open`; a `finished` or `ready` unit never receives them, and with
+no such unit they go on the current branch). Grep
 the other phases for the statement first. A coupling (K's decision constrains J's HOW) is
 handed to J's discuss. Example pattern: a config default discovered in a later phase's spec
 amends the earlier phases whose requirements assumed the opposite.
+
+**One switch per owner unit, one restack per phase step.** Batch the step's writes by owner unit,
+lowest first: `python3 <FOLD_PY> start --phase <J> --repo <REPO>`,
+`python3 <FOLD_PY> guard --phase <J> --repo <REPO>`, then `git -C <REPO> branch --show-current` must
+print J's unit branch from `show --all` (otherwise stop) before one commit of J's files with the
+resolved GSD command `query commit`; the same for the next owner unit up; then one
+`python3 <FOLD_PY> restack --repo <REPO>`, which after a commit on a lower unit pushes nothing in
+that run, its trunk cascade included (a restacked unit that was pushed before waits as `pending`; a
+never-pushed unit stays unpushed); then `python3 <FOLD_PY> start --phase <K> --repo <REPO>`,
+`python3 <FOLD_PY> guard --phase <K> --repo <REPO>` and the same check for K's unit branch, back to
+the unit the step came from. Going back up, `start --phase <K>` refuses
+`bad_checkpoint: phase dir not found` when K's directory exists only on the units above J (J's tree
+lacks it): create only that directory (`mkdir`, nothing written in it) and re-run `start` once. An
+intermediate `start` may already restack the units above locally, and a `start` run with the owner's
+push go-ahead publishes a pending tip only when every unit below it is pushed at its local tip, so
+after a commit on a lower unit it publishes nothing above it (the fold skill's rule). Commit before
+`restack` or `start`. `references/branches.md` holds the steps and the recipe for each refusal.
+
+**Going to an earlier phase J** (to read, write or amend its files, or to plan it after the chain):
+run `python3 <FOLD_PY> start --phase <J> --repo <REPO>` (it reuses and checks out J's open unit),
+then `python3 <FOLD_PY> guard --phase <J> --repo <REPO>`, then check that
+`git -C <REPO> branch --show-current` prints J's unit branch from `show --all`, and touch J's files
+(read or write, including a grep of J's documents) only after all three pass; the return to K runs
+the same three steps. These two commands are the only way to switch: never move a branch, check one
+out by hand or edit `.git/ai-kit-stack.json`; a refusal goes to `references/branches.md`.
 
 ## 7. Pacing
 
@@ -283,6 +393,7 @@ strictly in sequence (flag that gap in the log).
 - `references/log-formats.md` — before writing a SPEC Interview Log, CONTEXT, DISCUSSION-LOG,
   an amendment, or the ledger.
 - `references/relay-and-summary.md` — before the auto path's pre-run summary or the first interactive relay.
+- `references/branches.md` — at the first refusal of a fold command, for the where-am-I step, before going back to an earlier phase, and for the end report.
 - `references/agent-skills-diagnostics.md` — only when §0 step 8 finds an agent that is not clean.
 - `references/worked-examples.md` — only when a case is unclear: an override, a second
   opinion, a both-low item, an out-of-scope fix.

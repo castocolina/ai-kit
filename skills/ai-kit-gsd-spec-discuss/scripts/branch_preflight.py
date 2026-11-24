@@ -96,14 +96,9 @@ def phase_slug(repo, phase):
     return slug
 
 
-def _latin(char):
-    mapped = _CYRILLIC.get(char)
-    return char if mapped is None else mapped
-
-
-def gsd_slug(raw):
+def gsd_slug(raw: str) -> str:
     """Transliterate, then keep only ASCII slug characters (first-pass, no truncation)."""
-    text = "".join(_latin(char) for char in raw.lower())
+    text = "".join(_CYRILLIC.get(char, char) for char in raw.lower())
     return re.sub(r"[^a-z0-9]+", "-", text).strip("-")
 
 

@@ -31,6 +31,7 @@ RULES FOR EVERY PLAN
 - Reviewers come from .planning/config.json. Probe each one once before the first review. Record any failure; never substitute a model.
 - Read AGENTS.md first, then each phase SPEC and CONTEXT. Their decisions are locked; never re-discuss them.
 - Read a skill only when the task needs it. Candidate skills: ai-kit-gsd-spec-discuss, ai-kit-session-wake.
+- Go back to an earlier phase with fold.py start --phase <N>, then fold.py guard --phase <N>, before planning or executing it; never move a branch or edit the stack record by hand.
 
 ORDER
 - Phases in numeric order: 16, 16.1, 17.
@@ -113,6 +114,7 @@ RULES FOR EVERY PLAN
 - Reviewers come from .planning/config.json. Probe each one once before the first review. Record any failure; never substitute a model.
 - Read AGENTS.md first, then each phase SPEC and CONTEXT. Their decisions are locked; never re-discuss them.
 - Read a skill only when the task needs it. Candidate skills: ai-kit-gsd-spec-discuss, ai-kit-session-wake.
+- Go back to an earlier phase with fold.py start --phase <N>, then fold.py guard --phase <N>, before planning or executing it; never move a branch or edit the stack record by hand.
 
 ORDER
 - Phases in numeric order: 16, 16.1, 17.

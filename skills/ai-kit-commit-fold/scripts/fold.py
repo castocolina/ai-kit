@@ -372,8 +372,8 @@ def _flow(args):
         return _flow_refusal(args.command, "bad_value", "--note needs --continue; not both")
     if args.command == "checkpoint" and args.base is not None and args.plan is None:
         return _flow_refusal(args.command, "bad_value", "--base is only valid with --plan")
-    no_unit = not getattr(args, "next", False) and not getattr(args, "all", False)
-    if args.command in _UNIT_COMMANDS and no_unit:
+    needs_unit = not getattr(args, "next", False) and not getattr(args, "all", False)
+    if args.command in _UNIT_COMMANDS and needs_unit:
         try:
             _attach(args)
         except (flow_record.FlowError, FoldError) as exc:

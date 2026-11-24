@@ -69,7 +69,7 @@ The `ai-kit-spec-execute-superpowers` skill runs these commands, in this order:
    unit branch, below the fold range; `plan_not_carried` names the commands for the owner to
    run; stop and show them.
 2. Step 5, after the final review passes: `fold.py checkpoint --plan <plan file> --base "$FOLD_BASE" --final`.
-   The flow report is relayed verbatim. A refusal changes nothing.
+   The flow report is relayed verbatim. A refusal leaves earlier steps (a catch-up push) done.
 3. After the final review: `fold.py ready --plan <plan file>`, once verification has passed.
 
 The finishing step's merge, push and PR options are not used for a unit. A plan run inline,

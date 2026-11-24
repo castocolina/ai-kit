@@ -41,20 +41,37 @@ def merged_refs(repo, settings, record):
 
 
 def catch_up(repo, settings, record):
-    """Push every recorded pending (folded, skipped) tip, bottom-up, with its own lease."""
-    lines = []
+    """Push every recorded pending (folded, skipped) tip, bottom-up, with its own lease. An open
+    stacked unit stays pending while an open stacked unit below it is not pushed at its local
+    tip: its push would publish that unit's unfolded or unpushed commits under its own branch."""
+    lines, kept, held = [], [], None
     for entry in record["units"]:
+        stacked = entry["kind"] == "stacked" and entry["state"] != "merged"
         pending = entry.get("pending")
-        if pending is None:
-            continue
-        flow_git.push(repo, settings, record, [(entry["branch"], entry["pushed"], pending)])
-        entry["pushed"] = pending
-        entry["pending"] = None
-        write_record(repo, record)  # the remote moved; record it before any forge call
-        lines.append(f"caught up unit {entry['id']}: pushed {pending[:12]}")
-        if entry["pr"] is None and not entry.get("mvp"):  # an MVP unit opens no PR
-            lines.extend(_pr_step(repo, settings, record, _unit_of(entry), entry))
-            write_record(repo, record)
+        if pending is not None and stacked and held is not None:
+            kept.append(entry["id"])
+        elif pending is not None:
+            lines.extend(_catch_up_one(repo, settings, record, entry, pending))
+        if stacked and held is None:
+            tip = flow_git.rev(repo, f"refs/heads/{entry['branch']}")
+            if tip is None or tip != entry["pushed"]:  # a missing branch holds the units above
+                held = entry["id"]
+    if kept:
+        lines.append(f"kept {', '.join(kept)} pending: unit {held} below is not pushed at its "
+                     "local tip")
+    return lines
+
+
+def _catch_up_one(repo, settings, record, entry, pending):
+    """Push one pending tip with its own lease, then open the draft PR on a first push."""
+    flow_git.push(repo, settings, record, [(entry["branch"], entry["pushed"], pending)])
+    entry["pushed"] = pending
+    entry["pending"] = None
+    write_record(repo, record)  # the remote moved; record it before any forge call
+    lines = [f"caught up unit {entry['id']}: pushed {pending[:12]}"]
+    if entry["pr"] is None and not entry.get("mvp"):  # an MVP unit opens no PR
+        lines.extend(_pr_step(repo, settings, record, _unit_of(entry), entry))
+        write_record(repo, record)
     return lines
 
 
@@ -114,11 +131,21 @@ def _restore_branch(repo, entry):
     flow_git.run_git(repo, "branch", entry["branch"], tip)
 
 
+def _restore_open(repo, record, unit):
+    """Recreate a recorded open unit's deleted branch before the sync: the sync's lower-unit pass
+    checks every open unit's branch."""
+    entry = find_entry(record, unit.id)
+    if entry is not None and entry["state"] == "open":
+        _restore_branch(repo, entry)
+
+
 def _local_only(repo, record, parent_tip, paths=()):
-    """Commits on HEAD above parent_tip that no remote branch and no recorded unit holds."""
+    """Commits on HEAD above parent_tip that no remote branch and no recorded unit holds.
+    A None parent_tip (no tracking ref yet) excludes the remote refs and recorded units only."""
     units = [ref for ref in (f"refs/heads/{item['branch']}" for item in record["units"])
              if flow_git.rev(repo, ref) is not None]
-    argv = ["rev-list", "--reverse", "HEAD", "--not", parent_tip, "--remotes", *units]
+    argv = ["rev-list", "--reverse", "HEAD", "--not", *([parent_tip] if parent_tip else []),
+            "--remotes", *units]
     return flow_git.run_git(repo, *argv, *(["--", *paths] if paths else [])).split()
 
 
@@ -202,11 +229,61 @@ def _reuse(repo, entry, head):
     return [f"reuses unit {entry['id']}"]
 
 
+def _unrecorded_detail(repo, head, shas):
+    """The unrecorded_head detail: every listed commit as <sha12> <subject>, subjects redacted,
+    read with one git call."""
+    rows = flow_git.run_git(repo, "show", "-s", "--format=%H%x09%s", *shas[:10]).splitlines()
+    shown = "; ".join(
+        f"{row[:12]} {flow_pr.redact(row.split(chr(9), 1)[1])}" for row in rows if "\t" in row)
+    more = f"; and {len(shas) - 10} more" if len(shas) > 10 else ""
+    return (f"HEAD branch {head} is not a recorded unit and holds {len(shas)} commit(s) "
+            f"the trunk lacks: {shown}{more}")
+
+
+def _refuse_before_sync(repo, settings, record, unit, plan_paths):
+    """Read-only refusals of a new unit's start, decided before the sync moves anything:
+    stale_parent (the newest unmerged unit's branch is gone) and unrecorded_head (HEAD is an
+    unrecorded branch holding commits the stack and the remotes lack, other than the plan
+    commits start would carry)."""
+    head = flow_git.head_branch(repo)
+    if find_entry(record, unit.id) is not None:
+        return
+    if any(item["kind"] == "hotfix" and item["branch"] == head for item in record["units"]):
+        return
+    newest = next((entry for entry in reversed(record["units"])
+                   if entry["kind"] == "stacked" and entry["state"] != "merged"), None)
+    if newest is not None and flow_git.rev(repo, f"refs/heads/{newest['branch']}") is None:
+        raise FlowError(
+            "stale_parent",
+            f"unit {newest['id']} branch {newest['branch']} does not exist; it is the newest "
+            "unmerged unit in the stack record")
+    if not head or head == unit.branch or head in {item["branch"] for item in record["units"]} \
+            or head in settings["targets"]:
+        return
+    flow_git.primary_remote(repo, settings)  # for its refusal: no_remote wins over this check
+    try:
+        _parent, parent_tip = flow_git.start_point(repo, settings, record, unit.target)
+    except FlowError as error:
+        if error.reason != "no_trunk":
+            raise
+        # no local tracking ref yet: count what no remote ref and no recorded unit holds,
+        # before the sync can fetch one
+        parent_tip = None
+    paths = () if flow_git.rev(repo, f"refs/heads/{unit.branch}") is not None else plan_paths
+    tracked = [path for path in paths if flow_git.rev(repo, f"HEAD:./{path}") is not None]
+    carried = set(_local_only(repo, record, parent_tip, tracked)) if tracked else set()
+    left = [sha for sha in _local_only(repo, record, parent_tip) if sha not in carried]
+    if left:
+        raise FlowError("unrecorded_head", _unrecorded_detail(repo, head, left))
+
+
 def _start(args, unit):
     repo = args.repo
     if unit is None:
         raise FlowError("bad_value", "start needs a unit selector")
     settings, record = read_settings(repo), read_record(repo)
+    _refuse_before_sync(repo, settings, record, unit, getattr(args, "plan_paths", ()))
+    _restore_open(repo, record, unit)
     _sync(repo, settings, record)
     lines = catch_up(repo, settings, record) if consented(repo) else []
     head = flow_git.head_branch(repo)
@@ -219,7 +296,11 @@ def _start(args, unit):
         return [*lines, *_reuse(repo, existing, head)], "nothing to do"
     parent, parent_tip = flow_git.start_point(repo, settings, record, unit.target)
     if parent_tip is None:
-        raise FlowError("no_trunk", f"{parent} does not resolve to a commit")
+        raise FlowError(
+            "stale_parent",
+            "unit " + next(item["id"] for item in record["units"] if item["branch"] == parent)
+            + f" branch {parent} does not exist; it is the newest unmerged unit in the "
+            "stack record")
     branch_ref = f"refs/heads/{unit.branch}"
     if flow_git.rev(repo, branch_ref) is not None and not flow_git.is_ancestor(
             repo, parent_tip, branch_ref):
@@ -284,11 +365,18 @@ def _checkpoint(args, unit):
     new_tip = flow_git.rev(repo, f"refs/heads/{unit.branch}")
     if new_tip is None:
         raise FlowError("git_error", f"branch {unit.branch} does not resolve after the fold")
+    pushed_before = entry["pushed"]
     _cascade_if_moved(repo, settings, record, unit, old_tip)
     signals = getattr(args, "signals", (None, None))
     if args.final or signals[0] is True:
         entry["state"] = "finished"
     entry["checkpoints"] += 1
+    if entry["pushed"] != pushed_before and not unit.mvp:
+        # the cascade pushed this unit with the units above it, in one atomic leased push
+        lines.append(f"pushed {unit.branch} at {new_tip[:12]} with the units above")
+        lines.extend(_pr_step(repo, settings, record, unit, entry))
+        write_record(repo, record)
+        return lines, "done"
     # MVP units too: a draft-PR fallback (mvp_below_unmerged) must still push the rewrite
     if old_tip is not None and old_tip != new_tip and not (
             flow_git.is_ancestor(repo, old_tip, new_tip)):

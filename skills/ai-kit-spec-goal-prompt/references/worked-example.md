@@ -36,8 +36,8 @@ recommended, with the reason "OpenGSD scope: /gsd-autonomous with --from/--to/--
 
 ## The paste block (excerpt)
 
-The first 24 lines of the block, copied from `tests/fixtures/goal_prompt/golden/opengsd-recommended.md`
-(golden lines 10 to 33). The rest of the block, from ORDER to REPORT, is in that file:
+The first 19 lines of the block, copied from `tests/fixtures/goal_prompt/golden/opengsd-recommended.md`
+(golden lines 10 to 28). The rest of the block, from ORDER to REPORT, is in that file:
 
 ```
 /gsd-autonomous --from 16 --to 17 --converge
@@ -58,12 +58,7 @@ RULES FOR EVERY PLAN
 - Reviewers come from .planning/config.json. Probe each one once before the first review. Record any failure; never substitute a model.
 - Read AGENTS.md first, then each phase SPEC and CONTEXT. Their decisions are locked; never re-discuss them.
 - Read a skill only when the task needs it. Candidate skills: ai-kit-gsd-spec-discuss, ai-kit-session-wake.
-
-ORDER
-- Phases in numeric order: 16, 16.1, 17.
-- No SPEC (spec, then discuss, then plan): 17.
-- Plans already exist (execute them; the plan checker still runs): 16, 16.1, 17.
-- Already verified (verify only): 16.
+- Go back to an earlier phase with fold.py start --phase <N>, then fold.py guard --phase <N>, before planning or executing it; never move a branch or edit the stack record by hand.
 ```
 
 ## Render relay

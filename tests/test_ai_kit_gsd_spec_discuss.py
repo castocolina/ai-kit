@@ -176,6 +176,27 @@ class TestPhaseRange(_TmpHome):
         self.assertEqual(phase_range.undiscussed_reason(str(other), phase_range.git_time),
                          "SPEC newer than CONTEXT")
 
+    def test_artifact_pick_follows_gsd_bare_context_and_requirements_spec(self):
+        # Judge loop 39.2 D8-3: GSD reads a bare CONTEXT.md and never takes an AI- or UI-SPEC as
+        # the requirements SPEC (gsd-core planning-workspace findContextMdIn, isPhaseSpecFile).
+        phase = self.tmp / "21-z"
+        phase.mkdir()
+        (phase / "CONTEXT.md").write_text("context")
+        (phase / "21-UI-SPEC.md").write_text("ui spec")
+        stamps = {"CONTEXT.md": 1.0, "21-UI-SPEC.md": 2.0}
+
+        def timer(path):
+            return stamps.get(os.path.basename(path))
+
+        self.assertIsNone(phase_range.undiscussed_reason(str(phase), timer))
+        (phase / "21-AI-SPEC.md").write_text("ai spec")
+        stamps["21-AI-SPEC.md"] = 3.0
+        self.assertIsNone(phase_range.undiscussed_reason(str(phase), timer))
+        (phase / "21-SPEC.md").write_text("spec")
+        stamps["21-SPEC.md"] = 4.0
+        self.assertEqual(phase_range.undiscussed_reason(str(phase), timer),
+                         "SPEC newer than CONTEXT")
+
 
 # ─── edge_floor.py ────────────────────────────────────────────────────────────
 
@@ -589,8 +610,8 @@ class TestPhase324Contract(unittest.TestCase):
     def test_handoff_runs_after_the_state_commit(self):
         skill = _flat(self.read("SKILL.md"))
         self.assertIn("Hand off to goal-prompt (auto path only)", skill)
-        self.assertIn("After the range's `docs(state)` commit, prepare the autonomous-run prompt "
-                      "for the discussed range", skill)
+        self.assertIn("At step (1) of the end-of-range order above, prepare the "
+                      "autonomous-run prompt for the discussed range", skill)
         self.assertLess(skill.index("query state.record-session"),
                         skill.index("Hand off to goal-prompt"))
 
@@ -604,7 +625,8 @@ class TestPhase324Contract(unittest.TestCase):
 
     def test_handoff_not_installed_and_empty_range_stop(self):
         skill = _flat(self.read("SKILL.md"))
-        for needle in ("Empty `GOAL_MD`: say goal-prompt is not installed and stop.",
+        for needle in ("Empty `GOAL_MD`: say goal-prompt is not installed and end the run "
+                       "with the end report.",
                        "stop earlier only on a blocker",
                        "A range in which no phase was discussed prepares no prompt "
                        "and says so."):
@@ -1065,6 +1087,7 @@ class TestBranchPreflight(_TmpHome):
         self.assertEqual(branch_preflight.gsd_slug("Intro_V2.x"), "intro-v2-x")
         self.assertEqual(branch_preflight.gsd_slug("demo-slice"), "demo-slice")
         self.assertEqual(branch_preflight.gsd_slug("Привет_мир"), "privet-mir")
+        self.assertEqual(branch_preflight.gsd_slug("Объём"), "obem")  # the hard sign drops
         repo = self._repo()
         gsd = self._stub_gsd({"git.branching_strategy": "phase"})
         self._phase_dir(repo, "05-Intro_V2.x")
@@ -1173,8 +1196,9 @@ class TestBranchPreflight(_TmpHome):
 
 # ─── no ladder left in this skill ─────────────────────────────────────────────
 
+# only the fold reason name no_consent may appear; the word itself may not.
 FORBIDDEN_PATTERNS = (r"\blaya\b", r"typesafe", r"opencode zen", r"\bzen\b", r"system one",
-                      r"consent", r"--probe", r"missing_api_key", r"backend_unavailable",
+                      r"(?<!no_)consent", r"--probe", r"missing_api_key", r"backend_unavailable",
                       r"key_check", r"key_source", r"JEV_(BACKEND|ALLOW_REMOTE|MIN_CONFIDENCE)",
                       r"decide\.py")
 
@@ -1225,6 +1249,12 @@ class TestNoLadderHere(unittest.TestCase):
             for pattern in FORBIDDEN_PATTERNS:
                 with self.subTest(file=path.name, pattern=pattern):
                     self.assertIsNone(re.search(pattern, body, re.IGNORECASE))
+
+    def test_consent_pattern_allows_only_the_reason_name(self):
+        pattern = next(p for p in FORBIDDEN_PATTERNS if "consent" in p)
+        self.assertIsNone(re.search(pattern, "`no_consent`", re.IGNORECASE))
+        self.assertIsNotNone(re.search(pattern, "ask for remote consent", re.IGNORECASE))
+        self.assertIsNotNone(re.search(pattern, "x_consent", re.IGNORECASE))
 
 
 if __name__ == "__main__":

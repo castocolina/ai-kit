@@ -8,9 +8,12 @@ text is `SKILL.md`; the one policy every fold follows is `references/folding-pol
 On top of the fold, the skill runs the unit flow: `fold.py start` creates a unit's branch on the stack
 top, `fold.py checkpoint` folds and pushes it (the first push opens a draft PR), and `fold.py ready`
 marks the PR ready after verification. Restack, hotfix, merge-chain, settings and push consent are
-the same `fold.py` CLI. Pushes need push consent, granted once per repository. The contract any
-planning system can plug into is `references/unit-contract.md`; the GSD and superpowers adapters are
-in `references/adapter-guide.md`.
+the same `fold.py` CLI; `fold.py show --all` lists every recorded unit, `restack` (and every
+command that syncs first) also restacks the units above a lower unit that got a plain commit in a
+local pass that pushes nothing, and `start` refuses `stale_parent` or `unrecorded_head` before
+anything moves. Pushes need push consent, granted once per repository. The contract any planning
+system can plug into is `references/unit-contract.md`; the GSD and superpowers adapters are in
+`references/adapter-guide.md`.
 
 ## Files
 

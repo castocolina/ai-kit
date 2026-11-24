@@ -62,9 +62,19 @@ def git_time(path: str, run: Callable[..., Any] = subprocess.run) -> float | Non
     return os.path.getmtime(path)
 
 
-def first_match(directory: str, suffix: str) -> str | None:
-    """The first `*-<suffix>` file in a phase dir."""
-    hits = sorted(glob.glob(os.path.join(directory, f"*-{suffix}")))
+def find_context(directory: str) -> str | None:
+    """GSD's CONTEXT pick (findContextMdIn): a bare CONTEXT.md, else the first `*-CONTEXT.md`."""
+    bare = os.path.join(directory, "CONTEXT.md")
+    if os.path.isfile(bare):
+        return bare
+    hits = sorted(glob.glob(os.path.join(directory, "*-CONTEXT.md")))
+    return hits[0] if hits else None
+
+
+def find_spec(directory: str) -> str | None:
+    """GSD's requirements SPEC (isPhaseSpecFile): the first `*-SPEC.md` not an AI- or UI-SPEC."""
+    hits = sorted(path for path in glob.glob(os.path.join(directory, "*-SPEC.md"))
+                  if not path.endswith(("-AI-SPEC.md", "-UI-SPEC.md")))
     return hits[0] if hits else None
 
 
@@ -72,10 +82,10 @@ def undiscussed_reason(directory: str | None, timer: Callable[[str], float | Non
     """Why a phase still needs spec/discuss, or None when it is discussed."""
     if not directory:
         return "no phase dir"
-    context = first_match(directory, "CONTEXT.md")
+    context = find_context(directory)
     if not context:
         return "no CONTEXT"
-    spec = first_match(directory, "SPEC.md")
+    spec = find_spec(directory)
     spec_time, context_time = (timer(spec) if spec else None), timer(context)
     if spec_time is not None and context_time is not None and spec_time > context_time:
         return "SPEC newer than CONTEXT"

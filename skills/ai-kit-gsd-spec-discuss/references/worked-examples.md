@@ -51,7 +51,7 @@ CLI reads hooks from a fixed path.
 Phase 19 (spec): `config-new-project` copies `~/.gsd/defaults.json`, including
 `resolve_model_ids: "omit"`; with it, `resolve-model` returns `model: ""` on claude.
 - No model was asked; it was a scratch-dir experiment.
-- Same commit amended two earlier SPECs (`NN-SPEC` R5/R13, `MM-SPEC` R13) and added `NN D-xx`.
+- The two earlier SPECs (`NN-SPEC` R5/R13, `MM-SPEC` R13) were amended on their own units, lowest first, then one restack; the phase's own commit added `NN D-xx`.
 
 ## 6. A low answer (illustrative ids)
 
