@@ -1045,9 +1045,9 @@ Plans:
 
 **Requirement candidates (captured 2026-11-23, owner request)**: spec-discuss branch strategy for stacked units. No v2.0 phase edits `ai-kit-gsd-spec-discuss` today; inserted as this phase on 2026-11-23, owner decision. Source: `.planning/todos/pending/2026-11-23-spec-discuss-branch-strategy-after-the-chain.md`.
 
-**Plans**: 10 plans
+**Plans**: 1/10 plans executed
 
-- [ ] 39.2-01-PLAN.md (wave 1): tracer: `fold.py show --all`, the read-only all-units view (R7)
+- [x] 39.2-01-PLAN.md (wave 1): tracer: `fold.py show --all`, the read-only all-units view (R7)
 - [ ] 39.2-02-PLAN.md (wave 1): `branch_preflight.py`, the GSD branch-name and unrecorded-HEAD start-time checks (R5)
 - [ ] 39.2-03-PLAN.md (wave 2): `fold.py restack` restacks the units above a moved lower unit, locally, never pushed (R6)
 - [ ] 39.2-04-PLAN.md (wave 3): `start` refusals `stale_parent` and `unrecorded_head`, fold docs, evals and README row (R5, R8)

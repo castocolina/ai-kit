@@ -94,7 +94,7 @@ def _add_repo(parser):
     parser.add_argument("--repo", default=".", help="repository (default: current directory)")
 
 
-def _add_selector(parser, allow_next=False):
+def _add_selector(parser, allow_next=False, allow_all=False):
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--unit", dest="unit_file", metavar="FILE|-",
                        help="unit contract JSON, or - for stdin")
@@ -104,12 +104,15 @@ def _add_selector(parser, allow_next=False):
     if allow_next:
         group.add_argument("--next", action="store_true",
                            help="no unit yet: brief the top stacked unit as the previous unit")
+    if allow_all:
+        group.add_argument("--all", action="store_true",
+                           help="every recorded unit, one line each; read-only")
 
 
 def _add_flow_parsers(sub):
     for name in _UNIT_COMMANDS:
         parser = sub.add_parser(name, help=f"unit flow: {name}")
-        _add_selector(parser, allow_next=name == "boundary")
+        _add_selector(parser, allow_next=name == "boundary", allow_all=name == "show")
         _add_repo(parser)
         if name == "checkpoint":
             parser.add_argument("--checkpoint", metavar="FILE|-", help="checkpoint JSON")
@@ -369,7 +372,8 @@ def _flow(args):
         return _flow_refusal(args.command, "bad_value", "--note needs --continue; not both")
     if args.command == "checkpoint" and args.base is not None and args.plan is None:
         return _flow_refusal(args.command, "bad_value", "--base is only valid with --plan")
-    if args.command in _UNIT_COMMANDS and not getattr(args, "next", False):
+    no_unit = not getattr(args, "next", False) and not getattr(args, "all", False)
+    if args.command in _UNIT_COMMANDS and no_unit:
         try:
             _attach(args)
         except (flow_record.FlowError, FoldError) as exc:

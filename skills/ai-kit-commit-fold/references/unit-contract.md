@@ -136,6 +136,7 @@ What the flow does at each signal:
   `mvp` flag, the remote sha last pushed by the flow, any pending sha left by a skipped push,
   the backup tags of its folds, the title, the goal, the checkpoint count and `carried` (the
   local planning commits `start` kept below the fold range).
+- All-units view: `fold.py show --all` prints one line per recorded unit in stack order, `unit <id> branch <branch> parent <parent> state <state> exists <yes|no> tip <sha12|none>` (`exists no` and `tip none` when the unit's local branch is gone), or `units: none` when no unit is recorded. It reads the record and the local branches only: no sync, no remote call, no write, no report header; it exits 0.
 - Settings: `.aikit/flow.json` in the main worktree, ignored by git. Keys: `schema`, `repo`,
   push approval (`consent`), `granted`, `remote` (default `origin`), `targets` and `gates`. `gates` holds the
   project's own commands; each command is one argv list.

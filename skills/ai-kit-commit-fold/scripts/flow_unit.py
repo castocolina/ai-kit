@@ -433,8 +433,31 @@ def cmd_ready(args):
     return _run("ready", args, _ready)
 
 
+def _show_all(repo):
+    """One line per recorded unit in stack order, or `units: none`.
+
+    Reads the record and local refs only.
+    """
+    units = read_record(repo)["units"]
+    if not units:
+        print("units: none")
+        return 0
+    for entry in units:
+        tip = flow_git.rev(repo, f"refs/heads/{entry['branch']}")
+        exists = "yes" if tip else "no"
+        shown = tip[:12] if tip else "none"
+        print(f"unit {entry['id']} branch {entry['branch']} parent {entry['parent']} "
+              f"state {entry['state']} exists {exists} tip {shown}")
+    return 0
+
+
 def cmd_show(args):
-    """Read-only: no sync and no remote call. Prints the state and PR lines."""
+    """Read-only: no sync and no remote call.
+
+    Prints the state and PR lines, or with --all one line per unit.
+    """
+    if getattr(args, "all", False):
+        return _show_all(args.repo)
     record = read_record(args.repo)
     entry = find_entry(record, args.unit.id)
     if entry is None:
