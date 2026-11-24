@@ -42,6 +42,9 @@ variable.
      --catalog-path "$CATALOG_JSON" --cwd "<project root>" --if-stale \
      [--extra-candidate <cli>:<model-id> ...] > "$SCRATCH/fetch-model-catalog-result.json"
    ```
+   On the keep form of `catalog.md`'s "Pending old roster" section, prefix it with
+   `AI_KIT_KEEP_MIGRATION_BACKUP=1`, as every fetch; when that section ruled fetching out, skip
+   this item.
    `--if-stale` here gates the models.dev/Artificial Analysis NETWORK calls only — candidate
    discovery/reconciliation always runs, so a brand-new model is reflected in this run's
    `unmatched`/`discovered` output even when the catalog itself is still fresh and nothing was

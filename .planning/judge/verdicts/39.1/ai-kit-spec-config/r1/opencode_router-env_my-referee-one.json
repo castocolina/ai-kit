@@ -1,0 +1,229 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=325s out=1111724 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_df378fc97ffecMItbDtYBuqBNw applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-spec-config\",\"judge\":\"opencode:router-env/my-referee-one\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":18,\"D2\":13,\"D3\":15,\"D4\":13,\"D5\":11,\"D6\":13,\"D7\":12,\"D8\":5},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":100,\"max_total\":125,\"percent\":80.0,\"grade\":\"B\",\"findings\":[{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-config/references/catalog.md\",\"line\":31,\"evidence\":\"`fetch-model-catalog --runtimes-json <runtimes.json> --catalog-path <catalog> --if-stale --jev` omits `--cwd`. When a listing is missing, the command resolves and can migrate rosters from its process directory, not the project root Step 1.5 checked and the owner approved.\",\"fix\":\"Pass `--cwd \\\"<project root>\\\"` in every catalog fetch and apply the migration gate to that same resolved project and user layer before any fetch.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-config/references/check-only.md\",\"line\":17,\"evidence\":\"The risk question is supposed to cover 'exactly the keys `probe-quota` will spawn for,' but the preview and live command resolve and route independently. A config or availability change can introduce a write-capable lane that was not in the preview and did not receive consent.\",\"fix\":\"Have the probe command consume an approved plan of resolved lane identities, including their runtime, model and command. Refuse to launch any lane whose identity or risk status differs from the plan; show the updated plan and ask again.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":480,\"evidence\":\"The wizard runs `trust-local --cwd <project root>` after a yes to an earlier `--show`. The trusting invocation rereads the file, recomputes its digest and records trust without comparing it with the preview. An intervening edit can therefore receive trust without being shown to the owner.\",\"fix\":\"Include a preview fingerprint covering the command-bearing entries and their merged command values. Require the trusting invocation to match that fingerprint before recording trust; if it differs, show a fresh preview and get a new yes.\"},{\"id\":\"D8-4\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":115,\"evidence\":\"'the next command that reads the roster (`probe-quota`, `resolve-reviewers` or a review run) migrates it' is false for a legacy roster naming a removed runtime. The project and user loaders deliberately read that roster in memory without migrating it.\",\"fix\":\"Add a removed-runtime exception to the migrate-only guidance and the migration reference. Tell the owner to reconfigure the affected lanes through setup and approve replacement; do not promise that another read will migrate the old roster.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/references/catalog.md\",\"line\":23,\"evidence\":\"'Only when `HERDR_ENV=1` and the owner chose copilot as a preferred runtime' appears in Step 1.5, but the owner first chooses preferred runtimes in Step 2.2. Following the prescribed order leaves that optional discovery branch without the answer it needs.\",\"fix\":\"Keep initial catalog discovery separate from owner-dependent discovery. Put the Copilot pane offer at wizard-flow step 2, after the runtime choices and before final reconciliation and ranking. Preserve explicit consent and the skip default.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":452,\"evidence\":\"The main file is 492 lines and over 7,000 words. It loads the full command-trust procedure beginning 'When the write target was local' even for global writes and rosters that contain only ordinary runtime/model pairs.\",\"fix\":\"Keep the command-bearing check and the explicit-consent requirement in Step 4. Move the preview, inherited-command fallback and migration safeguards into a direct `references/trust-preview.md` link, read only for a local roster with command-bearing entries or an untrusted-local diagnostic.\"},{\"id\":\"D5-2\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/references/cli-model-selection.md\",\"line\":3,\"evidence\":\"'Loaded from `wizard-flow.md` step 2 only' contradicts the main skill's instruction to load item 6 for the code-index alternative check, even when all preferred runtimes have model listings.\",\"fix\":\"State both entry points in the reference header: load items 1–4 for missing listings or unmatched candidates, and load item 6 alone at the code-index alternative check. Link each entry point directly from the corresponding main workflow step.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":3,\"evidence\":\"'Use when the user requests cross-AI review or execute setup' does not explicitly exclude running an already configured review or plan. The description also omits stale-provider checks as a trigger and describes `--local` as a 'force local write without asking' despite the replacement gate.\",\"fix\":\"Use when the user wants to set up or refresh ai-kit's cross-AI reviewers or coding executors, choose models or fallback order for each role, check lane availability or stale OpenCode providers, or asks about migrating a legacy review-spec.toml roster. Also use when ai-kit-spec-review or ai-kit-spec-execute-superpowers offers setup because no lanes exist. Detect installed CLIs and models, propose separate review and execute sets from the catalog, and save the owner's choices under [lanes] in config.toml. Default to .aikit/config.toml; --local and --global select the layer without bypassing replacement consent. --check-only reports availability without persisting changes. Not for running an already configured review or execution plan, editing unrelated config tables, or changing a single setting by hand.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":200,\"evidence\":\"'`--global` forces <user config> directly' and '`--local` also forces local directly' give two incompatible targets when both flags are supplied, with no instruction to stop before writes or migration.\",\"fix\":\"Treat `--local` and `--global` as mutually exclusive in an entry check. If both are supplied, ask for one target and do not save caches, discover candidates, migrate rosters or write config until the conflict is resolved.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/evals/evals.json\",\"line\":107,\"evidence\":\"'If the proposal shows an alias group' lets the alias test pass when no alias is shown at all. Other critical cases, such as declining a write-risk probe, have assertions but no fixture that reliably sets up the risky lane and the owner's answer.\",\"fix\":\"Give the alias eval a deterministic catalog and discovery fixture and require the named alias to appear, labelled and unranked. Give the probe-decline eval a synthetic custom or unconfirmed runtime lane plus a scripted decline, then assert that no live probe ran and the config was unchanged.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/evals/trigger-queries.json\",\"line\":11,\"evidence\":\"The suite has 10 positives and 10 negatives, including useful near-misses, but 'Write a unit test for the parser in the markdown-to-pdf skill' is an easy negative, while the positives do not isolate execute-only setup without wizard terminology.\",\"fix\":\"Replace an unrelated negative and a repetitive positive with a matched pair: one user who wants to choose a coding model and fallback before running a plan, and one who wants the same plan run using already configured lanes.\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":19,\"evidence\":\"'Bash below means the host's shell tool' and '`Read` means its file reader' restate native tool capabilities. The valuable guidance is what to do when owner questions are unavailable, not what each tool does.\",\"fix\":\"Keep the numbered-question fallback, multi-select behavior and requirement to wait for the owner. Remove only the generic tool definitions and record the removal.\"},{\"id\":\"D8-5\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/references/free-lanes.md\",\"line\":21,\"evidence\":\"'Free models of <provider> appear to share one pool (reported by users, not confirmed by the vendor)' is presented for every provider, but gives no provider-specific source, check date or live verification step.\",\"fix\":\"Describe the same-pool exclusion as ai-kit's conservative fallback rule, not a provider quota fact. Present an actual shared-quota claim only when supported for that provider, with its source and check date.\"},{\"id\":\"D8-6\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":255,\"evidence\":\"'codex has no `models`/`list-models` subcommand (confirmed via `codex --help`)' is an undated claim about a vendor CLI. The workflow already has a live inventory and does not need that historical assertion to decide what to offer.\",\"fix\":\"Use the installed binary's `codex --help` and `codex debug models --help` when diagnosing a missing listing, or cite the dated official CLI reference. Keep the existing rule to use the current snapshot for model selection and never guess an ID.\"}]}"
+  }
+ ],
+ "digest": "bcc74c082ea8e5020b4bb9595d5faf3e0dd2a1d9cd6dc15e37cad5feca07f1b0",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "fbdac1e55606d6cb4bd680b275bf3eac300c4fc545c6a093e3e0b0c6b1e5ec85"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-one",
+ "loop": "39.1",
+ "modules": [
+  "tests/test_ai_kit_spec_check_providers.py",
+  "tests/test_ai_kit_spec_runtimes_table.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_arch_no_grok_runtime.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_role_orders.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_spec_chain_text.py",
+  "tests/test_spec_config_catalog_text.py",
+  "tests/test_spec_config_flow_text.py",
+  "tests/test_spec_config_lane_json.py"
+ ],
+ "prompt_sha256": "b88f91b604c8b2ba30f6cc1e52745d5103dfb68a5b7521a0298429c7b39062b2",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-spec-config",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D8",
+    "evidence": "`fetch-model-catalog --runtimes-json <runtimes.json> --catalog-path <catalog> --if-stale --jev` omits `--cwd`. When a listing is missing, the command resolves and can migrate rosters from its process directory, not the project root Step 1.5 checked and the owner approved.",
+    "file": "skills/ai-kit-spec-config/references/catalog.md",
+    "fix": "Pass `--cwd \"<project root>\"` in every catalog fetch and apply the migration gate to that same resolved project and user layer before any fetch.",
+    "id": "D8-1",
+    "line": 31,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The risk question is supposed to cover 'exactly the keys `probe-quota` will spawn for,' but the preview and live command resolve and route independently. A config or availability change can introduce a write-capable lane that was not in the preview and did not receive consent.",
+    "file": "skills/ai-kit-spec-config/references/check-only.md",
+    "fix": "Have the probe command consume an approved plan of resolved lane identities, including their runtime, model and command. Refuse to launch any lane whose identity or risk status differs from the plan; show the updated plan and ask again.",
+    "id": "D8-2",
+    "line": 17,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The wizard runs `trust-local --cwd <project root>` after a yes to an earlier `--show`. The trusting invocation rereads the file, recomputes its digest and records trust without comparing it with the preview. An intervening edit can therefore receive trust without being shown to the owner.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Include a preview fingerprint covering the command-bearing entries and their merged command values. Require the trusting invocation to match that fingerprint before recording trust; if it differs, show a fresh preview and get a new yes.",
+    "id": "D8-3",
+    "line": 480,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'the next command that reads the roster (`probe-quota`, `resolve-reviewers` or a review run) migrates it' is false for a legacy roster naming a removed runtime. The project and user loaders deliberately read that roster in memory without migrating it.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Add a removed-runtime exception to the migrate-only guidance and the migration reference. Tell the owner to reconfigure the affected lanes through setup and approve replacement; do not promise that another read will migrate the old roster.",
+    "id": "D8-4",
+    "line": 115,
+    "severity": "high"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "'Only when `HERDR_ENV=1` and the owner chose copilot as a preferred runtime' appears in Step 1.5, but the owner first chooses preferred runtimes in Step 2.2. Following the prescribed order leaves that optional discovery branch without the answer it needs.",
+    "file": "skills/ai-kit-spec-config/references/catalog.md",
+    "fix": "Keep initial catalog discovery separate from owner-dependent discovery. Put the Copilot pane offer at wizard-flow step 2, after the runtime choices and before final reconciliation and ranking. Preserve explicit consent and the skip default.",
+    "id": "D2-1",
+    "line": 23,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "The main file is 492 lines and over 7,000 words. It loads the full command-trust procedure beginning 'When the write target was local' even for global writes and rosters that contain only ordinary runtime/model pairs.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Keep the command-bearing check and the explicit-consent requirement in Step 4. Move the preview, inherited-command fallback and migration safeguards into a direct `references/trust-preview.md` link, read only for a local roster with command-bearing entries or an untrusted-local diagnostic.",
+    "id": "D5-1",
+    "line": 452,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "'Loaded from `wizard-flow.md` step 2 only' contradicts the main skill's instruction to load item 6 for the code-index alternative check, even when all preferred runtimes have model listings.",
+    "file": "skills/ai-kit-spec-config/references/cli-model-selection.md",
+    "fix": "State both entry points in the reference header: load items 1–4 for missing listings or unmatched candidates, and load item 6 alone at the code-index alternative check. Link each entry point directly from the corresponding main workflow step.",
+    "id": "D5-2",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "'Use when the user requests cross-AI review or execute setup' does not explicitly exclude running an already configured review or plan. The description also omits stale-provider checks as a trigger and describes `--local` as a 'force local write without asking' despite the replacement gate.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Use when the user wants to set up or refresh ai-kit's cross-AI reviewers or coding executors, choose models or fallback order for each role, check lane availability or stale OpenCode providers, or asks about migrating a legacy review-spec.toml roster. Also use when ai-kit-spec-review or ai-kit-spec-execute-superpowers offers setup because no lanes exist. Detect installed CLIs and models, propose separate review and execute sets from the catalog, and save the owner's choices under [lanes] in config.toml. Default to .aikit/config.toml; --local and --global select the layer without bypassing replacement consent. --check-only reports availability without persisting changes. Not for running an already configured review or execution plan, editing unrelated config tables, or changing a single setting by hand.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "'`--global` forces <user config> directly' and '`--local` also forces local directly' give two incompatible targets when both flags are supplied, with no instruction to stop before writes or migration.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Treat `--local` and `--global` as mutually exclusive in an entry check. If both are supplied, ask for one target and do not save caches, discover candidates, migrate rosters or write config until the conflict is resolved.",
+    "id": "D6-1",
+    "line": 200,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "'If the proposal shows an alias group' lets the alias test pass when no alias is shown at all. Other critical cases, such as declining a write-risk probe, have assertions but no fixture that reliably sets up the risky lane and the owner's answer.",
+    "file": "skills/ai-kit-spec-config/evals/evals.json",
+    "fix": "Give the alias eval a deterministic catalog and discovery fixture and require the named alias to appear, labelled and unranked. Give the probe-decline eval a synthetic custom or unconfirmed runtime lane plus a scripted decline, then assert that no live probe ran and the config was unchanged.",
+    "id": "D7-1",
+    "line": 107,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The suite has 10 positives and 10 negatives, including useful near-misses, but 'Write a unit test for the parser in the markdown-to-pdf skill' is an easy negative, while the positives do not isolate execute-only setup without wizard terminology.",
+    "file": "skills/ai-kit-spec-config/evals/trigger-queries.json",
+    "fix": "Replace an unrelated negative and a repetitive positive with a matched pair: one user who wants to choose a coding model and fallback before running a plan, and one who wants the same plan run using already configured lanes.",
+    "id": "D7-2",
+    "line": 11,
+    "severity": "low"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "'Bash below means the host's shell tool' and '`Read` means its file reader' restate native tool capabilities. The valuable guidance is what to do when owner questions are unavailable, not what each tool does.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Keep the numbered-question fallback, multi-select behavior and requirement to wait for the owner. Remove only the generic tool definitions and record the removal.",
+    "id": "D1-1",
+    "line": 19,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'Free models of <provider> appear to share one pool (reported by users, not confirmed by the vendor)' is presented for every provider, but gives no provider-specific source, check date or live verification step.",
+    "file": "skills/ai-kit-spec-config/references/free-lanes.md",
+    "fix": "Describe the same-pool exclusion as ai-kit's conservative fallback rule, not a provider quota fact. Present an actual shared-quota claim only when supported for that provider, with its source and check date.",
+    "id": "D8-5",
+    "line": 21,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'codex has no `models`/`list-models` subcommand (confirmed via `codex --help`)' is an undated claim about a vendor CLI. The workflow already has a live inventory and does not need that historical assertion to decide what to offer.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Use the installed binary's `codex --help` and `codex debug models --help` when diagnosing a missing listing, or cite the dated official CLI reference. Keep the existing rule to use the current snapshot for model selection and never guess an ID.",
+    "id": "D8-6",
+    "line": 255,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-one",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 80.0,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 18,
+   "D2": 13,
+   "D3": 15,
+   "D4": 13,
+   "D5": 11,
+   "D6": 13,
+   "D7": 12,
+   "D8": 5
+  },
+  "skill": "ai-kit-spec-config",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 100
+ }
+}

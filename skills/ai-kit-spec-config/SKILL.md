@@ -112,7 +112,7 @@ mention which of these are present on this machine — this is the data
 and follow it: it asks Step 2.5's write-risk question before any live probe, reports availability
 and stale providers, then stops with no writes.
 
-**A migrate-only request is not this wizard's write.** When the user only asks to migrate an old `review-spec.toml`, report `migration pending`, say that the next command that reads the roster (`probe-quota`, `resolve-reviewers` or a review run) migrates it, and stop: run no `detect-runtimes --save`, no catalog step and no write. Run the full setup only if the user also wants the lanes replaced.
+**A migrate-only request is not this wizard's write.** When the user only asks to migrate an old `review-spec.toml`, report `migration pending`, say that the next command that reads the roster (`probe-quota`, `resolve-reviewers` or a review run) migrates it, and stop: run no `detect-runtimes --save`, no catalog step and no write. Run the full setup only if the user also wants the lanes replaced. One exception: an old roster with a lane that names a removed runtime is never migrated by a read (each read uses the roster in memory and drops that lane with a removal note); say so instead of promising a migration, and offer the full setup to re-save those lanes.
 
 **Otherwise**, persist the snapshot before continuing to Step 2:
 ```bash
@@ -132,23 +132,11 @@ and an `(unconfirmed: ...)`, `config file only` or `not checked` line is never u
 
 ### Step 1.5 — Catalog
 
-**A pending old roster comes first.** When an old `review-spec.toml` awaits migration in the project's
-`.aikit/` or the user config folder and `$RUNTIMES_JSON` names an installed runtime without a
-`models` list, `fetch-model-catalog` reads the roster to find that runtime's model, and that read
-migrates every pending old roster it reads, project and user alike, whatever target the owner
-picks. In that case settle Step 2.1's write target and replacement gate before this step, and run
-the catalog step only when every pending old roster belongs to the target the owner approved for
-replacement: on "stop", end the run here; on the keep form, run it with
-`AI_KIT_KEEP_MIGRATION_BACKUP=1` in its environment so the old file is kept as
-`review-spec.toml.migrated`. When a pending roster outside that target would be read (for
-example the owner chose a local roster to leave a pending global one alone), do not run
-`fetch-model-catalog`: say that discovery would migrate that roster, and ask the owner for each
-listing-less runtime's model id (or `auto`) instead. That decision holds for the whole run: no
-later step runs `fetch-model-catalog` (skip `cli-model-selection.md` item 3, and never retry it
-for an empty catalog); add each model id the owner gave (not `auto`) with `confirm-catalog-entry`
-(item 4's form, which reads no roster) to the existing `<catalog>` file. When no catalog file exists yet, there is
-no proposal path that leaves the roster alone: stop before any write and say that discovery waits
-until the owner settles that pending roster.
+**A pending old roster comes first.** When an old `review-spec.toml` awaits migration in the
+project's `.aikit/` or the user config folder and `$RUNTIMES_JSON` names an installed runtime
+without a `models` list, the catalog fetch would migrate that roster: read the "Pending old
+roster" section of [`references/catalog.md`](references/catalog.md) before anything else in
+this step, and settle Step 2.1's write target and replacement gate first.
 
 Run the catalog flow and **MANDATORY read** [`references/catalog.md`](references/catalog.md).
 Show the `catalog-report` output and its attribution lines verbatim, then continue to Step 2.
@@ -383,7 +371,7 @@ so a nested `extra = { timeout_tiers = [...] }` is not a way to set it.
 
 ### Step 3 — Write
 
-Build the JSON shape `skills/ai-kit-spec-review/ai-kit-spec.py`'s `render-toml` subcommand expects: `{"strategy": "local-only", "policy": {"mode": "single", "timeout_tiers": [600, 1200, 1800], "review": {"ladder": ["<key>"]}, "execute": {"ladder": ["<key>"]}}, "lanes": [...]}` — `strategy` only when Step 2.8 asked for `local-only`, `timeout_tiers` only when changed, a role's `review` or `execute` table only when that role has a lane, and never a flat `ladder`. Each object in `lanes` carries: `key`; `runtime` and `model` (or neither, for the session default; `command` only on a custom entry for a CLI outside the table); `purpose` (`review`, `execute` or `both`, from Step 2.2 or Step 2.7 — every newly registered entry gets an explicit `purpose`; an absent `purpose` is reserved for a pre-migration entry carried forward unchanged); its knobs and `strength`; `is_router` or `fallback_quota` only when confirmed `true`; `effort` when chosen, plus `effort_source` only after a test call accepted it; `escalate_runtime` or `escalate_model` only when `true`; `usage_limited` (and `usage_limit_note`) only on the owner's yes; `pool` on every zero-price lane; and the data-use keys on every zero-price lane the owner confirmed (`references/free-lanes.md`). Never write a `false` flag. [`references/config-file.md`](references/config-file.md) shows an example. `render-toml` rejects anything else and prints why. Pass `--catalog-path <catalog>` (the path Step 1.5 printed) and `--runtimes-json "$RUNTIMES_JSON"` (the snapshot Step 1 saved), so the write checks each effort against the evidence the proposal used.
+Build the JSON shape `skills/ai-kit-spec-review/ai-kit-spec.py`'s `render-toml` subcommand expects: `{"strategy": "local-only", "policy": {"mode": "single", "timeout_tiers": [600, 1200, 1800], "review": {"ladder": ["<key>"]}, "execute": {"ladder": ["<key>"]}}, "lanes": [...]}` — `strategy` only when Step 2.8 asked for `local-only`, `timeout_tiers` only when changed, a role's `review` or `execute` table only when that role has a lane, and never a flat `ladder`. Each object in `lanes` carries: `key`; `runtime` and `model` (or neither, for the session default; `command` only on a custom entry for a CLI outside the table); `vendor` from Step 2.3 on every entry with a `model` (the `infer-vendor` value, or the owner's answer when it printed null; none on the session default), since the reviewer pick reads only the stored vendor for its cross-vendor filter; `purpose` (`review`, `execute` or `both`, from Step 2.2 or Step 2.7 — every newly registered entry gets an explicit `purpose`; an absent `purpose` is reserved for a pre-migration entry carried forward unchanged); its knobs and `strength`; `is_router` or `fallback_quota` only when confirmed `true`; `effort` when chosen, plus `effort_source` only after a test call accepted it; `escalate_runtime` or `escalate_model` only when `true`; `usage_limited` (and `usage_limit_note`) only on the owner's yes; `pool` on every zero-price lane; and the data-use keys on every zero-price lane the owner confirmed (`references/free-lanes.md`). Never write a `false` flag. [`references/config-file.md`](references/config-file.md) shows an example. `render-toml` rejects anything else and prints why. Pass `--catalog-path <catalog>` (the path Step 1.5 printed) and `--runtimes-json "$RUNTIMES_JSON"` (the snapshot Step 1 saved), so the write checks each effort against the evidence the proposal used.
 
 Write it to `$SCRATCH/config.json`, then let `--out` do the write directly (atomic, creating parent dirs as needed) rather than piping stdout through a second write yourself:
 
@@ -410,9 +398,7 @@ the whole written file (stdout adds one trailing newline, so compare with `diff`
 
 ### Step 4 — Report
 
-Run `python3 "$TOOLS_PY" config-status --cwd <project root>` (read-only, no probe) and show each `capability <runtime>/<model> <role>: <summary>` line it prints: one per lane of an `active` roster, review and execute lanes alike, in config order. A `pending` or `none` roster prints no capability line: say that the capability view appears once the roster is active. On a non-zero exit, quote its stderr and say the capability view is unavailable. When Step 1.6 ran, also list each role it wrote (`confirmed <name> role=<role>`), each confirm that failed with its stderr (an earlier confirm stays written), and each skill left unsorted.
-
-**First, check the printed exit status.** Anything but `render-toml exit 0` means the
+**First, check the printed exit status**, before any other report line. Anything but `render-toml exit 0` means the
 write is not confirmed (a rejected config can end in a traceback, with no `WARNING:` line;
 a `refusing to replace` line means nothing was written (render-toml checks the target before it migrates or writes anything); a `migrated ... to ...` line on stderr means the old roster moved into the target just before the write; a failure after the write,
 such as printing stdout, can leave the target already replaced): show
@@ -449,6 +435,8 @@ exact fallback sequence without having to open the file. If an order
 differs from the one confirmed at Step 2.2, name the missing keys; a role with no lane has no order. Show every other stderr line (a migration line, a usage-limited role warning, a legacy-order note) as printed. Name every entry saved
 untested at Step 2.5 ("untested: `<key>` — its availability is unverified").
 
+Only after a confirmed write (exit 0, with or without `WARNING:` lines), run `python3 "$TOOLS_PY" config-status --cwd <project root>` (read-only, no probe) and show each `capability <runtime>/<model> <role>: <summary>` line it prints: one per lane of an `active` roster, review and execute lanes alike, in config order. A `pending` or `none` roster prints no capability line: say that the capability view appears once the roster is active. On a non-zero exit, quote its stderr and say the capability view is unavailable. When Step 1.6 ran, also list each role it wrote (`confirmed <name> role=<role>`), each confirm that failed with its stderr (an earlier confirm stays written), and each skill left unsorted.
+
 **When the write target was local** (`./.aikit/config.toml`), check whether it holds a
 command-bearing entry. **Command-bearing** (the one definition, same as
 [`references/config-file.md`](references/config-file.md) and `trust.command_lanes_bytes`): an
@@ -456,33 +444,14 @@ entry with a `command`, or an entry whose `key` equals the `key` of a `command` 
 file or in the user config (the user config only without `strategy = "local-only"`), in any
 role (its fields fill that command's placeholders, so a
 `runtime` entry that overrides a user command entry counts). A plain (runtime, model) pair with
-its own key is not command-bearing. When the file holds at least one, tell the user the whole
-project `[lanes]` table stays inactive for cross-AI review until trusted; with none it needs no
-trust and is active at once. Run
-`python3 "$TOOLS_PY" trust-local --cwd <project root> --show`, where `<project root>` is the
-parent of `.aikit/` — never `.aikit/` itself, which looks for `.aikit/.aikit/config.toml`
-and exits 1. `--show` records no new consent, but it is not a pure read: like every `trust-local` call it first migrates a pending old `review-spec.toml`, which can carry that roster's existing trust record into the new store, and its merged preview can migrate a pending old roster in the user config folder too. When an old roster is pending in either place, say so before running it. When that roster lies outside the target the owner approved at Step 2.1 (a pending global roster after a local write, for example), run neither `trust-local` form: the file stays written but untrusted; say that `--show` would migrate that roster and give the owner the command to run once the owner agrees to that migration. It prints one JSON line per project entry that runs
-as a subprocess (an entry with a `runtime` or a `command`, so more entries than the
-command-bearing ones): `{"key", "argv", "trusted", "path"}`, where `argv` is the argument list
-a review dispatch would run (already merged with the global config per `strategy`) with the prompt
-shown as the literal `<prompt>` placeholder, or `{"key", "error"}` for an entry that would be
-refused. The preview walks the flattened entry view and renders the review invocation: an execute
-entry that shares a key with a review entry can be missing, and a table-runtime execute entry is
-shown with its review argv. Before asking, compare the lines with the file's command-bearing
-entries in both roles. A `{"key", "error"}` line, and a line that renders a key's review argv for
-an execute entry of that key, count as no line for that entry. For any entry without its own line,
-show its `command` text from the file
-and say the preview does not render it. An entry with no `command` of its own fills a user-config
-command's placeholders: show that user entry's `command` text beside the project entry's own
-fields, naming its role and key; when no such user entry can be shown, leave the file untrusted
-and name the role and key that could not be shown. Ask for trust only once every command-bearing
-entry has been shown that way. Show those lines, ask whether to trust the file, and run
-`python3 "$TOOLS_PY" trust-local --cwd <project root>` only after an explicit yes. Trust covers the file's command-bearing lane entries: editing another table, comments or spacing keeps it; changing a command-bearing entry needs a new trust; a file with no command-bearing entry needs none (`trust-local` prints `nothing to trust:`). `trust-local --cwd <project root>
---revoke` withdraws it, and still works after the file was deleted or moved.
-
-Outside `--check-only`, when `probe-quota` prints `ignoring untrusted project-local config`,
-apply the same `--show` / ask / trust sequence, then re-run `probe-quota` before treating its
-output as authoritative for that project's local entries.
+its own key is not command-bearing. With none, the file needs no trust and is active at once.
+When it holds at least one, tell the user the whole project `[lanes]` table stays inactive for
+cross-AI review until trusted, then **MANDATORY read**
+[`references/trust-flow.md`](references/trust-flow.md) and follow its steps in order: preview
+with `trust-local --cwd <project root> --show`, show every command-bearing entry, and run the
+trusting form only after an explicit yes. Outside `--check-only`, when `probe-quota` prints
+`ignoring untrusted project-local config`, follow the same reference before treating its output
+as authoritative for that project's local entries.
 
 Finally, `rm -rf "$SCRATCH"` (only on a successful write; a failed one keeps it, above).
 

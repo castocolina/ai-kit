@@ -1,0 +1,186 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=274s out=748920 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_df3740692ffebB2XM2IOxhoSv0 applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-spec-review-checklist\",\"judge\":\"opencode:router-env/my-referee-one\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":18,\"D2\":15,\"D3\":15,\"D4\":13,\"D5\":15,\"D6\":13,\"D7\":13,\"D8\":9},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":111,\"max_total\":125,\"percent\":88.8,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":337,\"evidence\":\"“An unconstrained review run produced about 8000 lines” repeats the two already-explained failure modes at lines 218–223. The historical detail does not change the reviewer's next action.\",\"fix\":\"Move the incident record intact to evals/test-scenarios.md. Keep the operational rules and the reasons for them in the budget section of SKILL.md.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":3,\"evidence\":\"“Use when a design, spec, requirements, or plan document has been produced and needs review before the next step” gives a clear trigger, but does not distinguish the audit-only checklist from the neighboring review-and-fix orchestrator or fixer.\",\"fix\":\"Use when a saved intent brief, requirements spec, design or RFC, or implementation plan needs a read-only review before the next step, even if the user only asks whether it is ready to build. Returns severity-rated findings on contradictions, untestable requirements, codebase claims, sequencing, and framework conventions such as Kiro EARS, OpenSpec deltas, and GitHub Spec Kit [P] tasks. Supports Superpowers, OpenSpec, GitHub Spec Kit, Kiro, BMAD, GSD, and generic documents, with or without an orchestrator-supplied profile and archetype. Not for drafting or editing documents, applying findings, running a review-and-fix loop, or reviewing code diffs.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":145,\"evidence\":\"“A plan must be executable by an engineer with zero project context: exact files, exact code, exact commands” applies a Superpowers convention to every framework. OpenSpec's official task examples specify concrete actions and verification without embedding exact code and commands in every task.\",\"fix\":\"Require unambiguous targets, dependencies, and observable verification for every plan. Require exact code and commands when the matched framework calls for them or when missing detail makes a fragile step unsafe or non-executable; otherwise accept implementation choices the plan intentionally delegates.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/evals/evals.json\",\"line\":19,\"evidence\":\"“Review evals/files/design-good.md” still expects Issues Found because that fixture contains a planted false claim. All nine cases expect Issues Found or Failure, so none checks that a clean document or one with only LOW observations produces a parser-safe Approved report.\",\"fix\":\"Keep the planted-claim case. Add a genuinely clean fixture and a LOW-only plan fixture. Assert that each returns Approved, that the files stay byte-identical, and that the LOW-only report's plain notes parse as zero findings.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-checklist/evals/evals.json\",\"line\":23,\"evidence\":\"“The report lists evals/files/commit-message-skill.md under ### Files Read, so its content was read” mistakes a self-reported file list for evidence of a read. Listing the path without opening it passes that assertion.\",\"fix\":\"Keep the Files Read format check. Separately verify the content read in the tool trace, or require the finding to cite the fixture's distinct rules on staging and committing and explain how they contradict the design.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":118,\"evidence\":\"“OpenSpec requirement missing ‘SHALL’” makes a valid requirement using MUST a HIGH finding. The same skill accepts MUST at line 166; the bundled OpenSpec profile at line 33 and upstream's official Concepts guide both show MUST as valid.\",\"fix\":\"Flag a missing or misused normative term according to the resolved profile and the requirement's intended strength. Explicitly accept OpenSpec MUST alongside SHALL for mandatory behavior.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":42,\"evidence\":\"“Else (fallback): pick the framework by the path markers in the table” only matches detection signals before choosing a profile. In a mixed project, `.kiro/specs/export/design.md` matches Kiro's `doc_types` but neither of its detection signals; a repository-level Spec Kit marker can therefore win and apply the wrong conventions.\",\"fix\":\"Make the fallback path table cover supported document paths as well as detection signals, including Kiro design and task files and OpenSpec change deltas. Normalize the path against the supplied root, prefer a document-path match over repository markers, and load only the winning profile.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":28,\"evidence\":\"“Confirm every input is a real file path on disk” gives an exact Failure response for inline content, but not for a named file that cannot be read. The introduction also permits persisting inline input, while this branch assigns that action to the caller and tells the reviewer to stop.\",\"fix\":\"Make the caller solely responsible for persisting input. Specify `### Status: Failure — <path>: <reason>` for an unreadable review target or an unreadable explicitly supplied profile, and prohibit approval when either required input could not be checked.\"},{\"id\":\"D8-4\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/SKILL.md\",\"line\":312,\"evidence\":\"“### Cross-Document Consistency appears only when two or more files were reviewed” says when the heading is allowed but gives the standalone reviewer no comparison step. Applying every checklist independently can miss a plan that contradicts an otherwise sound requirements spec.\",\"fix\":\"Before choosing a Status, map each reviewed path to its archetypes, then compare shared requirements, interfaces, and task dependencies across the reviewed files. Cite both locations for a contradiction. Use grounding-only documents as evidence about the reviewed target, not as finding targets.\"},{\"id\":\"D8-5\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-checklist/references/frameworks/gsd.md\",\"line\":41,\"evidence\":\"The unpinned route hardcodes “/gsd-plan-phase {phase_id} --reviews”. Both the archived upstream command definition and the active GSD Core definition identify the command as `gsd:plan-phase` and document `--reviews`; the hyphenated name needs a host alias that this profile does not establish.\",\"fix\":\"Resolve the registered planner name on the target host before invoking or surfacing it. Use the hyphenated alias only when that host exposes it, and cite the active upstream command definition with a date checked while preserving the existing attribution.\"}]}"
+  }
+ ],
+ "digest": "5cc8b3f6a14f7d8ca7b4857aa5f0fe880769197a7cd3ec11d996ccc15e765dca",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "fbdac1e55606d6cb4bd680b275bf3eac300c4fc545c6a093e3e0b0c6b1e5ec85"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-one",
+ "loop": "39.1",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_review_checklist.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_arch_no_grok_runtime.py",
+  "tests/test_framework_profiles.py",
+  "tests/test_skill_text_history.py"
+ ],
+ "prompt_sha256": "c05dfd63942dd3c071cccac51ff52f5c2e437510853c6fc31da4ea2bea704a2a",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-spec-review-checklist",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "“An unconstrained review run produced about 8000 lines” repeats the two already-explained failure modes at lines 218–223. The historical detail does not change the reviewer's next action.",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Move the incident record intact to evals/test-scenarios.md. Keep the operational rules and the reasons for them in the budget section of SKILL.md.",
+    "id": "D1-1",
+    "line": 337,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "“Use when a design, spec, requirements, or plan document has been produced and needs review before the next step” gives a clear trigger, but does not distinguish the audit-only checklist from the neighboring review-and-fix orchestrator or fixer.",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Use when a saved intent brief, requirements spec, design or RFC, or implementation plan needs a read-only review before the next step, even if the user only asks whether it is ready to build. Returns severity-rated findings on contradictions, untestable requirements, codebase claims, sequencing, and framework conventions such as Kiro EARS, OpenSpec deltas, and GitHub Spec Kit [P] tasks. Supports Superpowers, OpenSpec, GitHub Spec Kit, Kiro, BMAD, GSD, and generic documents, with or without an orchestrator-supplied profile and archetype. Not for drafting or editing documents, applying findings, running a review-and-fix loop, or reviewing code diffs.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "“A plan must be executable by an engineer with zero project context: exact files, exact code, exact commands” applies a Superpowers convention to every framework. OpenSpec's official task examples specify concrete actions and verification without embedding exact code and commands in every task.",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Require unambiguous targets, dependencies, and observable verification for every plan. Require exact code and commands when the matched framework calls for them or when missing detail makes a fragile step unsafe or non-executable; otherwise accept implementation choices the plan intentionally delegates.",
+    "id": "D6-1",
+    "line": 145,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“Review evals/files/design-good.md” still expects Issues Found because that fixture contains a planted false claim. All nine cases expect Issues Found or Failure, so none checks that a clean document or one with only LOW observations produces a parser-safe Approved report.",
+    "file": "skills/ai-kit-spec-review-checklist/evals/evals.json",
+    "fix": "Keep the planted-claim case. Add a genuinely clean fixture and a LOW-only plan fixture. Assert that each returns Approved, that the files stay byte-identical, and that the LOW-only report's plain notes parse as zero findings.",
+    "id": "D7-1",
+    "line": 19,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“The report lists evals/files/commit-message-skill.md under ### Files Read, so its content was read” mistakes a self-reported file list for evidence of a read. Listing the path without opening it passes that assertion.",
+    "file": "skills/ai-kit-spec-review-checklist/evals/evals.json",
+    "fix": "Keep the Files Read format check. Separately verify the content read in the tool trace, or require the finding to cite the fixture's distinct rules on staging and committing and explain how they contradict the design.",
+    "id": "D7-2",
+    "line": 23,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“OpenSpec requirement missing ‘SHALL’” makes a valid requirement using MUST a HIGH finding. The same skill accepts MUST at line 166; the bundled OpenSpec profile at line 33 and upstream's official Concepts guide both show MUST as valid.",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Flag a missing or misused normative term according to the resolved profile and the requirement's intended strength. Explicitly accept OpenSpec MUST alongside SHALL for mandatory behavior.",
+    "id": "D8-1",
+    "line": 118,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“Else (fallback): pick the framework by the path markers in the table” only matches detection signals before choosing a profile. In a mixed project, `.kiro/specs/export/design.md` matches Kiro's `doc_types` but neither of its detection signals; a repository-level Spec Kit marker can therefore win and apply the wrong conventions.",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Make the fallback path table cover supported document paths as well as detection signals, including Kiro design and task files and OpenSpec change deltas. Normalize the path against the supplied root, prefer a document-path match over repository markers, and load only the winning profile.",
+    "id": "D8-2",
+    "line": 42,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“Confirm every input is a real file path on disk” gives an exact Failure response for inline content, but not for a named file that cannot be read. The introduction also permits persisting inline input, while this branch assigns that action to the caller and tells the reviewer to stop.",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Make the caller solely responsible for persisting input. Specify `### Status: Failure — <path>: <reason>` for an unreadable review target or an unreadable explicitly supplied profile, and prohibit approval when either required input could not be checked.",
+    "id": "D8-3",
+    "line": 28,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“### Cross-Document Consistency appears only when two or more files were reviewed” says when the heading is allowed but gives the standalone reviewer no comparison step. Applying every checklist independently can miss a plan that contradicts an otherwise sound requirements spec.",
+    "file": "skills/ai-kit-spec-review-checklist/SKILL.md",
+    "fix": "Before choosing a Status, map each reviewed path to its archetypes, then compare shared requirements, interfaces, and task dependencies across the reviewed files. Cite both locations for a contradiction. Use grounding-only documents as evidence about the reviewed target, not as finding targets.",
+    "id": "D8-4",
+    "line": 312,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The unpinned route hardcodes “/gsd-plan-phase {phase_id} --reviews”. Both the archived upstream command definition and the active GSD Core definition identify the command as `gsd:plan-phase` and document `--reviews`; the hyphenated name needs a host alias that this profile does not establish.",
+    "file": "skills/ai-kit-spec-review-checklist/references/frameworks/gsd.md",
+    "fix": "Resolve the registered planner name on the target host before invoking or surfacing it. Use the hyphenated alias only when that host exposes it, and cite the active upstream command definition with a date checked while preserving the existing attribution.",
+    "id": "D8-5",
+    "line": 41,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-one",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 88.8,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 18,
+   "D2": 15,
+   "D3": 15,
+   "D4": 13,
+   "D5": 15,
+   "D6": 13,
+   "D7": 13,
+   "D8": 9
+  },
+  "skill": "ai-kit-spec-review-checklist",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 111
+ }
+}

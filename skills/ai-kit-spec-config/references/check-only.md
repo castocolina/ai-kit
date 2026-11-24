@@ -10,7 +10,8 @@ file (the user `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml` if `--global` 
 `./.aikit/config.toml` by default) and note each `[[lanes.review]]` and `[[lanes.execute]]` entry's `key`/`runtime` (or
 legacy `cli`) with its role, if it exists. (This is a raw on-disk read only, not `cfg_resolve`'s merged view.) When that
 config.toml has no `[lanes]` table and an old `review-spec.toml` sits beside it, report that the old roster migrates on
-the next command that reads it, and list its `[[reviewers]]` entries (read-only).
+the next command that reads it (unless a lane names a removed runtime: such a roster is never migrated by a read, and its
+lanes are re-saved through the full setup), and list its `[[reviewers]]` entries (read-only).
 Whatever the raw read found (none in this file can still mean lanes in the other layer), the
 lanes' **quota availability** is the core purpose of `--check-only`, but the
 probe is a live call to each CLI, so check write risk first, exactly as SKILL.md Step 2.5 does,
@@ -50,8 +51,11 @@ List every such entry with the model and command the snippet printed, so the own
 `probe-quota` cannot probe a subset, so the answer covers the whole probe. On skip, run no
 `probe-quota` call and report every raw-read and printed key as
 `available: unknown (not probed — the write-risk probe was declined)`, then continue with the
-stale-provider report below. On yes, or when every printed entry is confirmed read-only (or none
-was printed), probe using a throwaway path:
+stale-provider report below. The snippet and `probe-quota` resolve separately, so on yes first run
+the snippet again: when its list differs from the one the owner saw (an added key, or another
+runtime, model or command for a key), show the new list and ask again instead of probing. On yes
+with an unchanged list, or when every printed entry is confirmed read-only (or none was printed),
+probe using a throwaway path:
 
 ```bash
 python3 "$TOOLS_PY" probe-quota --cwd "<project root>" --role both --no-save-runtimes --no-migrate --quota-path "$SCRATCH/quota.json"

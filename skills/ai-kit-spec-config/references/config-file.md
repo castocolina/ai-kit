@@ -73,6 +73,7 @@ An example only: the keys are the ones the wizard writes; the ids and values are
       "key": "review-main",
       "runtime": "codex",
       "model": "placeholder-model-1",
+      "vendor": "fake-vendor-a",
       "purpose": "review",
       "effort": "high",
       "escalate_runtime": true,
@@ -82,18 +83,21 @@ An example only: the keys are the ones the wizard writes; the ids and values are
       "key": "review-second",
       "runtime": "pi",
       "model": "placeholder-model-2",
+      "vendor": "fake-vendor-b",
       "purpose": "review"
     },
     {
       "key": "review-third",
       "runtime": "codex",
       "model": "placeholder-model-5",
+      "vendor": "fake-vendor-a",
       "purpose": "review"
     },
     {
       "key": "execute-free",
       "runtime": "opencode",
       "model": "fake/placeholder-model-3",
+      "vendor": "fake-vendor-c",
       "purpose": "execute",
       "effort": "high",
       "effort_source": "accepted by a call on YYYY-MM-DD",
@@ -111,6 +115,7 @@ An example only: the keys are the ones the wizard writes; the ids and values are
       "key": "execute-main",
       "runtime": "codex",
       "model": "placeholder-model-4",
+      "vendor": "fake-vendor-a",
       "purpose": "execute"
     }
   ]

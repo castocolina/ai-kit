@@ -33,9 +33,10 @@ For each chosen row whose `price` state is `zero` (`data_use_needed` is true), r
 
 For each chosen lane, resolve its vendor (Step 2.3), store the pair and its knobs (Step 2.4) with the row's `model_id` (or the id the owner named) as `model`, and ask the optional `strength` (Step 2.6). Then the effort:
 
+- A custom entry (a `command` and no `runtime`): ask no runner effort question and write no `effort` or `effort_source`, since the writer refuses an effort without a table runtime. A level the owner wants for it is one of the entry's own template fields, stored and tested with its other fields (Step 2.4).
 - `claude` and `copilot`: ask no effort question; say in one line "the runner has no effort flag for <runtime> yet, so no effort is stored", and write none.
 - Known levels (the row's `efforts` is not empty): offer only the row's `efforts`, in the printed order, plus "no effort" (the default). Name each pair of the row's `efforts_refused` to the owner with its reason (a level the model lists but the runner cannot pass); never offer it. The chosen level is written as `effort`.
-- Unknown support (the row's `efforts` is empty and its `efforts_source` is null, or the lane is an alias row or a model the owner named; any runtime but `claude` and `copilot`): ask whether to test one level the owner names. Ask Step 2.5's write-risk question first when it applies (the test is a real call; on a skip run no call and write no effort). For a zero-price lane, say in one line before the call: "This test call spends part of the lane's allowance." Then:
+- Unknown support (the row's `efforts` is empty and its `efforts_source` is null, or the lane is an alias row or a model the owner named; any table runtime but `claude` and `copilot`, never a custom entry): ask whether to test one level the owner names. Ask Step 2.5's write-risk question first when it applies (the test is a real call; on a skip run no call and write no effort). For a zero-price lane, say in one line before the call: "This test call spends part of the lane's allowance." Then:
 
 - Run: `check-reviewer --key <lane-key> --model <model-id> --vendor <vendor> --runtime <runtime-id> --effort <level>`
 
