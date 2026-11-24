@@ -215,7 +215,7 @@ B310` on a URL from app config, not user input). "Required for functionality" or
 
 ## Operating under a turn/token budget (external CLI dispatch)
 
-When you were dispatched via a headless CLI (`codex exec`, `grok`, etc.) rather than as a
+When you were dispatched via a headless CLI (`codex exec`, etc.) rather than as a
 native subagent, your transcript itself consumes the same limited budget you're reviewing
 against — verbose narration or full-file echoes can burn enough of it that you never reach
 `### Status:`, silently losing the whole review. Two rules, load-bearing for exactly this
