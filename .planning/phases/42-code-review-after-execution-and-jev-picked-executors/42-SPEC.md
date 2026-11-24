@@ -84,12 +84,15 @@ affinity and context filters and before dispatch; the renewal count is a named c
 
 4. **A lite executor gets a lite block in the plan-writer brief (EXE-03, part 2)** *(effect on a lite model unverified)*: when the
    picked executor is lite, a short block of ai-kit-owned text (smaller tasks, exact commands, one file group per task, no
-   inference needed) is appended to the plan-writer brief; with a strong executor nothing is added; superpowers' own prose is
-   never edited.
-   - Current: the plan-writer brief (`.aikit/brief/SKILL.md`) has no executor-specific text.
-   - Target: a lite block and the rule that selects it (a lite class from the model catalog; the selector is fixed at plan time).
-   - Acceptance: fixtures: a lite pick yields the block in the brief; a strong pick yields none; a diff-scope check shows no
-     third-party file changed; a doc-contract test pins the block's text and its unverified label.
+   inference needed) is delivered beside the plan-writer brief as its own file; with a strong executor nothing is written;
+   superpowers' own prose and the brief file are never edited. *(amended 2026-11-23, 42 discuss: the first draft appended the
+   block to the brief; `fold.py boundary` writes that brief with no extra-text option and the fold tool stays system-neutral, so
+   the block is a separate file)*
+   - Current: the plan-writer brief (`.aikit/brief/SKILL.md`) has no executor-specific text and no second file.
+   - Target: a lite block file and the rule that selects it (a lite class from the model catalog; the selector is fixed at plan
+     time), handed to the plan writer by the same rail that hands over the brief.
+   - Acceptance: fixtures: a lite pick yields the lite file; a strong pick yields none; the brief file bytes are unchanged; a
+     diff-scope check shows no third-party file changed; a doc-contract test pins the block's text and its unverified label.
 
 5. **A recorded spike verifies session ids and headless resume per host (EXE-06, part 1)**: a spike record states, for each
    installed host, whether a session id can be obtained and a headless resume run, with the run's version, date, result and a
@@ -168,7 +171,7 @@ affinity and context filters and before dispatch; the renewal count is a named c
 
 ## Edge Coverage
 
-**Coverage:** 30/32 applicable edges resolved (18 covered or backstop, 12 dismissed with the owner's approval of 2026-11-23) · 2 unresolved (R2 and R3 unclassified; flagged assumptions)
+**Coverage:** 32/34 applicable edges resolved (20 covered or backstop, 12 dismissed with the owner's approval of 2026-11-23) · 2 unresolved (R2 and R3 unclassified; flagged assumptions) *(amended 2026-11-23, 42 discuss: the R4 amendment added the R4 boundary and precision rows)*
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -180,6 +183,8 @@ affinity and context filters and before dispatch; the renewal count is a named c
 | concurrency | R1 | ✅ covered | R1 reuses Phase 40's partial report: one lane's failure never cancels another lane's result. |
 | unclassified | R2 | ⚠ UNRESOLVED | Edge unresolved — planner must treat as assumption (no shape cue matched the lens requirement). |
 | unclassified | R3 | ⚠ UNRESOLVED | Edge unresolved — planner must treat as assumption (no shape cue matched the executor-pick requirement). |
+| boundary | R4 | 🧪 backstop | Held-out fixture: a model whose catalog class sits exactly at the lite edge is read as the catalog states; a missing class means no lite file. |
+| precision | R4 | ✅ covered | R4 acceptance: the brief file bytes are unchanged and no third-party file changes. |
 | adjacency | R4 | 🧪 backstop | Held-out fixture: a model whose catalog class is unknown gets no lite block. |
 | empty | R4 | 🧪 backstop | Held-out fixture: no executor picked adds nothing to the brief. |
 | encoding | R4 | ⛔ dismissed | The lite block is a fixed ai-kit text; no length or normalization semantics. |
