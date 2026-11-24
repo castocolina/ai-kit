@@ -238,7 +238,7 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
     p_catalog.add_argument(
         "--extra-candidate", action="append", default=[], metavar="CLI:MODEL_ID",
         help="repeatable; a wizard-typed single-provider-CLI candidate not yet in "
-             "the config.toml [lanes] roster (e.g. a first-time codex/grok setup with "
+             "the config.toml [lanes] roster (e.g. a first-time codex setup with "
              "nothing registered yet) -- still goes through the same matching/enrichment "
              "path as anything else.")
     p_catalog.add_argument(
@@ -578,7 +578,7 @@ def _drop_removed_runtimes(ids, clis: dict) -> None:
 
 
 def _custom_entry_runtime(reviewer: dict) -> str | None:
-    """The table runtime whose binary a custom entry's `{model}` command launches (a grok
+    """The table runtime whose binary a custom entry's `{model}` command launches (a custom
     entry stores a command and no runtime), else None."""
     command = reviewer.get("command")
     if reviewer.get("runtime") or not isinstance(command, str) or "{model}" not in command:
@@ -1209,7 +1209,7 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
         return 1
     rid = runtime_id(args.runtime)
     row = RUNTIMES.get(rid)
-    if row is not None and row.runner:
+    if row is not None:
         spec = spec_with_effort(rid, "{model}",
                                 "exec" if args.role == "execute" else "review", 600, {
             "effort": args.effort, "service_tier": args.service_tier,

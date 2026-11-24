@@ -89,7 +89,6 @@ class Runtime(NamedTuple):
     native_selectors: tuple[str, ...] = ()
     model_suffix: str | None = None
     multi_provider: bool = False
-    runner: bool = True
     advice: Advice | None = None
 
 
@@ -131,8 +130,7 @@ RUNTIMES: dict[str, Runtime] = {
         advice=Advice("usually the main agent in this host", "seed row"),
     ),
     # copilot has no known host signal (unverified) and its runner rows are unverified.
-    "copilot": Runtime(
-        ("copilot",), (), runner=True),
+    "copilot": Runtime(("copilot",), ()),
 }
 
 KNOWN_CLIS = tuple(RUNTIMES)

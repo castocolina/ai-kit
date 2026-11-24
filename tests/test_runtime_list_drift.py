@@ -83,7 +83,7 @@ def template_runtime_ids(source: str) -> set[str]:
 
 
 def _runner_ids() -> set[str]:
-    return {rid for rid, row in RUNTIMES.items() if row.runner}
+    return set(RUNTIMES)
 
 
 class TestRuntimeListDrift(unittest.TestCase):

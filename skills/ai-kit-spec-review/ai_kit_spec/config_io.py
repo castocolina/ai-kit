@@ -104,12 +104,12 @@ def _normalize_legacy_cli(result: dict, key) -> list[str]:
     result.pop("cli", None)
     result.pop("native_runtime", None)
     row = RUNTIMES.get(rid)
-    if row is None or not row.runner:
+    if row is None:
         if "command" in result:
-            return [f"{key}: cli={cli} has no runner formula; kept as a custom command entry"]
+            return [f"{key}: cli={cli} is not in the runtime table; kept as a custom command entry"]
         result["runtime"] = rid
-        return [f"{key}: cli={cli} has no runner formula and no command; this entry is skipped "
-                f"(build-command --runtime {rid} generates a custom command entry)"]
+        return [f"{key}: cli={cli} is not in the runtime table and has no command; "
+                "store a custom `command` lane for it"]
     if "command" not in result:
         result["runtime"] = rid
         return [f"{key}: cli={cli} -> runtime={rid}"]
@@ -820,21 +820,15 @@ _VALID_PURPOSE = {"review", "execute", "both"}
 _LEGACY_WRITE_FIELDS = ("cli", "native_runtime")
 
 
-# A runner-less row (grok) runs only as a custom command entry (D-29), never as a pair.
-_RUNNER_RUNTIMES = sorted(rid for rid, row in RUNTIMES.items() if row.runner)
-
-
 def _validate_pair_fields(entry: dict, key) -> str | None:
-    """Save is strict: a runtime must be a runner row and carry a model, a command only exists
+    """Save is strict: a runtime must be a table row and carry a model, a command only exists
     on a custom entry, and a pinned model needs a runtime. Load stays lenient."""
     runtime = entry.get("runtime")
     if "runtime" in entry and runtime is not None:
         removed = removed_runtime_message(runtime)
-        if removed is not None or not isinstance(runtime, str) or runtime not in _RUNNER_RUNTIMES:
-            known = isinstance(runtime, str) and runtime in RUNTIMES
-            reason = "has no runner formula" if known else "is not in the runtime table"
+        if removed is not None or not isinstance(runtime, str) or runtime not in RUNTIMES:
             message = removed if removed is not None else (
-                f"runtime {runtime!r} {reason}; "
+                f"runtime {runtime!r} is not in the runtime table; "
                 "store a custom `command` lane instead (no 'runtime')")
             return f"{key}: {message}"
         model = entry.get("model")

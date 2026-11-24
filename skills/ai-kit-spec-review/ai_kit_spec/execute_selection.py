@@ -98,7 +98,7 @@ def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
             kept.append(c)
             continue
         row = RUNTIMES.get(runtime_id(cli)) if cli is not None else None
-        if cli is not None and (row is None or not row.runner) \
+        if cli is not None and row is None \
                 and purpose_matches(c.get("purpose"), "execute"):
             cli_err = (f"{cli!r} has no runner row in the RUNTIMES table, so the runner "
                        "has no way to execute with it")

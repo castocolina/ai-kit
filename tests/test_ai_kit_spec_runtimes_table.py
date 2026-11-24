@@ -613,7 +613,7 @@ def model_suffix_mismatches(text):
     """Runtimes whose template modelSuffix source differs from the Python table."""
     suffixes = template_model_suffixes(text)
     names = set(suffixes) | {
-        name for name, spec in detection.RUNTIMES.items() if spec.runner
+        name for name in detection.RUNTIMES
     }
     bad = []
     for name in sorted(names):
@@ -665,7 +665,7 @@ def template_bins_and_list_argv(text):
 def binary_and_listing_mismatches(text):
     """Runner runtimes whose template bins or listing argv differ from the Python table."""
     found = template_bins_and_list_argv(text)
-    names = set(found) | {name for name, spec in detection.RUNTIMES.items() if spec.runner}
+    names = set(found) | set(detection.RUNTIMES)
     bad = []
     for name in sorted(names):
         spec = detection.RUNTIMES.get(name)
