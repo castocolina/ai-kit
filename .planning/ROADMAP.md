@@ -1013,8 +1013,8 @@ Plans:
   3. The "grok is not a target" notes of Phases 36, 37 and 38.1 are superseded by this removal, and the pending todo "Cursor subagents pinned to non-fast composer-2.5 and grok" is re-read: its grok half (a model, not the runtime) is kept or dropped explicitly.
   4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 
-**Plans**: 13 plans
-- [ ] 39.1-01-PLAN.md (wave 1): unknown-runtime pins, `REMOVED_RUNTIMES` and message helper, stale lane dropped at load after the layer merge, refused at save
+**Plans**: 1/13 plans executed
+- [x] 39.1-01-PLAN.md (wave 1): unknown-runtime pins, `REMOVED_RUNTIMES` and message helper, stale lane dropped at load after the layer merge, refused at save
 - [ ] 39.1-02-PLAN.md (wave 2): `build-command` and `detect-runtimes` report the removed runtime; grok command builder deleted; config-status and silent previews
 - [ ] 39.1-03-PLAN.md (wave 3): grok table row removed with every mirror list (host CLIs, scrub signals, template `scrubEnv`, drift exceptions)
 - [ ] 39.1-04-PLAN.md (wave 4): `runner` field, `_RUNNER_RUNTIMES` and runner-formula branches deleted (D-01)

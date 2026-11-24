@@ -143,6 +143,18 @@ RUNTIMES: dict[str, Runtime] = {
 
 KNOWN_CLIS = tuple(RUNTIMES)
 
+# 39.1 D-02: runtimes ai-kit removed, mapped to the runtimes that still reach their models.
+REMOVED_RUNTIMES: dict[str, tuple[str, ...]] = {"grok": ("opencode", "pi", "cursor-agent")}
+
+
+def removed_runtime_message(rid: object) -> str | None:
+    """The one removal message for an exact removed runtime id, else None (39.1 D-02)."""
+    if not isinstance(rid, str) or rid not in REMOVED_RUNTIMES:
+        return None
+    return (f"runtime {rid!r} was removed from ai-kit; its models stay usable through the "
+            f"{', '.join(REMOVED_RUNTIMES[rid])} runtimes: pick one and re-save the lane with "
+            "the ai-kit-spec-config wizard or render-toml --out <file> --replace")
+
 
 def advice_line(runtime: str) -> str | None:
     """The seed advice line for a preview or the wizard, or None; display only (36 SPEC R7)."""

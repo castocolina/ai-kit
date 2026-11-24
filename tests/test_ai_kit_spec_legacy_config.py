@@ -328,13 +328,6 @@ class TestLegacyForms(unittest.TestCase):
                          Inventory(frozenset(), {}))
         self.assertEqual(decision, "unknown_runtime")
 
-    def test_grok_without_a_command_points_at_the_generator_and_save_rejects_it(self):
-        # B-WR-04: a runner-less row is never saved as a pinned pair.
-        mapped, notes = normalize_legacy_entry({"key": "g", "cli": "grok", "model": "grok-4"})
-        self.assertIn("build-command --runtime grok", notes[0])
-        self.assertIn("has no runner formula; store a custom `command` lane instead (no 'runtime')",
-                      validate_reviewer_fields(mapped) or "")
-
     def test_native_runtime_unknown_keeps_an_explicit_runtime(self):
         # B-WR-05: the new-form field wins over a stale legacy one.
         mapped, notes = normalize_legacy_entry(

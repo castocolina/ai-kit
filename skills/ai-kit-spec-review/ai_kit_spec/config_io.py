@@ -5,7 +5,7 @@ import shlex
 import sys
 
 from ai_kit_spec import config_migrate, lane_effort, lane_settings, role_orders, toml_splice, trust
-from ai_kit_spec.detection import RUNTIMES, runtime_id
+from ai_kit_spec.detection import REMOVED_RUNTIMES, RUNTIMES, removed_runtime_message, runtime_id
 
 try:
     import tomllib as _tomllib_impl
@@ -249,16 +249,21 @@ def infer_legacy_native(reviewers) -> tuple[list, list[str]]:
     return normalized, notes
 
 
-def _emit_legacy_note(label, notes, warn_fn) -> None:
-    """Emit one privacy-safe migration note per label in this process."""
-    if not notes or label in _LEGACY_NOTED:
+def _note_once(label, line, warn_fn) -> None:
+    """Emit one line per label in this process (the legacy-note dedupe)."""
+    if label in _LEGACY_NOTED:
         return
     _LEGACY_NOTED.add(label)
-    warn_fn(
-        f"ai-kit-spec: {label}: legacy reviewer fields loaded in memory "
-        f"({'; '.join(notes)}); the file is unchanged -- re-save it with the "
-        "ai-kit-spec-config wizard or render-toml --out <file> --replace"
-    )
+    warn_fn(line)
+
+
+def _emit_legacy_note(label, notes, warn_fn) -> None:
+    """Emit one privacy-safe migration note per label in this process."""
+    if notes:
+        _note_once(label,
+                   f"ai-kit-spec: {label}: legacy reviewer fields loaded in memory "
+                   f"({'; '.join(notes)}); the file is unchanged -- re-save it with the "
+                   "ai-kit-spec-config wizard or render-toml --out <file> --replace", warn_fn)
 
 
 def cfg_local_path(cwd: str) -> str:
@@ -625,6 +630,16 @@ def _project_lanes(cwd: str, env: dict, emit_warn, migrate: bool) -> dict:
     return _pending_project_lanes(cwd, local_path, env, emit_warn)
 
 
+def _legacy_names_removed(new_path: str) -> bool:
+    """True when the pending old roster names a removed runtime; skip migration (39.1 D-03)."""
+    found = _read_legacy_lanes(new_path)
+    if found is None:
+        return False
+    lanes = found[0]
+    return any(cfg_removed_runtime(entry) is not None for role in ("review", "execute")
+               if isinstance(lanes.get(role), list) for entry in lanes[role])
+
+
 def cfg_resolve(cwd: str, env: dict, warn_fn=None, migrate: bool = True) -> dict:
     """Resolve the effective roster (D-10, D-11, D-24): the project config.toml's [lanes], migrated
     from an old roster file first unless migrate=False, merged over the user layer per role.
@@ -632,11 +647,14 @@ def cfg_resolve(cwd: str, env: dict, warn_fn=None, migrate: bool = True) -> dict
     The project [lanes] is used only when it has no command-bearing lane entry or its canonical
     bytes are trusted (trust.py); an untrusted one is ignored with a warning to warn_fn (default
     stderr). Parsing executes nothing, so a malformed file fails the same whether trusted or not.
-    migrate=False reads a pending old roster in memory and writes nothing (--no-migrate)."""
+    migrate=False reads a pending old roster in memory and writes nothing (--no-migrate).
+    A pending old roster holding a lane that names a removed runtime is never migrated; it is read
+    in memory like migrate=False (39.1 D-03)."""
     emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
-    if migrate:
+    project_migrate = migrate and not _legacy_names_removed(cfg_local_path(cwd))
+    if project_migrate:
         cfg_migrate_project(cwd, env, warn_fn=emit_warn)
-    local = _project_lanes(cwd, env, emit_warn, migrate)
+    local = _project_lanes(cwd, env, emit_warn, project_migrate)
     return cfg_combine(local, env, warn_fn=emit_warn, local_path=cfg_local_path(cwd),
                        migrate=migrate)
 
@@ -671,12 +689,65 @@ def _pending_user_lanes(global_path: str, emit_warn) -> dict:
 def _user_lanes(env: dict, emit_warn, migrate: bool) -> dict:
     """The user layer's [lanes] table; migrated first when migrate is true, else read as it is."""
     global_path = cfg_global_path(env)
+    migrate = migrate and not _legacy_names_removed(global_path)
     if migrate:
         cfg_migrate_user(env, warn_fn=emit_warn)
     lanes = cfg_lanes_table(cfg_load_toml(global_path), global_path)
     if lanes or migrate:
         return lanes
     return _pending_user_lanes(global_path, emit_warn)
+
+
+def cfg_removed_runtime(entry: object) -> str | None:
+    """The removed runtime named by a raw lane's runtime, cli or native_runtime (39.1 D-03)."""
+    if not isinstance(entry, dict):
+        return None
+    for field in ("runtime", "cli"):
+        rid = entry.get(field)
+        if isinstance(rid, str) and rid in REMOVED_RUNTIMES:
+            return rid
+    rid = entry.get("native_runtime")
+    if (isinstance(rid, str) and rid in REMOVED_RUNTIMES
+            and entry.get("runtime") is None and entry.get("cli") is None):
+        return rid
+    return None
+
+
+def _pin_removed(lanes: dict) -> dict:
+    """Pin removed variants before merging, without legacy fields or stored routes (39.1 A2)."""
+    pinned = dict(lanes)
+    for role in ("review", "execute"):
+        if isinstance(lanes.get(role), list):
+            entries = []
+            for entry in lanes[role]:
+                rid = cfg_removed_runtime(entry)
+                if rid is not None:
+                    entry = {**{k: v for k, v in entry.items()
+                                if k not in ("cli", "command", "native_runtime", "route")},
+                             "runtime": rid}
+                entries.append(entry)
+            pinned[role] = entries
+    return pinned
+
+
+def _drop_removed_lanes(roles: dict, label: str, emit_warn) -> tuple[dict, dict]:
+    """Drop removed lanes after merging and note each role and key once (39.1 D-03)."""
+    kept, removed = {}, {}
+    for role in ("review", "execute"):
+        kept[role], keys = [], set()
+        for entry in roles[role]:
+            rid = cfg_removed_runtime(entry)
+            if rid is None:
+                kept[role].append(entry)
+                continue
+            key = entry.get("key")
+            if isinstance(key, str):
+                keys.add(key)
+            note_label = f"{label} [{role} {key}]"
+            _note_once(note_label, f"ai-kit-spec: {note_label}: {removed_runtime_message(rid)}; "
+                       "this lane is skipped and the file is unchanged", emit_warn)
+        removed[role] = frozenset(keys)
+    return kept, removed
 
 
 def _combine_role(local_view: dict, global_view: dict, role: str, local_only: bool) -> list:
@@ -693,20 +764,16 @@ def _combine_role(local_view: dict, global_view: dict, role: str, local_only: bo
     return merged
 
 
-def _combine_roles(local_view: dict, global_view: dict, local_only: bool, policy: dict,
-                   emit_warn) -> dict:
+def _combine_roles(roles: dict, policy: dict, label: str, emit_warn) -> dict:
     """Each role's merged lanes and order (36 D-04).
 
+    Lanes naming a removed runtime are dropped first (39.1 D-03).
     It prints one warning per role whose usage_limited lanes have no selectable lane to fall
     back to (36 D-17).
     """
-    review = _combine_role(local_view, global_view, "review", local_only)
-    execute = _combine_role(local_view, global_view, "execute", local_only)
-    result = {"review": review, "execute": execute,
-              "orders": role_orders.role_orders(policy, {"review": review, "execute": execute},
-                                                emit_warn)}
-    for line in lane_settings.fallback_warnings({"review": review, "execute": execute},
-                                                result["orders"]):
+    roles, removed = _drop_removed_lanes(roles, label, emit_warn)
+    result = {**roles, "orders": role_orders.role_orders(policy, roles, emit_warn, removed)}
+    for line in lane_settings.fallback_warnings(roles, result["orders"]):
         emit_warn(line)
     return result
 
@@ -720,17 +787,22 @@ def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None,
     emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
     # A local-only project never consults the user file, so it is never read (B-WR-01).
     local_only = bool(local) and local.get("strategy") == "local-only"
-    global_lanes = {} if local_only else _user_lanes(env, emit_warn, migrate)
-    local_view = cfg_lanes_view(local) if local else {}
-    global_view = cfg_lanes_view(global_lanes)
+    local_view = cfg_lanes_view(_pin_removed(local)) if local else {}
+    global_view = cfg_lanes_view(_pin_removed(
+        {} if local_only else _user_lanes(env, emit_warn, migrate)))
     merged, policy, local_notes, global_notes, notes = _combine_layers(local_view, global_view)
     if local:
         _emit_legacy_note(local_path or "project config.toml", local_notes, emit_warn)
     _emit_legacy_note(cfg_global_path(env), global_notes, emit_warn)
     _emit_legacy_note(f"merged lanes ({local_path or 'local'}, {cfg_global_path(env)})",
                       notes, emit_warn)
+    merged = [entry for entry in merged if cfg_removed_runtime(entry) is None]
+    roles = {role: _combine_role(local_view, global_view, role, local_only)
+             for role in ("review", "execute")}
     return {"policy": policy, "reviewers": merged,
-            **_combine_roles(local_view, global_view, local_only, policy, emit_warn)}
+            **_combine_roles(roles, policy,
+                             f"merged lanes ({local_path or 'local'}, {cfg_global_path(env)})",
+                             emit_warn)}
 
 
 _VALID_PURPOSE = {"review", "execute", "both"}
@@ -746,11 +818,14 @@ def _validate_pair_fields(entry: dict, key) -> str | None:
     on a custom entry, and a pinned model needs a runtime. Load stays lenient."""
     runtime = entry.get("runtime")
     if "runtime" in entry and runtime is not None:
-        if not isinstance(runtime, str) or runtime not in _RUNNER_RUNTIMES:
+        removed = removed_runtime_message(runtime)
+        if removed is not None or not isinstance(runtime, str) or runtime not in _RUNNER_RUNTIMES:
             known = isinstance(runtime, str) and runtime in RUNTIMES
             reason = "has no runner formula" if known else "is not in the runtime table"
-            return (f"{key}: runtime {runtime!r} {reason}; "
-                    "store a custom `command` lane instead (no 'runtime')")
+            message = removed if removed is not None else (
+                f"runtime {runtime!r} {reason}; "
+                "store a custom `command` lane instead (no 'runtime')")
+            return f"{key}: {message}"
         model = entry.get("model")
         if "model" not in entry or not isinstance(model, str) or model == "":
             return f"{key}: an entry with a 'runtime' needs a non-empty 'model'"
