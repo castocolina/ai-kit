@@ -6,7 +6,7 @@ cli.py registers it; this module never imports cli.
 
 import os
 
-from ai_kit_spec import capability_block, config_io, config_migrate, trust
+from ai_kit_spec import capability_block, config_io, config_migrate, detection, trust
 
 _ROLES = ("review", "execute")
 _PENDING = frozenset({"untrusted", "pending-migration"})
@@ -14,7 +14,8 @@ _PENDING = frozenset({"untrusted", "pending-migration"})
 
 def _has_lane(lanes: dict, roles: tuple) -> bool:
     return any(isinstance(entries, list) and any(
-        isinstance(entry, dict) and isinstance(entry.get("key"), str) for entry in entries
+        isinstance(entry, dict) and isinstance(entry.get("key"), str)
+        and config_io.cfg_removed_runtime(entry) is None for entry in entries
     ) for entries in (lanes.get(role) for role in roles))
 
 
@@ -61,6 +62,20 @@ def _user_status(path: str, roles: tuple) -> str:
     return _lane_less_status(path, lanes, legacy)
 
 
+def _merged_has_lane(cwd: str, env: dict, roles: tuple) -> bool:
+    """Count effective lanes after project overrides and removed lanes are applied."""
+    resolved = config_io.cfg_resolve_quiet(cwd, env)
+    return any(isinstance(entry, dict) for role in roles for entry in resolved.get(role) or [])
+
+
+def removal_notes(cwd: str, env: dict) -> list[str]:
+    """Collect normal load's removal notes without migrating configuration."""
+    notes = []
+    config_io.cfg_resolve(cwd, env, warn_fn=notes.append, migrate=False)
+    texts = tuple(detection.removed_runtime_message(rid) for rid in detection.REMOVED_RUNTIMES)
+    return [line for line in notes if any(text is not None and text in line for text in texts)]
+
+
 def config_status(
     cwd: str, env: dict, role: str | None = None
 ) -> tuple[str, list[tuple[str, str, str]]]:
@@ -75,12 +90,14 @@ def config_status(
     )
     statuses = {project, user}
     state = "pending" if statuses & _PENDING else "active" if "lanes" in statuses else "none"
+    if state == "active" and not _merged_has_lane(cwd, env, roles):
+        state = "none"
     return state, [("project", project_path, project), ("user", user_path, user)]
 
 
 def capability_lines(cwd: str, env: dict, role: str | None) -> list[str]:
     """Return previews for the effective lanes in configuration order."""
-    resolved = config_io.cfg_resolve(cwd, env, warn_fn=lambda _line: None, migrate=False)
+    resolved = config_io.cfg_resolve_quiet(cwd, env)
     lines = []
     for each_role in ((role,) if role else _ROLES):
         for entry in resolved.get(each_role) or []:
@@ -99,6 +116,8 @@ def cmd_config_status(args, deps) -> int:
     print(state)
     for layer, path, status in checked:
         print(f"checked {layer} {path} {status}")
+    for line in removal_notes(args.cwd, env):
+        print(line)
     for line in lines:
         print(line)
     return 0

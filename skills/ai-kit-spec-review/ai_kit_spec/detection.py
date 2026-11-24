@@ -1249,7 +1249,8 @@ def detect_unlisted_runtimes(ids, which_fn=shutil.which) -> dict:
     """Report valid user-named runtime ids outside RUNTIMES without executing them."""
     result = {}
     for rid in ids:
-        if not isinstance(rid, str) or not _EXTRA_RUNTIME_RX.fullmatch(rid) or rid in RUNTIMES:
+        if (not isinstance(rid, str) or not _EXTRA_RUNTIME_RX.fullmatch(rid)
+                or rid in RUNTIMES or rid in REMOVED_RUNTIMES):
             continue
         path = which_fn(rid)
         result[rid] = ({"installed": True, "path": path, "listing": "none",

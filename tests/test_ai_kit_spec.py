@@ -71,7 +71,6 @@ from ai_kit_spec.capability_block import ComposeResult, ComposeSeams
 from ai_kit_spec.cli import main
 from ai_kit_spec.commands import (
     ResolvedReviewer,
-    build_grok_command,
     render_reviewer_command,
 )
 from ai_kit_spec.config_io import (
@@ -3160,16 +3159,6 @@ class TestFilterLadderByPurpose(unittest.TestCase):
         self.assertFalse(fell_back)
 
 
-class TestBuildGrokCommand(unittest.TestCase):
-    def test_grok_command_shape(self):
-        # corrected 2026-08-29: `-p -` does NOT read from stdin -- it sends the literal
-        # string "-" as the prompt (confirmed live). {prompt} is the correct placeholder,
-        # substituted raw into one argv element by render_reviewer_command.
-        self.assertEqual(
-            build_grok_command(), "grok -p {prompt} -m {model} --output-format plain"
-        )
-
-
 class TestRenderReviewerCommand(unittest.TestCase):
     def test_fills_model_and_prompt(self):
         resolved = ResolvedReviewer(
@@ -4664,21 +4653,6 @@ class TestMainCli(unittest.TestCase):
         self.assertEqual(argv[argv.index("--cursor-mode") + 1], "plan")
         self.assertIn("a config.toml lane stores runtime and model", err.getvalue())
 
-    def test_build_command_grok_prints_custom_template(self):
-        import io
-        from contextlib import redirect_stderr, redirect_stdout
-
-        out, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            code = main(["build-command", "--runtime", "grok"])
-        self.assertEqual(code, 0)
-        body = json.loads(out.getvalue())
-        self.assertEqual(body, {
-            "kind": "custom",
-            "command": "grok -p {prompt} -m {model} --output-format plain",
-        })
-        self.assertIn("custom entry", err.getvalue())
-
     def test_build_command_unknown_runtime_exits_nonzero(self):
         import io
         from contextlib import redirect_stderr, redirect_stdout
@@ -5287,15 +5261,6 @@ class TestExecuteCliRejection(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("no capability block built", stderr)
         self.assertEqual(len(calls), 1)
-
-    def test_grok_keeps_its_custom_entry_generator(self):
-        # R10/D-29 boundary: the table builders are gone; grok still generates the custom
-        # command a config.toml entry stores.
-        self.assertEqual(
-            commands.build_grok_command(),
-            "grok -p {prompt} -m {model} --output-format plain",
-        )
-
 
 class TestExecuteLadderScreen(unittest.TestCase):
     """D-15: unsupported CLIs in the execute ladder are screened loudly, never silently."""

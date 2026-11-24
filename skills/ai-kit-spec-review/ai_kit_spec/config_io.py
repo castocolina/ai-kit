@@ -249,8 +249,14 @@ def infer_legacy_native(reviewers) -> tuple[list, list[str]]:
     return normalized, notes
 
 
+def _quiet_warn(_line) -> None:
+    """Drop preview notes without recording their dedupe keys."""
+
+
 def _note_once(label, line, warn_fn) -> None:
     """Emit one line per label in this process (the legacy-note dedupe)."""
+    if warn_fn is _quiet_warn:
+        return
     if label in _LEGACY_NOTED:
         return
     _LEGACY_NOTED.add(label)
@@ -657,6 +663,11 @@ def cfg_resolve(cwd: str, env: dict, warn_fn=None, migrate: bool = True) -> dict
     local = _project_lanes(cwd, env, emit_warn, project_migrate)
     return cfg_combine(local, env, warn_fn=emit_warn, local_path=cfg_local_path(cwd),
                        migrate=migrate)
+
+
+def cfg_resolve_quiet(cwd: str, env: dict) -> dict:
+    """Resolve without migration or consuming another load's deduplicated notes."""
+    return cfg_resolve(cwd, env, warn_fn=_quiet_warn, migrate=False)
 
 
 def _combine_layers(local, global_cfg):

@@ -20,22 +20,6 @@ class ResolvedReviewer(NamedTuple):
     extra: dict
 
 
-# Table runtimes have no command string: the runner builds their argv. Only grok, which has
-# no runner formula, still generates a custom-entry template here (D-21, D-29).
-
-def build_grok_command() -> str:
-    """The command a custom grok entry stores. Grok has no runner formula (D-21).
-
-    Corrected 2026-08-29 by live re-reproduction: `-p -` does NOT read the prompt from
-    stdin -- `-p`/`--single <PROMPT>` is a required VALUE, and passing a literal `-` sends
-    the two-character string "-" as the prompt itself (confirmed live: grok replied "A
-    single dash is too little to act on"). The `-p -` design here was an earlier unverified
-    assumption inherited from this builder before it was ever run against a real grok CLI.
-    render_reviewer_command substitutes {prompt} raw into one argv element (no shell, no
-    quoting), delivered as a real positional argument value, never via stdin."""
-    return "grok -p {prompt} -m {model} --output-format plain"
-
-
 def split_command_template(key: str, template: str | None) -> list[str]:
     """Tokenizes a reviewer `command` template into the argv tokens that
     render_reviewer_command then fills -- the consent display (`trust-local --show`) prints

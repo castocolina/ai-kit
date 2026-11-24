@@ -50,7 +50,6 @@ from ai_kit_spec.catalog_facts import FactsInputs
 from ai_kit_spec.catalog_labels import now_iso
 from ai_kit_spec.commands import (
     ResolvedReviewer,
-    build_grok_command,
     execute_cli_error,
     render_reviewer_command,
     split_command_template,
@@ -86,6 +85,7 @@ from ai_kit_spec.detection import (
     find_code_index_alternative,
     group_models_by_family,
     normalize_runtime_keys,
+    removed_runtime_message,
     runtime_id,
 )
 from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
@@ -556,6 +556,7 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
                                         opencode=OpencodeSeams(deps.popen_fn, deps.urlopen_fn,
                                                                deps.env_fn()))
     snapshot["clis"].update(detect_unlisted_runtimes(args.extra_runtime, deps.which_fn))
+    _drop_removed_runtimes(args.extra_runtime, snapshot["clis"])
     runner_facts.refresh_fact(snapshot, deps.which_fn, deps.run_fn)
     save_path = args.if_stale or args.save
     if save_path:
@@ -563,6 +564,17 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
     print(json.dumps(snapshot))
     return 0
 
+
+
+def _drop_removed_runtimes(ids, clis: dict) -> None:
+    """Drop each removed runtime id named with --runtime from the snapshot and say why
+    on stderr, once per id (39.1 D-02).
+    """
+    for rid in dict.fromkeys(ids):
+        message = removed_runtime_message(rid)
+        if message is not None:
+            clis.pop(rid, None)
+            print(f"detect-runtimes: {message}", file=sys.stderr)
 
 
 def _custom_entry_runtime(reviewer: dict) -> str | None:
@@ -1191,6 +1203,10 @@ def _cmd_infer_vendor(args: argparse.Namespace, deps: CliDeps) -> int:
     return 0
 
 def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
+    removed = removed_runtime_message(args.runtime)
+    if removed is not None:
+        print(f"build-command: {removed}", file=sys.stderr)
+        return 1
     rid = runtime_id(args.runtime)
     row = RUNTIMES.get(rid)
     if row is not None and row.runner:
@@ -1204,12 +1220,7 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
         print(f"build-command: a config.toml lane stores runtime and model for {rid}; "
               f"the runner builds this argv at dispatch", file=sys.stderr)
         return 0
-    if rid == "grok":
-        print(json.dumps({"kind": "custom", "command": build_grok_command()}))
-        print("build-command: grok has no runner formula; store this as a custom entry's "
-              "command with no runtime (trust-gated like any custom command)", file=sys.stderr)
-        return 0
-    print(f"build-command: {rid} has no runner formula; register it as a custom entry with a "
+    print(f"build-command: {rid} is not in the runtime table; register it as a custom entry with a "
           f"hand-written command", file=sys.stderr)
     return 1
 

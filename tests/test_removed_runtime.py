@@ -1,7 +1,13 @@
+import argparse
+import ast
+import io
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 sys.path.insert(
@@ -9,7 +15,15 @@ sys.path.insert(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills", "ai-kit-spec-review"),
 )
 
-from ai_kit_spec import config_io, detection, reviewer_dispatch, routing, runner_dispatch
+from ai_kit_spec import (
+    cli,
+    config_io,
+    config_status,
+    detection,
+    reviewer_dispatch,
+    routing,
+    runner_dispatch,
+)
 
 _FAKE_LANE = '[[lanes.review]]\nkey = "fr"\nruntime = "fake-runtime"\nmodel = "fake-model-1"\n'
 
@@ -70,6 +84,149 @@ def _dispatch(entry, spy):
     return reviewer_dispatch.dispatch_reviewer(
         spec, seams=reviewer_dispatch.ReviewerSeams(runner_tiers_fn=spy, custom_fn=spy)
     )
+
+
+class TestDetectRuntimesRemoved(unittest.TestCase):
+    def test_unlisted_excludes_removed(self):
+        result = detection.detect_unlisted_runtimes(
+            ["grok", "fake-runtime"], which_fn=lambda name, **_k: "/fake/bin/" + name
+        )
+        self.assertNotIn("grok", result)
+        self.assertIn("fake-runtime", result)
+
+    def test_drop_reports_once(self):
+        clis = {"grok": {"installed": False}, "pi": {"installed": False}}
+        err = io.StringIO()
+        with redirect_stderr(err):
+            cli._drop_removed_runtimes(["grok", "fake-runtime", "grok"], clis)
+        message = detection.removed_runtime_message("grok")
+        assert message is not None
+        self.assertEqual(err.getvalue(), "detect-runtimes: " + message + "\n")
+        self.assertEqual(clis, {"pi": {"installed": False}})
+
+    def test_cli_detect_runtimes_drops_and_reports_grok(self):
+        with tempfile.TemporaryDirectory() as root:
+            deps = cli.CliDeps(
+                which_fn=lambda name, **_k: "/fake/bin/fake-runtime"
+                if name == "fake-runtime" else None,
+                run_fn=mock.Mock(return_value=subprocess.CompletedProcess(
+                    args=[], returncode=1, stdout="", stderr="")),
+                env_fn=lambda: {"HOME": root, "XDG_CACHE_HOME": os.path.join(root, "cache"),
+                                "XDG_CONFIG_HOME": os.path.join(root, "xdg")},
+            )
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = cli.main(["detect-runtimes", "--runtime", "grok", "--runtime",
+                                 "fake-runtime", "--runtime", "grok"], deps=deps)
+        self.assertEqual(code, 0)
+        self.assertNotIn("grok", json.loads(out.getvalue())["clis"])
+        self.assertIn("fake-runtime", json.loads(out.getvalue())["clis"])
+        message = detection.removed_runtime_message("grok")
+        assert message is not None
+        self.assertEqual([line for line in err.getvalue().splitlines()
+                          if line.startswith("detect-runtimes: ")],
+                         ["detect-runtimes: " + message])
+
+
+class TestBuildCommandRemoved(unittest.TestCase):
+    @staticmethod
+    def _run(argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cli.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_removed_runtime_exits_1_with_the_message(self):
+        code, out, err = self._run(["build-command", "--runtime", "grok"])
+        message = detection.removed_runtime_message("grok")
+        assert message is not None
+        self.assertEqual((code, out, err), (1, "", "build-command: " + message + "\n"))
+
+    def test_case_variant_gets_the_generic_refusal(self):
+        code, out, err = self._run(["build-command", "--runtime", "Grok"])
+        self.assertEqual((code, out, err), (
+            1, "", "build-command: Grok is not in the runtime table; register it as a "
+            "custom entry with a hand-written command\n",
+        ))
+
+    def test_empty_id_gets_the_generic_refusal(self):
+        code, out, err = self._run(["build-command", "--runtime", ""])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("is not in the runtime table", err)
+
+    def test_commands_module_defines_no_grok_function(self):
+        path = os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review",
+                            "ai_kit_spec", "commands.py")
+        with open(path, encoding="utf-8") as stream:
+            tree = ast.parse(stream.read())
+        self.assertFalse(any(isinstance(node, ast.FunctionDef) and "grok" in node.name.lower()
+                             for node in ast.walk(tree)))
+
+
+class TestConfigStatusRemovedLane(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = self.temp.name
+
+    def test_removed_only_project_is_empty(self):
+        _project(self.root, '[[lanes.review]]\nkey = "gk"\nruntime = "grok"\n')
+        state, checked = config_status.config_status(self.root, _env(self.root))
+        self.assertEqual(state, "none")
+        self.assertEqual(checked[0][2], "empty")
+
+    def test_removed_plus_pi_is_active(self):
+        _project(self.root, '[[lanes.review]]\nkey = "gk"\nruntime = "grok"\n'
+                 '[[lanes.review]]\nkey = "pl"\nruntime = "pi"\nmodel = "fake-model-2"\n')
+        self.assertEqual(config_status.config_status(self.root, _env(self.root))[0], "active")
+
+    def test_status_prints_the_removal_note(self):
+        _project(self.root, '[[lanes.review]]\nkey = "gk"\nruntime = "grok"\n')
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = config_status.cmd_config_status(
+                argparse.Namespace(cwd=self.root, role=None),
+                mock.Mock(env_fn=lambda: _env(self.root)))
+        self.assertEqual(code, 0)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines[0], "none")
+        notes = [line for line in lines if "[review gk]" in line]
+        self.assertEqual(len(notes), 1)
+        message = detection.removed_runtime_message("grok")
+        assert message is not None
+        self.assertIn(message, notes[0])
+        self.assertGreater(lines.index(notes[0]), 2)
+
+    def test_project_removed_lane_over_a_user_lane_is_none(self):
+        _user(self.root, '[[lanes.review]]\nkey = "k"\nruntime = "pi"\nmodel = "fake-model-2"\n')
+        _project(self.root, '[[lanes.review]]\nkey = "k"\nruntime = "grok"\n'
+                 'model = "fake-model-1"\n')
+        self.assertEqual(config_status.config_status(self.root, _env(self.root))[0], "none")
+
+
+class TestSilentPreview(unittest.TestCase):
+    def test_quiet_preview_keeps_the_notice(self):
+        with tempfile.TemporaryDirectory() as root:
+            _project(root, '[[lanes.review]]\nkey = "gk"\nruntime = "grok"\n'
+                     'model = "fake-model-1"\n'
+                     '[[lanes.review]]\nkey = "pl"\nruntime = "pi"\nmodel = "fake-model-2"\n')
+            before = set(config_io._LEGACY_NOTED)
+            config_io.cfg_resolve_quiet(root, _env(root))
+            self.assertEqual(config_io._LEGACY_NOTED, before)
+            _, lines = _load(root)
+            self.assertEqual(len(lines), 1)
+            self.assertIn("[review gk]", lines[0])
+
+    def test_quiet_preview_keeps_another_loads_dedupe(self):
+        with tempfile.TemporaryDirectory() as root:
+            a, b = os.path.join(root, "a"), os.path.join(root, "b")
+            text = '[[lanes.review]]\nkey = "gk"\nruntime = "grok"\nmodel = "fake-model-1"\n'
+            _project(a, text)
+            _project(b, text)
+            self.assertEqual(len(_load(a)[1]), 1)
+            config_io.cfg_resolve_quiet(b, _env(b))
+            self.assertEqual(_load(a)[1], [])
 
 
 class TestRemovedLaneLoad(unittest.TestCase):

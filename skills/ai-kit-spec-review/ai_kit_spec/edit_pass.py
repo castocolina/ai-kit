@@ -209,7 +209,7 @@ def _approved(req, scan):
 
 def pick_lane(cwd, env, seams):
     """Select the first configured lane whose preview reports write access."""
-    entries = config_io.cfg_resolve(cwd, env, warn_fn=lambda _line: None, migrate=False)
+    entries = config_io.cfg_resolve_quiet(cwd, env)
     for entry in entries.get("execute") or []:
         if not isinstance(entry, dict) or not entry.get("runtime"):
             continue
