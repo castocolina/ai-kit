@@ -893,6 +893,12 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [x] **JEV-13**: A guard test keeps Zen and any other removed backend out of jev-fast-decision and fails on a
   step that hands Laya's or the official skill's install or upgrade to tools-installer or another repository.
   *(added 2026-11-14, owner decision)*
+- [ ] **JEV-14**: When jev-fast-decision answers an item with low confidence (Laya or TypeSafe: `needs_fallback`, a forced
+  answer, an error or no answer), the agent that asked consults its host's advisor tool before it decides, where the host has
+  one, and falls back to its own reasoning only when the host has none; the skill states the rule once and callers chain it;
+  scripts that run without an agent keep their rule-based default; the decision log names who decided from one closed list.
+  *(added 2026-11-23, owner request, Phase 44.1: "when Laya or jev have low confidence, use the advisor model instead"; the
+  advisor is the host's own tool, not a new jev backend, and it sees the whole conversation)*
 
 ### Features and live checks
 
@@ -1221,6 +1227,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | JEV-11 | Phase 34 | Complete |
 | JEV-12 | Phase 34 | Complete |
 | JEV-13 | Phase 34 | Complete |
+| JEV-14 | Phase 44.1 | Pending |
 | FEAT-01 | Phase 30.1 | Complete |
 | FEAT-02 | Phase 54 | Pending |
 | FEAT-03 | Phase 54 | Pending |
@@ -1256,7 +1263,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | IDX-07 | Phase 32.5 | Complete |
 
 **Coverage:**
-- v2.0 requirements: 193 total *(193 after RUN-15, added 2026-11-19, owner decision, Phase 39.1: remove the grok runtime; 185 after RUN-12, added 2026-11-16, 37 D-22; 186 after RUN-13, added 2026-11-16, 38 D-25; 191 after FLOW-14, EXE-09, RUN-14, RULE-33 and RULE-34, added 2026-11-16, owner decisions: language rules, smart test selection, goal-prompt learned rails, free-lane pools; 192 after HUB-10, added 2026-11-16, 36 D-23: free-model data use)*
+- v2.0 requirements: 194 total *(194 after JEV-14, added 2026-11-23, owner request, Phase 44.1: a low-confidence jev answer goes to the host's advisor tool; 193 after RUN-15, added 2026-11-19, owner decision, Phase 39.1: remove the grok runtime; 185 after RUN-12, added 2026-11-16, 37 D-22; 186 after RUN-13, added 2026-11-16, 38 D-25; 191 after FLOW-14, EXE-09, RUN-14, RULE-33 and RULE-34, added 2026-11-16, owner decisions: language rules, smart test selection, goal-prompt learned rails, free-lane pools; 192 after HUB-10, added 2026-11-16, 36 D-23: free-model data use)*
 - Mapped to phases: 193
 - Unmapped: 0
 

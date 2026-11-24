@@ -11,11 +11,11 @@ last_activity: 2026-11-27
 last_activity_desc: Phase 42 complete, transitioned to Phase 43
 state_head: 18b2f6af165ae0500d70fc5d4806c0cb6c918e4f
 progress:
-  total_phases: 41
+  total_phases: 42
   completed_phases: 24
   total_plans: 329
   completed_plans: 329
-  percent: 59
+  percent: 57
 ---
 
 # Project State
@@ -34,7 +34,7 @@ Plan: Not started
 Status: Ready to plan
 Last activity: 2026-11-27 — Phase 42 complete, transitioned to Phase 43
 
-Progress: [██████░░░░] 59%
+Progress: [██████░░░░] 57%
 
 ## Performance Metrics
 
@@ -263,6 +263,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
   milestone inputs (gates and flow first, removals before the baseline, rules before dist, hooks after
   playbooks, wake after the shared quota decision).
 - Phase 47.2 inserted after Phase 47.1: Goal-prompt learns rails from sessions: proposes learned rails from the current and previous session, deduplicated against AGENTS.md and the generated block (owner request 2026-11-16)
+- Phase 44.1 inserted after Phase 44: jev falls back to the host advisor on low confidence
 
 ## Deferred Verification
 
