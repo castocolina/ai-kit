@@ -1,10 +1,11 @@
 # Catalog inputs before the proposal
 
-Loaded from `wizard-flow.md` step 2 only: when a preferred runtime has no `models` list, or the catalog step printed unmatched candidates. Each candidate registered from here is a
+Loaded from `wizard-flow.md` only: step 2 reads items 1 to 4 when a preferred runtime has no `models` list or the catalog step printed unmatched candidates; step 6 reads item 6 for every kept lane. Each candidate registered from here is a
 (runtime, model) pair: Step 2.4 stores `runtime` and `model` (plus that runtime's knobs),
 and the runner builds the argv. Only a CLI outside the runtime table
-stores a `command` instead. `$TOOLS_PY`, `$RUNTIMES_JSON` and `$SCRATCH` are the literal
-paths SKILL.md's Step 0 printed; every temporary file here goes under `$SCRATCH`. Every `Bash`
+stores a `command` instead. `$TOOLS_PY` and `$RUNTIMES_JSON` are the literal paths SKILL.md's
+Step 0 printed; every temporary file here goes under `$SCRATCH`, made at its first need as
+Step 0 says (item 3 below is usually that first need). Every `Bash`
 call starts a fresh shell, so no value set in one block survives into the next: `$CATALOG_JSON`
 (item 1) is a literal path too, substituted directly into every later block, never a shell
 variable.
@@ -55,8 +56,10 @@ variable.
    "Artificial Analysis (artificialanalysis.ai) adds intelligence/coding/agentic index scores
    and speed data to model ranking — optional, models.dev alone still gives context window,
    pricing, and tool-calling data. If you have a key, add
-   `ARTIFICIAL_ANALYSIS_API_KEY=<key>` to `~/.config/ai-kit/secrets.env` yourself (this skill
-   never writes that file), then re-run the command above without `--if-stale` so the fresh key
+   `ARTIFICIAL_ANALYSIS_API_KEY=<key>` to `secrets.env` in the user config folder,
+   `${XDG_CONFIG_HOME:-~/.config}/ai-kit/` (an absolute `XDG_CONFIG_HOME` only, the same rule as
+   the config reader), yourself, or export it as an environment variable (this skill never writes
+   that file), then re-run the command above without `--if-stale` so the fresh key
    gets used." **Never write, create, or edit `secrets.env` from this skill** — reading it is
    `local_secrets.load_secret`'s job; writing it is out of scope everywhere in this design.
    The printed JSON's `unmatched` list drives the next item (item 4 below). `rejections` is not
@@ -70,8 +73,11 @@ variable.
 
 5. **The ranked shortlist comes from `propose-lanes`, never from a hand-built ranking.** Return to [`wizard-flow.md`](wizard-flow.md) step 3: it runs `propose-lanes` once per purpose over the catalog refreshed above, limited to the preferred runtimes, and shows its rows as printed. A runtime-table row never decides which pairs may review or execute: a pair the runner cannot run in a mode is skipped at dispatch with its named reason (route `no_formula`), never dropped from the proposal here.
 
-6. **Before finalizing a CLI where ai-kit cannot read a codebase-memory-mcp registration
-   (a custom entry or a CLI outside the runtime table), check for an alternative whose registration it can read.** For each model the owner kept on such a CLI (`wizard-flow.md` step 6 runs this check for every kept lane), run:
+6. **Before finalizing each kept lane, check for an alternative CLI whose codebase-memory-mcp
+   registration ai-kit can read** (`wizard-flow.md` step 6 runs this for every kept lane). Only a CLI
+   whose registration ai-kit cannot read (a custom entry or a CLI outside the runtime table) can get
+   a non-null `alternative_cli`; a table runtime with a readable registration prints null and needs no
+   owner line. Run:
    ```bash
    python3 "$TOOLS_PY" check-code-index-alternative --runtime <id> --model <model-id> \
      --runtimes-json "$RUNTIMES_JSON"

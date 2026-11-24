@@ -143,7 +143,10 @@ def _run_refresh(paths: _RefreshPaths, refresh, env, run_fn):
 
 
 def _normalize_snapshot_clis(runtimes):
-    """Id-key a cached snapshot's `clis` in memory. No detection module leaves them as read."""
+    """Id-key cached `clis` and drop removed runtimes (39.1 D-03).
+
+    No detection module leaves them as read.
+    """
     if not isinstance(runtimes, dict):
         return runtimes
     clis = runtimes.get("clis")
@@ -153,7 +156,10 @@ def _normalize_snapshot_clis(runtimes):
     if detection is None:
         return runtimes
     normalized = dict(runtimes)
-    normalized["clis"] = detection.normalize_runtime_keys(clis)
+    normalized["clis"] = {
+        rid: row for rid, row in detection.normalize_runtime_keys(clis).items()
+        if rid not in detection.REMOVED_RUNTIMES
+    }
     return normalized
 
 

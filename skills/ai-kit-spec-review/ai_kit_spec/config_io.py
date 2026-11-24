@@ -602,27 +602,46 @@ def _trusted_lanes(lanes: dict, local_path: str, cwd: str, env: dict, emit_warn)
     return {}
 
 
+def _pending_note(new_path: str, lanes: dict, emit_warn) -> None:
+    """Report a pending old roster: it moves on the next read, or it is held because it names a
+    removed runtime (39.1 D-03: no read migrates it), noted once per file."""
+    legacy = config_migrate.legacy_path(new_path)
+    if not cfg_names_removed_runtime(lanes):
+        emit_warn(f"ai-kit-spec: migration pending: {legacy} moves to {new_path} on the next "
+                  "command that reads the roster")
+        return
+    _note_once(f"migration held {legacy}",
+               f"ai-kit-spec: migration held: {legacy} names a removed runtime, so no read moves "
+               f"it to {new_path}; re-save its lanes with the ai-kit-spec-config wizard or "
+               f"render-toml --out {new_path} --replace", emit_warn)
+
+
+def cfg_legacy_project_trusted(local_path: str, lanes: dict, raw: bytes, env: dict) -> bool:
+    """True when the pending old project roster beside local_path may be used: it needs no trust
+    (D-11) or the old file is trusted under the old raw-byte rule."""
+    canonical = cfg_project_trust_bytes(lanes, env)
+    return canonical is None or trust.is_trusted(
+        config_migrate.legacy_trust_dir(cfg_trust_store_dir(env)),
+        os.path.realpath(config_migrate.legacy_path(local_path)), raw)
+
+
 def _pending_project_lanes(cwd: str, local_path: str, env: dict, emit_warn) -> dict:
     """migrate=False: a pending old roster is read in memory and reported, never written. It is used
-    when it needs no trust (D-11) or the old file is trusted under the old raw-byte rule."""
+    when cfg_legacy_project_trusted allows it."""
     found = _read_legacy_lanes(local_path)
     if found is None:
         return {}
     lanes, raw = found
-    legacy = config_migrate.legacy_path(local_path)
-    emit_warn(f"ai-kit-spec: migration pending: {legacy} moves to {local_path} on the next "
-              "command that reads the roster")
-    canonical = cfg_project_trust_bytes(lanes, env)
-    if canonical is None or trust.is_trusted(
-            config_migrate.legacy_trust_dir(cfg_trust_store_dir(env)),
-            os.path.realpath(legacy), raw):
+    _pending_note(local_path, lanes, emit_warn)
+    if cfg_legacy_project_trusted(local_path, lanes, raw, env):
         return lanes
     emit_warn(_untrusted_warning(local_path, cwd))
     return {}
 
 
-def _project_lanes(cwd: str, env: dict, emit_warn, migrate: bool) -> dict:
-    """The project layer's lanes as cfg_resolve may use them (empty when none, or untrusted)."""
+def _project_lanes(cwd: str, env: dict, emit_warn, migrate: bool) -> tuple[dict, str]:
+    """The project layer's lanes as cfg_resolve may use them (empty when none, or untrusted), and
+    the file they came from: its config.toml, or the pending old roster read in memory."""
     local_path = cfg_local_path(cwd)
     if os.path.exists(local_path):
         # Parsing happens BEFORE the trust check: a malformed file is reported (R13) whether or
@@ -630,20 +649,23 @@ def _project_lanes(cwd: str, env: dict, emit_warn, migrate: bool) -> dict:
         lanes = cfg_lanes_table(cfg_parse_toml_bytes(cfg_read_bytes(local_path), local_path),
                                 local_path)
         if lanes:
-            return _trusted_lanes(lanes, local_path, cwd, env, emit_warn)
+            return _trusted_lanes(lanes, local_path, cwd, env, emit_warn), local_path
     if migrate:
-        return {}
-    return _pending_project_lanes(cwd, local_path, env, emit_warn)
+        return {}, local_path
+    lanes = _pending_project_lanes(cwd, local_path, env, emit_warn)
+    return lanes, (config_migrate.legacy_path(local_path) if lanes else local_path)
+
+
+def cfg_names_removed_runtime(lanes: dict) -> bool:
+    """True when a [lanes] table holds a lane that names a removed runtime (39.1 D-03)."""
+    return any(cfg_removed_runtime(entry) is not None for role in ("review", "execute")
+               if isinstance(lanes.get(role), list) for entry in lanes[role])
 
 
 def _legacy_names_removed(new_path: str) -> bool:
     """True when the pending old roster names a removed runtime; skip migration (39.1 D-03)."""
     found = _read_legacy_lanes(new_path)
-    if found is None:
-        return False
-    lanes = found[0]
-    return any(cfg_removed_runtime(entry) is not None for role in ("review", "execute")
-               if isinstance(lanes.get(role), list) for entry in lanes[role])
+    return found is not None and cfg_names_removed_runtime(found[0])
 
 
 def cfg_resolve(cwd: str, env: dict, warn_fn=None, migrate: bool = True) -> dict:
@@ -660,9 +682,8 @@ def cfg_resolve(cwd: str, env: dict, warn_fn=None, migrate: bool = True) -> dict
     project_migrate = migrate and not _legacy_names_removed(cfg_local_path(cwd))
     if project_migrate:
         cfg_migrate_project(cwd, env, warn_fn=emit_warn)
-    local = _project_lanes(cwd, env, emit_warn, project_migrate)
-    return cfg_combine(local, env, warn_fn=emit_warn, local_path=cfg_local_path(cwd),
-                       migrate=migrate)
+    local, local_source = _project_lanes(cwd, env, emit_warn, project_migrate)
+    return cfg_combine(local, env, warn_fn=emit_warn, local_path=local_source, migrate=migrate)
 
 
 def cfg_resolve_quiet(cwd: str, env: dict) -> dict:
@@ -671,7 +692,8 @@ def cfg_resolve_quiet(cwd: str, env: dict) -> dict:
 
 
 def _combine_layers(local, global_cfg):
-    """(reviewers, policy) after strategy, legacy normalization and the route drop."""
+    """(reviewers, policy, (project notes, user notes, merge notes)) after strategy, legacy
+    normalization and the route drop."""
     local_reviewers, local_notes = normalize_legacy_reviewers(local.get("reviewers", []))
     global_reviewers, global_notes = normalize_legacy_reviewers(global_cfg.get("reviewers", []))
     strategy = local.get("strategy", "global-merge") if local else "global-merge"
@@ -684,7 +706,7 @@ def _combine_layers(local, global_cfg):
         policy = {**DEFAULT_POLICY, **global_cfg.get("policy", {}), **local.get("policy", {})}
     merged, inferred_notes = infer_legacy_native(merged)
     merged, route_notes = _drop_stored_routes(merged)
-    return merged, policy, local_notes, global_notes, inferred_notes + route_notes
+    return merged, policy, (local_notes, global_notes, inferred_notes + route_notes)
 
 
 def _pending_user_lanes(global_path: str, emit_warn) -> dict:
@@ -692,21 +714,22 @@ def _pending_user_lanes(global_path: str, emit_warn) -> dict:
     found = _read_legacy_lanes(global_path)
     if found is None:
         return {}
-    emit_warn(f"ai-kit-spec: migration pending: {config_migrate.legacy_path(global_path)} moves to "
-              f"{global_path} on the next command that reads the roster")
+    _pending_note(global_path, found[0], emit_warn)
     return found[0]
 
 
-def _user_lanes(env: dict, emit_warn, migrate: bool) -> dict:
-    """The user layer's [lanes] table; migrated first when migrate is true, else read as it is."""
+def _user_lanes(env: dict, emit_warn, migrate: bool) -> tuple[dict, str]:
+    """The user layer's [lanes] table, migrated first when migrate is true, else read as it is, and
+    the file it came from: its config.toml, or the pending old roster read in memory."""
     global_path = cfg_global_path(env)
     migrate = migrate and not _legacy_names_removed(global_path)
     if migrate:
         cfg_migrate_user(env, warn_fn=emit_warn)
     lanes = cfg_lanes_table(cfg_load_toml(global_path), global_path)
     if lanes or migrate:
-        return lanes
-    return _pending_user_lanes(global_path, emit_warn)
+        return lanes, global_path
+    lanes = _pending_user_lanes(global_path, emit_warn)
+    return lanes, (config_migrate.legacy_path(global_path) if lanes else global_path)
 
 
 def cfg_removed_runtime(entry: object) -> str | None:
@@ -741,10 +764,15 @@ def _pin_removed(lanes: dict) -> dict:
     return pinned
 
 
-def _drop_removed_lanes(roles: dict, label: str, emit_warn) -> tuple[dict, dict]:
-    """Drop removed lanes after merging and note each role and key once (39.1 D-03)."""
+def _drop_removed_lanes(roles: dict, project_view: dict, paths: tuple,
+                        emit_warn) -> tuple[dict, dict]:
+    """Drop removed lanes after merging and note each role and key once (39.1 D-03), labelled with
+    the file that holds the lane: paths is (project file, user file), and the project file is named
+    when its own entry names the removed runtime (it wins the merge), else the user file."""
     kept, removed = {}, {}
     for role in ("review", "execute"):
+        project_keys = {entry.get("key") for entry in project_view.get(role, [])
+                        if cfg_removed_runtime(entry) is not None}
         kept[role], keys = [], set()
         for entry in roles[role]:
             rid = cfg_removed_runtime(entry)
@@ -754,7 +782,7 @@ def _drop_removed_lanes(roles: dict, label: str, emit_warn) -> tuple[dict, dict]
             key = entry.get("key")
             if isinstance(key, str):
                 keys.add(key)
-            note_label = f"{label} [{role} {key}]"
+            note_label = f"{paths[0] if key in project_keys else paths[1]} [{role} {key}]"
             _note_once(note_label, f"ai-kit-spec: {note_label}: {removed_runtime_message(rid)}; "
                        "this lane is skipped and the file is unchanged", emit_warn)
         removed[role] = frozenset(keys)
@@ -775,14 +803,15 @@ def _combine_role(local_view: dict, global_view: dict, role: str, local_only: bo
     return merged
 
 
-def _combine_roles(roles: dict, policy: dict, label: str, emit_warn) -> dict:
+def _combine_roles(roles: dict, policy: dict, project_view: dict, paths: tuple,
+                   emit_warn) -> dict:
     """Each role's merged lanes and order (36 D-04).
 
     Lanes naming a removed runtime are dropped first (39.1 D-03).
     It prints one warning per role whose usage_limited lanes have no selectable lane to fall
     back to (36 D-17).
     """
-    roles, removed = _drop_removed_lanes(roles, label, emit_warn)
+    roles, removed = _drop_removed_lanes(roles, project_view, paths, emit_warn)
     result = {**roles, "orders": role_orders.role_orders(policy, roles, emit_warn, removed)}
     for line in lane_settings.fallback_warnings(roles, result["orders"]):
         emit_warn(line)
@@ -794,26 +823,27 @@ def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None,
     """Combine an already-trusted (or empty) project [lanes] table with the user layer, honoring
     the local `strategy`. Shared by cfg_resolve and `trust-local --show`, so the consent display
     renders the same merged entries dispatch would run. Returns the flat `reviewers` view plus the
-    `review` and `execute` lists (D-24), and `orders`, each role's priority order (36 D-04)."""
+    `review` and `execute` lists (D-24), and `orders`, each role's priority order (36 D-04).
+    local_path names the file the project lanes came from (a note label)."""
     emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
     # A local-only project never consults the user file, so it is never read (B-WR-01).
     local_only = bool(local) and local.get("strategy") == "local-only"
+    user_lanes, user_path = (({}, cfg_global_path(env)) if local_only
+                             else _user_lanes(env, emit_warn, migrate))
     local_view = cfg_lanes_view(_pin_removed(local)) if local else {}
-    global_view = cfg_lanes_view(_pin_removed(
-        {} if local_only else _user_lanes(env, emit_warn, migrate)))
-    merged, policy, local_notes, global_notes, notes = _combine_layers(local_view, global_view)
+    global_view = cfg_lanes_view(_pin_removed(user_lanes))
+    merged, policy, notes = _combine_layers(local_view, global_view)
     if local:
-        _emit_legacy_note(local_path or "project config.toml", local_notes, emit_warn)
-    _emit_legacy_note(cfg_global_path(env), global_notes, emit_warn)
+        _emit_legacy_note(local_path or "project config.toml", notes[0], emit_warn)
+    _emit_legacy_note(cfg_global_path(env), notes[1], emit_warn)
     _emit_legacy_note(f"merged lanes ({local_path or 'local'}, {cfg_global_path(env)})",
-                      notes, emit_warn)
-    merged = [entry for entry in merged if cfg_removed_runtime(entry) is None]
+                      notes[2], emit_warn)
     roles = {role: _combine_role(local_view, global_view, role, local_only)
              for role in ("review", "execute")}
-    return {"policy": policy, "reviewers": merged,
-            **_combine_roles(roles, policy,
-                             f"merged lanes ({local_path or 'local'}, {cfg_global_path(env)})",
-                             emit_warn)}
+    return {"policy": policy,
+            "reviewers": [entry for entry in merged if cfg_removed_runtime(entry) is None],
+            **_combine_roles(roles, policy, local_view,
+                             (local_path or "project config.toml", user_path), emit_warn)}
 
 
 _VALID_PURPOSE = {"review", "execute", "both"}

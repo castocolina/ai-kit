@@ -21,6 +21,7 @@ from ai_kit_spec.capability_block import (
     with_block,
 )
 from ai_kit_spec.commands import ResolvedReviewer, render_reviewer_command
+from ai_kit_spec.detection import removed_runtime_message
 from ai_kit_spec.runner_dispatch import (
     CustomSpec,
     RunnerResult,
@@ -97,6 +98,9 @@ def dispatch_reviewer(
         raise ValueError(
             f"reviewer {key} routes native; the host runs it, not dispatch-reviewer"
         )
+    removed = removed_runtime_message(runtime)
+    if removed is not None:
+        raise ValueError(f"reviewer {key}: {removed}")
     if entry.get("route") in routing.SKIP_ROUTES:
         raise ValueError(f"reviewer {key} route {entry['route']}: not dispatchable")
     if runtime and not entry.get("model"):

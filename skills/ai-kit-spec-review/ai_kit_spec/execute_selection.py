@@ -75,7 +75,7 @@ class ExecuteSelectionError(ValueError):
 
 
 def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
-    """D-15 screen, 36 SPEC R7: a runtime outside the table or a runner-less row cannot
+    """D-15 screen, 36 SPEC R7: a runtime outside the table cannot
     execute: purpose "execute" raises ExecuteSelectionError naming the missing runner row;
     purpose unset or "both" is dropped with a warning. A runner row passes even without
     an exec formula: the route walk skips it as no_formula with its reason. Native candidates,

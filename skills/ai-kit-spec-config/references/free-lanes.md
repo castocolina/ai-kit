@@ -36,7 +36,7 @@ For each usage-limited lane that has no fallback by that rule, run once, with `-
 
 - Run: `propose-lanes --purpose review --catalog-path <catalog> --detect --jev --runtime <runtime-id> --avoid-pool <pool-key> --skip <runtime-id>:<catalog-key>`
 
-Show the printed `alternative` row (when it is null, say there is no candidate outside those pools). The owner adds it (it goes through `wizard-flow.md` steps 4 to 6 like any chosen lane; that explicit add confirms it for the role's purpose), names another candidate, or says explicitly that there is none. Write the role only after one of those answers. On an explicit none the role is written as it is, and `render-toml` prints a warning line for it on this write and on every later read; show it at Step 4. Nothing refuses the role.
+Show the printed `alternative` row (when it is null, say there is no candidate outside those pools). The owner adds it (it goes through `wizard-flow.md` steps 4 to 6 like any chosen lane; that explicit add confirms it for the role's purpose), names another candidate, or says explicitly that there is none. An added lane counts as the fallback only once it is kept through those steps and is not usage-limited itself; when it leaves the set or is flagged, ask again (another candidate or an explicit none). Write the role only after one of those answers. On an explicit none the role is written as it is, and `render-toml` prints a warning line for it on this write and on every later read; show it at Step 4. Nothing refuses the role.
 
 ## f. Who asks
 

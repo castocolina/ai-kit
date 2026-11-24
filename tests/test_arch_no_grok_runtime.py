@@ -243,5 +243,6 @@ class TestNoGrokRuntimeNonVacuity(unittest.TestCase):
 
     def test_wrong_root_is_not_vacuous(self):
         hits, scanned = scan_tree(ROOT / "no-such-root")
-        self.assertTrue(missing_anchors(scanned))
-        self.assertTrue(hits)
+        self.assertEqual(missing_anchors(scanned), list(ANCHORS))
+        self.assertIn(f"{TABLE}: missing or unreadable runtime table", hits)
+        self.assertIn(f"{PROFILES}: missing or unreadable profile folder", hits)

@@ -200,6 +200,22 @@ class TestCheckProvidersSources(_Scratch):
         self.assertFalse(os.path.exists(self.local))
         self.assertTrue(os.path.exists(legacy))
 
+    def test_held_legacy_roster_says_migration_held(self):
+        legacy = os.path.join(self.proj, ".aikit", "review-spec.toml")
+        _write(legacy, '[[reviewers]]\nkey = "gk"\nruntime = "grok"\nmodel = "fake-model-1"\n\n'
+               '[[reviewers]]\nkey = "p"\nruntime = "pi"\nmodel = "fake-model-2"\n')
+        lines = self._report()
+        self.assertIn(f"cross-reference: {self.local} scanned (migration held: {legacy})", lines)
+        self.assertFalse(any("migration pending" in line for line in lines))
+        self.assertFalse(os.path.exists(self.local))
+
+    def test_held_user_roster_is_inactive_under_a_local_only_project(self):
+        _write(self.local, '[lanes]\nstrategy = "local-only"\n[[lanes.review]]\nkey = "l"\n'
+               'runtime = "pi"\nmodel = "fake-model-2"\n')
+        _write(os.path.join(os.path.dirname(self.global_path), "review-spec.toml"),
+               '[[reviewers]]\nkey = "gk"\nruntime = "grok"\nmodel = "fake-model-1"\n')
+        self.assertIn(f"cross-reference: {self.global_path} scanned-inactive", self._report())
+
     def test_invalid_local_toml_is_unreadable_not_fatal(self):
         _write(self.local, "not = [valid\n")
         lines = self._report()
@@ -464,10 +480,12 @@ class TestCheckOnlyProbeSet(_Scratch):
             text = handle.read()
         opener = 'python3 -c "\n'
         start = text.rindex(opener, 0, text.index("probe_keys")) + len(opener)
-        body = text[start : text.index('\n"\n', start)]
+        end = text.index('\n" "$(dirname "$TOOLS_PY")" "<project root>"\n', start)
+        body = text[start:end]
         review_dir = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review")
-        return body.replace('$(dirname "$TOOLS_PY")', review_dir).replace("<project root>",
-                                                                          self.proj)
+        # The snippet takes both paths as argv (judge loop 39.1.1 r1 D8-1), never in its source.
+        return body.replace("sys.argv[1]", repr(review_dir)).replace("sys.argv[2]",
+                                                                     repr(self.proj))
 
     def test_snippet_lists_the_merged_probe_set(self):
         # a user-layer key reached only through the merge is listed; an uninstalled one is not

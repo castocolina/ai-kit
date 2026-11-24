@@ -318,10 +318,14 @@ class TestSkillSkeleton(unittest.TestCase):
         self.assertNotIn('pick one of those four', text)
 
     def test_cursor_effort_is_a_lane_key(self):
-        text = between(self.skill, '#### Step 2.4', '#### Step 2.5')
-        self.assertNotIn('[--effort <e>] [--fast', text)
-        self.assertNotIn('effort/fast/context', text)
-        self.assertIn('Leave `--effort` out', text)
+        # Judge loop 39.1.1 r1: the cursor id rules moved to references/runtime-ids.md.
+        step = between(self.skill, '#### Step 2.4', '#### Step 2.5')
+        self.assertIn('(references/runtime-ids.md)', step)
+        ref = (SKILL_DIR / "references" / "runtime-ids.md").read_text(encoding="utf-8")
+        for text in (step, ref):
+            self.assertNotIn('[--effort <e>] [--fast', text)
+            self.assertNotIn('effort/fast/context', text)
+        self.assertIn('Leave `--effort` out', ref)
 
     def test_allowance_line_in_step_2_5(self):
         self.assertIn(ALLOWANCE_LINE, between(self.skill, '#### Step 2.5', '#### Step 2.6'))

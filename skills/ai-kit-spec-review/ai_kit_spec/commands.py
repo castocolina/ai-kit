@@ -2,7 +2,7 @@ import shlex
 from typing import NamedTuple
 
 from ai_kit_spec import runner_facts
-from ai_kit_spec.detection import runtime_id
+from ai_kit_spec.detection import removed_runtime_message, runtime_id
 
 # ── Policy resolution ────────────────────────────────────────────────────────
 
@@ -44,10 +44,14 @@ def split_command_template(key: str, template: str | None) -> list[str]:
 
 
 def execute_cli_error(cli, fact=None) -> str | None:
-    """None unless a recorded runner fact says the runner has no exec formula for `cli`
-    (a legacy name maps to its runtime id; 37 R9). An absent fact never refuses: the runner
-    refuses at run time with its own named reason."""
+    """None unless `cli` names a removed runtime (39.1 D-02: the one removal message, before any
+    spawn) or a recorded runner fact says the runner has no exec formula for it (a legacy name
+    maps to its runtime id; 37 R9). An absent fact never refuses: the runner refuses at run time
+    with its own named reason."""
     runtime = runtime_id(cli)
+    removed = removed_runtime_message(runtime)
+    if removed is not None:
+        return removed
     if runner_facts.runner_has_exec(fact, runtime) is False:
         return (f"{cli!r} has no exec formula in the runner (route no_formula): "
                 f"{runner_facts.FACT_SOURCE}")

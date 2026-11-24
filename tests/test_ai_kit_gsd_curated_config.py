@@ -774,6 +774,18 @@ class TestReviewerSlug(unittest.TestCase):
         self.assertIsNone(cross_ai_build.reviewer_slug("codex"))
 
 
+class TestRejectExecuteCli(unittest.TestCase):
+    def test_removed_runtime_is_refused_with_the_shared_removal_message(self):
+        detection = importlib.import_module("ai_kit_spec.detection")
+        message = detection.removed_runtime_message("grok")
+        assert message is not None
+        self.assertTrue(message.startswith("runtime 'grok' was removed from ai-kit"))
+        self.assertEqual(cross_ai_build.reject_execute_cli("grok"), message)
+
+    def test_supported_runtime_is_not_refused(self):
+        self.assertIsNone(cross_ai_build.reject_execute_cli("pi"))
+
+
 class TestApplyExecutionCli(unittest.TestCase):
     def setUp(self):
         self.fake_install_root = tempfile.mkdtemp()

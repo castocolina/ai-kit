@@ -1851,6 +1851,9 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
     def test_marks_missing_clis_not_installed(self):
         snapshot = build_runtimes_snapshot(
             which_fn=lambda *_a, **_k: None, run_fn=lambda *a, **k: None)
+        self.assertEqual(
+            snapshot["clis"], {rid: {"installed": False} for rid in detection.RUNTIMES}
+        )
         self.assertNotIn("grok", snapshot["clis"])
 
     def test_lists_opencode_models_when_installed(self):
@@ -4622,6 +4625,36 @@ class TestMainCli(unittest.TestCase):
             code = main(["infer-vendor", "--model", "auto"])
         self.assertEqual(code, 0)
         self.assertIsNone(json.loads(buf.getvalue())["vendor"])
+
+    def test_infer_vendor_maps_claude_aliases_on_the_claude_runtime(self):
+        import io
+        from contextlib import redirect_stdout
+
+        from ai_kit_spec.detection import CLAUDE_MODEL_ALIASES
+
+        self.assertTrue(CLAUDE_MODEL_ALIASES)
+        for alias in CLAUDE_MODEL_ALIASES:
+            with self.subTest(alias=alias):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = main(["infer-vendor", "--model", alias, "--runtime", "claude"])
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(buf.getvalue()), {"vendor": "anthropic"})
+
+    def test_infer_vendor_alias_needs_the_claude_runtime(self):
+        import io
+        from contextlib import redirect_stdout
+
+        from ai_kit_spec.detection import CLAUDE_MODEL_ALIASES
+
+        alias = CLAUDE_MODEL_ALIASES[0]
+        for runtime_args in ([], ["--runtime", "opencode"]):
+            with self.subTest(runtime_args=runtime_args):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = main(["infer-vendor", "--model", alias, *runtime_args])
+                self.assertEqual(code, 0)
+                self.assertIsNone(json.loads(buf.getvalue())["vendor"])
 
     def test_build_command_codex_prints_runner_argv(self):
         import io

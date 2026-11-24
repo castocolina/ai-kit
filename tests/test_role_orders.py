@@ -350,10 +350,12 @@ ladder = ["listed"]
             text = handle.read()
         opener = 'python3 -c "\n'
         start = text.rindex(opener, 0, text.index("probe_keys")) + len(opener)
-        body = text[start:text.index('\n"\n', start)]
+        end = text.index('\n" "$(dirname "$TOOLS_PY")" "<project root>"\n', start)
+        body = text[start:end]
         review_dir = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review")
-        return body.replace('$(dirname "$TOOLS_PY")', review_dir).replace("<project root>",
-                                                                          self.cwd)
+        # The snippet takes both paths as argv, never in its source.
+        return body.replace("sys.argv[1]", repr(review_dir)).replace("sys.argv[2]",
+                                                                     repr(self.cwd))
 
     def test_check_only_snippet_lists_model_and_command_for_both_roles(self):
         self.write_user(PROBE_ROSTER)

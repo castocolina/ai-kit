@@ -185,6 +185,20 @@ class SpecConfigAndConfigDocs(unittest.TestCase):
                       "addressable", "Step 2.1", "confirm-skill-role --name", "--global",
                       "[skills.roles]", "user-stated", "never runs", "only after the owner agrees"):
             self.assertIn(value, sec)
+        # The listing runs before the offer, and nothing is offered when it lists no unsorted skill.
+        self.assertIn("without asking", sec)
+        self.assertIn("nothing to offer", sec)
+        self.assertLess(sec.index("classify-skills --cwd"),
+                        sec.index("only after the owner agrees"))
+
+    def test_scratch_is_made_on_first_need(self):
+        step0 = section_text(SPEC_CONFIG_SKILL.read_text(encoding="utf-8"),
+                             "### Step 0 — Locate `ai-kit-spec.py` and the CLI profiles")
+        block = step0.split("```bash", 1)[1].split("```", 1)[0]
+        self.assertNotIn("mktemp", block)
+        self.assertIn("made on first need", step0)
+        probe = (SPEC_CONFIG_SKILL.parent / "references/check-only.md").read_text(encoding="utf-8")
+        self.assertLess(probe.index("mktemp -d"), probe.index("probe-quota --cwd"))
 
     def test_capability_line_is_role_specific(self):
         self.assertIn("review-role dry run", SPEC_CONFIG_SKILL.read_text(encoding="utf-8"))

@@ -18,11 +18,14 @@ sys.path.insert(
 from ai_kit_spec import (
     cli,
     config_io,
+    config_migrate,
     config_status,
     detection,
+    execute_dispatch,
     reviewer_dispatch,
     routing,
     runner_dispatch,
+    trust,
     vendor,
 )
 
@@ -176,14 +179,12 @@ class TestDetectRuntimesRemoved(unittest.TestCase):
         self.assertIn("fake-runtime", result)
 
     def test_drop_reports_once(self):
-        clis = {"grok": {"installed": False}, "pi": {"installed": False}}
         err = io.StringIO()
         with redirect_stderr(err):
-            cli._drop_removed_runtimes(["grok", "fake-runtime", "grok"], clis)
+            cli._drop_removed_runtimes(["grok", "fake-runtime", "grok"])
         message = detection.removed_runtime_message("grok")
         assert message is not None
         self.assertEqual(err.getvalue(), "detect-runtimes: " + message + "\n")
-        self.assertEqual(clis, {"pi": {"installed": False}})
 
     def test_cli_detect_runtimes_drops_and_reports_grok(self):
         with tempfile.TemporaryDirectory() as root:
@@ -207,6 +208,20 @@ class TestDetectRuntimesRemoved(unittest.TestCase):
         self.assertEqual([line for line in err.getvalue().splitlines()
                           if line.startswith("detect-runtimes: ")],
                          ["detect-runtimes: " + message])
+
+    def test_catalog_discovery_skips_a_removed_runtime(self):
+        runtimes = {"clis": {"grok": {"installed": True, "models": ["fake-model-9"]},
+                             "pi": {"installed": True, "models": ["fake-model-2"]}}}
+        args = argparse.Namespace(extra_candidate=["grok:fake-model-8", "pi:fake-model-3"],
+                                  cwd=None)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            discovered = cli._discovered_catalog_candidates(runtimes, args, mock.Mock())
+        self.assertEqual(discovered, [{"runtime": "pi", "model_id": "fake-model-2"},
+                                      {"runtime": "pi", "model_id": "fake-model-3"}])
+        message = detection.removed_runtime_message("grok")
+        assert message is not None
+        self.assertEqual(err.getvalue(), "fetch-model-catalog: " + message + "\n")
 
 
 class TestBuildCommandRemoved(unittest.TestCase):
@@ -285,6 +300,58 @@ class TestConfigStatusRemovedLane(unittest.TestCase):
                  'model = "fake-model-1"\n')
         self.assertEqual(config_status.config_status(self.root, _env(self.root))[0], "none")
 
+    def _legacy(self, folder, text):
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "review-spec.toml"), "w", encoding="utf-8") as stream:
+            stream.write(text)
+
+    def test_held_user_roster_is_reported_and_its_other_lane_counts(self):
+        self._legacy(os.path.join(self.root, "xdg", "ai-kit"),
+                     '[[reviewers]]\nkey = "gk"\nruntime = "grok"\nmodel = "fake-model-1"\n\n'
+                     '[[reviewers]]\nkey = "pl"\nruntime = "pi"\nmodel = "fake-model-2"\n')
+        state, checked = config_status.config_status(self.root, _env(self.root))
+        self.assertEqual((state, checked[1][2]), ("active", "migration-held"))
+
+    def test_held_project_roster_with_only_a_removed_lane_is_none(self):
+        self._legacy(os.path.join(self.root, ".aikit"),
+                     '[[reviewers]]\nkey = "gk"\nruntime = "grok"\nmodel = "fake-model-1"\n')
+        state, checked = config_status.config_status(self.root, _env(self.root))
+        self.assertEqual((state, checked[0][2]), ("none", "migration-held"))
+
+    def test_clean_old_roster_stays_pending(self):
+        self._legacy(os.path.join(self.root, ".aikit"),
+                     '[[reviewers]]\nkey = "pl"\nruntime = "pi"\nmodel = "fake-model-2"\n')
+        state, checked = config_status.config_status(self.root, _env(self.root))
+        self.assertEqual((state, checked[0][2]), ("pending", "pending-migration"))
+
+    _HELD_COMMAND = ('[[reviewers]]\nkey = "gk"\nruntime = "grok"\nmodel = "fake-model-1"\n\n'
+                     '[[reviewers]]\nkey = "cc"\nmodel = "fake-model-3"\n'
+                     'command = "fake-cli {model}"\n')
+
+    def test_untrusted_held_project_roster_is_pending_like_its_config_toml_twin(self):
+        self._legacy(os.path.join(self.root, ".aikit"), self._HELD_COMMAND)
+        state, checked = config_status.config_status(self.root, _env(self.root))
+        self.assertEqual((state, checked[0][2]), ("pending", "migration-held-untrusted"))
+
+    def test_untrusted_held_project_roster_is_pending_even_with_user_lanes(self):
+        _user(self.root, '[[lanes.review]]\nkey = "u1"\nruntime = "pi"\nmodel = "fake-model-2"\n')
+        self._legacy(os.path.join(self.root, ".aikit"), self._HELD_COMMAND)
+        state, checked = config_status.config_status(self.root, _env(self.root))
+        self.assertEqual((state, checked[0][2], checked[1][2]),
+                         ("pending", "migration-held-untrusted", "lanes"))
+
+    def test_trusted_held_project_roster_stays_held_and_active(self):
+        folder = os.path.join(self.root, ".aikit")
+        self._legacy(folder, self._HELD_COMMAND)
+        env = _env(self.root)
+        legacy = os.path.join(folder, "review-spec.toml")
+        with open(legacy, "rb") as stream:
+            raw = stream.read()
+        trust.record_trust(config_migrate.legacy_trust_dir(config_io.cfg_trust_store_dir(env)),
+                           os.path.realpath(legacy), raw)
+        state, checked = config_status.config_status(self.root, env)
+        self.assertEqual((state, checked[0][2]), ("active", "migration-held"))
+
 
 class TestSilentPreview(unittest.TestCase):
     def test_quiet_preview_keeps_the_notice(self):
@@ -346,12 +413,13 @@ class TestRemovedLaneLoad(unittest.TestCase):
 
     def test_project_removed_lane_never_exposes_the_user_lane(self):
         _user(self.root, self.lane("review", "k", "pi", "fake-model-2"))
-        _project(self.root, self.lane("review", "k", "grok"))
+        path = _project(self.root, self.lane("review", "k", "grok"))
         result, lines = _load(self.root)
         self.assertEqual(result["review"], [])
         self.assertEqual(result["reviewers"], [])
         self.assertEqual(len(lines), 1)
         self.assertIn("[review k]", lines[0])
+        self.assertIn(f"{path} [review k]", lines[0])
 
     def test_execute_role_collision_is_dropped_too(self):
         _user(self.root, self.lane("execute", "k", "pi", "fake-model-2"))
@@ -362,12 +430,13 @@ class TestRemovedLaneLoad(unittest.TestCase):
         self.assertIn("[execute k]", lines[0])
 
     def test_user_removed_lane_under_a_project_override_is_dropped(self):
-        _user(self.root, self.lane("review", "k", "grok"))
+        path = _user(self.root, self.lane("review", "k", "grok"))
         _project(self.root, self.lane("review", "k", model="fake-model-2"))
         result, lines = _load(self.root)
         self.assertEqual(result["review"], [])
         self.assertEqual(len(lines), 1)
         self.assertIn("[review k]", lines[0])
+        self.assertIn(f"{path} [review k]", lines[0])
 
     def test_project_pair_over_a_user_removed_lane_runs(self):
         _user(self.root, self.lane("review", "k", "grok"))
@@ -548,6 +617,13 @@ class TestRemovedLaneEdges(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(folder, "config.toml")))
         self.assertEqual([e["key"] for e in result["reviewers"]], ["pl"])
         self.assertEqual(sum("[review gk]" in line for line in lines), 1)
+        legacy = os.path.join(folder, "review-spec.toml")
+        held = [line for line in lines if "migration held" in line]
+        self.assertEqual(len(held), 1)
+        self.assertIn(legacy, held[0])
+        self.assertFalse(any("migration pending" in line or "on the next command" in line
+                             for line in lines))
+        self.assertTrue(any(f"{legacy} [review gk]" in line for line in lines))
 
     def test_user_legacy_file_with_a_removed_lane_is_not_migrated(self):
         self.check_removed_legacy(os.path.join(self.root, "xdg", "ai-kit"))
@@ -566,6 +642,73 @@ class TestRemovedLaneEdges(unittest.TestCase):
         self.assertFalse(any("was removed from ai-kit" in line for line in lines))
 
 
+class TestDispatchRemovedRuntime(unittest.TestCase):
+    def test_hand_built_removed_entry_never_reaches_the_runner(self):
+        spy = mock.Mock(side_effect=_Reached())
+        message = detection.removed_runtime_message("grok")
+        assert message is not None
+        with self.assertRaises(ValueError) as caught:
+            _dispatch({"key": "gk", "runtime": "grok", "model": "fake-model-1"}, spy)
+        self.assertEqual(str(caught.exception), "reviewer gk: " + message)
+        self.assertEqual(spy.call_count, 0)
+
+    def test_hand_built_removed_execute_candidate_never_reaches_the_runner(self):
+        runner, compose = mock.Mock(side_effect=_Reached()), mock.Mock(side_effect=_Reached())
+        message = detection.removed_runtime_message("grok")
+        assert message is not None
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as target:
+            spec = execute_dispatch.ExecuteDispatchSpec(
+                {"runtime": "grok", "model": "fake-model-1"}, "task", target, 60, files=())
+            with self.assertRaises(ValueError) as caught:
+                execute_dispatch.dispatch_execute(
+                    spec, execute_dispatch.ExecuteSeams(runner_fn=runner, compose_fn=compose))
+        self.assertEqual(str(caught.exception), message)
+        self.assertEqual((runner.call_count, compose.call_count), (0, 0))
+
+    def test_dispatch_execute_cli_refuses_before_reading_the_prompt(self):
+        spy = mock.Mock(side_effect=_Reached())
+        message = detection.removed_runtime_message("grok")
+        assert message is not None
+        err = io.StringIO()
+        with (tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as target,
+              redirect_stderr(err)):
+            code = cli.main(["dispatch-execute", "--runtime", "grok", "--model", "fake-model-1",
+                             "--target-dir", target, "--timeout", "60",
+                             "--prompt-file", os.path.join(target, "missing-prompt.md")],
+                            deps=cli.CliDeps(dispatch_execute_fn=spy))
+        self.assertEqual(code, 2)
+        self.assertEqual(err.getvalue(), f"ai-kit-spec: {message}\n")
+        self.assertEqual(spy.call_count, 0)
+
+
+class TestStaleCatalogRow(unittest.TestCase):
+    def test_propose_lanes_skips_a_removed_runtime_row(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as root:
+            catalog = os.path.join(root, "model-catalog.json")
+            runtimes = os.path.join(root, "runtimes.json")
+            with open(catalog, "w", encoding="utf-8") as stream:
+                json.dump({"fake/fake-model-8": {"provider": "fake", "runtimes": {
+                    "pi": {"model_id": "fake/fake-model-8"},
+                    "grok": {"model_id": "fake-model-9"}}}}, stream)
+            with open(runtimes, "w", encoding="utf-8") as stream:
+                json.dump({"clis": {"grok": {"installed": True, "models": ["fake-model-9"]},
+                                    "pi": {"installed": True, "models": ["fake/fake-model-8"]}}},
+                          stream)
+            deps = cli.CliDeps(env_fn=lambda: _env(root))
+            for purpose in ("review", "execute"):
+                for extra in ([], ["--runtime", "grok", "--runtime", "pi"]):
+                    with self.subTest(purpose=purpose, extra=extra):
+                        out = io.StringIO()
+                        with redirect_stdout(out):
+                            code = cli.main(["propose-lanes", "--purpose", purpose,
+                                             "--catalog-path", catalog, "--runtimes-json",
+                                             runtimes, *extra], deps=deps)
+                        self.assertEqual(code, 0)
+                        data = json.loads(out.getvalue())
+                        self.assertEqual({row["runtime"] for row in data["pool"] + data["wider"]},
+                                         {"pi"})
+
+
 class TestUnknownRuntimeToday(unittest.TestCase):
     def test_unknown_runtime_lane_loads_silently(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as root:
@@ -575,35 +718,31 @@ class TestUnknownRuntimeToday(unittest.TestCase):
             self.assertEqual(lines, [])
 
     def test_unknown_runtime_routes_unverified(self):
-        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as root:
-            _project(root, _FAKE_LANE)
-            entry = {"key": "fr", "runtime": "fake-runtime", "model": "fake-model-1"}
-            self.assertEqual(
-                routing.route(
-                    routing.RouteInput.of(entry),
-                    "unknown",
-                    "review",
-                    routing.Inventory(frozenset(), {}),
-                ),
-                "unverified",
-            )
+        entry = {"key": "fr", "runtime": "fake-runtime", "model": "fake-model-1"}
+        self.assertEqual(
+            routing.route(
+                routing.RouteInput.of(entry),
+                "unknown",
+                "review",
+                routing.Inventory(frozenset(), {}),
+            ),
+            "unverified",
+        )
 
     def test_unknown_runtime_reaches_the_runner(self):
-        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as root:
-            _project(root, _FAKE_LANE)
-            self.assertIs(
-                reviewer_dispatch.ReviewerSeams._field_defaults["runner_tiers_fn"],
-                runner_dispatch.run_runner_tiers,
+        self.assertIs(
+            reviewer_dispatch.ReviewerSeams._field_defaults["runner_tiers_fn"],
+            runner_dispatch.run_runner_tiers,
+        )
+        spy = mock.Mock(side_effect=_Reached())
+        with self.assertRaises(_Reached):
+            _dispatch(
+                {
+                    "key": "fr",
+                    "runtime": "fake-runtime",
+                    "model": "fake-model-1",
+                    "route": "unverified",
+                },
+                spy,
             )
-            spy = mock.Mock(side_effect=_Reached())
-            with self.assertRaises(_Reached):
-                _dispatch(
-                    {
-                        "key": "fr",
-                        "runtime": "fake-runtime",
-                        "model": "fake-model-1",
-                        "route": "unverified",
-                    },
-                    spy,
-                )
-            self.assertEqual(spy.call_count, 1)
+        self.assertEqual(spy.call_count, 1)
