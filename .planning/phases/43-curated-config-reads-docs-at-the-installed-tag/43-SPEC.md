@@ -21,7 +21,10 @@ settings) follows; this phase owns the reading and asking side.
 - 2026-11-23, answers to this phase's question batch: (1) the cascade replaces the four questions the v2 flow asks today
   (profile, rigor, cross-AI plan review, cross-AI execution); profile and routing become Phase 44 defaults and the single cross-AI
   execution confirmation stays Phase 44's; (2) jev labels changelog entries by impact and rules decide the offer: an offer
-  appears for any high or medium entry, without jev a keyword rule gives the same labels and the run says which decided.
+  appears for any high or medium entry, without jev a keyword rule gives the same labels and the run says which decided; (3)
+  the `rigorous` rigor level and the cross-AI plan review choice leave the questions but stay reachable as plan edits: the plan
+  review shows the rigor and the cross-AI review default derived from the MVP answer, host and inventory, and `plan-set` changes
+  either (no existing feature is removed).
 - ai-kit never installs or updates GSD itself: a project-local install is an approval-gated follow-up the skill prints (the
   existing `followups` machinery), never `gsd update` and never a write into `~/.claude` (global rules of the owner).
 - jev is advisory and never gates; every jev path has a tested no-jev behavior; only summaries go to jev.
@@ -135,6 +138,8 @@ resolver through the project's `gsd-tools` and confirmed, not re-implemented.
 - [ ] No step runs `gsd update` or writes under `~/.claude`
 - [ ] The cascade lists MVP, UI, granularity, runtime and the detected base branch in order; none of the four old questions
   remains; the runtime question appears only when another host is detected
+- [ ] The `rigorous` level and the cross-AI plan review choice are changeable with `plan-set` in the plan review, and the plan
+  review shows their derived defaults
 - [ ] The run record has one dated row for each of the eleven v1 subcommands with command, exit code, output keys and changed files
 - [ ] The decision record has keep, merge or remove for each; no v1 entry point is removed without its row
 - [ ] The changed SKILL.md meets the judge bar of AGENTS.md
