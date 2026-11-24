@@ -1030,22 +1030,33 @@ Plans:
 
 ### Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)
 
-**Goal**: The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks. *(inserted 2026-11-23, owner decision; no SPEC yet, the SPEC step finalizes the criteria below)*
+**Goal**: The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks. *(inserted 2026-11-23, owner decision; SPEC written 2026-11-23, `39.2-SPEC.md`, 10 requirements)*
 **Depends on**: Phase 39
-**Requirements**: none yet (the SPEC step defines them)
-**Success Criteria** (what must be TRUE; seeded from the 2026-11-23 requirement candidates, the SPEC step finalizes them):
+**Requirements**: the 10 numbered requirements of `39.2-SPEC.md`, cited in plans as `39.2-R1` to `39.2-R10`; JDG-04 for R10 *(amended 2026-11-24, 39.2 planning: the SPEC defined its requirements but no REQUIREMENTS.md id was registered; the plans cite the SPEC numbers and register no new id)*
+**Success Criteria** (what must be TRUE; seeded from the 2026-11-23 requirement candidates and finalized by `39.2-SPEC.md`, which wins where the two differ):
   1. Each file is committed on the branch of the lowest open unit that owns it: a phase's own SPEC, CONTEXT and log on its unit; a cross-phase amendment on the amended phase's branch; REQUIREMENTS, ROADMAP, STATE and the goal file on the lowest open unit; the units above are restacked after each phase step. Test: an eval over three phases where the third amends the first ends with the amendment on the first unit, visible on all three, and no restack conflict.
   2. A read-only where-am-I step runs at setup and before each phase: current branch, stack order with unit states, and the branch holding each phase's documents; it never edits the stack record. Test: a doc-contract test pins the step; an eval checks the printed fields.
   3. Every later step that reads or writes phase N's files first runs `fold.py start --phase N` (reuse and checkout) and `fold.py guard --phase N`; the goal-prompt rails say the same for planning or executing an earlier phase. Test: an eval "plan the first phase after the chain" reads nothing from the top branch.
   4. The end report states the branch the checkout is left on (the lowest phase of the range), the stack order with tips, which branch holds each phase's documents, the goal file's path and branch, and every `unit flow off` line. Test: a doc-contract test pins the fields.
-  5. Before the first `start`, the run stops with a reason when GSD's `git.branching_strategy` is not `none`, or when HEAD is an unrecorded branch with commits the trunk lacks; the agent moves no branch and edits no record. Test: two fixture repos, each refused with its reason.
+  5. Before the first `start`, the run stops with a reason when GSD's `git.branching_strategy` is not `none` and the branch name GSD gives the phase differs from the unit branch the fold flow creates for it, or when HEAD is an unrecorded branch with commits the trunk lacks; the agent moves no branch, edits no record and writes no config. Test: fixture repos, each refused with its reason; strategy `none` and a `phase` template that renders the unit's own name proceed. *(amended 2026-11-24, 39.2 planning, from SPEC R5 as confirmed by the owner 2026-11-23: ai-kit's own `phase` template renders the unit names, so a rule that stops on any strategy other than `none` would stop ai-kit's own runs)*
   6. The fold tool restacks the units above after a plain commit on a lower unit (no fold rewrite, no push), offers a read-only all-units view, and names a stale parent unit instead of `no_trunk`. Test: fixture-repo tests for each, with non-vacuity cases.
   7. A recipe table in a spec-discuss reference maps each refusal or symptom (`ref_mismatch`, `wrong_parent`, `plan_not_carried`, `branch_missing`, stale unit, GSD branching on, unrecorded HEAD branch, inserted phase below open units, paused restack) to the next step. Test: a doc-contract test checks every listed reason appears with an action.
   8. The changed SKILL.md files meet the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 
 **Requirement candidates (captured 2026-11-23, owner request)**: spec-discuss branch strategy for stacked units. No v2.0 phase edits `ai-kit-gsd-spec-discuss` today; inserted as this phase on 2026-11-23, owner decision. Source: `.planning/todos/pending/2026-11-23-spec-discuss-branch-strategy-after-the-chain.md`.
 
-**Plans**: TBD
+**Plans**: 10 plans
+
+- [ ] 39.2-01-PLAN.md (wave 1): tracer: `fold.py show --all`, the read-only all-units view (R7)
+- [ ] 39.2-02-PLAN.md (wave 1): `branch_preflight.py`, the GSD branch-name and unrecorded-HEAD start-time checks (R5)
+- [ ] 39.2-03-PLAN.md (wave 2): `fold.py restack` restacks the units above a moved lower unit, locally, never pushed (R6)
+- [ ] 39.2-04-PLAN.md (wave 3): `start` refusals `stale_parent` and `unrecorded_head`, fold docs, evals and README row (R5, R8)
+- [ ] 39.2-05-PLAN.md (wave 4): `references/branches.md`: where-am-I shape, write steps, recipe table, end-report template (R1, R2, R4, R9)
+- [ ] 39.2-06-PLAN.md (wave 5): spec-discuss SKILL.md branch rules, ownership rule, end report, README row (R1-R5, R8, R9)
+- [ ] 39.2-07-PLAN.md (wave 6): seven spec-discuss evals (R1-R5, R8)
+- [ ] 39.2-08-PLAN.md (wave 6): goal-prompt rail line for going back to an earlier phase (R3)
+- [ ] 39.2-09-PLAN.md (wave 7): judge loop for the changed skills (orchestrator action, JDG-04)
+- [ ] 39.2-10-PLAN.md (wave 8): closing gate: installed-layout check, suites, ROADMAP tick (orchestrator action)
 
 ### Phase 40: Resilient review sized by jev
 
