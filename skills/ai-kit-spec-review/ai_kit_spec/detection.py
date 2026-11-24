@@ -93,7 +93,7 @@ class Runtime(NamedTuple):
     advice: Advice | None = None
 
 
-# Insertion order is host precedence. grok is a row, never a detected host (D-03).
+# Insertion order is host precedence.
 # 35 R11: seed data labeled by its _LABEL_* source strings; the claude native selectors and
 # CLAUDE_FALLBACK_MODEL_IDS are deciding lists kept in the guard baseline for Phase 36.
 RUNTIMES: dict[str, Runtime] = {
@@ -133,12 +133,6 @@ RUNTIMES: dict[str, Runtime] = {
     # copilot has no known host signal (unverified) and its runner rows are unverified.
     "copilot": Runtime(
         ("copilot",), (), runner=True),
-    "grok": Runtime(
-        ("grok",),
-        (),
-        scrub_signals=("GROK_AGENT",),
-        runner=False,
-    ),
 }
 
 KNOWN_CLIS = tuple(RUNTIMES)
@@ -253,8 +247,8 @@ _RUNTIME_ENV_SIGNALS = tuple(
 )
 
 # Every variable runtime detection reads (D-14), plus host identity markers not tied to a
-# specific runtime (AI_AGENT, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_SSE_PORT, CODEX_SANDBOX,
-# GROK_AGENT), so a cross-AI child spawned by dispatch never mistakes itself for the host.
+# specific runtime (AI_AGENT, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_SSE_PORT, CODEX_SANDBOX),
+# so a cross-AI child spawned by dispatch never mistakes itself for the host.
 # The runner template's literal `scrubEnv` array is kept equal to this authoritative set.
 HOST_SIGNAL_ENV_VARS = frozenset(
     {var for _rid, var in _RUNTIME_ENV_SIGNALS}
@@ -1561,7 +1555,8 @@ def find_code_index_alternative(
     cli: str, model: str, runtimes_snapshot: dict, env=None
 ) -> str | None:
     """Best-effort only (design spec §8, §14): when `cli` has no codebase-memory-mcp registration
-    reader (not in CBM_REGISTRATION_KEYS; today grok, which gets the CLI form only) but a
+    reader (not in CBM_REGISTRATION_KEYS: a custom entry or an id outside the table, which gets
+    the CLI form only) but a
     substring match suggests the SAME base model is reachable through a multi-provider CLI
     that has codebase-memory-mcp registered (read from its config), return that CLI's name --
     informational only, never a

@@ -39,7 +39,6 @@ _SCRUB_NAMES = {
     "PI_CODING_AGENT",
     "CODEX_THREAD_ID",
     "CODEX_SANDBOX",
-    "GROK_AGENT",
     "CODEX_VERSION",
 }
 
@@ -80,18 +79,18 @@ class TestRuntimeTable(unittest.TestCase):
     def test_ids_follow_host_precedence_and_known_clis(self):
         self.assertEqual(
             list(detection.RUNTIMES),
-            ["pi", "opencode", "cursor", "codex", "claude", "copilot", "grok"],
+            ["pi", "opencode", "cursor", "codex", "claude", "copilot"],
         )
         self.assertEqual(detection.KNOWN_CLIS, tuple(detection.RUNTIMES))
-        self.assertFalse(detection.RUNTIMES["grok"].runner)
         self.assertEqual(detection.RUNTIMES["cursor"].model_suffix, r"\[[^\]]*\]$")
 
-    def test_grok_agent_is_never_a_detected_host(self):
+    def test_unknown_signal_is_never_a_detected_host(self):
         self.assertEqual(detection.detect_current_runtime({"GROK_AGENT": "1"}), "unknown")
+        self.assertEqual(detection.detect_current_runtime({"GROK_AGENT": ""}), "unknown")
 
-    def test_scrub_set_keeps_the_same_eleven_names(self):
+    def test_scrub_set_keeps_the_same_ten_names(self):
         self.assertEqual(detection.HOST_SIGNAL_ENV_VARS, _SCRUB_NAMES)
-        self.assertEqual(len(detection.HOST_SIGNAL_ENV_VARS), 11)
+        self.assertEqual(len(detection.HOST_SIGNAL_ENV_VARS), 10)
 
     def test_codex_labels_are_live_verified(self):
         labels = dict(detection.RUNTIMES["codex"].host_signals)
@@ -410,7 +409,7 @@ class TestLegacyEntryPoints(unittest.TestCase):
             host_fakes.write_cbm_registration(tmp, ["cursor"])
             self.assertEqual(
                 detection.find_code_index_alternative(
-                    "grok", "grok-4.6", snapshot, {"HOME": tmp}),
+                    "placeholder-cli-1", "grok-4.6", snapshot, {"HOME": tmp}),
                 "cursor",
             )
 

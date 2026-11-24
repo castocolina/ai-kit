@@ -128,7 +128,6 @@ const CONFIG = {
     "CODEX_THREAD_ID",
     "CODEX_VERSION",
     "CURSOR_AGENT",
-    "GROK_AGENT",
     "OPENCODE",
     "PI_CODING_AGENT"
   ]

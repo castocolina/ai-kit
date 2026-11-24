@@ -89,9 +89,9 @@ class TestRegistrationReads(_ScratchHome):
         self.assertIsNone(detection.cbm_registration("claude", self.env).registered)
 
     def test_a_runtime_without_a_reader_reads_unknown_never_not_registered(self):
-        result = detection.cbm_registration("grok", self.env)
+        result = detection.cbm_registration("placeholder-cli-1", self.env)
         self.assertIsNone(result.registered)
-        self.assertEqual(result.detail, "no registration reader for grok")
+        self.assertEqual(result.detail, "no registration reader for placeholder-cli-1")
 
     def test_cursor_agent_reads_like_cursor(self):
         host_fakes.write_cbm_registration(self.home, ["cursor"])

@@ -524,8 +524,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
     def test_resolve_injection_prints_the_d15_skip_warning_once(self):
         # A-IN-06: the ladder pass and the build pass both screen; warn only once.
         candidates = [
-            {"key": "g", "runtime": "grok", "model": "m", "vendor": "x", "purpose": None,
-             "task_affinity": None, "context_limit": None},
+            {"key": "g", "runtime": "placeholder-cli-1", "model": "m", "vendor": "x",
+             "purpose": None, "task_affinity": None, "context_limit": None},
             {"key": "c", "runtime": "codex", "model": "m", "vendor": "o", "purpose": None,
              "task_affinity": None, "context_limit": None},
         ]

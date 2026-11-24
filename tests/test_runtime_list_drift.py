@@ -33,20 +33,16 @@ DELIBERATE = {
     ("RUNNER_IDS", "claude"): "review-only: claude is a reviewer, not a curated runner choice",
     ("RUNNER_IDS", "copilot"): "not a curated runner choice: its runner rows are unverified",
     ("HOSTS", "copilot"): "no host support: the host list has no copilot entry",
-    ("HOSTS", "grok"): "no host support: the host list has no grok entry",
     ("HOST_BINARY", "copilot"): "no host support: the goal-prompt host map has no copilot entry",
-    ("HOST_BINARY", "grok"): "no host support: the goal-prompt host map has no grok entry",
     ("REVIEWER_SLUGS", "codex"): _SUBSET.format(module="cross_ai_build", name="REVIEWER_SLUGS"),
     ("REVIEWER_SLUGS", "pi"): _SUBSET.format(module="cross_ai_build", name="REVIEWER_SLUGS"),
     ("REVIEWER_SLUGS", "copilot"): _SUBSET.format(module="cross_ai_build", name="REVIEWER_SLUGS"),
-    ("REVIEWER_SLUGS", "grok"): _SUBSET.format(module="cross_ai_build", name="REVIEWER_SLUGS"),
     ("_RUNTIME_ORDER", "claude"): _SUBSET.format(module="preference_match",
                                                  name="_RUNTIME_ORDER"),
     ("_RUNTIME_ORDER", "codex"): _SUBSET.format(module="preference_match", name="_RUNTIME_ORDER"),
     ("_RUNTIME_ORDER", "pi"): _SUBSET.format(module="preference_match", name="_RUNTIME_ORDER"),
     ("_RUNTIME_ORDER", "copilot"): _SUBSET.format(module="preference_match",
                                                   name="_RUNTIME_ORDER"),
-    ("_RUNTIME_ORDER", "grok"): _SUBSET.format(module="preference_match", name="_RUNTIME_ORDER"),
 }
 # Copies that are deliberately empty (an empty copy fails unless its name is listed here).
 DELIBERATE_EMPTY: set[str] = set()

@@ -238,7 +238,7 @@ EXPLICIT_GROUPS = {
 # Host CLI binary names the tripwire stubs: copied from the RUNTIMES binaries plus the
 # goal-prompt HOST_BINARY values (cursor-agent comes from the table); pinned by a drift test.
 HOST_CLI_NAMES = frozenset({
-    "agent", "claude", "codex", "copilot", "cursor-agent", "grok", "opencode", "pi",
+    "agent", "claude", "codex", "copilot", "cursor-agent", "opencode", "pi",
 })
 # Non-host tools a test may reach only through a fake (tests/index_fakes.py); kept apart from
 # HOST_CLI_NAMES, which a drift test pins to the RUNTIMES binaries.
@@ -248,7 +248,7 @@ TRIPWIRE_MAX_LINES = 20
 # must not make a module believe it runs inside a host.
 HOST_SIGNAL_VARS = frozenset({
     "AI_AGENT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CODEX_SANDBOX",
-    "CODEX_THREAD_ID", "CODEX_VERSION", "CURSOR_AGENT", "GROK_AGENT", "OPENCODE",
+    "CODEX_THREAD_ID", "CODEX_VERSION", "CURSOR_AGENT", "OPENCODE",
     "PI_CODING_AGENT",
 })
 # Env names product code reads as a host config dir, XDG home, credential file, tooling path or

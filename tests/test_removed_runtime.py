@@ -23,6 +23,7 @@ from ai_kit_spec import (
     reviewer_dispatch,
     routing,
     runner_dispatch,
+    vendor,
 )
 
 _FAKE_LANE = '[[lanes.review]]\nkey = "fr"\nruntime = "fake-runtime"\nmodel = "fake-model-1"\n'
@@ -84,6 +85,86 @@ def _dispatch(entry, spy):
     return reviewer_dispatch.dispatch_reviewer(
         spec, seams=reviewer_dispatch.ReviewerSeams(runner_tiers_fn=spy, custom_fn=spy)
     )
+
+
+class TestRuntimeTableWithoutGrok(unittest.TestCase):
+    def test_grok_stub_on_path_is_ignored(self):
+        with tempfile.TemporaryDirectory() as folder:
+            stub = os.path.join(folder, "grok")
+            with open(stub, "w", encoding="utf-8") as stream:
+                stream.write("#!/bin/sh\nexit 0\n")
+            os.chmod(stub, 0o755)
+            with mock.patch.dict(os.environ, {"PATH": folder}):
+                self.assertNotIn("grok", detection.detect_installed_clis())
+
+    def test_empty_path_maps_every_table_key_to_none(self):
+        with tempfile.TemporaryDirectory() as folder, mock.patch.dict(os.environ, {"PATH": folder}):
+            result = detection.detect_installed_clis()
+        self.assertEqual(result, dict.fromkeys(
+            ("pi", "opencode", "cursor", "codex", "claude", "copilot")))
+
+    def test_table_ids_and_order(self):
+        expected = ("pi", "opencode", "cursor", "codex", "claude", "copilot")
+        self.assertEqual(detection.KNOWN_CLIS, expected)
+        self.assertEqual(tuple(detection.RUNTIMES), expected)
+
+    def test_grok_agent_is_an_unknown_signal(self):
+        for value in ("1", ""):
+            self.assertEqual(detection.detect_current_runtime({"GROK_AGENT": value}), "unknown")
+        scrub = detection.HOST_SIGNAL_ENV_VARS
+        self.assertNotIn("GROK_AGENT", scrub)
+        self.assertNotIn("GROK_AGENTS_HOME", scrub)
+        env = {"GROK_AGENT": "1", "GROK_AGENTS_HOME": "x"}
+        self.assertEqual({key: value for key, value in env.items() if key not in scrub}, env)
+
+    def test_scrub_lists_agree_without_grok_agent(self):
+        root = os.path.join(os.path.dirname(__file__), "..")
+        template = os.path.join(root, "skills", "ai-kit-spec-review", "references", "cross-ai.mjs")
+        runner = os.path.join(root, "tools", "run_unittest_parallel.py")
+        gsd = os.path.join(root, "skills", "ai-kit-spec-review", "ai_kit_spec", "gsd_tools.py")
+        with open(template, encoding="utf-8") as stream:
+            self.assertNotIn('"GROK_AGENT"', stream.read())
+        with open(runner, encoding="utf-8") as stream:
+            text = stream.read()
+        self.assertNotIn('"GROK_AGENT"', text)
+        self.assertIn('"GROK_AGENTS_HOME"', text)
+        with open(gsd, encoding="utf-8") as stream:
+            tree = ast.parse(stream.read())
+        self.assertTrue(any(isinstance(node, ast.Constant) and node.value == "GROK_AGENTS_HOME"
+                            for node in ast.walk(tree)))
+
+    def test_stale_snapshot_row_is_ignored(self):
+        snapshot = {"clis": {
+            "grok": {"installed": True, "models": ["fake-model-1"]},
+            "pi": {"installed": True, "models": ["fake-model-2"]},
+        }}
+        inventory = routing.inventory_from_snapshot(snapshot)
+        self.assertEqual(inventory.installed, frozenset({"pi"}))
+        self.assertNotIn("grok", inventory.models)
+        self.assertEqual(inventory.models["pi"], ("fake-model-2",))
+
+    def test_catalog_fixture_names_no_grok_runtime(self):
+        path = os.path.join(os.path.dirname(__file__), "fixtures", "curated_config_v2",
+                            "model-catalog.json")
+        with open(path, encoding="utf-8") as stream:
+            catalog = json.load(stream)
+        entries = [entry for key, entry in catalog.items() if key != "_meta" and "grok" in key]
+        self.assertTrue(entries)
+        for entry in entries:
+            self.assertNotIn("grok", entry["runtimes"])
+
+    def test_bare_grok_model_vendor_is_unchanged(self):
+        path = os.path.join(os.path.dirname(__file__), "fixtures", "cursor_models.txt")
+        with open(path, encoding="utf-8") as stream:
+            model = next(line.split()[0] for line in stream if line.startswith("grok-"))
+        self.assertIsNone(vendor.infer_vendor_from_model(model))
+
+    def test_catalog_build_without_grok_models_raises_nothing(self):
+        discovered = [{"runtime": "opencode", "model_id": f"fake/fake-model-{i}"}
+                      for i in (1, 2)]
+        result = cli.build_model_catalog(discovered, cli.CatalogSources({}, True, [], True), {})
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 3)
 
 
 class TestDetectRuntimesRemoved(unittest.TestCase):
