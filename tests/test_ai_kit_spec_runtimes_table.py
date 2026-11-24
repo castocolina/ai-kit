@@ -845,7 +845,6 @@ REFERENCES = [
     "skills/ai-kit-spec-review/references/cli-profiles/codex.md",
     "skills/ai-kit-spec-review/references/cli-profiles/cursor.md",
     "skills/ai-kit-spec-review/references/cli-profiles/opencode.md",
-    "skills/ai-kit-spec-review/references/cli-profiles/grok.md",
     "skills/ai-kit-spec-config/references/cli-model-selection.md",
     "skills/ai-kit-spec-execute-superpowers/references/escalation.md",
     "skills/ai-kit-spec-execute-superpowers/references/design-notes.md",
