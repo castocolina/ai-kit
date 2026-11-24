@@ -89,7 +89,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
 
 # arch-test tier: the AST architecture-fitness modules (35: the hardcoded-model guard).
-ARCH_MODULES = frozenset({"tests.test_arch", "tests.test_arch_hardcoded_models"})
+ARCH_MODULES = frozenset({
+    "tests.test_arch", "tests.test_arch_hardcoded_models", "tests.test_arch_no_grok_runtime",
+})
 # Needs PyYAML or LibCST, which only the uv env provides.
 UNIT_UV_MODULES = frozenset({
     "tests.test_cst_refactor_codemods",  # needs LibCST from the uv dev group (32.1)

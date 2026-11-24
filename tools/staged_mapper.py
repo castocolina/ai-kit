@@ -127,6 +127,7 @@ TIGHT_SKILL_FOLDERS = frozenset({"ai-kit-spec-review"})
 SKILLS_TREE_WALKERS = frozenset({
     "tests.test_skill_text_history",
     "tests.test_arch_hardcoded_models",
+    "tests.test_arch_no_grok_runtime",
 })
 
 

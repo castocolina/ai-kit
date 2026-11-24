@@ -407,7 +407,8 @@ class RunnerStagedTest(unittest.TestCase):
         code, out = self.main("--staged", "tools/beta.py", "tools/beta.py")
         self.assertEqual(code, 0, out)
         self.assertEqual(
-            self.ran, [["tests.test_beta", "tests.test_arch", "tests.test_arch_hardcoded_models"]]
+            self.ran, [["tests.test_beta", "tests.test_arch", "tests.test_arch_hardcoded_models",
+                        "tests.test_arch_no_grok_runtime"]]
         )
         self.assertIn("staged: tests.test_beta", out)
 

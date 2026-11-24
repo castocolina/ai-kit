@@ -1013,7 +1013,7 @@ Plans:
   3. The "grok is not a target" notes of Phases 36, 37 and 38.1 are superseded by this removal, and the pending todo "Cursor subagents pinned to non-fast composer-2.5 and grok" is re-read: its grok half (a model, not the runtime) is kept or dropped explicitly.
   4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 
-**Plans**: 8/13 plans executed
+**Plans**: 9/13 plans executed
 - [x] 39.1-01-PLAN.md (wave 1): unknown-runtime pins, `REMOVED_RUNTIMES` and message helper, stale lane dropped at load after the layer merge, refused at save
 - [x] 39.1-02-PLAN.md (wave 2): `build-command` and `detect-runtimes` report the removed runtime; grok command builder deleted; config-status and silent previews
 - [x] 39.1-03-PLAN.md (wave 3): grok table row removed with every mirror list (host CLIs, scrub signals, template `scrubEnv`, drift exceptions)
@@ -1022,7 +1022,7 @@ Plans:
 - [x] 39.1-06-PLAN.md (wave 6): grok CLI profile deleted; cursor profile, dispatch reference and code comments reworded
 - [x] 39.1-07-PLAN.md (wave 7): spec-review tests use invented ids instead of grok as a runtime
 - [x] 39.1-08-PLAN.md (wave 8): curated-config fixture loses its grok runtime row; tests use an invented id
-- [ ] 39.1-09-PLAN.md (wave 9): arch guard against grok returning as a runtime, with non-vacuity class
+- [x] 39.1-09-PLAN.md (wave 9): arch guard against grok returning as a runtime, with non-vacuity class
 - [ ] 39.1-10-PLAN.md (wave 10): dated amendments in 36, 37 and 38.1 documents; todos resolved
 - [ ] 39.1-11-PLAN.md (wave 11): template 12 to 13, live copy re-rendered, shard times re-recorded (D-05)
 - [ ] 39.1-12-PLAN.md (wave 12): judge loop for the changed skills (orchestrator action)
