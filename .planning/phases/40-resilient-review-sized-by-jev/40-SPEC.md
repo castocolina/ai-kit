@@ -88,8 +88,11 @@ finding (the fixer rule stays: address it anyway and note the disagreement).
 3. **Every ping or lane failure records a reason from one closed list (REV-07)**: one list of reasons, in one place, covers a ping
    or lane failure (the runner's closed class list of Phase 38.1 mapped in, plus ping-only reasons such as a ping timeout, a
    missing runtime and no lane left); a test fails when a key is added or removed without the list changing.
-   - Current: no such list in spec-review; the probe result carries free-text detail.
-   - Target: the list is a constant read by the ping, the switch and the report.
+   - Current: `REASONS` in `ai_kit_spec/error_classifier.py` is a closed nine-member tuple the probe stores as the entry's reason
+     and tests read; a replaced lane, a lane that never resolved and "no lane left" have no reason of their own. *(amended
+     2026-11-23, 40 discuss: the first draft said no list existed; live read of `error_classifier.py:16`)*
+   - Target: the existing list is extended with the review-level reasons and is the one list read by the ping, the switch and
+     the report.
    - Acceptance: a lock test compares the keys with the documented list and fails on an added or removed key; a non-vacuity case
      adds a key and sees the test fail; every fake-lane failure in requirements 1, 2 and 4 records a key from the list.
 
@@ -191,7 +194,7 @@ finding (the fixer rule stays: address it anyway and note the disagreement).
 
 ## Edge Coverage
 
-**Coverage:** 38/38 applicable edges resolved (26 covered or backstop, 12 dismissed with the owner's approval of 2026-11-23) · 0 unresolved
+**Coverage:** 37/37 applicable edges resolved (26 covered or backstop, 11 dismissed with the owner's approval of 2026-11-23) · 0 unresolved *(amended 2026-11-23, 40 discuss: the R3 amendment removed the R3 encoding row, which had been dismissed)*
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -208,7 +211,6 @@ finding (the fixer rule stays: address it anyway and note the disagreement).
 | precision | R2 | 🧪 backstop | Held-out fixture: a lane that answered at the TTL minus one second is not pinged again and one at the TTL plus one second is. |
 | adjacency | R3 | ✅ covered | R3 acceptance: the lock test compares the full key set, so a near-duplicate key changes the list. |
 | empty | R3 | 🧪 backstop | Held-out fixture: a failure the list cannot classify records the list's default reason, never an empty one. |
-| encoding | R3 | ⛔ dismissed | Reason keys are ASCII identifiers. |
 | ordering | R3 | ⛔ dismissed | The lock test compares a set of keys; order carries no meaning. |
 | boundary | R4 | ✅ covered | R4 acceptance: two lanes where one fails still merge the other's findings and the report is partial. |
 | adjacency | R4 | 🧪 backstop | Held-out fixture: a replaced lane and its replacement both appear in the report, the first with its reason, the second as judging. |
