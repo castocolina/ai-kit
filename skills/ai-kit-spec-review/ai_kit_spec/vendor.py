@@ -12,10 +12,8 @@ _MODEL_TIER_SUFFIXES = (
     "thinking", "low", "medium", "high", "xhigh", "max", "none", "fast",
 )
 
-# Longest/most-specific prefix first within each group — "cursor-grok-"
-# must be checked before any bare "grok-" entry would be (there isn't one
-# here: the standalone `grok` CLI is single-vendor by construction, so it
-# never needs this table). opencode's ids are namespaced "<provider>/...";
+# Longest/most-specific prefix first within each group, so a vendor-prefixed cursor id is
+# matched before any shorter prefix. opencode's ids are namespaced "<provider>/...";
 # cursor-agent's are bare, vendor-prefixed strings with no separator.
 _MODEL_VENDOR_PREFIXES = (
     ("opencode-go/kimi", "moonshot"),

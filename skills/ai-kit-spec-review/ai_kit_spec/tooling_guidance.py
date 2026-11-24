@@ -91,7 +91,8 @@ def build_tooling_guidance(cli: str, tool_availability: dict, agents_tooling_pat
         )
     # The caller may forward a legacy id (cursor-agent); normalize it the way the registration
     # reader does, so an alias gets the same guidance as its table id. A runtime without a
-    # registration reader (grok) never gets the MCP list, even with an inconsistent True.
+    # registration reader (a custom entry or an id outside the table) never gets the MCP list,
+    # even with an inconsistent True.
     if tool_availability.get(CBM_NAME):
         name = runtime_id(cli)
         mcp = bool(code_index_registered) and name in CBM_REGISTRATION_KEYS
