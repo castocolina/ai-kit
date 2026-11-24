@@ -7,6 +7,9 @@ __pycache__
 *.pyc
 .aikit
 uv.lock.bak
+# The gitignored scratch folder (run logs, lane folders, a TMPDIR): never part of
+# the clean-room copy, and a build whose TMPDIR sits under it would copy itself.
+tmp
 
 # Untracked secret material must never enter a build context, even one that's
 # never had a real secret committed to git — git-hygiene alone can't catch a
