@@ -98,7 +98,7 @@ python3 "$TOOLS_PY" detect-tools
 
 Parse the printed JSON: for each CLI marked `"installed": true`, note its
 path, plus its `models` list when present (pi, opencode, cursor, codex and claude carry
-one, grok never does; a CLI whose enumeration failed degrades to no list).
+one; a CLI without a listing command, or whose enumeration failed, has no list).
 
 `detect-tools` prints `{"rg": bool, "sd": bool, "bat": bool, "eza": bool, "fd": bool,
 "codebase-memory-mcp": bool}` — informational only, this step does not add new wizard questions.
@@ -270,11 +270,9 @@ python3 "$TOOLS_PY" build-model-id --runtime cursor --base-model <id> \
 and use the printed id as this entry's `model` field (unchanged from the plain id when no
 overrides were given). `build-model-id` stays for these cursor bracket ids. Leave `--effort` out: the lane's `effort` key is merged into the id's bracket at dispatch, and an id that already carries an effort keeps it and prints an `ignored:` line for a different lane effort.
 
-**Grok has no runner formula.** `build-command --runtime grok` prints the command to store on a
-custom entry with no `runtime`, trust-gated like any custom command. Any other CLI outside the
-runner table — a CLI this catalog of profiles hasn't caught up with yet, a brand-new provider,
-or a fully custom local script — is that same escape hatch: a custom entry with a hand-written
-`command` and no `runtime`. A lane entry's `command` field accepts a plain template with
+**A CLI outside the runtime table** — a CLI this catalog of profiles hasn't caught up with yet,
+a brand-new provider, or a fully custom local script — uses the escape hatch: a custom entry with a
+hand-written `command` and no `runtime`, trust-gated like any custom command. A lane entry's `command` field accepts a plain template with
 just `{model}`/`{prompt}` as placeholders. Hand-written templates are split into argv the way a
 shell splits words; `{model}`, `{prompt}`, and any `extra` fields each fill a whole argument
 (`{prompt}` needs no quoting). Shell operators (`;`, `|`, `&&`, `>`), `$` expansions, and

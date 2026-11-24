@@ -2,7 +2,7 @@
 
 Loaded from `wizard-flow.md` step 2 only: when a preferred runtime has no `models` list, or the catalog step printed unmatched candidates. Each candidate registered from here is a
 (runtime, model) pair: Step 2.4 stores `runtime` and `model` (plus that runtime's knobs),
-and the runner builds the argv. Only a runtime outside the runner table, grok today,
+and the runner builds the argv. Only a CLI outside the runtime table
 stores a `command` instead. `$TOOLS_PY`, `$RUNTIMES_JSON` and `$SCRATCH` are the literal
 paths SKILL.md's Step 0 printed; every temporary file here goes under `$SCRATCH`. Every `Bash`
 call starts a fresh shell, so no value set in one block survives into the next: `$CATALOG_JSON`
@@ -22,7 +22,7 @@ variable.
     printed the same path first (`catalog.md` `## Catalog path`); carry it forward.
     **The runtimes to consider are the preferred runtimes of `wizard-flow.md` step 1** — do not re-ask.
     Build the catalog from the whole snapshot: see [`catalog.md`](catalog.md) `## Build and classify` (the fetch reads the whole snapshot and caches each source by its own age).
-2. **For any kept CLI with no `models` array (grok always; codex or pi when its listing
+2. **For any kept CLI with no `models` array (a CLI without a listing command; codex or pi when its listing
    failed) that has NO existing lane entry in `config.toml` yet** (first-time setup): ask the
    user for a candidate model id now (never guess or trust training knowledge; web names come only from `web-query`'s fixed query and `record-web-names`, never from a model-specific search). Collect these as `--extra-candidate <cli>:<model-id>`
    flags (repeatable) for the next command — this is what lets a brand-new
@@ -30,12 +30,12 @@ variable.
    everything else, instead of being registered blind.
 3. Refresh the catalog (this also picks up, automatically, every model already registered in
    the `config.toml` roster for a kept CLI with no `models` array — a pair's `runtime`, or a custom
-   grok entry, recognized by the binary its `{model}` command launches). **Capture its printed JSON to a
+   command wrapping a binary of a current RUNTIMES row, recognized by that binary through its `{model}` command; any other custom command is not discovered). **Capture its printed JSON to a
    file** — `fetch-model-catalog` prints the FULL reconciled `discovered` candidate list
    (runtimes snapshot + registered single-provider-CLI models + `--extra-candidate`, exactly
    what the subcommand itself used) alongside `unmatched`/`rejections`, so this step never has
    to recompute a partial version of that list later (rebuilding `discovered` from
-   `$RUNTIMES_JSON`'s own `models` arrays alone would silently exclude codex/grok/every
+   `$RUNTIMES_JSON`'s own `models` arrays alone would silently exclude codex/every
    single-provider-CLI candidate from ranking):
    ```bash
    python3 "$TOOLS_PY" fetch-model-catalog --runtimes-json "$RUNTIMES_JSON" \
@@ -68,14 +68,14 @@ variable.
 5. **The ranked shortlist comes from `propose-lanes`, never from a hand-built ranking.** Return to [`wizard-flow.md`](wizard-flow.md) step 3: it runs `propose-lanes` once per purpose over the catalog refreshed above, limited to the preferred runtimes, and shows its rows as printed. A runtime-table row never decides which pairs may review or execute: a pair the runner cannot run in a mode is skipped at dispatch with its named reason (route `no_formula`), never dropped from the proposal here.
 
 6. **Before finalizing a CLI where ai-kit cannot read a codebase-memory-mcp registration
-   (today: `grok`), check for an alternative whose registration it can read.** For each model the owner kept on such a CLI (`wizard-flow.md` step 6 runs this check for every kept lane), run:
+   (a custom entry or a CLI outside the runtime table), check for an alternative whose registration it can read.** For each model the owner kept on such a CLI (`wizard-flow.md` step 6 runs this check for every kept lane), run:
    ```bash
    python3 "$TOOLS_PY" check-code-index-alternative --runtime <id> --model <model-id> \
      --runtimes-json "$RUNTIMES_JSON"
    ```
    When `alternative_cli` is non-null, tell the user in one line before they finalize: `"<model>
    is also reachable via <alternative_cli>, which can carry the codebase-memory-mcp MCP tools
-   (grok gets only its CLI form) — consider registering it through <alternative_cli> instead
+   (<id> gets only its CLI form) — consider registering it through <alternative_cli> instead
    for grounding-heavy review/execute work."` This is informational only (best-effort substring
    match, per `find_code_index_alternative`'s own docstring) — the user still makes the final call; never
    silently substitute the CLI or drop the original option.
