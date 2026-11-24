@@ -1810,6 +1810,7 @@ SHAPE_COPIES = (
     "skills/ai-kit-spec-goal-prompt/scripts/secret_shapes.py",
     "skills/jev-fast-decision/scripts/secret_shapes.py",
     "skills/ai-kit-commit-fold/scripts/secret_shapes.py",
+    "skills/ai-kit-gsd-spec-discuss/scripts/secret_shapes.py",
     "skills/ai-kit-session-wake/ai_kit_session_wake/secret_shapes.py",
 )
 SHAPES_RUNNER = "skills/ai-kit-spec-review/references/cross-ai.mjs"
