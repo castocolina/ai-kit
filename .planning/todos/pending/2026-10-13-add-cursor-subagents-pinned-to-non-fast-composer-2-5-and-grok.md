@@ -66,3 +66,5 @@ Approach hints (see Verified above):
 3. **Decide ownership.** These are our own agents, so ai-kit could ship them like its skills, with `tools/setup.py` linking them into `~/.cursor/agents`. Check against the scope split in memory: tools-installer owns third-party sets only.
 4. **Coordinate with v1.3 Phase 18.** The curated `cross-ai.mjs` cursor block already pins `--model`. The new agents cover Cursor's *in-session* subagents, which `cross-ai.mjs` does not.
 5. **Look for a fast-default override.** Check whether Cursor's built-in subagents (explore and similar) can be overridden to a non-fast model by config, which would be cheaper than custom agents.
+
+- *Note 2026-11-23 (39.1):* the grok half of this todo is a model pin (`cursor-agents/grok-worker.md`, a Cursor subagent pinned to a grok model) and is kept; Phase 39.1 removed only the grok runtime. The rest of this todo stays pending for its own phase.

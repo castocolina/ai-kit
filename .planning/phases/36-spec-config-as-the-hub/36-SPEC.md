@@ -114,6 +114,7 @@ free models of one provider share a pool (users report it, no maintainer has con
   fixture, doc line or list entry is added, existing grok code is left as it is, and R7's acceptance names a placeholder
   CLI (`placeholder-cli-1`) stored as a custom `command` lane instead of grok. The grok facts in the live-facts list above
   stay as history.
+  *(amended 2026-11-23, 39.1: Phase 39.1 removed the grok runtime code this note kept; grok models stay usable through opencode, pi and cursor-agent)*
 
 ## Requirements
 

@@ -145,6 +145,7 @@ runtime, RUN-15), recorded in the run's request notes; owner-directed, so decide
   list entry, including in any recorded-help fixture list that a later unit's amendment to this phase names. Existing grok code
   (the detection row, `build_grok_command`, the runner's one mention, `cursor-agents/grok-worker.md`) is left alone; Phase 39.1
   removes the runtime (RUN-15).
+  *(amended 2026-11-23, 39.1: Phase 39.1 removed the grok runtime code this note kept; grok models stay usable through opencode, pi and cursor-agent)*
 - Free-lane pools (Phase 36 wrote `pool = "<provider>:free"` on zero-price lanes, 36 D-20 to D-22): this phase's text names no
   pool and adds none; the runner treats a pooled lane like any other.
 
