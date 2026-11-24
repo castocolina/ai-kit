@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=12 sha256=UNSTAMPED
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=13 sha256=UNSTAMPED
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v12).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v13).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
