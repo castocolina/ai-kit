@@ -116,7 +116,9 @@ finding (the fixer rule stays: address it anyway and note the disagreement).
    `owner_decision`, `mechanical` or `reviewer_wrong`; only `owner_decision` items and items jev answers with low confidence reach
    the owner, with jev's class shown as advisory; a confident `mechanical` item gets one more fixer pass inside the iteration cap;
    a confident `reviewer_wrong` MEDIUM or LOW item is listed as skipped with jev's reason; a CRITICAL or HIGH finding is never
-   closed on jev's word; without jev the owner is asked as before.
+   closed on jev's word; without jev the owner is asked as before. *(amended 2026-11-25, 40 plan, orchestrator decision: a
+   CRITICAL or HIGH finding never takes the `mechanical` route either; whatever class jev gives, it reaches the owner with the
+   class shown as advisory (CONTEXT D-06); only MEDIUM and LOW items get the extra fixer pass)*
    - Current: every escalation, skip and cap stop goes to the owner as one message; jev is not consulted.
    - Target: a classification step before the Step 5 surface, through the existing jev client, one item per finding.
    - Acceptance: fake-jev tests: each class routes as written; a low answer goes to the owner; a CRITICAL finding classed
