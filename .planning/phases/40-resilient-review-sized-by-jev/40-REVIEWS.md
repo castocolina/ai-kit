@@ -2,7 +2,7 @@
 phase: 40
 cycle: 1
 reviewers: [referee-one]
-reviewed_at: 2026-11-25T02:57:13-03:00
+reviewed_at: 2026-11-25T03:39:46-03:00
 plans_reviewed: [40-01-PLAN.md, 40-02-PLAN.md, 40-03-PLAN.md, 40-04-PLAN.md, 40-05-PLAN.md, 40-06-PLAN.md, 40-07-PLAN.md, 40-08-PLAN.md, 40-09-PLAN.md, 40-10-PLAN.md, 40-11-PLAN.md, 40-12-PLAN.md, 40-13-PLAN.md]
 models:
   referee-one: "router-env/my-referee-one"
@@ -41,7 +41,8 @@ run (time box): the fixes themselves are unreviewed by referee-one. The review d
 pointing to the fix brief.
 
 Open concerns after the fix pass (with severity):
-- **HIGH — resume supersede (plan 40-03, owner of `dispatch-reviewer --lane-log`):** a lane logged `failed` by its first
+- **HIGH — resume supersede (plan 40-03, owner of `dispatch-reviewer --lane-log`) — FIXED 2026-11-25 in commit 73421b3
+  (40-03 Task 2 red-then-green test, `_record_dispatch_success`):** a lane logged `failed` by its first
   dispatch (for example an exit-75 pending lane) that succeeds on its one-shot resume logs nothing, so `record_merge` keeps it
   `failed` and drops its report (the D4 precedence rule). Fix before wave 3: a successful `dispatch-reviewer --lane-log`
   appends a `chosen` event that supersedes the earlier `failed` of the same round, with a test of failed-then-resumed.
@@ -554,3 +555,559 @@ Static, read-only review. No files changed, no suites or live lanes run, and no 
 - 40-13 #16 MEDIUM evidence printing, exact statuses, same-SHA before the live write: incorporated (evidence lines before layout: ok, exact Judged by line and exit codes 0/1/2/3, --cwd on merge-reports; HEAD == tip == candidate before the live link and before the tick) per brief D3, D12.
 - D cross-plan R4 roster-order and R3 failed-candidate event coverage: owned by 40-01/40-02 per brief D3, D5 (not in this range).
 - D cross-plan R5 payload and severity reconciliation: owned by 40-06 per brief D7b, D7e.
+
+## Cycle 2 (referee-one)
+
+### Review conditions (cycle 2)
+
+Cycle 2 (referee-one, same drivers and batches, all 13 plans changed since cycle 1, the cycle-1 triage and the orchestrator
+decisions of 2026-11-25 inlined through `c2/triage.md`): four lanes exit 0 (497-667 s), every review read in full, findings
+path:line grounded. The cycle-1 fixes held in the main; the remaining HIGHs sat at handoffs (resume branch order and payload,
+same-round remerge, replacement route for a lane with no route result, deadline wording, shared quota-cache reuse, check-reviewer
+pool side effect, pool-status race and expired-pool retry, routing of CROSS-DOC/unheaded findings and owner items after Edits
+Applied, sizing selection against the resolver, fold fence nesting and merge order, the Judged-by line on every outcome,
+judge-ping isolation and later-round launch, clean-room preflight evidence).
+
+Targeted fix pass (one, no cycle 3): orchestrator decisions E1-E14 (`tmp/p40-review/c2/fix-brief.md`) applied by five opus fix
+planners; every touched plan ends with a `## Review dispositions (cycle 2)` section; the orchestrator added three handoff
+edits (40-09 `size-review` gets `--source-vendor ... --cross-ai` and a nonzero-exit branch, the sizing paragraph names the
+resolver's double-mode pick; 40-08 quotes the five-argument `_merge_with_lane_log`; VALIDATION row updated after the cache
+reuse was deleted). Deviation recorded: 40-04 passes the pool with `review_spec(...)._replace(pool=...)` instead of a sixth
+`review_spec` parameter (pylint max-args 5); D2's intent (review role only) is kept.
+
+Open after the fix pass (severity; not fixed, owner or execution-time items):
+- MEDIUM — summaries-only residual risk (E9, rejected as a plan change): reviewer and fixer titles and reasons are free-text
+  model summaries; the filter drops recognizable code, path, assignment, quoted and long-hex forms, but an unquoted copied value
+  inside such a summary would still reach jev. Owner decision.
+- MEDIUM — 40-06/40-07: an undecodable jev reply can still escape the shared client (`jev_names.ask_items`); a change to the
+  shared client is outside the SPEC's scope.
+- MEDIUM — 40-07: no CLI test yet that a confident jev "one" rewrites reviewers.json and logs the reason, and the log does not
+  say why the first reviewer moved; E10 edge: when the single existing row is already the resolver's second entry, a risky plan
+  can stay on one lane.
+- MEDIUM — 40-03: a refused switch can still run read-only route discovery; a dispatch that fails before it runs (unreadable
+  prompt, bad `--timeout-tiers`) logs nothing, so the previous attempt's reason stands.
+- MEDIUM — 40-10: the loop diagram still draws unconditional edges into the ping step; 40-11: the jev eval does not prove that
+  a CRITICAL or HIGH finding reaches the owner; 40-12: no failure branch for an extra advisory lane; 40-13: the requirement
+  checklist does not separate CLI evidence from skill behaviour.
+- LOW — lane size: 40-02 Task 1 and 40-05 Task 1 are large; each plan states its split rule if a lane overruns.
+- PROVISIONAL — everything about the blocked-until record (D-05), owner asked by the orchestrator.
+
+### referee-one
+
+#### Batch A (40-01, 40-02, 40-03)
+
+#### 40-01
+
+**Summary.** The first slice has the right boundary: extend one reason vocabulary, keep the legacy no-log merge unchanged, and make the logged merge preserve surviving reports. Cycle 1’s roster-order and stale-file fixes are present. The remaining blocker is that the logged merge can still approve a report that does not contain the findings of every lane it claims judged.
+
+**Strengths**
+- Reuses the existing parser and renderer. In particular, it preserves `any_source_issues`, which prevents an unparseable finding from silently turning an Issues report into an approval. This also keeps the no-log behavior separate. `.planning/phases/40-resilient-review-sized-by-jev/40-01-PLAN.md:127–131`; `skills/ai-kit-spec-review/ai_kit_spec/review_reports.py:119–145`; `skills/ai-kit-spec-review/ai_kit_spec/cli.py:976–1001`.
+- The reversed-argument and first-slot replacement tests now exercise the actual config order, not a test-supplied surrogate. The 13-key lock changes in the same commit as `REASONS`; the runtime-table test checks membership, not the old count. `.planning/phases/40-resilient-review-sized-by-jev/40-01-PLAN.md:118,220–221`; `skills/ai-kit-spec-review/ai_kit_spec/role_orders.py:85–89`; `tests/test_ai_kit_spec_runtimes_table.py:774–780`.
+
+**Concerns**
+- **HIGH — A same-round remerge can drop findings but still say the lane judged.** `record_merge` correctly preserves the prior state of an omitted key. But the CLI takes the verdict’s `judged` and `none_judged` from the **whole log**, while findings come only from the **current arguments**. If lane A previously judged with a HIGH finding and a remerge supplies only lane B’s Approved report, the prescribed code can print `Judged by: lane-a, lane-b` and plain `Approved`. The new tests cover stale *files* for failed and replaced lanes, not a previously judged lane omitted from the current merge. `.planning/phases/40-resilient-review-sized-by-jev/40-01-PLAN.md:125–129,213–221`; `skills/ai-kit-spec-review/ai_kit_spec/cli.py:979–1001`. This matters at the resume handoff, where one-report and two-report merges are both possible: `skills/ai-kit-spec-review/references/cross-ai-dispatch.md:308–314,365–376`.
+- **MEDIUM — The log validator still admits records the ping consumer cannot read.** A `judged` event with a valid round, key and state but no `at`, or a nonnumeric `at`, passes `round_states`. The next plan indexes and subtracts `event["at"]` before entering the protected probe worker, so one bad record can abort the whole ping. The malformed-record test never exercises that field. `.planning/phases/40-resilient-review-sized-by-jev/40-01-PLAN.md:121–125,167`; `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:137–139`.
+
+**Suggestions**
+- Preserve historical lane states, but derive the rendered current-round judged set from the reports actually admitted to this merge. Add a regression with a previously judged HIGH report omitted from a remerge; it must not produce a clean approval. Make the normal and resume callers pass every completed report. Also resolve the Task 1 call/signature mismatch: the inline call omits `deps`, while the signature requires it and 40-08 quotes the stale four-argument form. `.planning/phases/40-resilient-review-sized-by-jev/40-01-PLAN.md:129,277`; `.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:121`.
+- Treat an invalid timestamp as **not fresh**, without discarding otherwise useful failure evidence. Pin this with a single malformed-log-to-ping case.
+
+**Risk assessment: HIGH.** The remerge can overstate review coverage and lose a blocking finding while returning success.
+
+##### Ponytail findings
+- **HIGH — Task 1:** The log and merge change are needed for R3/R4. Keep the existing `merge_findings` and renderer; fix the mismatch at their caller, not with a second report parser. `skills/ai-kit-spec-review/ai_kit_spec/review_reports.py:72–145`.
+- **MEDIUM — Task 2:** The separate log module tests and generated registration are justified. Spend the reason-membership case on events actually emitted by `record_merge`, rather than checking hand-built fixtures that also include a deliberately invalid reason. `.planning/phases/40-resilient-review-sized-by-jev/40-01-PLAN.md:176–179`; `tools/gen_test_groups.py:72–103`; `tests/test_gate_scope.py:570–583`.
+- **LOW — Task 3:** Keep the legacy twins and `_REPORT_A` pattern. Reuse one expected set and one assertion for the actual lock and its add/remove mutation checks; a second set plus independent inequality assertions does not exercise the same check. `tests/test_ai_kit_spec.py:3483–3490,3552–3560`; `.planning/phases/40-resilient-review-sized-by-jev/40-01-PLAN.md:205–215`.
+
+#### 40-02
+
+**Summary.** The concurrent ping slice correctly reuses the existing probe, ordered fallback policy and atomic writer. The revised plan fixes the empty-list case and gives original lanes and candidates the same worker. It is not ready to execute: the replacement builder conflicts with the prescribed row type, and the timeout and cache rules still do not provide the guarantees claimed.
+
+**Strengths**
+- The reader guard changes in the first commit that needs it, retaining a planted violation outside the allowlist. Reusing `cache_write_bytes` also avoids a second atomic writer. `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:127–132`; `tests/test_lane_settings.py:239–260,453–477`; `skills/ai-kit-spec-review/ai_kit_spec/cache.py:27–46`.
+- A trailing `ProbeSeams.timeout_s` preserves current callers and reaches both launch paths. Distinct failure reasons in the out-of-order test check attribution rather than just elapsed time. `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:180–188,230`; `skills/ai-kit-spec-review/ai_kit_spec/cli.py:188–190`; `skills/ai-kit-spec-review/ai_kit_spec/quota.py:250–256`.
+
+**Concerns**
+- **HIGH — The replacement builder sets the route incorrectly in the prescribed pure tests.** `replacement_row` falls back to `"native"` when `route_fn` returns `None`, which is the default seam. `_native` then skips the candidate probe even for a custom-command row. The rejected-candidate test expects lane C to be probed and rejected, but the specified code keeps it as native. In production, the existing router classifies that shape as `custom`; lack of a route result is not evidence that the current host can run the lane natively. `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:129–138,189`; `skills/ai-kit-spec-review/ai_kit_spec/routing.py:134–150`. There is a second fixture mismatch: the exact-deadline test starts with **only** lane A, so owner order selects B, not the asserted C. `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:182,187`; `skills/ai-kit-spec-review/ai_kit_spec/lane_settings.py:133–154`.
+- **HIGH — The deadline classifies a late answer but does not bound CLI exit.** `shutdown(wait=False, cancel_futures=True)` does not stop running threads, and Python waits for them at interpreter exit. The real runner’s outer deadline adds 30 seconds and its Python backstop adds another 10 before cleanup. The planned test releases its held thread in cleanup, so it proves classification, not that the CLI returns within its stated bound. `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:181,185–187,265`; `skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py:42–43,275–282,645–670`. The provisional handoff compounds this: 40-05 puts the status read inside the worker but still gives the subsequent probe its full budget. `.planning/phases/40-resilient-review-sized-by-jev/40-04-PLAN.md:111–113`; `.planning/phases/40-resilient-review-sized-by-jev/40-05-PLAN.md:114`.
+- **HIGH — A newer global cache entry does not prove this review ran the probe.** The cache is shared and keyed by lane key; another project can write the same key after this review’s sizing event. The proposed reuse check can then skip a mandatory round-1 probe. Task 3’s positive reuse test does not specify a later round, while the shared helper defaults to round 1. `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:137,182,223–228`; `skills/ai-kit-spec-review/ai_kit_spec/quota.py:31–32,290–306`; `skills/ai-kit-spec-review/ai_kit_spec/config_io.py:384–399`.
+- **MEDIUM — The CLI leaves gaps in input and failure handling.** `--round 0` is accepted and can return success while emitting lane events 40-01 will discard. `_reason` also passes through any nonempty reason from `entry_reason`; the planned test checks known reasons only. And the two-blocked fixture does not say whether `_stop_text` should list the rejected candidate it just logged. `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:137–144,234`; `.planning/phases/40-resilient-review-sized-by-jev/40-01-PLAN.md:123`; `skills/ai-kit-spec-review/ai_kit_spec/quota.py:196–205`.
+- **MEDIUM — Task 1 is still oversized for the unattended lane.** It stages seven files, introduces both runtime modules, and takes the full unit/arch hook for generated files. The suggested split only happens after an overrun; as written, the helper-only first commit would also need a caller or direct test to satisfy the plan’s vulture rule. `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:109–111,127–147,280–284`; `tools/run_unittest_parallel.py:226–232`; `pyproject.toml:97–102`.
+
+**Suggestions**
+- Give the pure tests explicit `custom` routes and explicit occupied slots. In production, require a real dispatchable route; do not infer `native` from a missing route. Specify the first green split before execution, with a direct selection test in the helper commit.
+- Enforce the deadline at the existing supervised child boundary, with a remaining-time budget for each substep. Test **CLI completion** with a supervised fake child as well as exact result classification. Preserve the later-round no-reprobe rule when 40-05 adds pool status: its current “pooled rows always reach the worker” recipe otherwise probes a fresh judged lane when the status is `none`. `.planning/phases/40-resilient-review-sized-by-jev/40-05-PLAN.md:114`.
+- Disable round-1 reuse explicitly. For later reuse, require evidence from this review’s own log; a timestamp in someone else’s cache is not that evidence. Validate the round before I/O and normalize unrecognized probe reasons to `real_error` before logging.
+
+**Risk assessment: HIGH.** The plan as written can fail its own tests, skip a required probe, or leave a round waiting beyond the advertised timeout.
+
+##### Ponytail findings
+- **HIGH — Task 1:** Shared selection and atomic row replacement are needed. Keep `selectable_lanes` plus `lane_fallback`; don’t add a fallback routing rule that treats unknown as native. `skills/ai-kit-spec-review/ai_kit_spec/lane_settings.py:133–154`; `skills/ai-kit-spec-review/ai_kit_spec/cache.py:27–46`.
+- **HIGH — Task 2:** The deadline seam is needed. Reuse the existing supervisor for child lifetime rather than asking the thread pool to enforce it. `skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py:566–592,645–719`.
+- **MEDIUM — Task 3:** Keep the judge-file CLI case, but add a conflicting global roster to that fixture. The current test empties **both** config layers; the actual judge handoff supplies a scratch `--cwd` but does not isolate the global config lookup. `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:231–232`; `.planning/phases/40-resilient-review-sized-by-jev/40-12-PLAN.md:114`; `skills/ai-kit-spec-review/ai_kit_spec/config_io.py:721–732,821–832`.
+
+#### 40-03
+
+**Summary.** The plan now tests the real `--stdout-only` branch, dispatches the replacement rather than manufacturing its report, and adds the required failed-then-successful resume regression. The policy tests are useful. The remaining blockers are at the CLI and caller boundaries: an expected non-switch can still run discovery, and a resumed quota stop can still bypass switch-first.
+
+**Strengths**
+- The tracer checks the real return-code contract and records which row was dispatched after the slot rewrite. The negative cases distinguish quota, capacity, crashes and the real pre-spawn refusal. `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:123–126,172–175`; `skills/ai-kit-spec-review/ai_kit_spec/cli.py:1373–1388`; `skills/ai-kit-spec-review/ai_kit_spec/prompt_guard.py:22–32`.
+- The one-writer rule is written into both the CLI contract and the downstream caller. The two-slot test checks that the second switch sees the first rewrite rather than claiming the same fallback. `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:121,179`; `.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:171`.
+
+**Concerns**
+- **HIGH — A resumed lane can enter another quota wait before `switch-lane` runs.** 40-09 adds the check only to the final “anything else” bullet and leaves the earlier exit-75-with-hint branch unchanged. A flagged lane can first be pending on `capacity`, then resume and return `quota` with a hint. The earlier branch schedules again, contrary to the locked “switch first on any nonzero exit” contract. 40-03’s new test exercises only a successful resume. `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:181`; `.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:31,211`; `skills/ai-kit-spec-review/references/cross-ai-dispatch.md:365–376`.
+- **MEDIUM — Non-switch cases still run route discovery.** Task 1 resolves all routes before `flagged_replacement` checks the reason and flag. Thus a flagged auth or configuration refusal can wait on live discovery even though the only permitted result is `not switched`. `persist=False` suppresses the cache write, not runtime inventory or subprocess calls. `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:119–123`; `skills/ai-kit-spec-review/ai_kit_spec/routing.py:265–281,353–369`.
+- **MEDIUM — Some dispatch failures bypass the new logging boundary.** The plan records exceptions inside the dispatch `try`, but reading the prompt and parsing `--timeout-tiers` are above it. An unreadable prompt or bad tier token exits without the promised typed event; a resumed lane can retain the previous attempt’s reason. `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:123,175–181`; `skills/ai-kit-spec-review/ai_kit_spec/cli.py:1340–1360,1373–1388`.
+- **LOW — The provisional label is only partly applied.** The adjacency backstop is labelled, but the main truth still states the different-pool rule without qualification, and other pool fixtures lack the marker. Keep the owner’s flag-and-quota decision settled and label the pool-dependent parts specifically. `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:20–23,124,165–169,179`; `.planning/phases/40-resilient-review-sized-by-jev/40-SPEC.md:65–70`.
+
+**Suggestions**
+- Put switch-first above **all** resumed nonzero-exit branches, preserving the sibling and merge-lock rules. Add one transient-to-quota resume case: replacement runs immediately, no new wait is scheduled, and the merged outcome stays partial.
+- Invoke the route lookup lazily, only after the quota, flag and row-identity checks pass. Give the executor one ordered `cmd_switch_lane` recipe instead of an inline sequence plus instructions to replace part of it. Add a fake that fails the test if a refused switch reaches discovery.
+- Move prompt and tier validation into the logged error path once a lane is identified. For the red-then-green proof, require the **named resume test** to fail on the expected old state, not merely a module-level `FAILED` line. `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:181,189–192`; `tools/run_unittest_parallel.py:938–945`.
+
+**Risk assessment: HIGH.** The ordinary fake-switch path is well specified, but the real resume caller can still wait instead of switching, and the reason log can misdescribe a failed re-invocation.
+
+##### Ponytail findings
+- **MEDIUM — Task 1:** The shared row writer and production CLI tracer are needed. Reuse the lazy route lookup from 40-02 rather than discovering routes on a known refusal. Supply one complete `switch` test helper with the required flags so the isolated executor need not reconstruct shorthand invocations. `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:139`; `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:121–126,172–180`.
+- **HIGH — Task 2:** Keep the successful-resume test and the flag/quota policy cases. Add the missing nonzero resume branch at the existing caller; no new scheduler or retry policy is needed. `skills/ai-kit-spec-review/references/cross-ai-dispatch.md:355–376`; `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:181`.
+
+##### Batch coverage and sequencing
+
+- **3 of 3 plans reviewed.** Waves 1, 2 and 3 each contain one plan. There is no same-wave overlap; the serial dependencies supply the log, selection and switch in order. The problems above are handoff **contracts**, not missing dependency edges. `.planning/phases/40-resilient-review-sized-by-jev/40-01-PLAN.md:5–6`; `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:5–6`; `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:5–6`; `.planning/phases/40-resilient-review-sized-by-jev/40-04-PLAN.md:5–6`.
+- All 11 acceptance lines have a plan assignment. The non-dismissed R1–R4 edges are assigned across 40-01–05, with doc and judge handoffs in 40-09/10/12; the later plans assign the R5–R8 edges and the remaining prohibitions. I found no unassigned SPEC row in that map. Assignment is not proof: the remerge, deadline, cache provenance, pooled cadence and resumed-quota cases above still need coverage. `.planning/phases/40-resilient-review-sized-by-jev/40-VALIDATION.md:39–54`; `.planning/phases/40-resilient-review-sized-by-jev/40-SPEC.md:205–255`; `.planning/phases/40-resilient-review-sized-by-jev/40-13-PLAN.md:129`.
+
+**Verdict: revise before execution.** This was a read-only source review. No files were changed, and no tests, make targets, or live lanes were run.
+
+#### Batch B (40-04, 40-05, 40-06, 40-07)
+
+#### 40-04
+
+**Summary.** The plan adds the PROVISIONAL pool-status reader and passes `--pool` to the runner. Using the runner’s existing reader is the right boundary. The revised plan fixes the original execute-role leak in `probe-quota`, but a diagnostic caller still inherits the flag, and several task checks cannot pass as written.
+
+**Strengths**
+- Task 1 uses the runner’s validated record reader rather than parsing the state file again. It also handles undecodable child output and uses the existing process-group timeout path. `.planning/phases/40-resilient-review-sized-by-jev/40-04-PLAN.md:109–113`; `skills/ai-kit-spec-review/references/cross-ai.mjs:4072–4082,4140–4143`; `skills/ai-kit-spec-review/ai_kit_spec/detection.py:955–982`.
+- Task 2 preserves the no-pool flags, makes the live review callers opt in explicitly, and pins the execute-role negative case through `probe_reviewer_quota`, not just through an execute spec constructor. `.planning/phases/40-resilient-review-sized-by-jev/40-04-PLAN.md:148–154`; `skills/ai-kit-spec-review/ai_kit_spec/quota.py:250–256`; `tests/test_runner_flags.py:44–55`.
+
+**Concerns**
+1. **HIGH — `check-reviewer` can gain pool-record side effects.** Task 2 gives `ProbeSeams` a default role of `"review"` and overrides it only in `_cmd_probe_quota`. `check-reviewer` accepts `extra` and calls the same quota probe both directly and through `probe_effort`. The effort preview stays pool-free, but its subsequent live probe does not. A diagnostic with flagged pooled `extra` can now explicitly clear the pool record on success. `.planning/phases/40-resilient-review-sized-by-jev/40-04-PLAN.md:148–154`; `skills/ai-kit-spec-review/ai_kit_spec/cli.py:1402–1418`; `skills/ai-kit-spec-review/ai_kit_spec/effort_probe.py:58–61,75–88`; `skills/ai-kit-spec-review/references/cross-ai.mjs:4133–4137,7314`.
+2. **MEDIUM — The “last on argv” test checks only an intermediate flag list.** The proposed tests call `runner_flags` on a recorded spec. `build_runner_argv` appends timeouts and `--no-preamble`, and `run_runner` adds the child-PGID argument at spawn. The action implements “after the existing settings flags”; it does not implement the advertised “last on the argv.” Also, omitting `--pool` prevents *explicit* pool selection and clearing, not every record write: the runner can infer a pool from a matched row. `.planning/phases/40-resilient-review-sized-by-jev/40-04-PLAN.md:142–154,170,220`; `skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py:275–282,645–665`; `skills/ai-kit-spec-review/references/cross-ai.mjs:4061–4067,4112–4124`.
+3. **MEDIUM — The executor is left to repair the test recipe and lint contract.** Task 1 still passes `run_fn` from outside the helper where it is defined. Its literal reader recipe has seven return sites against a cap of six, while Task 2’s `review_spec` gains a sixth parameter against a cap of five. Task 1 requires four `PROVISIONAL` matches in `lane_switch.py` but prescribes only three there. Task 3’s count is also stale: 40-03 now specifies 18 tests, so the additions yield **23**, not 22. `.planning/phases/40-resilient-review-sized-by-jev/40-04-PLAN.md:109–127,148,188–201`; `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:181–189`; `pyproject.toml:70–80`.
+
+**Suggestions**
+- Make pool participation explicit at the actual review callers; add a fake-runner `check-reviewer` regression for both normal and effort checks. Assert the pool’s placement relative to existing settings and timeout flags on constructed argv, without starting Node.
+- Give the missing-Node test its own fail-if-called fake. Specify the parser/spawn helper split and resolve the `review_spec` lint signature in the plan, not in the executor prompt. Replace inherited total-test counts with checks for the named new cases.
+
+**Risk assessment: HIGH.** The process boundary is sound, but the unintended state change and the intermediate gate conflicts should be fixed before wave 4 runs.
+
+##### Ponytail findings
+- **MEDIUM — Task 1:** The thin reader is needed for D-05. Keep `bounded_run` and the `RunnerSeams` pattern; split parsing from spawning rather than adding another reader or a lint waiver. `skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py:294–328`; `.planning/phases/40-resilient-review-sized-by-jev/40-04-PLAN.md:109–114`.
+- **HIGH — Task 2:** The trailing field is sufficient for D-04; the missing work is at the existing diagnostic callers, not another flag abstraction. `skills/ai-kit-spec-review/ai_kit_spec/cli.py:1402–1418`; `skills/ai-kit-spec-review/ai_kit_spec/reviewer_dispatch.py:108–121`.
+- **LOW — Task 3:** The equality boundary is needed; keep that named test and the no-record cases. The cache helper alone is not evidence of a retry—the actual consumer decides whether to probe. `.planning/phases/40-resilient-review-sized-by-jev/40-04-PLAN.md:187–201`; `skills/ai-kit-spec-review/ai_kit_spec/quota.py:290–307`.
+
+#### 40-05
+
+**Summary.** The plan connects the PROVISIONAL status reader to both selection paths. It correctly moves the status read into the ping worker and uses the existing unavailable-entry shape. The remaining defects are in the transitions between expired, cleared and fresh states: the implementation can spend zero or two retries where the plan promises one.
+
+**Strengths**
+- The CLI fakes now answer both `--describe` and `--blocked-status`. This reaches the intended integration path without a real node or host process. The synthetic `quota` entry also reaches the existing fallback and logging path without a second selector. `.planning/phases/40-resilient-review-sized-by-jev/40-05-PLAN.md:110–120,155–158`; `skills/ai-kit-spec-review/ai_kit_spec/runner_facts.py:30–44,54–60`; `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:128–139`.
+
+**Concerns**
+1. **HIGH — An expired pool can get no retry.** Task 2 drops only a cached *unavailable quota* entry for the first key. A fresh cached success or fresh `auth` failure survives, and `refresh_quota_cache` skips any fresh entry. Meanwhile later keys are stamped unavailable. The test seeds only cached quota failures, so it misses the case where expiry suppresses the whole pool without trying it. The same recipe sends unflagged lanes down the `none` branch, which says to delete cached quota failures; its own unflagged-cache test requires the opposite. `.planning/phases/40-resilient-review-sized-by-jev/40-05-PLAN.md:148–161`; `skills/ai-kit-spec-review/ai_kit_spec/quota.py:290–307`.
+2. **HIGH — The ping retry test starts with a blocked pool, and a successful retry can release a second worker.** Task 1 uses epoch `1000.0` for `now`, but the “expired” timestamp is in 2000. Both workers therefore see a future block; the first lane cannot make the expected retry. After the clock is fixed, there is still a race: each worker reads separately, and the `retry_keys` check only applies to `expired`. If the first probe succeeds and clears the record before the second worker reads it, the second sees `none` and probes too. The renewal-only fake does not cover this. `.planning/phases/40-resilient-review-sized-by-jev/40-05-PLAN.md:114–119`; `skills/ai-kit-spec-review/references/cross-ai.mjs:4133–4137,7314`.
+3. **HIGH — The pool path breaks the cadence and does not bound the work by the ping deadline.** Task 1 bypasses both fresh checks for every pooled non-native row, even if it judged last round and has no blocked record. It also checks elapsed time only after a status subprocess with its own fixed 30-second timeout and a probe with its original full budget. With `--timeout 1`, the worker can still be in the status read when the caller declares a timeout, and can then start a probe. Cancelling pending futures does not stop work already running. `.planning/phases/40-resilient-review-sized-by-jev/40-05-PLAN.md:114,193`; `.planning/phases/40-resilient-review-sized-by-jev/40-04-PLAN.md:111`; `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:179–187,224–228`; `skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py:645–665`.
+4. **MEDIUM — Two handoff checks are not executable as specified.** The execute-role fake accepts and returns a valid answer for `--blocked-status`, but its helper returns only probe keys and cache contents, so it cannot assert that no read took place. Task 1 also expects 23 total tests in `test_lane_switch.py`; the preceding plans and its own addition specify **24**. `.planning/phases/40-resilient-review-sized-by-jev/40-05-PLAN.md:133,157–162`; `.planning/phases/40-resilient-review-sized-by-jev/40-04-PLAN.md:114,188–201`; `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:189`.
+
+**Suggestions**
+- Keep one status decision per pool for a `ping-lanes` call, obtained inside the workers. Test both renewal and clearing with a fixed clock and assert exact call multiplicity, not just sets.
+- Specify an early bypass for non-pooled rows, how the first expired lane bypasses the quota TTL, and how the remaining monotonic budget reaches both child calls. Add a pooled round-2 freshness test and a test proving an exhausted status read starts no probe. Make the execute fake reject any status read.
+
+**Risk assessment: HIGH.** The current fixtures can fail before exercising the intended behavior, and the remaining defects can either hide a pool after expiry or spend quota the plan says it will not spend.
+
+##### Ponytail findings
+- **HIGH — Task 1:** The in-worker check is required by D6. Reuse `_ping_one` and `_probe_all`; give them a shared pool decision and remaining budget rather than introducing a second probe path. `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:137–139,179–187`; `.planning/phases/40-resilient-review-sized-by-jev/40-05-PLAN.md:110–120`.
+- **HIGH — Task 2:** The pre-pass belongs at the existing quota-refresh boundary. Reuse the existing cache-entry shape, but pin the actual expired-pool retry against `refresh_quota_cache`, including both a fresh success and a non-quota failure. `skills/ai-kit-spec-review/ai_kit_spec/cli.py:922–934`; `skills/ai-kit-spec-review/ai_kit_spec/quota.py:217–223,290–307`.
+
+#### 40-06
+
+**Summary.** The merged-report tracer, report-sourced severity and reviewed-root `cwd` fix the main cycle-1 integration gaps. The plan still treats scrubbed free text as safe by construction, misses a locked severity restriction, and can lose owner items in the handoff to the fixer loop.
+
+**Strengths**
+- The tracer uses the actual merged-report renderer and an `Edits Applied` summary with a skip. The optional reviewer tag fixes the real parser/renderer mismatch, and the fake checks the subprocess working directory. `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:123–136`; `skills/ai-kit-spec-review/ai_kit_spec/review_reports.py:11–13,138–141`; `skills/ai-kit-spec-review/ai_kit_spec/skill_classify.py:121–128`.
+- The plan reuses `ask_items(strict=True)` and the existing confidence threshold. Its cases for out-of-criteria choices, `needs_fallback`, failed exit and no matching report finding exercise meaningful advisory boundaries. `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:127–132,181–185`; `skills/ai-kit-spec-review/ai_kit_spec/jev_names.py:121–174`.
+
+**Concerns**
+1. **HIGH — The payload filter still forwards unmarked source or values.** The new test fixes the old placement problem, but tests only the forms the filter knows how to remove. A fixer reason containing an unquoted copied setting value such as `The access phrase is Violet Harbor` or an unmarked source fragment such as `return 7` survives. `secret_shapes.redact` preserves text outside known matches; clipping does not establish provenance. This leaves the R5 prohibition unproved and the claimed boundary false. `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:124,129–130,186`; `skills/ai-kit-spec-review/ai_kit_spec/secret_shapes.py:91–117`; `.planning/phases/40-resilient-review-sized-by-jev/40-SPEC.md:249–255`.
+2. **HIGH — Routing is incomplete at the severity and Surface boundaries.** `route_for` restricts `reviewer_wrong` to MEDIUM/LOW but sends a confident `mechanical` CROSS-DOC or unheaded finding to the fixer below the cap. Amended R5 restricts the extra pass to MEDIUM/LOW as well. Separately, the actual handoff is 40-10, not 40-09: its `Edits Applied` row advances the iteration after classification, but its Surface edits only cover escalation and cap. An owner item from a skip on `Edits Applied` can disappear when the next review approves; the plan never says to surface or carry that item forward. `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:21,131,178–180`; `.planning/phases/40-resilient-review-sized-by-jev/40-SPEC.md:114–124`; `.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:144–151`.
+3. **MEDIUM — One jev failure still escapes both adapters.** The shared client uses `text=True` but catches only `OSError` and `SubprocessError` around the spawn. A decoding error occurs during the call, before the separate JSON parse handler. Both this adapter and 40-07 can therefore raise instead of taking the old path. The nonzero-exit test does not exercise it. `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:132–133,183`; `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:132`; `skills/ai-kit-spec-review/ai_kit_spec/jev_names.py:140–167`.
+4. **MEDIUM — Task 1 is oversized for the lane and describes a non-green intermediate commit.** It asks for the full parser, adapter, CLI, fixtures and six staged paths including both generated listings. It also explicitly adds `re` and `secret_shapes` to the test module in Task 1, although the described tests first use them in Task 2. Ruff’s `F` checks cover this module before the first commit. `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:108–137,186`; `.pre-commit-config.yaml:20–25,71`; `pyproject.toml:29–48`.
+
+**Suggestions**
+- Keep D7e’s scrubbing as a backstop, not as proof a field is safe. Define what makes a summary safe to send, and keep a finding on the owner path when no safe summary can be formed. Add a recorded-payload case with unmarked copied text.
+- Apply the same MEDIUM/LOW guard to both non-owner routes. Specify how 40-10 preserves owner items from mixed outcomes through a re-pass or later approval. Add a fake sequence for `Edits Applied` + owner item → next-round approval.
+- Handle the decoding failure once at the shared client boundary, without adding a second client, and pin it for both callers. Keep Task 1 to the smallest complete CLI tracer, moving Task 2-only imports and coverage to the backstop commit.
+
+**Risk assessment: HIGH.** The open issues affect what can leave the process and whether the owner learns about an unresolved disagreement. Passing the current route tests would not establish either guarantee.
+
+##### Ponytail findings
+- **HIGH — Task 1:** The adapter and merged-report round trip are needed for R5. Reuse `parse_findings` and the shared client as planned; enforce the safe-payload and fallback boundaries there rather than asking the host to infer them later. `skills/ai-kit-spec-review/ai_kit_spec/review_reports.py:44–69`; `skills/ai-kit-spec-review/ai_kit_spec/jev_names.py:140–174`; `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:123–136`.
+- **MEDIUM — Task 2:** The fake is useful and already records the real request shape. Spend the next cases on decoding failure, non-MEDIUM/LOW mechanical answers, and the mixed-outcome handoff rather than more copies of happy-path `Finding` tuples. `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:176–186`; `tests/test_catalog_jev_names.py:132–146`.
+
+#### 40-07
+
+**Summary.** The plan keeps signal detection local and now sends counts, fixed labels and opaque tokens instead of roster data. It also fixes the quota-excluded-lane case from cycle 1. The remaining selection logic still does not match the resolver it claims to reuse, and the test for jev selecting one lane does not reach the required log.
+
+**Strengths**
+- The signal branch bypasses jev, and the request is built from local counts and allowlisted labels. The test also enforces the real ladder’s two-option minimum and checks that keys, models, commands and plan text stay out of the recorded payload. `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:126–132,224–225`; `skills/jev-fast-decision/scripts/jev_ladder.py:218–221,583–591`.
+- The CLI tracer starts from real `resolve-reviewers` output and demonstrates that an unavailable quota entry is not re-added in the supplied case. Reusing the atomic rows writer and the existing append-only log avoids another persistence format. `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:133,139–141`; `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:130–132`; `skills/ai-kit-spec-review/ai_kit_spec/cache.py:27–46`.
+
+**Concerns**
+1. **HIGH — The added lane is not necessarily one `resolve-reviewers` would select.** `eligible_keys` calls the low-level picker with an empty vendor filter and the raw quota cache. The actual resolver first narrows by review purpose, uses a cross-vendor secondary when selecting a pair, and overlays routes on the quota cache so a stale failure cannot hide a native lane. A dispatchable lane tagged `purpose="execute"` can be added ahead of a valid review lane; a native second lane with a stale cache failure can be missed. The current tracer has neither case. `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:26,127–128,141`; `skills/ai-kit-spec-review/ai_kit_spec/quota.py:104–119,168–193`; `skills/ai-kit-spec-review/ai_kit_spec/cli.py:962–973`; `skills/ai-kit-spec-review/ai_kit_spec/routing.py:192–204`; `tests/test_ai_kit_spec.py:3042–3065,3090–3099`.
+2. **MEDIUM — A bad sizing input can prevent the mandatory ping without a defined outcome.** `cmd_size_review` specifies an `OSError` handler, not handling for malformed reviewers JSON or undecodable plan text. The common CLI catches only `ConfigError`. The 40-09 handoff predicates ping on the sizing event’s file existing but gives no branch for `size-review` failure. A failed sizing step that creates no log can therefore fall through to dispatch without the ping, or stop without the specified review outcome. `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:133–134`; `skills/ai-kit-spec-review/ai_kit_spec/cli.py:1474–1481`; `.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:168–169`.
+3. **MEDIUM — The jev-one log acceptance is not exercised.** Task 1’s CLI cases cover a signal, absent jev and quota exclusion; Task 3’s confident-one case checks a returned reason, not `reviewers.json` or the round-0 event. No planned test would catch the CLI failing to write or log the jev-one decision. A confident reorder also records the final keys but not why the first key moved: the reason contains only the count answer and its confidence. `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:131–141,219–220`; `.planning/phases/40-resilient-review-sized-by-jev/40-SPEC.md:126–137`.
+4. **MEDIUM — The first task still leaves boundary work for the lite executor.** It references `_clip`, which 40-06 does not create, and tells the executor to unpack `{t}`, `{f}`, `{s}`, `{c}` from an unnamed mapping step. The task combines the scanner, selector, CLI I/O, two fixtures and three CLI tests before the first commit. Task 3 then needs a temporary jev-root fixture defined as `jev_root(self)` in the prior plan but does not state where to put it so both test classes can reuse it. `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:109–145,214–217`; `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:124–134,175–177`.
+
+**Suggestions**
+- Use the resolver’s purpose narrowing and route-to-quota overlay for sizing. Make the vendor eligibility of a synthesized second slot explicit and test it against the existing resolver contract instead of silently using `skip_vendor=""`.
+- Specify exact CLI outcomes for invalid inputs and sizing-log failure, and a 40-09 branch that never dispatches without the required ping. Add one confident-je v CLI tracer that checks the rewritten rows, the event and the reason for any applied reviewer pick.
+- Name `_summary_text` correctly, specify the fact bindings and shared temp-fixture scope, and use the token map returned by `sizing_items` rather than rebuilding it. Keep the first task to one complete CLI tracer and move the remaining fixtures and branch tests to the later tasks.
+
+**Risk assessment: HIGH.** The privacy shape is much stronger than in cycle 1. The selection mismatch can still admit the wrong second lane or report that none exists, and the failed-sizing handoff can bypass the next required step.
+
+##### Ponytail findings
+- **HIGH — Task 1:** The signal-plus-sizing slice is needed. The atomic writer and log are good reuse; the sizing eligibility path should also reuse the resolver’s existing policy rather than a near-copy. `skills/ai-kit-spec-review/ai_kit_spec/quota.py:104–119,168–193`; `skills/ai-kit-spec-review/ai_kit_spec/routing.py:192–204`; `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:127–133`.
+- **LOW — Task 2:** The held-out fixtures and generated listings are justified. Keep the existing generator and gate; do not add mutation machinery just to prove the trigger table, and do not overstate overlap-prone regex examples as independent mutation tests. `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:180–186`; `tests/test_gate_scope.py:570–583`.
+- **MEDIUM — Task 3:** The pure tests are useful for the floor and payload. Reuse `answers_run` in a CLI-level confident-one case, and test a failed shared-client call that actually reaches the error branch. `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:217–226`; `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:136`; `skills/ai-kit-spec-review/ai_kit_spec/jev_names.py:140–167`.
+
+##### Coverage and overall verdict
+
+- **Waves and handoffs:** Waves 4–7 each contain one plan. I found no same-wave file overlap or missing dependency edge: the serial chain supplies the earlier log, ping and switch helpers before 40-04/05, and classification before 40-07. The inaccurate 40-09 classification ownership in 40-06 is a handoff citation, not a scheduling conflict. `.planning/phases/40-resilient-review-sized-by-jev/40-04-PLAN.md:5–6`; `.planning/phases/40-resilient-review-sized-by-jev/40-05-PLAN.md:5–6`; `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:5–6,21`; `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:5–6`; `.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:144–151`.
+- **SPEC coverage:** The acceptance lines and non-dismissed edges have plan homes: R1 in 40-03/04/05/09; R2 in 40-02/05/09/12; R3–R4 in 40-01/02/03/09/10; R5 in 40-06/10; R6 in 40-07/09; R7 in 40-08/09/10; and R8 in 40-11/12/13. The five prohibitions are assigned, but assignment is not proof: the expiry and freshness backstops, summaries-only and advisory-fallback prohibitions, and the jev-one logged result still have the gaps above. The plan-level `<verification>` blocks in 40-05/06/07 also omit `make check-dogfood`; it is present in their orchestrator steps, so this is a gate-list mismatch, not missing execution. `.planning/phases/40-resilient-review-sized-by-jev/40-VALIDATION.md:39–54`; `.planning/phases/40-resilient-review-sized-by-jev/40-05-PLAN.md:200–212`; `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:224–236`; `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:263–275`.
+- **Verification:** The unittest runner’s `=== <module>: FAILED (rc=...)` prefix is real. The concerns above are static findings about the prescribed implementations and assertions, not reports of executed failures. `tools/run_unittest_parallel.py:935–945`.
+
+**Verdict: Revise before execution.** Prioritize the pool retry and deadline contract, the jev payload and owner-routing boundaries, and resolver parity. Keep the pool behavior **PROVISIONAL** pending owner confirmation.
+
+No files were changed or created; no tests, make targets, live lanes or jev calls were run. Runtime timing and judge outcomes remain unverified.
+
+#### Batch C (40-08, 40-09)
+
+#### 40-08
+
+##### Summary
+
+The plan is well scoped for REV-08: a deterministic check produces a HIGH finding, the existing merger carries it into the report, and the execute adapter remains unchanged. Cycle 2 fixes ordinary fenced examples, trailing self-review sections, and document identity for distinct filenames. Three issues still block dispatch: the prescribed multi-document test cannot pass, valid nested fences can fool the checker, and the merge can discard the required fold edit while keeping its `fold-check` tag.
+
+##### Strengths
+
+- The CLI follows the existing `register_parsers` / `COMMANDS` pattern and feeds the existing report parser and renderer. The extra file stays out of lane validation, so it cannot turn a failed no-log review into a success. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:113–122`; `skills/ai-kit-spec-review/ai_kit_spec/skill_classify.py:197–220`; `skills/ai-kit-spec-review/ai_kit_spec/cli.py:976–1001`)
+- Task 3 updates both demo fixtures that can reach review and leaves the execute-only fixture alone: its eval stops at the setup question. The permanent test pins the actual final heading and checks the adapter wording without a runtime cross-skill import. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:194–204`; `skills/ai-kit-spec-review/evals/evals.json:123–129,153–159`; `skills/ai-kit-spec-execute-superpowers/SKILL.md:108`)
+
+##### Concerns
+
+1. **HIGH — Task 2’s exact multi-document command cannot pass.** `--doc-paths` takes **one string**, not multiple arguments. In the prescribed call, `p2.md` and `p3.md` are treated as positional lane reports. Neither contains `=`, so the handler tries to open an empty path and returns Failure instead of the expected three findings. This blocks the unattended executor even if the implementation is correct. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:170`; `skills/ai-kit-spec-review/ai_kit_spec/cli.py:315–318,976–997`)
+2. **HIGH — Fence toggling still lets examples count as real tasks.** `_real_lines` flips state on any triple-backtick or triple-tilde prefix. A three-backtick line inside a four-backtick Markdown fence therefore ends the fence early for the checker. A fold heading or checkbox later in that example can suppress the HIGH finding. This is not a hypothetical Markdown style: the repo already has plans with four-backtick fences containing triple-backtick code blocks. The new fixture checks only a single, matching triple-backtick pair. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:113–115,158–161`; `docs/superpowers/plans/2026-06-14-e1-review-spec-skill.md:119–138`)
+3. **HIGH — A reviewer finding at the same location can erase the deterministic edit.** The plan appends the extra report *after* the reviewer reports. The merger keys across reports by `(severity, location)`, keeps the first finding’s text, and only adds the later reviewer tag. If a reviewer raises a different HIGH at `<doc>, last ### Task`, the output can carry `fold-check` without `Plan has no fold step` or its exact `Required:` edit. Task 2 tests a reviewer HIGH at a deliberately different location, while 40-10’s repair handoff assumes the fold text survives. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:121,170,268–269`; `skills/ai-kit-spec-review/ai_kit_spec/review_reports.py:87–101`; `.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:152–153`)
+4. **MEDIUM — A generated but unparseable finding is treated as an empty result.** `--doc` is interpolated verbatim into a single-line report field. A valid filename containing a line break can make that bullet unparseable, and `read_extra_findings` then returns `[]` even though the file is nonempty. A clean lane can consequently yield Approved. The existing subprocess path guard rejects control characters, but this check also runs on the native-only path. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:113–118`; `skills/ai-kit-spec-review/ai_kit_spec/review_reports.py:9–13,57–69`; `skills/ai-kit-spec-review/ai_kit_spec/prompt_guard.py:82–88`; `.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:174–175`)
+5. **MEDIUM — The logged test does not isolate the config it reads.** A temporary `--cwd` does not make the user layer empty. `_run` inherits the process environment, and the 40-01 logged handler resolves the global roster even with `migrate=False`. The prescribed parallel runner supplies a scratch HOME, so the named verification is isolated; the new test itself is not when run directly. Task 1 also stages six paths and triggers the full unit/arch hook. That is a scheduling risk, not evidence that it exceeds 1,800 seconds. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:122–123,171`; `.planning/phases/40-resilient-review-sized-by-jev/40-01-PLAN.md:129–130`; `skills/ai-kit-spec-review/ai_kit_spec/config_io.py:821–832`; `tools/run_unittest_parallel.py:226–232,438–460`)
+
+##### Suggestions
+
+- Pass the document set as one `--doc-paths` argument, matching the shipped caller. Add a same-location regression asserting that **both** the reviewer’s finding and the deterministic `Required:` text survive, then check that the latter reaches the correct `writing-plans` handler report. (`skills/ai-kit-spec-review/SKILL.md:426–432`; `skills/ai-kit-spec-review/references/apply-findings.md:7–22`)
+- Track fence marker and opening length, and close only on a matching fence of sufficient length. Reuse the existing scanner pattern without importing the other skill. Reject report-breaking path characters before rendering, and distinguish an empty extra file from a nonempty file that fails to parse. (`skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/cli.py:23,51–64`; `skills/ai-kit-spec-review/ai_kit_spec/prompt_guard.py:82–96`)
+- Give the logged test an explicit scratch `env_fn`, as 40-01 does. Keep the existing generated-listing and lint gates; put the most important parser and merge cases in the task that first ships the behavior. (`.planning/phases/40-resilient-review-sized-by-jev/40-01-PLAN.md:130`; `tests/test_gate_scope.py:570–583`)
+
+##### Risk Assessment
+
+**HIGH for correctness; low for runtime cost.** Both R7 backstops are assigned, and no phase prohibition is directly owned by this slice. The problem is not throughput in a solo-maintainer workflow; it is a false approval or a HIGH finding that reaches the fixer without the required edit. The named unittest command and failure marker match the runner, but the specified multi-document test would fail under that command. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:29–41,177–182`; `tools/run_unittest_parallel.py:884–913,939–945`)
+
+##### Ponytail findings
+
+- **Task 1 — HIGH:** Required by D-08. Keep the small stdlib command and existing report format. Fix the collision at the existing merge boundary; do not add a second report format or a new Markdown dependency. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:101–121`; `skills/ai-kit-spec-review/ai_kit_spec/review_reports.py:72–101`)
+- **Task 2 — HIGH:** The edge tests are needed. Reuse the in-process `main` pattern, but spend the tests on nested fences, same-location findings, and real CLI argument shape rather than counting test methods. The current task proves distinct document locations, not the full repair handoff. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:158–185`; `tests/test_ai_kit_spec.py:3646–3662`)
+- **Task 3 — LOW:** Both fixture edits and the wording pin are needed; an adapter edit or third fixture update is not. The downstream flagged fixture copies the active plan after this wave, so it inherits the fold task. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:194–204`; `.planning/phases/40-resilient-review-sized-by-jev/40-11-PLAN.md:89–95`)
+
+#### 40-09
+
+##### Summary
+
+This is the host agent’s runbook, not just explanatory documentation. Cycle 2 improves the fresh-dispatch path: it keeps the existing no-log branch, stops on the documented ping and fold errors, threads log flags into resume argv, and puts partial approval before plain approval. It does not yet make the resumed path obey those same rules. Related gaps can skip the fold check, lose partial evidence, or claim that a live probe cannot migrate configuration.
+
+##### Strengths
+
+- The reason-table lock uses the runtime `REASONS` tuple, checks duplicates, and demonstrates drift with both an added and a removed row. It follows an existing section-scoped test pattern. (`.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:133–139`; `skills/ai-kit-spec-review/ai_kit_spec/error_classifier.py:14–26`; `tests/test_cross_ai_settings_text.py:59–60`)
+- The fresh path correctly adds `--cwd` to logged merge, preserves the three pinned status cells and the refusal rule, and retains evidence for partial approvals. Those are real compatibility checks, not just wording preferences. (`.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:170–179,212–214`; `tests/test_ai_kit_spec_review_checklist.py:25–29`; `tests/test_quota_policy_text.py:97–107`; `skills/ai-kit-spec-review/ai_kit_spec/review_reports.py:22–28`)
+
+##### Concerns
+
+6. **HIGH — Resume still schedules a wait before checking for a flagged quota switch, and can skip the fold check.** Task 3 changes only the final “anything else” bullet. A resumed exit 75 with `retry_after_s=` still hits the *first* bullet and reschedules, before `switch-lane` can run. A successful final resume still goes straight to Step 1.5; the new fold check sits before that heading in Step 1. Task 1’s instruction to reset the fold file on resume has no effect if the resumed path never runs the check. The new test checks only that the pending section contains `switch-lane`, so it passes with this ordering. (`.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:135,174–175,211,218`; `skills/ai-kit-spec-review/SKILL.md:308–313`; `skills/ai-kit-spec-review/references/cross-ai-dispatch.md:355–376`)
+7. **HIGH — The resume payload does not restore the inputs Phase 40 adds.** Resume skips Step 0.7. The saved inputs have the old `archetype` and `framework_profile_path`, but not `QUOTA_JSON` or the per-document fold-check arguments. If a resumed round is fixed and starts another round, `ping-lanes` needs the original quota path. If the last resume is made to run the fold check as intended, it also needs those document-specific arguments. The saved `sibling_key` is likewise not refreshed by the switch instructions; a sibling replaced after that pointer was captured can be mistaken for the current slot. The successful-resume event added by 40-03 fixes log precedence, not this caller state. (`.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:169–174,211`; `skills/ai-kit-spec-review/references/cross-ai-dispatch.md:315–337,355–373`; `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:181`)
+8. **HIGH — Partial evidence is not required on every final outcome.** Task 3 quotes `Judged by:` only for partial approval. Its general Step 5 addition appends sizing and ping output, not the full round evidence. A mid-dispatch replacement or failed lane followed by an Issues Found handoff can be invisible to the owner; it is not a ping event. The unchanged “Single reviewer” row also says approval removes the run folder, which conflicts with the new partial outcome when only one lane survives. R4 requires Step 5 to name the lanes that judged and the reasons for the others, not only on approval. (`.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:212–214,218`; `skills/ai-kit-spec-review/SKILL.md:508–525,547–551`; `.planning/phases/40-resilient-review-sized-by-jev/40-SPEC.md:103–112`)
+9. **HIGH — The blanket “never migrates” promise is false for a live ping.** `migrate=False` covers Python’s roster resolution. The reused probe starts the normal runner in a scratch working directory; that avoids scanning the caller’s Git tree, but the runner still checks the caller’s user config and can migrate legacy retry settings into `config.toml`. The judge plan has a legacy preflight; this user-facing path has no equivalent. A scratch cwd alone is not a read-only guarantee. (`.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:129–130`; `skills/ai-kit-spec-review/ai_kit_spec/quota.py:231–265`; `skills/ai-kit-spec-review/references/cross-ai.mjs:3769–3805,7077–7081`; `.planning/phases/40-resilient-review-sized-by-jev/40-12-PLAN.md:114`)
+10. **HIGH — The summaries-only prohibition still is not enforced by construction.** The revised payload test does put forbidden *shapes* inside transmitted fields, which is an improvement. It still cannot catch ordinary, unquoted words copied verbatim from a file or a config value into a title or reason. The adapter keeps text outside its matching spans and the existing client serializes that text to jev. The doc test only proves the promise exists. This is a remaining 40-06 handoff issue, not a request to change the owner’s prohibition or add another client. (`.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:134,138,285`; `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:129–132,186`; `skills/ai-kit-spec-review/ai_kit_spec/secret_shapes.py:99–114`; `skills/ai-kit-spec-review/ai_kit_spec/jev_names.py:140–153`)
+11. **MEDIUM — Sizing still has two owners and no defined failure branch.** Step 0.7 says to run `size-review`, and mandatory reference point 5 also says to run it. Neither says its text is only a pointer to the other. Running both can ask jev twice and mutate an already-sized list. Conversely, a sizing error that leaves no log silently disables the ping, because the next step checks only whether the log exists. The earlier handler explicitly returns 2 on some failures before appending the event. (`.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:168–169,216,288`; `skills/ai-kit-spec-review/SKILL.md:153–161`; `.planning/phases/40-resilient-review-sized-by-jev/40-07-PLAN.md:133–134`)
+12. **MEDIUM — The exact-command reference cannot satisfy its own mismatch rule.** Task 1 says both “use the line the code prints” and “stop” on a mismatch. There are already concrete mismatches in the plans: `check-fold-step` does not accept `--cwd`, and the empty ping input has its own stderr line, `ai-kit-spec: no lane left: (empty reviewers file)`. The same task omits the **PROVISIONAL** label from the different-pool eligibility sentence and promises that a successful run clears the record, although the runner can report a failed clear. It also does not make the D6 once-per-pool rule explicit across Step 0.7 and later pings. (`.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:125,129–137`; `.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:119`; `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:143–145`; `tmp/p40-review/c1/fix-brief.md:58–64`; `skills/ai-kit-spec-review/references/cross-ai.mjs:4124–4137`)
+13. **MEDIUM — The one-task prompts still leave execution choices unresolved.** Both objectives tell a blocked executor to write in the SUMMARY, but the orchestrator alone owns that file. The tasks also name bare lint targets and `git commit`; the scratch-HOME guarantee they cite applies to unittest children, not to the outer `uv run` hooks. With a cold dev environment, the lane has no prescribed offline setup or stop condition. In 40-09 specifically, Task 3 must distinguish **copying** the existing inline Python and redirections as shipped Markdown from **executing** them, which its shell rules forbid. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:80–82,247–251`; `.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:92–94,211,267`; `Makefile:98–113`; `.pre-commit-config.yaml:20–44`; `tools/run_unittest_parallel.py:438–460`)
+
+##### Suggestions
+
+- Give fresh and resumed dispatches one switch-first exit procedure. On a resume, apply it **before** the hinted-75 branch, serialize the roster rewrite across wakes, and use the resulting current roster when deciding who merges. From the final-resume merge lock, run the fold check exactly once before Step 1.5. Pin these with a saved-resume case, not a command-name assertion. (`skills/ai-kit-spec-review/references/cross-ai-dispatch.md:355–376`)
+- Make reference point 5 the sole sizing call. Specify what to do on every nonzero result, including how to preserve mandatory pings when advisory sizing is unavailable. Save or rederive the quota path and per-document fold inputs on resume. Add a mixed-archetype example so one document’s labels cannot be applied to every document. (`skills/ai-kit-spec-review/references/cross-ai-dispatch.md:148–196`; `skills/ai-kit-spec-review/SKILL.md:103–128`)
+- Require the `Judged by:` line for **every final logged outcome** that has a merged report. Keep the existing pending notice separate. Add a fake case where a sibling fails and the surviving report contains an open finding; the handoff must show both the finding and the partial evidence. (`skills/ai-kit-spec-review/SKILL.md:500–525`; `.planning/phases/40-resilient-review-sized-by-jev/40-11-PLAN.md:97–100`)
+- Distinguish a read-only Python config lookup from a live probe, and reuse the runner guide’s preflight before the first call that can migrate retry settings. For jev, add a fail-closed check or owner path for summaries whose content cannot be safely sent; do not treat the wording pin as proof of payload safety. (`skills/ai-kit-cross-ai/SKILL.md:106–117`; `.planning/phases/40-resilient-review-sized-by-jev/40-SPEC.md:251–255`)
+- Resolve command mismatches in the plan rather than asking the executor to reconcile them. Have the executor report blockers in its final response, and make the orchestrator provide the pre-provisioned offline lint/hook environment. (`tmp/p40-review/c1/fix-brief.md:94–107,130–133`)
+
+##### Risk Assessment
+
+**HIGH.** The normal path is substantially clearer, but a real resume can still wait instead of switching, or approve without the fold check. The text tests can pass while both behaviors remain broken. The three tasks are serial and have quoted anchors; the seven-file plan exceeds the rough five-file target, but its generated files and full-hook cost are execution risks, not proof of a timeout. (`.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:7–14,159–179,210–222`; `tools/run_unittest_parallel.py:226–232`)
+
+##### Ponytail findings
+
+- **Task 1 — MEDIUM:** D-01 and D-09 require the reference and lock. Reuse the existing reason-table test pattern; keep one authoritative command example per operation. The test should verify the table it claims to lock, not independently hardcode the count in addition to equality and duplicate checks. (`tests/test_cross_ai_settings_text.py:59–60`; `.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:129–139`)
+- **Task 2 — HIGH:** The dispatch wiring is necessary. Reuse the existing Step 1.5 report binding and Step 2 table, but keep one owner for sizing and one shared route into fold-check-and-merge. An extra pointer that leaves a second imperative is not a shortcut. (`skills/ai-kit-spec-review/SKILL.md:423–464`; `.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:168–176,216`)
+- **Task 3 — HIGH:** The resume changes, partial evidence, and caller exception are necessary. Extend the existing resume JSON, running marker, and merge lock rather than adding a new state file or editing the runner template. The current edits reach the saved argv but not the earlier wait branch, the final-resume fold check, or all Step 5 outcomes. (`skills/ai-kit-spec-review/references/cross-ai-dispatch.md:315–337,355–376`; `.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:210–218`)
+
+##### Batch coverage and dependencies
+
+**No same-wave overlaps or missing dependency edges.** Waves 8 and 9 each contain one plan. The serial chain supplies 40-08 with 40-01’s merge helper and 40-06’s tagged-bullet parser, and supplies 40-09 with the earlier CLI commands. The 40-10 docs, 40-11 evals, and 40-13 layout check consume those outputs later. The remaining problems are in the contracts passed between waves, not the wave order. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:5–6,121`; `.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:5–6`; `.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:5–6,148–153`; `.planning/phases/40-resilient-review-sized-by-jev/40-11-PLAN.md:89–100`; `.planning/phases/40-resilient-review-sized-by-jev/40-13-PLAN.md:82–97`)
+
+**The SPEC rows are assigned, but some assigned checks do not prove the user-visible behavior.** The phase verification map assigns R1–R8, the resolved edges have plan homes, and all five prohibitions have named checks. I found no unassigned row in this batch. I would not count the resumed switch-first and fold-repair paths, the partial Issues Found handoff, or the summaries-only prohibition as covered by the planned evidence. Also keep the 40-10 diagram aligned with 40-09: its revised start distinguishes native-only review, but its next-iteration edges unconditionally route that same review through ping. (`.planning/phases/40-resilient-review-sized-by-jev/40-VALIDATION.md:39–53`; `.planning/phases/40-resilient-review-sized-by-jev/40-SPEC.md:205–255`; `.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:110–116`)
+
+**Verdict: revise both plans before dispatch.** Fix the fold parser and merge test first, then make fresh and resumed reviews follow the same exit, fold, and reporting rules.
+
+Static, read-only review: no files changed, no suites or live lanes ran, and executor timing was not measured.
+
+#### Batch D (40-10, 40-11, 40-12, 40-13)
+
+#### 40-10
+
+**Summary.** This plan is where the REV-02 classifier becomes part of the actual review loop. The cycle-1 revision now invokes it on mixed edit-and-skip summaries and at the cap. But it specifies when to call the classifier more clearly than what to do with its answer. A valid Fix Summary can still lead to a lost owner decision, an unintended second edit, or an unnecessary escalation.
+
+**Strengths**
+- Task 2 edits the existing Step 2 action cell and preserves the status spelling the checklist test pins. The `rg -e` fix for the leading-hyphen pattern is also correct. (`.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:144,161`; `tests/test_ai_kit_spec_review_checklist.py:25–29,162–168`)
+- The fold note now carries document identity into the existing `writing-plans` route rather than adding an unrelated rule to the generic fixer. The profile and handler already support this handoff. (`.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:152`; `skills/ai-kit-spec-review/references/apply-findings.md:17–22,69–83`; `skills/ai-kit-spec-review-checklist/references/frameworks/superpowers.md:33–38`)
+
+**Concerns**
+1. **HIGH — Calling jev does not reliably change the next action.** A fixer can legitimately return `Edits Applied` with a skipped MEDIUM finding. If classification returns `owner`, the planned row still increments the iteration; only the Escalation and Cap rows know how to surface that item. A clean next review can discard it. Conversely, if `No Edits` contains only a confident `reviewer_wrong` skip, the unchanged escalation row still asks the owner to decide. The cap row also retains an unconditional `Decide manually.` (`.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:144–151`; `skills/ai-kit-spec-review/SKILL.md:493–519`; `skills/ai-kit-spec-review-fixer/SKILL.md:79–91`)
+2. **HIGH — The mechanical re-pass exposes findings that were not routed to it.** Task 2 passes the same direct-edit report and adds a list of titles. Task 3 says to edit those titles but never says to process *only* those findings. The fixer builds its checklist from the whole report and must address its HIGH and CRITICAL findings. A fresh fixer can therefore revisit an already addressed HIGH or edit a MEDIUM item reserved for the owner. “Only when the edit is impossible” also leaves it unclear whether an existing escalation condition still takes precedence over jev’s advice. (`.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:149–151,179–180`; `skills/ai-kit-spec-review-fixer/SKILL.md:31–48,53–64`)
+3. **MEDIUM — The diagram still contradicts the loop.** The native-only bypass works at Start, but all four next-iteration edges lead unconditionally to ping. `Edits Applied` still bypasses classification in the graph, and the instruction to preserve pending-lane nodes preserves none: the existing DOT file has no pending branch. The proposed tests pin the unconditional edges and check labels, not the missing paths. (`.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:110–116`; `skills/ai-kit-spec-review/references/loop-diagram.md:30–67`; `skills/ai-kit-spec-review/SKILL.md:457–464`; `.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:168–169`)
+4. **MEDIUM — The fold handoff still has a same-location collision.** The document path fixes collisions *between plans*. It does not fix a reviewer HIGH at the exact same location as the fold HIGH. The dependency appends the fold report after the reviewer reports, and the existing merge keeps the first finding’s `Required:` text for the same severity and location. The new doc test cannot verify the promised edit survives that merge. (`.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:152–153`; `.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:121,170–171`; `skills/ai-kit-spec-review/ai_kit_spec/review_reports.py:87–101`)
+
+**Suggestions**
+- Specify one Step 4 action table that combines the fixer status and classification result. Say what happens to first-pass `owner` and `skipped` items after a re-pass or re-review; only unresolved owner items should ask for a decision. Pin mixed `Edits Applied` plus skip, skipped-only, and a mixed owner/mechanical re-pass.
+- Reuse the existing handler-report split to pass only the eligible mechanical findings to the fresh fixer. Leave the existing escalation rules in force. Add a branch-level check rather than more substring checks.
+- Put the round-log condition on the diagram’s shared dispatch path, draw the pending wait explicitly, and test that the fold `Required:` text survives a same-location merge.
+
+**Risk assessment: HIGH.** These Markdown instructions are executable control flow for the host agent. The current plan can lose an owner decision or cause an edit that the advisory classifier did not authorize.
+
+##### Ponytail findings
+- **MEDIUM — Task 1:** D-09 needs the existing DOT companion, not a second account of the loop. Reuse its shared return to Step 1 and put the log check there once. (`skills/ai-kit-spec-review/references/loop-diagram.md:3–9,45–61`)
+- **HIGH — Task 2:** The classifier hook is needed; a new classifier or report format is not. Reuse the command contract from 40-09 and the existing per-handler report. The six planned files are slightly over the sizing guideline, but Task 2’s incomplete branching instructions are the bigger risk for the unattended executor. (`.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:7–13,134–157`; `.planning/phases/40-resilient-review-sized-by-jev/40-09-PLAN.md:135`; `skills/ai-kit-spec-review/references/apply-findings.md:22`)
+- **MEDIUM — Task 3:** One row and one test are enough if the caller supplies the scoped report and the row explicitly preserves the existing escalation rules. Reuse `TestRules` and keep the Fix Summary contract unchanged. (`tests/test_ai_kit_spec_review_fixer.py:78–98`; `skills/ai-kit-spec-review-fixer/SKILL.md:53–91`)
+
+#### 40-11
+
+**Summary.** The plan budgets two small tasks for the four required reviewer evals and one fixer eval. The revised ping case distinguishes stdout, log cause and rendered reason correctly. The remaining gap is in the simulated inputs: several expected outcomes still depend on facts the prompt never supplies.
+
+**Strengths**
+- The blocked-ping eval now distinguishes `auth` on stdout and in the event’s `cause` from `replaced` in the report. The fixture marks its pooled behavior PROVISIONAL and uses placeholder models. (`.planning/phases/40-resilient-review-sized-by-jev/40-11-PLAN.md:94,98`; `.planning/phases/40-resilient-review-sized-by-jev/40-01-PLAN.md:125–126`)
+- The fixer eval reuses inputs with a real MEDIUM edit and a separate HIGH edit. The latter’s expected replacement matches the fixture exactly. (`.planning/phases/40-resilient-review-sized-by-jev/40-11-PLAN.md:126`; `skills/ai-kit-spec-review-fixer/evals/files/plan-bad-review.md:9–17`)
+
+**Concerns**
+1. **MEDIUM — The lane evals pin the chosen pair, not the outcomes needed to reach their assertions.** The quota-switch and partial-approval cases do not say that both pings pass. The blocked-ping case does not say that the replacement’s own ping passes. The shared setup also never says that the PROVISIONAL pool has no active block; the planned worker can bypass the probe if it does. All three scenarios can follow the skill correctly and miss the expected branch. (`.planning/phases/40-resilient-review-sized-by-jev/40-11-PLAN.md:96–99`; `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:137–138`; `.planning/phases/40-resilient-review-sized-by-jev/40-05-PLAN.md:112–119`)
+2. **MEDIUM — The jev eval does not prove serious findings reach the owner or that the re-pass terminates correctly.** The prompt supplies only MEDIUM and LOW, with no iteration number, matching report titles, or second-pass result. The assertion about CRITICAL/HIGH can pass without exercising that rule. In the real classifier contract, an unmatched summary item goes straight to the owner, and `mechanical` routes to the fixer only with an explicit iteration below the cap. The shape checks cannot catch any of this. (`.planning/phases/40-resilient-review-sized-by-jev/40-11-PLAN.md:100,104–105`; `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:127–134`; `tests/test_skill_evals_shape.py:1–5,41–67`)
+
+**Suggestions**
+- Make each simulation a complete short sequence: no pool block, exact ping outcomes including the candidate, dispatch outcome, and clean surviving report where approval is expected.
+- Set the disagreement case below the cap, name the findings and their exact matching summary titles, and give the re-pass a result. Include a HIGH sent to `owner` despite a confident contrary answer, or remove that assertion from this eval and cite the dedicated fake-jev test. Put the fixer’s `Mechanical re-pass:` input on its own literal line.
+
+**Risk assessment: MEDIUM.** These defects weaken the judge’s evidence, not the runtime directly. The two tasks fit the stated executor size, and their checks are appropriate for shape, not behavior.
+
+##### Ponytail findings
+- **MEDIUM — Task 1:** The four evals are required by R8. Reuse the current `Setup: copy …` pattern and fixture-shape checks; tighten the inputs rather than adding an eval harness or changing vendors merely to satisfy a simulated case. (`skills/ai-kit-spec-review/evals/evals.json:29–36`; `tests/test_spec_chain_text.py:492–501`)
+- **LOW — Task 2:** The extra eval is justified by the one new fixer rule. Keep the existing two inputs and the HIGH assertion; no new fixture or parser is needed. (`skills/ai-kit-spec-review-fixer/evals/files/plan-bad-review.md:9–17`; `tests/test_skill_evals_shape.py:53–65`)
+
+#### 40-12
+
+**Summary.** The judge plan correctly keeps paid dispatch and live-host access with the orchestrator. It now makes an unmet bar fatal, separates the third verdict from any count-one advisory verdict, and keeps pool and count records stable across rounds. The live ping boundary and later-round handoff still need correction before spending quota.
+
+**Strengths**
+- The judged set is based on the actual `SKILL.md` diff, and the inherited driver stops on unexpected or unregistered skills. An unchanged checklist does not get a new verdict. (`.planning/phases/40-resilient-review-sized-by-jev/40-12-PLAN.md:112–113`; `tmp/judge-39.2/judged.py:34–62,95–114`)
+- `--gate` really does make an unmet bar fail, and the new exactly-one check tests verdict presence rather than inferring it from a finding count. The plan also distinguishes transcript-assessed evals from executed tests. (`.planning/phases/40-resilient-review-sized-by-jev/40-12-PLAN.md:111,141,148–155`; `tools/judge_loop.py:1376–1389,1957–1962`; `tmp/judge-39.2/findings.py:43–69`)
+
+**Concerns**
+1. **HIGH — A config-less cwd does not isolate the referee ping from the real roster.** The plan invokes `ping-lanes` with the caller’s real HOME. `cfg_resolve(..., migrate=False)` still combines an empty project layer with the user layer; that setting suppresses migration, not reading. A user config with a matching referee key can enter the normal replacement path. A malformed user config can stop the ping entirely. The mtime audit does not detect either read. The runner also inherits the XDG state directory, so the quota JSON and lane log are not the only possible writes. (`.planning/phases/40-resilient-review-sized-by-jev/40-12-PLAN.md:77,114,176–177`; `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:129,139`; `skills/ai-kit-spec-review/ai_kit_spec/config_io.py:721–732,821–838`; `skills/ai-kit-spec-review/references/cross-ai.mjs:3985–3989,4009–4012`)
+2. **HIGH — Later rounds log ping failures, then launch from the unchanged pool anyway.** Even if ping removes `referee-two` from `referees-r2.json`, `lanes.py assign` reads only the saved pool and counts. The round-1 tool probe can adjudicate a failed ping; the plan explicitly skips that probe in later rounds without giving a new rule for a failed ping. The earlier round’s recent success can also satisfy ping from the shared 120-second cache. The ledger proves the command was invoked, not that the actual round’s lanes were freshly checked or admitted by it. (`.planning/phases/40-resilient-review-sized-by-jev/40-12-PLAN.md:114–116,141`; `tmp/judge-39.2/lanes.py:391–415`; `.planning/phases/40-resilient-review-sized-by-jev/40-02-PLAN.md:137–139`)
+3. **MEDIUM — The extra-advisory driver is scoped per skill, but not to surviving skills.** Step 6 says to launch every copy created in step 5. Those copies hardcode a singleton `SKILLS` and use round-keyed done files. If a count-one skill was fixed and retired in round 1 while another skill continues, its extra driver can judge it again in round 2. Also, `wait` prints `advisory ended` when the process stops, whether it emitted a valid verdict or failed; there is no explicit failure branch before including its findings count. (`.planning/phases/40-resilient-review-sized-by-jev/40-12-PLAN.md:114–116,141`; `tmp/judge-39.2/advisory_extra.py:46–57,194–226,230–256`)
+4. **LOW — The copy recipe contains a check whose premise is false.** The `39.2` substitution matches the string in `"tmp" / "judge-39.2"`; splitting the Python path does not split the text `39.2`. The expected old text will already be gone if the driver was copied as instructed. The runbook says to stop rather than improvise if an exact edit cannot be made. (`.planning/phases/40-resilient-review-sized-by-jev/40-12-PLAN.md:110–111`; `tmp/judge-39.2/copy_drivers.py:23–35`; `tmp/judge-39.2/verdict_facts.py:13–16`)
+
+**Suggestions**
+- Give the referee ping an explicit config and state boundary. Verify both the Python resolver and runner environment against it; do not cite an empty cwd or mtime checks as proof that config cannot be read. Keep the authorized host access separate and explicit.
+- Keep the committed pool/count frozen, but state how each new ping governs launch. For a failed selected pool referee, stop with the named owner decision rather than dispatching from stale evidence; apply the locked third-lane rule separately. Select extra-advisory drivers from the round’s `skills.txt` and check for a validated verdict or a recorded failure before counting.
+- Check the resulting split path, not the presence of the old text. Rehearse round 2 and a failed extra advisory with fake records before any paid call. Scope the closing `--gate` to `skills.r1.txt`: without `--skills`, the tool gates the entire registry, not just Phase 40 (`tools/judge_loop.py:1461–1475`).
+
+**Risk assessment: HIGH.** The plan can consult unintended real configuration and then dispatch a judge that failed its pre-round check. Both faults can survive a green record-shape check.
+
+##### Ponytail findings
+- **HIGH — Task 1:** REV-07 needs the ping and JDG-04 needs the frozen-tree judge run. Keep `lanes.py assign` and the supported judge commands; fix the boundary and the launch decision, not `tools/judge_loop.py`. (`tmp/judge-39.2/lanes.py:379–426`; `tools/judge_loop.py:1974–1998`)
+- **MEDIUM — Task 2:** Reuse `publish.py`, `check.py` and `decide.py`. Pass the validated-plus-extra count to the existing decision function and check only the phase’s bar at the final gate. No new record scheme or count override is needed. (`tmp/judge-39.2/publish.py:20–32,51–76`; `tmp/judge-39.2/check.py:34–52`; `tmp/judge-39.2/decide.py:10–15`)
+
+#### 40-13
+
+**Summary.** The closeout sequence is sound: linked-layout smoke check, suites, dry run, live link check, then ROADMAP. Candidate-specific module reports and the same-SHA check before live writes address the major cycle-1 concerns. The plan still overstates two pieces of evidence: what the layout test prints and which host test backs the clean-room exception.
+
+**Strengths**
+- The scratch check reuses the test runner’s tripwire and baseline environment, and then narrows PATH further. It checks actual command output and exit codes for both a partial merge and the empty-lane refusal. (`.planning/phases/40-resilient-review-sized-by-jev/40-13-PLAN.md:89–97`; `tools/run_unittest_parallel.py:363–388,438–462`)
+- The pre-write SHA comparison and the link-only helper preserve the ship order. The helper inspects all target entries before adding any link and refuses unexpected destinations. (`.planning/phases/40-resilient-review-sized-by-jev/40-13-PLAN.md:148–161,193–194`; `tmp/run-2026-11-23/p39.2-10/live_links.py:14–42`; `AGENTS.md:347–352`)
+
+**Concerns**
+1. **HIGH — The clean-room preflight exception is not backed by evidence for the preflight it inherits.** The 39.2 exception names `tests.test_ai_kit_gsd_spec_discuss_e2e.TestRealBranchPreflight`. This plan requires no skips in three *other* modules and records every other skip as allowed. If the branch-preflight module skips, the gate can still claim the skipped clean-room case ran on the host. The image does not install Node, so this is a real evidence gap, not just a wording problem. (`.planning/phases/40-resilient-review-sized-by-jev/40-13-PLAN.md:124–129`; `.planning/phases/39.2-spec-discuss-branch-strategy-for-stacked-units/39.2-10-PLAN.md:117–118`; `tests/test_ai_kit_gsd_spec_discuss_e2e.py:78–84`; `tests/e2e/docker/Dockerfile:10–14`)
+2. **MEDIUM — The layout check can pass its assertions but fail its own evidence contract.** Task 1 asks for each command’s first stdout line. `merge-reports` starts with `## Review: …`, not the status, and the empty-list ping’s reason is on stderr. Some successful checks deliberately have no stdout. The plan also requires evidence of an empty tripwire log, but tells the script only to assert emptiness before deleting the layout. Unless the implementer adds unspecified output, the saved evidence cannot prove all the stated acceptance conditions. (`.planning/phases/40-resilient-review-sized-by-jev/40-13-PLAN.md:90–106`; `skills/ai-kit-spec-review/ai_kit_spec/review_reports.py:129–145`; `tools/run_unittest_parallel.py:370–377`)
+3. **MEDIUM — The requirement checklist gives isolated CLI tests credit for end-to-end behavior.** Task 2 cites 40-06 for jev classification, but that adapter test cannot prove the owner saw a mixed `Edits Applied` result or that the re-pass stayed in scope. Likewise, 40-08 proves the fold finding enters a merge but not that its exact `Required:` reaches `writing-plans` when a reviewer flags the same location. The proposed layout check cannot close either gap: it classifies an empty report and merges a fold finding against an approval. (`.planning/phases/40-resilient-review-sized-by-jev/40-13-PLAN.md:91,95,129`; `.planning/phases/40-resilient-review-sized-by-jev/40-06-PLAN.md:130–136`; `.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:170–171`)
+
+**Suggestions**
+- Keep the single candidate `make test` run. Require host execution evidence for `TestRealBranchPreflight` as well, using the inherited skip check against the candidate-specific reports. Record each clean-room skip as a skip.
+- Pin the precise evidence rows: matched report status and `Judged by:` line, stderr reason for exit 3, an explicit marker for empty stdout, and `tripwire calls: 0` before cleanup. Use the snapshot shape in `tests/test_ai_kit_spec_routing.py:47–50,71–76` rather than making the orchestrator hunt for a working cache fixture.
+- Separate CLI, skill-routing, and judge evidence in the checklist. Keep the RDG/JDG bar and the PROVISIONAL pool caveat visible; do not promote transcript predictions to executed proof.
+
+**Risk assessment: HIGH.** The principal risk is closing the phase with a claim the evidence does not establish. The same-SHA and link-only safeguards materially reduce the real-HOME write risk.
+
+##### Ponytail findings
+- **LOW — Task 1:** The installed-entry-point check is justified. Reuse `baseline_env` and `write_tripwire`; keep this a smoke check, not another suite. The existing runner already proves what a non-empty tripwire log means. (`tools/run_unittest_parallel.py:370–409,438–462`)
+- **MEDIUM — Task 2:** The aggregate suite and one installer dry run are needed. Reuse the existing evidence reader, including its real-preflight skip check, instead of adding another run or accepting an unrelated green module as proof. (`Makefile:67–89`; `tmp/run-2026-11-23/p39.2-10/evidence.py:7–9,21–49`; `tmp/run-2026-11-23/p39.2-10/dryrun.py:28–64`)
+- **LOW — Task 3:** The roadmap-only commit is the right scope. Keep it behind the digest and live-check gates; no new installer path or workflow hook is needed. (`.planning/ROADMAP.md:132`; `AGENTS.md:347–352`; `.planning/phases/40-resilient-review-sized-by-jev/40-13-PLAN.md:145–161`)
+
+##### Cross-plan coverage and verdict
+
+- **Coverage:** Reviewed **4/4** manifest plans. No same-wave file overlap: waves 10–13 each contain one plan. The serial chain `40-09 → 40-10 → 40-11 → 40-12 → 40-13` covers the named handoffs, including the fold fixture from 40-08 and the classifier contract from 40-06. (`.planning/phases/40-resilient-review-sized-by-jev/40-08-PLAN.md:200–203`; `.planning/phases/40-resilient-review-sized-by-jev/40-10-PLAN.md:5–6`; `.planning/phases/40-resilient-review-sized-by-jev/40-11-PLAN.md:5–6,95,170`; `.planning/phases/40-resilient-review-sized-by-jev/40-12-PLAN.md:5–6,100`; `.planning/phases/40-resilient-review-sized-by-jev/40-13-PLAN.md:5–6`)
+- **Acceptance and prohibitions:** The earlier plans assign the non-dismissed SPEC edge rows and all five prohibitions to checks; 40-13 maps all eleven acceptance lines to evidence. The gaps are in what that evidence proves: actual judge admission after a failed ping (R2), owner-visible classification and a scoped re-pass (R5), and the fold handoff when findings collide (R7). The cycle-1 resume-supersede item is no longer missing from the plan: 40-03 now specifies the `chosen` event and a red-then-green check. (`.planning/phases/40-resilient-review-sized-by-jev/40-SPEC.md:184–199,205–255`; `.planning/phases/40-resilient-review-sized-by-jev/40-13-PLAN.md:129`; `.planning/phases/40-resilient-review-sized-by-jev/40-03-PLAN.md:181`)
+- **Verdict: revise before dispatch.** Fix 40-10’s owner and fixer routing first, make 40-12’s ping boundary and launch decision explicit, then make 40-13 certify only evidence it actually captures.
+
+Read-only review: no files changed, and no suites, live judges, or installer steps were run. The blocked-until pool behavior remains **PROVISIONAL**.
+
+### Triage of cycle 2 (planner fix pass after the cycle)
+
+#### Batch A (40-01, 40-02, 40-03)
+
+# Cycle-2 dispositions, Batch A (40-01, 40-02, 40-03)
+
+- 40-01 HIGH same-round remerge lists a judged lane whose report is omitted: incorporated (E1) Task 1 step 4 exit 2 `merge-reports: lane <key> judged in round <N> but its report is not given` before any write; truth, record_merge text, T-40-03, artifacts; Task 3 `test_remerge_without_a_judged_lanes_report_exits_2` (N + 15).
+- 40-01 MEDIUM call omits `deps`: incorporated (one-line) `_merge_with_lane_log(args, reports, failing, missing, deps)`.
+- 40-01 MEDIUM judged event without numeric `at` aborts the ping: incorporated in 40-02 `_skip_status` (not fresh), pinned in `test_ttl_edges`.
+- 40-01 MEDIUM ponytail Task 2 reason-membership on record_merge events: rejected, `TestRecordMerge` already asserts the exact reasons record_merge appends; not one line.
+- 40-01 LOW ponytail Task 3 one expected set: rejected, SPEC 40-R3 asks for a non-vacuity case of the lock.
+- 40-01 HIGH ponytail Task 1 fix at the caller: incorporated, guard in the CLI caller, merge_findings and renderer reused.
+- 40-01 LOW (clarity) shared log across subTests in `test_missing_lane_reads_never_resolved_in_either_order`: incorporated, fresh log per subTest.
+- 40-02 HIGH `replacement_row` reads a missing route as native; fixtures wrong: incorporated (E2) `lane_switch._route` (None -> `custom` for a command lane, else not dispatchable and excluded); rows stated; exact deadline asserts `replaced by lane-b`.
+- 40-02 HIGH deadline does not bound CLI exit: incorporated (E3) truth, `_probe_all` docstring, `--timeout` help, T-40-06 (per-ping timeout to the runner plus `RUNNER_OUTER_MARGIN_S`/`_KILL_GRACE_S`/`_TERM_GRACE_S`; pool only classifies).
+- 40-02 HIGH global cache entry does not prove this review probed: incorporated (E4) reuse window, its constant and `_review_start` deleted; round 1 probes all non-native lanes; later rounds skip only a lane judged in round N-1 within `QUOTA_TTL_SECONDS`; probes still written to quota.json; three reuse tests -> `test_round_one_probes_despite_a_fresh_cache_success`; count 20; negative grep.
+- 40-02 HIGH ponytail Task 1 (unknown is not native) and Task 2 (supervisor owns child lifetime): incorporated with E2 and E3.
+- 40-02 MEDIUM `--round 0` accepted: incorporated (one-line) `--round` type `_positive_int`.
+- 40-02 MEDIUM `_reason` passes unknown reasons: incorporated (one-line) mapped to `real_error`.
+- 40-02 MEDIUM `_stop_text` and the rejected candidate: incorporated (one-line) original rows only.
+- 40-02 MEDIUM Task 1 oversized: open, not one line; three-task cap; orchestrator split rule stands.
+- 40-02 MEDIUM ponytail Task 3 conflicting global roster in the judge-file CLI case: incorporated (one-line).
+- 40-03 HIGH resumed lane can enter another quota wait before switch-lane: incorporated (E5, 40-03 part) truth "Resumed failure"; Task 2 `test_resumed_flagged_lane_failing_with_quota_switches` (capacity, then resumed quota, flagged lane switches); count 19. Doc order and order test: 40-09.
+- 40-03 HIGH ponytail Task 2 resume branch at the caller: incorporated, CLI already records the resumed reason; caller text 40-09.
+- 40-03 MEDIUM non-switch cases run route discovery: open, not one line (lazy lookup would move 40-02's `_lazy_routes` into lane_switch.py); read-only (`persist=False`).
+- 40-03 MEDIUM prompt read and tier parse fail before the logged path: open, not one line; that exit carries no event, so the log keeps the earlier reason.
+- 40-03 LOW provisional label partly applied: incorporated (one-line) main D-04 truth labels the different-pool part PROVISIONAL.
+- 40-03 LOW red proof accepts any FAILED line: incorporated (one-line) acceptance requires `FAIL: test_resumed_lane_after_a_failed_attempt_is_judged`.
+- 40-03 MEDIUM ponytail Task 1 lazy lookup and one switch helper: open for the lazy lookup; E2's `_route` also governs switch-lane's replacement row.
+
+## Handoffs to other planners (not edited here)
+
+- 40-08 quotes the stale four-argument `_merge_with_lane_log`; the signature is `(args, reports, failing, missing, deps)`.
+- 40-09 callers of `merge-reports --lane-log` must pass every report already judged in the round, or handle exit 2 with `merge-reports: lane <key> judged in round <N> but its report is not given`.
+- 40-09 and 40-12 text that mentions the 120-second cache reuse must drop it (E4): round 1 always probes; later rounds skip only a lane judged in round N-1 within `QUOTA_TTL_SECONDS`.
+- 40-05: each worker's probe gets `min(timeout_s, remaining)` (E3), on top of 40-02's `ProbeSeams.timeout_s`.
+- Checked at fix time: 40-05, 40-09 and 40-12 already drop the reuse (E4); SPEC and CONTEXT do not require it. `40-VALIDATION.md` line 45 (REV-07 R2 row) still lists `quota-cache reuse`; the orchestrator should change it to `round 1 probes despite a fresh cache entry` (outside the plan scope).
+
+#### Batch B (40-04, 40-05, 40-06, 40-07)
+
+# Cycle-2 dispositions, Batch B first half (40-04, 40-05)
+
+- 40-04 HIGH check-reviewer (plain and effort) can clear a pool record: incorporated (E6) Task 2: `ProbeSeams.role` default `""`; only `probe-quota --role review` and `ping-lanes` (40-05 Task 1, `role="review"`) opt in; `test_check_reviewer_never_passes_the_pool` (CLI plain leg plus direct `probe_effort` leg); T-40-15.
+- 40-04 HIGH ponytail Task 2 (fix at the diagnostic callers): incorporated (E6), same field with the default flipped.
+- 40-04 MEDIUM "last on the argv" / runner pool inference: incorporated: "after every existing `runner_flags` flag"; the D-04 truth says the runner may still infer a pool from a matched row.
+- 40-04 MEDIUM `run_fn` used outside `_read`: incorporated: its own fail-if-called `never` fake.
+- 40-04 MEDIUM seven returns in `blocked_until`: incorporated: `_parse_status` parser helper (PROVISIONAL, gate).
+- 40-04 MEDIUM `review_spec` sixth parameter vs `max-args = 5`: incorporated as a deviation from c1 D2's literal signature (intent kept): `review_spec` unchanged; the two review callers use `review_spec(...)._replace(pool=...)`; evidence pyproject.toml:75-76 and runner_dispatch.py:114-115; no other plan quotes the keyword.
+- 40-04 MEDIUM PROVISIONAL count / stale 22 total: incorporated: four named docstrings; named-test gate instead of a total.
+- 40-04 LOW ponytail Task 3: incorporated by 40-05 (E7 decisions, pre-pass pinned against `refresh_quota_cache`).
+- 40-05 HIGH expired pool gets no retry; unflagged lanes hit `none`: incorporated (E7) Task 2: `blocked_cache_entries` on `pool_decisions`; the retry key pops ANY cached entry; only flagged pooled keys are touched; subTests for a cached quota failure, fresh success, fresh `auth`; unflagged test with cleared and expired lines.
+- 40-05 HIGH fake clock epoch and second-worker race: incorporated (E7) Task 1: one epoch (`POOL_NOW`, `PAST`, `FUTURE`); one concurrent read per pool before the workers (`_read_pools`), decisions passed in as data, no read in a worker; renewal and clearing subTests with exact read and probe counts and read-before-probe order; two-pool test; prohibition reworded.
+- 40-05 HIGH cadence and deadline bound: incorporated (E3, E4, E7) Task 1: decision `none` keeps `_skip_status` (no cache reuse); shared monotonic budget from before the reads; probe gets `min(timeout_s, int(remaining))`, under 1 s is `ping_timeout` with no probe; reads killed at `timeout_s` (`blocked_until`/`blocked_reader` gain `timeout_s`); bound stated as E3 words it (truth, `_ping_one` docstring, T-40-18); round-2 fresh and budget tests.
+- 40-05 HIGH ponytail Task 1/Task 2: incorporated: same `_ping_one`/`_probe_all`; pre-pass pinned through `probe-quota` against `refresh_quota_cache`.
+- 40-05 MEDIUM execute fake cannot show no read: incorporated: helper returns the read count, a status read with `line=None` is unexpected; execute test asserts reads 0.
+- 40-05 MEDIUM stale 23 total: incorporated: named-test gates.
+- 40-05 MEDIUM `<verification>` lacks `make check-dogfood`: incorporated.
+- 40-05 E4 (no 120-second reuse): incorporated: no reliance on reuse; `rg -q "PING_REUSE_S"` exits 1 gate; cycle-1 row marked superseded.
+- 40-05 40-02 names quoted in read_first: incorporated: the revised 40-02-PLAN.md has `_skip_status(run, row, now)`, `PING_GRACE_S = 5`, `clock_fn`, `_ping_one(row, run, seams)` and no `PING_REUSE_S`.
+- 40-05 native rows reaching the worker / retry slot: incorporated: decisions built from non-native rows only.
+- 40-05 two-pool concurrency proof: incorporated: `threading.Barrier(2)` in `test_two_pools_are_read_once_each_before_any_probe`.
+- 40-05 Task 1 size (tracer plus eight named cases): open: explicit overrun rule (five named cases to a Task 3 with only tests/test_lane_ping.py, both gate counts stated).
+
+# Cycle-2 dispositions, Batch B second half (40-06, 40-07)
+
+- B/40-06 #1 payload filter forwards unmarked text | HIGH -> MEDIUM residual risk | rejected (E9): summaries only by construction (CONTEXT D-06); filter drops every recognizable code, path, assignment, quoted and long-hex form; adapter reads no file content, diff or config value; no new filter. Recorded for the owner.
+- B/40-06 #2a mechanical CROSS-DOC/unheaded reaches the fixer | HIGH | incorporated (E8): one SKIPPABLE guard before the class in `route_for`; `SERIOUS` removed; CROSS-DOC/none mechanical cases in Task 2.
+- B/40-06 #2b owner items lost after an Edits Applied skip | HIGH | incorporated (E8, 40-06 part): `classify-disagreements --owner-out <path>` appends each owner entry as one JSON line via `review_log.append_event`; OSError -> exit 2, empty stdout; `test_owner_items_are_appended_to_the_owner_file`. Final-Surface carry stays with 40-10.
+- B/40-06 #3 decoding error escapes the shared jev client | MEDIUM | open: fix belongs in `jev_names.ask_items` (outside both plans' files) plus a test.
+- B/40-06 #4 Task 1 test imports before use; Task 1 size | MEDIUM | incorporated: `re`/`secret_shapes` moved to Task 2; size kept.
+- B/40-06 ponytail Task 2 | MEDIUM | incorporated except decoding (open).
+- B/40-07 #1 added lane differs from the resolver's choice | HIGH | incorporated (E10): forced-double `quota.resolve_reviewers` over `routing.unroutable_quota`, same `--source-vendor`/`--cross-ai`, second entry when not already chosen; `eligible_keys` deleted; distinct test vendors; execute-purpose and native stale-cache tests.
+- B/40-07 ponytail Task 1 | HIGH | incorporated: no second eligibility predicate; reviewer tokens index the candidate rows (D8 tokens and omission kept).
+- E10 residual (existing row = resolver's second entry) | n/a | open for the owner: literal E10 keeps one lane.
+- B/40-07 #2 bad sizing input | MEDIUM | incorporated (40-07 part: OSError/ValueError -> exit 2, no write, no event); 40-09 failure branch open.
+- B/40-07 #3 jev-one CLI log, reorder reason | MEDIUM | open (new CLI test; reason text that 40-09 quotes).
+- B/40-07 #4 `_clip`, fact bindings, token map, `jev_root` scope | MEDIUM | incorporated.
+- B/40-07 ponytail Task 2 | LOW | no change needed.
+
+## Cross-plan handoffs (orchestrator: relay to the owners of 40-09 and 40-10)
+
+- 40-09 `## Commands` (1) must add `--source-vendor "<the value passed to resolve-reviewers>" --cross-ai` to the `size-review` line. Without `--cross-ai` the resolver returns only the session default and no second lane is ever added, so the signal floor never fires in the real flow.
+- 40-09 `## jev classes and sizing` sizing paragraph: replace "the next lane of the review order that resolve-reviewers could also have chosen (its route dispatches and the quota file marks it available)" with "the second lane resolve-reviewers picks in double mode (same source vendor, quota and routes)", and "the reviewer among the first five keys of the review order" with "the reviewer among the candidate lanes (the current lanes, then that second lane)".
+- 40-09: give a `size-review` exit 2 its own branch (stop with the stderr line; never dispatch without the ping).
+- 40-10: the flag is `classify-disagreements --owner-out "$RUN_TMP_DIR/owner-items.json"`; each call appends its owner entries as JSON lines `{"title", "severity", "source", "class", "confidence"}` plus `"reason"` on noted entries; a nonzero exit means nothing was printed (today's path).
+
+#### Batch C (40-08, 40-09)
+
+# Cycle-2 dispositions, Batch C (40-08, 40-09)
+
+- 40-08 #1 HIGH --doc-paths as three arguments: incorporated (E11), Task 2 test passes "p1.md p2.md p3.md" as one argument.
+- 40-08 #2 HIGH fence toggle ends a four-backtick fence: incorporated (E11), Task 1 CommonMark rule (same char, run >= opening, no info string); Task 2 fixture fold_in_long_fence.md (fold lines inside the inner block, so HEAD's toggle fails it) and a tilde-in-backtick text case.
+- 40-08 #3 HIGH same-location reviewer HIGH erases the fold edit: incorporated (E11), merge_findings((args.extra_findings or []) + reports) in both calls; test_same_location_reviewer_high_keeps_the_fold_edit; the reviewer's text at that one key is dropped, its tag kept.
+- 40-08 #4 MEDIUM unparseable non-empty extra file reads as empty: incorporated (one-line), read_extra_findings raises ArgumentTypeError (exit 2), pinned.
+- 40-08 #5 MEDIUM logged test config isolation: rejected, the named verify runs under tools/run_unittest_parallel.py with a temporary HOME and AI_KIT_REFUSE_REAL_HOME=1 (tools/run_unittest_parallel.py:438-460).
+- 40-08 ponytail Task 1/2 HIGH: incorporated with #1-#3; Task 3 LOW: no change.
+- 40-09 #6 HIGH resume waits before the flagged switch; final resume skips fold check: incorporated (E5), Task 3 point 5 switch-first bullet before the hinted exit-75 bullet, fold check before Step 1.5 (exit 0 and failed-lane merge), ORDER doc test with non-vacuity.
+- 40-09 #7 HIGH resume payload lacks QUOTA_JSON/fold inputs; stale sibling_key: incorporated (E5), quota_json, lane_log, framework_id, doc_archetypes saved and restored; sibling re-read from current reviewers.json; failed-lane merge passes the sibling's key=path again.
+- 40-09 #8 HIGH Judged by only on partial approval; Single reviewer cleanup: incorporated (E12), every Step 5 outcome quotes Judged by when a merged report exists; Single reviewer row cleans up only on clean Approved.
+- 40-09 #9 HIGH "never migrates" false for live probe: incorporated (E12), sentence now "Python's config resolution in these commands never migrates; the runner's own legacy check runs as on every dispatch."
+- 40-09 #10 summaries-only residual risk: rejected as a plan change, severity MEDIUM (E9): summaries by construction (CONTEXT D-06), 40-06 filter drops code/path/assignment/quoted/long-hex forms, no file content, diff or config value read.
+- 40-09 #11 MEDIUM sizing failure branch: open (not a one-line edit); sizing owner already single since cycle 1.
+- 40-09 #12 MEDIUM command mismatches: incorporated in part (check-fold-step excluded from --cwd sentence; empty reviewers stderr line quoted); open: PROVISIONAL label on different-pool sentence, failed-clear wording (40-04/40-05 own it).
+- 40-09 #13 MEDIUM one-task prompt choices: incorporated in part (python3 -c lines are Markdown to edit, never to run); open: blocker reporting and cold lint env are orchestrator-wide (D14).
+- 40-09 E4 120-second cache reuse: incorporated, removed from Task 1 ping (a) and Task 2 step 3; round 1 always probes; later rounds skip only a lane judged last round within the TTL.
+- 40-09 lane-failure.md chosen supersede and --owner-out: incorporated (Partial status, Commands final paragraph, jev paragraph, Commands (5), COMMANDS pin includes --owner-out).
+- 40-09 ponytail Task 1 MEDIUM count hardcode: open (kept as a drift alarm); Task 2/3 HIGH: incorporated with #6-#8.
+
+#### Batch D (40-10, 40-11, 40-12, 40-13)
+
+# Cycle 2 dispositions, Batch D (40-10..40-13)
+
+- 40-10 #1 jev answer does not change the next action | HIGH | incorporated (E8): `--owner-out $RUN_TMP_DIR/owner-items.json` in Step 2 cap cell and Step 4; Step 4 branch on lists; all-`reviewer_wrong` surfaces as skipped, no Decide manually; cap asks only with owner items; every outcome lists the file; tests in TestSkillClassifyWiring
+- 40-10 #2 re-pass exposes unrouted findings | HIGH | incorporated (E8): template parenthetical, apply-findings, Step 4 and fixer row say process only the listed findings, escalation conditions take precedence; Task 3 test, grep, truth, prohibition, T-40-35 changed together
+- 40-10 ponytail Task 2 branching | HIGH | incorporated: Step 4 branch sentence
+- 40-10 #3 diagram edges | MEDIUM | open (not one-line)
+- 40-10 #4 fold same-location collision | MEDIUM | open here, owned by 40-08 (E11)
+- 40-11 E8 ripple: fixer eval required a HIGH edit on a MEDIUM-only re-pass | HIGH (consistency) | incorporated: Task 2 prompt line on its own line; assertion 3 checks `Modify: TBD` stays
+- 40-11 #1 ping/pool outcomes missing | MEDIUM | incorporated (one-line setup sentence)
+- 40-11 #2 jev eval CRITICAL/HIGH and re-pass result | MEDIUM | open (not one-line; covered by 40-06 and 40-10 tests)
+- 40-12 #1 ping not isolated from the real roster; XDG writes | HIGH | incorporated (E13): `judge-referee-*` keys, user-layer read stated as accepted, exit 2 failed ping + owner question, `state_audit.py` lists runner state writes after every ping
+- 40-12 #2 later rounds launch from the unchanged pool; 120 s cache | HIGH | incorporated (E13, E4): failed later-round pool referee skips assign/launch with owner question; failed referee-three skips advisory launch and takes the substitute; every round probes all three (no judged events in the ping log, no cache reuse)
+- 40-12 #3 extra advisory scope / failure branch | MEDIUM | partly incorporated (round `skills.txt` scope); failure branch open
+- 40-12 #4 split-path hand edit false premise | LOW | incorporated: check instead of edit
+- 40-12 closing --gate covers whole registry | MEDIUM | incorporated: `--skills` from skills.r1.txt
+- 40-13 #1 clean-room exception lacks preflight host evidence | HIGH | incorporated (E14): `tests.test_ai_kit_gsd_spec_discuss_e2e` rc 0, ran >= 1, no REAL_CASE_SKIPS skip, reports from `reports-<SHA>`
+- 40-13 #2 layout evidence lines | MEDIUM | incorporated (one-line)
+- 40-13 #3 checklist credits CLI tests for skill behaviour | MEDIUM | open (not one-line)
