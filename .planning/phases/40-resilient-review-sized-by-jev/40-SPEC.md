@@ -54,7 +54,11 @@ finding (the fixer rule stays: address it anyway and note the disagreement).
 - The fixer (`ai-kit-spec-review-fixer/SKILL.md`) addresses every CRITICAL and HIGH finding even when it disagrees (line 48) and
   may skip a MEDIUM or LOW one with a reason.
 - `evals/evals.json` holds 14 evals (the last: `edge-refused-lane-exit-65`, `edge-edit-lens-pass-owner-started`); none covers a
-  lane failing mid-review. The word "fold" does not appear in SKILL.md or `references/` of the skill.
+  lane failing mid-review. The word "fold" does not appear in SKILL.md or `references/` of the skill. *(amended 2026-11-25,
+  40 plan: the live count is 15 evals; `merge-reports` today fails the whole merge when any lane fails (`cli.py`
+  `_cmd_merge_reports`), so R4 changes that behaviour and its tests; `RunnerSpec` has no `pool` field yet; a superpowers plan
+  revises through Step 3b-skill (`skill:superpowers:writing-plans`), so "the fixer adds the step" means the revise route that
+  receives the finding)*
 
 ## Requirements
 
@@ -142,7 +146,7 @@ finding (the fixer rule stays: address it anyway and note the disagreement).
 8. **Every changed SKILL.md meets the judge bar (JDG-04)**: `ai-kit-spec-review`, `ai-kit-spec-review-fixer` and
    `ai-kit-spec-review-checklist` (and any other SKILL.md this phase changes) carry new-shape evals and tests and pass the
    skill-judge loop.
-   - Current: `ai-kit-spec-review` carries 14 evals, none for a failing lane.
+   - Current: `ai-kit-spec-review` carries 14 evals, none for a failing lane. *(amended 2026-11-25, 40 plan: 15 evals live)*
    - Target: each judged result has no critical or high finding, or grade B or better, and no regression beyond the judge's
      run-to-run variation (Phase 36 and 39 brought the first skill to the bar; this phase keeps it).
    - Acceptance: the judge record of each changed skill meets the bar of AGENTS.md and `make check-dogfood` validates the records;
