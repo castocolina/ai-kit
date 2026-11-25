@@ -2,7 +2,7 @@
 phase: 40
 cycle: 1
 reviewers: [referee-one]
-reviewed_at: 2026-11-25T02:51:52-03:00
+reviewed_at: 2026-11-25T02:57:13-03:00
 plans_reviewed: [40-01-PLAN.md, 40-02-PLAN.md, 40-03-PLAN.md, 40-04-PLAN.md, 40-05-PLAN.md, 40-06-PLAN.md, 40-07-PLAN.md, 40-08-PLAN.md, 40-09-PLAN.md, 40-10-PLAN.md, 40-11-PLAN.md, 40-12-PLAN.md, 40-13-PLAN.md]
 models:
   referee-one: "router-env/my-referee-one"
@@ -35,9 +35,21 @@ path:line evidence: the five-file budget for fixtures and generated listings, th
 README row, distinct eval vendors, the duplicate pure-function switch cases, dropping the REASONS non-vacuity case). The plan
 checker re-checked the revised plans: 0 blockers, 0 warnings (40-05 checked separately after its own fix). Contract change
 accepted by the orchestrator: before round 1 every chosen non-native lane is probed (the 120-second cache reuse applies only to
-probes this review ran itself). Review cycle 2 was NOT run (time box); the review drivers are ready
-(`tmp/p40-review/prep_cycle.py 2 ...`, `run_all.sh 2`, `assemble.py 2`). Open concerns: none recorded as unaddressed; the
-fixes themselves are unreviewed by referee-one.
+probes this review ran itself). The decision-coverage gate passes (10 of 10 CONTEXT decisions cited). Review cycle 2 was NOT
+run (time box): the fixes themselves are unreviewed by referee-one. The review drivers are ready
+(`tmp/p40-review/prep_cycle.py 2 ...`, `run_all.sh 2`, `assemble.py 2`); the inlined planner rules carry a CORRECTIONS section
+pointing to the fix brief.
+
+Open concerns after the fix pass (with severity):
+- **HIGH — resume supersede (plan 40-03, owner of `dispatch-reviewer --lane-log`):** a lane logged `failed` by its first
+  dispatch (for example an exit-75 pending lane) that succeeds on its one-shot resume logs nothing, so `record_merge` keeps it
+  `failed` and drops its report (the D4 precedence rule). Fix before wave 3: a successful `dispatch-reviewer --lane-log`
+  appends a `chosen` event that supersedes the earlier `failed` of the same round, with a test of failed-then-resumed.
+- **MEDIUM — fixture assumptions the planners did not verify at HEAD:** that `cfg_resolve` keeps `usage_limited` and `pool`
+  on a custom-command lane (40-03, 40-05 fixtures); `route_all` for custom lanes under the fake `which_fn` (40-05);
+  `resolve-reviewers` under 40-07's fakes; the synthetic runtime cache shape of 40-13's layout check.
+- **LOW — lane size:** 40-02 Task 1 stages seven files and 40-06 Task 1 six (two of them generated listings); split at run
+  time if a lane exceeds its cap (the plans say how).
 
 ### referee-one
 
