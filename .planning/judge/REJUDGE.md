@@ -19,6 +19,7 @@ Rubric: loop 39: version 5, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 Rubric: loop 39.1: version 5, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 Rubric: loop 39.1.1: version 5, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 Rubric: loop 39.1.2: version 5, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
+Rubric: loop 39.1.3: version 5, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec8176379
 
 ## Judged skills
 | Skill | Batch | Loop | Round | Rounds | Judges | Why this many | Worst percent | Worst grade | Critical | High | Refuted | Bar | Spread | Digest |
@@ -28,7 +29,7 @@ Rubric: loop 39.1.2: version 5, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec817637
 | cst-refactor | 32.1 | 32.1 | 2 | 2 | 2 | 2: last verdict had a critical or high finding | 76.8 | C | 0 | 0 | 0 | met: no critical or high finding; lowest percent 76.8, loop 32 base 72.8 | 10.4 | 75bf49842855 |
 | jev-fast-decision | 32.1 | 34 | 3 | 3 | 2 | 2: last percent 86.4 is within 7.0 points of 80 | 92.0 | A | 0 | 2 | 0 | met: grade B or better; lowest percent 88.8, loop 32.1 base 86.4 | 3.2 | d89cd646430b |
 | markdown-to-pdf | 32.1 | 32.1 | 3 | 3 | 2 | 2: last verdict had a critical or high finding | 84.0 | B | 0 | 0 | 0 | met: no critical or high finding; lowest percent 84.0, loop 32 base 71.2 | 1.6 | 7eff8867401f |
-| ai-kit-spec-config | 32.2 | 39.1.2 | 2 | 2 | 2 | 1: no deterministic trigger; jev not asked (--no-jev) | 84.0 | B | 0 | 3 | 0 | met: grade B or better; lowest percent 84.0, loop 39.1.1 base 90.4 | 4.8 | c24e9fef256c |
+| ai-kit-spec-config | 32.2 | 39.1.3 | 3 | 3 | 3 | 2: last verdict had a critical or high finding; last percent 84.0 is within 7.0 points of 80 | 84.8 | B | 0 | 3 | 0 | met: grade B or better; lowest percent 84.8, loop 39.1.2 base 84.0 | - | b59463442d66 |
 | ai-kit-spec-execute | 32.2 | 32 | 1 | 1 | 2 | 2: last verdict had a critical or high finding; last percent 80.8 is within 7.0 points of 80 | 85.6 | B | 0 | 1 | 0 | met: grade B or better | 1.6 | 5811a9263ec9 |
 | ai-kit-spec-review | 32.2 | 39 | 3 | 3 | 2 | 2: last verdict had a critical or high finding; last percent 83.2 is within 7.0 points of 80 | 82.4 | B | 0 | 4 | 0 | met: grade B or better; lowest percent 82.4, loop 36 base 83.2 | 6.4 | cf225c0842f3 |
 | ai-kit-spec-review-checklist | 32.2 | 39.1 | 1 | 1 | 2 | 2: no rubric-v4 verdict | 88.8 | B | 0 | 1 | 0 | met: grade B or better | 8.0 | 5cc8b3f6a14f |
@@ -53,8 +54,9 @@ Rubric: loop 39.1.2: version 5, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec817637
 | jev-fast-decision | 34 | 3 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=87s out=154379 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 111/125 | 88.8 | B | 0 | 0 |
 | markdown-to-pdf | 32.1 | 3 | opencode:router-env/my-referee-three | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=94s out=33369 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 107/125 | 85.6 | B | 0 | 0 |
 | markdown-to-pdf | 32.1 | 3 | native:opus-xhigh | native, xhigh (frontmatter, documented; not observed) | replaces opencode:router-env/my-referee-two: failed: attempt n=13 rung=first cycle=1 session=ses_e46abaaafffee4jovG1Lvyonoj status=transient rule=omniroute-model-unavailable pattern=verified at=2026-11-08T04:04:34.037Z took=84s; then attempt 14 ran 630 s with stdout +0 bytes; orchestrator stopped the worker (same router failure as round 2, jev native_substitute 0.97) | 105/125 | 84.0 | B | 0 | 0 |
-| ai-kit-spec-config | 39.1.2 | 2 | opencode:router-env/my-referee-one | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=293s out=1101127 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_df0eef7faffeeoGFwsRnIgj1gF applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=- | - | 105/125 | 84.0 | B | 0 | 3 |
-| ai-kit-spec-config | 39.1.2 | 2 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=102s out=426641 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_df0eef80bffeuXYl9ktOin1vi7 applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=- | - | 111/125 | 88.8 | B | 0 | 0 |
+| ai-kit-spec-config | 39.1.3 | 3 | opencode:router-env/my-referee-one | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=498s out=1121991 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_ded87290effeyMxwqfswhbM96W applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=- | - | 106/125 | 84.8 | B | 0 | 3 |
+| ai-kit-spec-config | 39.1.3 | 3 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=170s out=196708 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_ded803207ffeKwK1JU0esOSGCk applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=- | - | 123/125 | 98.4 | A | 0 | 0 |
+| ai-kit-spec-config | 39.1.3 | 3 | opencode:router-env/my-referee-three | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=47s out=130063 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_ded872511ffe2DFFIoM0AxbcFl applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=- | - | 109/125 | 87.2 | B | 0 | 0 |
 | ai-kit-spec-execute | 32 | 1 | opencode:router-env/my-referee-two | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=46s out=97578 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 107/125 | 85.6 | B | 0 | 1 |
 | ai-kit-spec-execute | 32 | 1 | opencode:router-env/my-referee-three | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=41s out=40257 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 | - | 105/125 | 84.0 | B | 0 | 0 |
 | ai-kit-spec-review | 39 | 3 | opencode:router-env/my-referee-one | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=285s out=1261332 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_df6723597ffeYF4yKppJi2VY6k applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=- | - | 103/125 | 82.4 | B | 0 | 4 |
@@ -81,7 +83,7 @@ Rubric: loop 39.1.2: version 5, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec817637
 | cst-refactor | 32.1 | 72.8 | 0 | 1 | de846aae4cfe9720837e5f3e53e3b59f3ec8b0bb | verdicts/32/cst-refactor/r1/opencode_router-env_my-referee-three.json | not asked (deterministic two) | 2 | last verdict had a critical or high finding |
 | jev-fast-decision | 34 | 86.4 | 0 | 0 | 950e4855e72afdec208baebbf3946579480a40a3 | verdicts/32.1/jev-fast-decision/r1/opencode_router-env_my-referee-two.json | not asked (deterministic two) | 2 | last percent 86.4 is within 7.0 points of 80 |
 | markdown-to-pdf | 32.1 | 71.2 | 0 | 2 | a760f97e165b30cabc5aecaaab0faf7b2b369947 | verdicts/32/markdown-to-pdf/r1/native_opus-xhigh.json | not asked (deterministic two) | 2 | last verdict had a critical or high finding |
-| ai-kit-spec-config | 39.1.2 | 90.4 | 0 | 0 | - | verdicts/39.1.1/ai-kit-spec-config/r3/opencode_router-env_my-referee-two.json | jev not asked (--no-jev) | 1 | no deterministic trigger; jev not asked (--no-jev) |
+| ai-kit-spec-config | 39.1.3 | 84.0 | 0 | 3 | - | verdicts/39.1.2/ai-kit-spec-config/r2/opencode_router-env_my-referee-one.json | not asked (deterministic two) | 2 | last verdict had a critical or high finding; last percent 84.0 is within 7.0 points of 80 |
 | ai-kit-spec-execute | 32 | 80.8 | 0 | 1 | - | .planning/phases/31-removals-and-small-defects/31-VERIFICATION.md:69 | not asked (deterministic two) | 2 | last verdict had a critical or high finding; last percent 80.8 is within 7.0 points of 80 |
 | ai-kit-spec-review | 39 | 83.2 | 0 | 3 | - | verdicts/36/ai-kit-spec-review/r2/opencode_router-env_my-referee-one.json | not asked (deterministic two) | 2 | last verdict had a critical or high finding; last percent 83.2 is within 7.0 points of 80 |
 | ai-kit-spec-review-checklist | 39.1 | - | - | - | - | - | not asked (deterministic two) | 2 | no rubric-v4 verdict |
@@ -100,7 +102,7 @@ Rubric: loop 39.1.2: version 5, spec_sha 69ef37e9424c0a7ea9dd2293b559e43ec817637
 | cst-refactor | 6 evals | 20 | 10 | 8 | - |
 | jev-fast-decision | 8 evals | 20 | 10 | 36 | - |
 | markdown-to-pdf | 6 evals | 20 | 10 | 7 | - |
-| ai-kit-spec-config | 21 evals | 21 | 10 | 13 | - |
+| ai-kit-spec-config | 21 evals | 22 | 10 | 13 | - |
 | ai-kit-spec-execute | 6 evals | 16 | 8 | 6 | - |
 | ai-kit-spec-review | 15 evals | 20 | 10 | 144 | - |
 | ai-kit-spec-review-checklist | 9 evals | 20 | 10 | 6 | - |
@@ -277,6 +279,16 @@ Substitutes: none
 |---|---|---|---|
 | opencode:router-env/my-referee-one | usable | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=23s out=2258 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_df0fe4609ffe70UtfIojkFKDSL applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=- | - |
 | opencode:router-env/my-referee-two | usable | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=24s out=2297 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_df0fe4605ffe3G2IFN8m27NKiX applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=- | - |
+
+Members: opencode:router-env/my-referee-one, opencode:router-env/my-referee-two
+Substitutes: none
+
+### Loop 39.1.3
+
+| Judge | Probe | Status line | Reason |
+|---|---|---|---|
+| opencode:router-env/my-referee-one | usable | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=24s out=2168 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_deda8e474ffe2Cz1HXKOblh6EA applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=- | - |
+| opencode:router-env/my-referee-two | usable | AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=23s out=2366 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_deda8e44fffedTTilQO4Jbvhl5 applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=- | - |
 
 Members: opencode:router-env/my-referee-one, opencode:router-env/my-referee-two
 Substitutes: none

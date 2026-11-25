@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-config
-description: "Cross-AI lane setup: detects installed CLIs and models, proposes a review set and an execute set from the model catalog for the owner to pick, asks each role's priority order, effort and opt-in flags, then writes the [lanes] table of ai-kit's config.toml. Writes the per-project ./.aikit/config.toml by default, names the target first, and asks before replacing any existing [lanes] table. Use when the user wants to set up, refresh or check cross-AI review or execute lanes (which models review, which implement, in what fallback order), even without the word lanes; when ai-kit-spec-review or ai-kit-spec-execute-superpowers offers it because no lanes exist; to find lane providers opencode no longer lists; or to ask about migrating an old review-spec.toml. Supports --check-only (report availability, no config writes), --local and --global (pick the target, never consent to replace it). Not for running a review or execute with configured lanes, hand-editing one lane value, or editing [runner] or opencode.jsonc."
+description: "Sets up, refreshes or checks ai-kit's cross-AI lanes: which models review plans, which implement them, and each role's fallback order. Detects installed CLIs and models, proposes a review set and an execute set from the model catalog for the owner to pick, asks each role's order, effort and opt-in flags, and writes the [lanes] table of ./.aikit/config.toml (or the user config.toml with --global), asking before it replaces an existing roster. Use when the user wants cross-AI review or execute lanes set up, refreshed or checked, even without the word lanes; when ai-kit-spec-review or ai-kit-spec-execute-superpowers offers it because no lanes exist; to find lane providers opencode no longer lists; or to ask about migrating an old review-spec.toml. Supports --check-only (availability report, no config writes), --local and --global (pick the target, never consent to replace it). Not for running a review or execute with configured lanes, hand-editing one lane value, or editing [runner] or opencode.jsonc."
 ---
 
 ## Your task
@@ -9,7 +9,9 @@ Set up (or refresh) ai-kit's cross-AI lanes: the review and execute lanes and ea
 
 **Read [`references/config-file.md`](references/config-file.md) when** the user asks where the config lives, about another table in the file, the migration of an old `review-spec.toml`, or trust.
 
-Run Steps 0 to 4 in order (locate, detect, ask, write, report). Every CLI call, model id and TOML
+Run the steps in order: 0 locate; 1 detect (and stop there for a headless run, `--check-only`, or a
+migrate-only or stale-provider-only request); 1.5 catalog; 1.6 optional skill sort; 2 ask; 3 write;
+4 report. Every CLI call, model id and TOML
 field goes through the `ai-kit-spec.py` factory subcommands, never hand-typed: a wrong quote or a
 guessed model id fails silently, or errors at dispatch far from where the mistake was made.
 
@@ -21,7 +23,7 @@ and wait for the answer. Never answer a question on the user's behalf because no
 ## NEVER
 
 - **Never infer a model's vendor from its name** — always call `infer-vendor` (training knowledge is stale, consistency matters).
-- **Never hand-write a `command` for a runtime the runner knows** — a table runtime stores `runtime` and `model` (plus its knobs); the runner builds the argv. Only a CLI outside the runner table gets a custom `command`.
+- **Never hand-write a `command` for a runtime the runner knows** — a table runtime stores `runtime` and `model` (plus its knobs); the runner builds the argv. A hand-written command makes the lane command-bearing (the whole project `[lanes]` table then needs trust) and stops it following the runner's argv fixes. Only a CLI outside the runner table gets a custom `command`.
 - **Never save a CLI reviewer entry without testing it via `check-reviewer` first** — catch auth/model/entitlement problems before persisting. The one exception: the user declined the test at Step 2.5's write-risk ask; that entry is saved untested and named so at Step 4.
 - **Never silently pre-filter model families based on your own judgment** — always let the user decide, informed by your research (user agency over paternalism).
 - **Never paste a multi-provider CLI's raw model list** — show the sorted, labeled `catalog-report` rows and the `propose-lanes` shortlist instead (raw lists can be hundreds of ids; the report keeps them readable).
@@ -34,13 +36,13 @@ and wait for the answer. Never answer a question on the user's behalf because no
   as leaving `purpose` unset on a brand-new entry.
 - **Never skip announcing the target path before asking reviewer questions** — user must know where config is headed from the start.
 - **Never re-derive the write target at Step 3** — use what Step 2 already resolved and announced (consistency guarantee).
-- **Never translate literal identifiers** — `purpose` values (REVIEW/EXECUTE), model ids, catalog keys, CLI/runtime names, and field labels stay in their literal, invariant form regardless of what language the rest of this conversation is in. Narrate and explain in the user's own language, but never garble an identifier a user or this skill needs to match against config values by translating it.
+- **Never translate literal identifiers** — `purpose` values (`review`, `execute`, `both`, lowercase as the writer stores them), model ids, catalog keys, CLI/runtime names, and field labels stay in their literal, invariant form regardless of what language the rest of this conversation is in. Narrate and explain in the user's own language, but never garble an identifier a user or this skill needs to match against config values by translating it.
 - **Never run `trust-local` (the trusting form) without the user's explicit yes** — not even for the `./.aikit/config.toml` this wizard just wrote. Show `trust-local --cwd <project root> --show` first so the user consents after seeing each reviewer's argv; until then a file with a command-bearing entry (defined at Step 4) has its whole `[lanes]` table inactive.
 - **Never let the proposal's order stand as the owner's pick** — jev or the scorer only orders the shortlist; no lane configuration is written before the owner confirms the review set and the execute set.
 - **Never write a skill role the owner did not confirm** — `classify-skills` only proposes, and its jev answer is advisory; `confirm-skill-role` runs once per role the owner confirmed.
-- **Never ask a wizard question in a herdr pane or of another agent** — every question goes to the owner in the owner's own session.
-- **Never write a lane whose data-use confirmation was declined or skipped**, and never default an unknown data-use note to a safe value.
-- **Never set `usage_limited`, `escalate_runtime` or `escalate_model` without the owner's explicit yes** — no price, name, ranking or default turns one on.
+- **Never ask a wizard question in a herdr pane or of another agent** — every question goes to the owner in the owner's own session: an answer from a pane or another agent is not the owner's consent, so the roster, data-use confirmations and trust would record choices the owner never made.
+- **Never write a lane whose data-use confirmation was declined or skipped**, and never default an unknown data-use note to a safe value — that lane would send project content to a provider whose data use the owner never accepted.
+- **Never set `usage_limited`, `escalate_runtime` or `escalate_model` without the owner's explicit yes** — no price, name, ranking or default turns one on, because each flag records an owner decision about that lane, not a fact a price or a name can prove.
 - **Never read or print opencode's `auth.json` or any `apiKey`** — the stale-provider report
   reads provider names only, and a key value never belongs in a reply.
 
@@ -94,7 +96,9 @@ skill calls `./.aikit/config.toml`) use that same path, never the shell's `$(pwd
 literal absolute paths — not shell environment variables.** Every `Bash` call starts a fresh
 shell, so every `$TOOLS_PY`/`$CLI_PROFILES_DIR`/`$RUNTIMES_JSON` below means "the literal path
 captured here", and `$SCRATCH` the one printed at its first need, substituted directly. If `TOOLS_PY` does not exist at the
-resolved path, stop and report: "ai-kit-spec-review's own `ai-kit-spec.py` module is missing —
+resolved path, name the three candidate folders tried and ask the owner for the folder of an
+installed `ai-kit-spec-review` (another host may keep skills elsewhere), then use that folder as
+`REVIEW_SPEC_SKILL_DIR`. With no such folder, or no way to ask, stop and report: "ai-kit-spec-review's own `ai-kit-spec.py` module is missing —
 this skill configures cross-AI review for `ai-kit-spec-review`, which must already be
 installed."
 
@@ -115,15 +119,19 @@ When asking the user optional per-reviewer/per-executor questions later in the w
 mention which of these are present on this machine — this is the data
 `ai-kit-spec-execute` will need later; this step only surfaces it.
 
-**No way to ask: stop here.** If the host has no structured-question tool and no plain conversation with the user (a subagent, a print-mode or other headless run), stop after the two detection commands above: read [`references/headless.md`](references/headless.md), print its block, write no config, cache or trust record (no runtimes snapshot, no catalog, no scratch folder), and say that a person must run ai-kit-spec-config. This check comes before every branch below, `--check-only` included.
+**No way to ask: stop here.** If the host has no structured-question tool and no plain conversation with the user (a subagent, a print-mode or other headless run), stop after the two detection commands above: read [`references/headless.md`](references/headless.md), print its block, write no config, cache or trust record (no runtimes snapshot, no catalog, no scratch folder), and say that a person must run ai-kit-spec-config. The two detection commands still run each CLI's own listing: `detect-runtimes` may create ai-kit's cache folder for a private working directory, and a CLI may update its own files while it lists models; that is the limit of "no write" here. This check comes before every branch below, `--check-only` included.
 
 **If `--check-only` was passed** (a plain-words request only to check which lanes are available and change nothing, such as "just check my reviewers, change nothing", counts as the flag), read [references/check-only.md](references/check-only.md)
-and follow it: it asks Step 2.5's write-risk question before any live probe, reports availability
-and stale providers, then stops with no config, cache, snapshot or trust write. A live probe is
-still a real run: the CLI's own side effects aside, the cross-AI runner keeps run state under
-`${XDG_STATE_HOME:-~/.local/state}/ai-kit/` and may clear a dead run's leftovers there.
+and follow it: it reports detection, the roster and the stale providers without a live call, then
+asks before any live probe, every time, even when every lane's profile is read-only, with "skip
+the probe" as the default (a skip reports each lane's availability as unknown). A live probe is
+a real run: it spends one call of each lane's allowance, the CLI has its own side effects, and the
+cross-AI runner keeps run state under `${XDG_STATE_HOME:-~/.local/state}/ai-kit/` and may clear a
+dead run's leftovers there. The branch stops with no config, cache, snapshot or trust write.
 
 **A migrate-only request is not this wizard's write.** When the user only asks to migrate an old `review-spec.toml`, report `migration pending`, say that the next command that reads the roster (`probe-quota`, `resolve-reviewers` or a review run) migrates it, and stop: run no `detect-runtimes --save`, no catalog step and no write. Run the full setup only if the user also wants the lanes replaced. One exception: an old roster with a lane that names a removed runtime is never migrated by a read (each read uses the roster in memory and drops that lane with a removal note); say so instead of promising a migration, and offer the full setup to re-save those lanes.
+
+**A stale-provider-only request is not this wizard's write either.** When the user only asks which lane providers opencode no longer lists, run the `check-providers` report below, relay its lines with their certainty labels, and stop: no `detect-runtimes --save`, no catalog step, no question and no write. Run the full setup only if the user also wants lanes set up or changed.
 
 **Otherwise**, persist the snapshot before continuing to Step 2:
 ```bash
@@ -165,25 +173,10 @@ python3 "$TOOLS_PY" classify-skills --cwd <project root>
 When it prints no `unsorted` line (only `no unsorted skills` or `not offered` lines), say so in one
 line and go on to Step 2: there is nothing to offer. Otherwise offer the sort once, with the
 `unsorted` names, and sort only after the owner agrees; skip it when the owner declines or no
-question can be asked.
-
-It prints one `unsorted <name> hosts=<hosts>` line per addressable
-unsorted skill of the shared role table (a skill whose name the runner cannot address gets a `not offered <name> hosts=<hosts> reason=<reason>` line instead and no proposal) and, when jev is present, at most one `proposal <name> role=<role> confidence=<c> advisory`
-line per skill (jev sees only the skill's name and the first 300 characters of its description).
-With jev absent it prints `jev absent: nothing proposed`; after a low or missing answer the skill
-has no proposal. Say so and offer the closed roles yourself. MCP servers are never sent to jev. A
-proposal is advice: ask the owner about each skill and note each role the owner confirms. Write
-nothing yet: once Step 2.1 has resolved and announced the write target, run for each confirmed
-role
-
-```bash
-python3 "$TOOLS_PY" confirm-skill-role --name <skill> --role <role> --cwd <project root>
-```
-
-with `--global` in place of `--cwd <project root>` when the target is the user file. Each call
-writes one `[skills.roles]` entry, labeled `user-stated`, which beats the seed row; a name the
-command refuses stays unsorted. These writes come before the roster write and stand on their own:
-a later roster failure does not undo them, so say so before the first call.
+question can be asked. When the owner agrees, **read
+[`references/skill-role-sorting.md`](references/skill-role-sorting.md)** and follow it: a jev
+proposal is advisory, nothing is written before Step 2.1 has announced the target, and each
+confirmed role is its own `[skills.roles]` write that stands even when the roster write later fails.
 
 ### Step 2 — Ask
 
@@ -209,7 +202,7 @@ a later roster failure does not undo them, so say so before the first call.
 3. `--global` alone: `<user config>`; `--local` alone: `./.aikit/config.toml`. Either flag is an explicit choice, so skip the ask in case 4.
 4. Neither flag (the common case): the default is **local** (`./.aikit/config.toml`), since a per-project config cannot silently affect other projects. `Read` `<user config>`: a global roster exists when that file has a `[lanes]` table, or when an old `review-spec.toml` sits beside it (it migrates into the config.toml on the write); a config.toml with neither counts as no roster. With no global roster, proceed with the local default silently. With one, use `AskUserQuestion` before writing anywhere: "A global roster already exists at `<user config>` (or as an old `review-spec.toml` there that migrates into it). Write a per-project roster at `./.aikit/config.toml` instead (recommended — doesn't touch the global roster), or replace the global roster?" — with the local option first/default. When that global roster is an old `review-spec.toml`, offer replace in two forms: "replace" (the old file migrates first and is deleted once the migration's value check passes) and "replace, and keep the old roster as `review-spec.toml.migrated`". Picking either form here is the replacement consent below for the global file, and the keep form is also its keep answer.
 
-**Replacement gate (every flag combination).** `Read` the resolved target itself. If it already holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates into the target on the write) and the user has not already approved replacing that exact file above, use `AskUserQuestion`: "`<resolved absolute path>` already holds a roster. Replace it with the roster built in this run (its current lanes and policy are lost unless you re-enter them, with the comments of any lane or policy table the new roster drops; other tables and their comments are kept; an old `review-spec.toml` migrates first and is deleted once the migration's value check passes), or stop and keep it?" — with "stop" first/default. When an old `review-spec.toml` sits beside the target, add a third answer, "replace, and keep the old roster as `review-spec.toml.migrated`", which also migrates first. `--local`/`--global` choose the target, never consent to replace it. On "stop", end the run without writing. Only an explicit "replace" (either form) lets Step 3 pass `--replace`, and only the keep form adds `--keep-backup`; without `--replace`, `render-toml --out` refuses an existing roster and writes nothing.
+**Replacement gate (every flag combination).** `Read` the resolved target itself. If it already holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates into the target on the write) and the user has not already approved replacing that exact file above, use `AskUserQuestion`: "`<resolved absolute path>` already holds a roster. Replace it with the roster built in this run (its current lanes and policy are lost unless you re-enter them, with the comments of any lane or policy table the new roster drops; other tables and their comments are kept; an old `review-spec.toml` migrates first and is deleted once the migration's value check passes), or stop and keep it?" — with "stop" first/default. When an old `review-spec.toml` sits beside the target, add a third answer, "replace, and keep the old roster as `review-spec.toml.migrated`", which also migrates first. `--local`/`--global` choose the target, never consent to replace it. On "stop", end the run without writing. A "replace" answer covers the roster the owner saw, not the path: keep what the gate showed (the target's `[lanes]` table as Read, or the old file beside it), and Step 3 compares it again before writing. Only an explicit "replace" (either form) lets Step 3 pass `--replace`, and only the keep form adds `--keep-backup`; without `--replace`, `render-toml --out` refuses an existing roster and writes nothing.
 
 **Once the target is resolved, announce it immediately** — print "Writing to: `<resolved absolute path>`" before asking any of the reviewer questions below, so the user knows where this run's answers are headed from the start (not just in Step 4's closing report, which restates the same path after the write actually happens).
 
@@ -309,29 +302,25 @@ resolution logic** (`resolve_reviewers`/`resolve_ladder_pick` ignore it); say so
 
 #### Step 2.7 — Ask about the session default
 
-A reviewer or executor is a (runtime, model) pair. Each call runs it natively when its runtime is the current host and the host can select that model; otherwise it runs as a subprocess through the supervised runner. An entry with neither a runtime nor a model is the session default, which the host always runs natively. Today only Claude Code selects a model per call (its sonnet, opus, haiku and fable aliases); every other host runs only its session default natively. Those four are the `native_selectors` of the claude row of ai-kit's runtime table (`RUNTIMES` in the review skill's `ai_kit_spec/detection.py`), the only aliases routing runs natively, and not Claude Code's whole alias list; Step 1's `detect-runtimes` prints them as `aliases` for an installed claude.
+**MANDATORY read [`references/session-default.md`](references/session-default.md)** before this
+ask: it holds when a lane runs natively, what to do when the printed host looks wrong, and each
+host's entry shape (a claude host stores a short alias pair, tested at Step 2.5 like any pair;
+every other host stores the session default, no `runtime` and `model = ""`).
 
 Before asking, detect which runtime is hosting *this* session (never cached, always live):
 ```bash
 python3 "$TOOLS_PY" detect-current-runtime
 ```
 Capture the printed `host` (`pi` / `opencode` / `cursor` / `codex` / `claude` / `unknown`).
-That value is shown in the prompt below and decides the entry's shape at Step 3. When several
-CLIs are nested, their environment markers accumulate and the command returns the first marker in
-a fixed precedence (pi > opencode > cursor > codex > claude); it does not verify which CLI is the
-immediate parent. A codex or opencode session started from Claude Code records that CLI, not
-claude, but a pi marker left in the environment wins even when another CLI started later. When
-the owner says the printed host is not the active one, explain that precedence and offer a
-session-default entry without a host-specific alias.
+That value is shown in the prompt below and decides the entry's shape at Step 3.
 
 **Also ask, explicitly — do not skip this**: whether to register one or more entries that this
 host runs itself (running under: <host>), not any one specific vendor. Substitute the captured
-value into that annotation verbatim. When `detect-current-runtime` returns `"unknown"`, still
-render `(running under: unknown)` literally — never omitted, never softened to "not detected"
-or dropped from the prompt. Let the entry's `key` describe its place in the ladder (e.g.
+value into that annotation verbatim (an `unknown` host keeps it literally, as the NEVER list
+says). Let the entry's `key` describe its place in the ladder (e.g.
 `session-primary`, `session-fallback`), not a vendor.
 
-Worth asking regardless of `policy.mode`, since it is the only zero-external-dependency option (it needs no extra CLI and no external quota probe; the session's own quota still applies and is not observable here): useful as a primary pick or a pure fallback, depending on where the user places it in its role's order (`references/wizard-flow.md` step 9). **A host-run entry is never automatically prioritized over a subprocess one** — only its position in its role's order decides priority, and quota or availability failures decide fallback; for a pure fallback, place it last in that order. **When the captured `host` is `"claude"`**, the entry is the pair `runtime = "claude"` plus one of the short aliases that host defines (shown here as `placeholder-alias-1`), never a full model id such as `placeholder-model-1`; ask the user to pick one of those aliases (the `aliases` list of Step 1's `detect-runtimes` output) rather than typing a version string. That pair has a `model`, so it carries a `vendor` like any other pair: Step 2.3 with `--runtime claude` prints `anthropic`. On any other host, or `unknown`, the entry is the session default (no `runtime`, `model = ""`), because only Claude Code's aliases are verified per-call selectable.
+Ask it regardless of `policy.mode`: it is the only zero-external-dependency option. **A host-run entry is never automatically prioritized over a subprocess one** — only its position in its role's order decides priority; for a pure fallback, place it last in that order.
 
 **Also ask, for each such entry, the same `purpose` question Step 2.2 answers for ranked
 candidates**: review, execute, or both? (`"review"` | `"execute"` | `"both"`.) Such an entry
@@ -342,7 +331,7 @@ captured host's entry shape described above.
 
 #### Step 2.8 — Set `policy.mode`, strategy and timeouts
 
-Then ask `policy.mode` (`single` or `double`): `single` seats the first available lane of the review order whose vendor differs from the document author's, else the first available lane; `double` seats the first available lane and adds a secondary from another vendor only when one is available. Each role's order was already asked at `references/wizard-flow.md` step 9; `render-toml` keeps a generated `#` comment with each order above its `[lanes.policy.review]` or `[lanes.policy.execute]` table, so it stays readable to anyone opening `config.toml` later. If the resolved write target (above) is **local**,
+Then ask `policy.mode`, with `single` first/default (one review call per document) and `double` as the choice when the owner wants a second opinion from another vendor and a second-vendor lane exists: `single` seats the first available lane of the review order whose vendor differs from the document author's, else the first available lane; `double` seats the first available lane and adds a secondary from another vendor only when one is available. Each role's order was already asked at `references/wizard-flow.md` step 9; `render-toml` keeps a generated `#` comment with each order above its `[lanes.policy.review]` or `[lanes.policy.execute]` table, so it stays readable to anyone opening `config.toml` later. If the resolved write target (above) is **local**,
 also ask whether this local config should be `local-only` or the default `global-merge` — set
 the JSON config's top-level `strategy` key to `"local-only"` if so (`render-toml` writes it as `strategy = "..."` under `[lanes]`); omit the key entirely for the
 default (global-merge applies, no line needed).
@@ -362,6 +351,8 @@ the lane's `extra.timeout_tiers` (every lane key outside `key`, `model`, `vendor
 
 ### Step 3 — Write
 
+Before building the JSON, check once with the owner that each lane's place in its role's order still fits its quota reliability and its strength for that purpose (`references/wizard-flow.md` steps 3 and 9); a change goes back to step 9's order question.
+
 When both roles end with no lane (every candidate declined or dropped, and no session default), write nothing by default: say so and stop. Only on the owner's explicit request to clear the existing roster does an empty `lanes` list go to the writer, which then removes both role arrays.
 
 Build the JSON shape `python3 "$TOOLS_PY" render-toml` expects: `{"strategy": "local-only", "policy": {"mode": "single", "timeout_tiers": [600, 1200, 1800], "review": {"ladder": ["<key>"]}, "execute": {"ladder": ["<key>"]}}, "lanes": [...]}` — `strategy` only when Step 2.8 asked for `local-only`, `timeout_tiers` only when changed, a role's `review` or `execute` table only when that role has a lane, and never a flat `ladder`. **Before building `lanes`, read the "Lane entry fields" section of [`references/config-file.md`](references/config-file.md)**: it says which key each entry carries and when (`vendor`, `purpose`, knobs, flags, `pool` and the data-use keys), beside an example. Every newly registered entry gets an explicit `purpose`, and a flag is written only as `true`, never `false`. `render-toml` rejects anything else and prints why. Pass `--catalog-path <catalog>` (the path Step 1.5 printed; left out only in `references/catalog.md`'s no-catalog session-default case) and `--runtimes-json "$RUNTIMES_JSON"` (the snapshot Step 1 saved), so the write checks each effort against the evidence the proposal used.
@@ -369,17 +360,17 @@ Build the JSON shape `python3 "$TOOLS_PY" render-toml` expects: `{"strategy": "l
 Write it to `$SCRATCH/config.json` (make `$SCRATCH` first, as Step 0 says, when no earlier step made it), then let `--out` do the write directly (atomic, creating parent dirs as needed) rather than piping stdout through a second write yourself:
 
 ```bash
-python3 "$TOOLS_PY" render-toml --json-config "$SCRATCH/config.json" --out <target path> \
-  [--replace] [--keep-backup] --catalog-path <catalog> --runtimes-json "$RUNTIMES_JSON" > "$SCRATCH/rendered.toml" 2> "$SCRATCH/render-toml-stderr.txt"
+python3 "$TOOLS_PY" render-toml --json-config "$SCRATCH/config.json" --out "<target path>" \
+  [--replace] [--keep-backup] --catalog-path "<catalog>" --runtimes-json "$RUNTIMES_JSON" > "$SCRATCH/rendered.toml" 2> "$SCRATCH/render-toml-stderr.txt"
 echo "render-toml exit $?"
 ```
 
-`<target path>` is the write target Step 2 resolved and already
-announced — `./.aikit/config.toml` by default (or explicitly via
-`--local`), `<user config>` only via `--global` or
-because the user picked "replace the global roster" at Step 2.1's
-ask. Never re-derive the target here independently of what Step 2
-already resolved and told the user. Add `--replace` only when the target holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates) and Step 2.1's replacement gate got an explicit "replace"; with `--replace`, render-toml first migrates that old roster and prints one line. Add `--keep-backup` only for Step 2.1's keep answer: the migrated old roster then stays as `review-spec.toml.migrated`; without it the old file is deleted once the migration's value check passes. (The runtimes snapshot was already
+`<target path>` is the target Step 2.1 resolved and announced, used as recorded (never
+re-derived here). Right before this call, `Read` the target again (with any old roster beside it
+that is pending migration): when its roster differs from what Step 2.1's gate showed, other than by a migration an
+approved step of this run made, show the difference and ask the gate again instead of writing; when
+a target that had no roster now has one, ask the gate for the first time. A change made between
+that read and the write is not caught. Add `--replace` only when the target holds a roster (a `[lanes]` table, or an old `review-spec.toml` beside it, which migrates) and Step 2.1's replacement gate got an explicit "replace"; with `--replace`, render-toml first migrates that old roster and prints one line. Add `--keep-backup` only for Step 2.1's keep answer: the migrated old roster then stays as `review-spec.toml.migrated`; without it the old file is deleted once the migration's value check passes. (The runtimes snapshot was already
 persisted in Step 1 via `--save` — no separate write needed here.)
 **Capture stderr to `$SCRATCH/render-toml-stderr.txt`** — `render-toml`
 prints a `WARNING:` line there for every lane entry it
@@ -409,23 +400,18 @@ Review order:
 Execute order:
   1. execute-primary
 ```
-not folded into a single vague sentence about "reviewers configured in
-some order" — the point of this report is that the user can see the
-exact fallback sequence without having to open the file. If an order
+never summarized in a sentence, so the owner sees each fallback sequence without opening the file. If an order
 differs from the one confirmed at Step 2.2, name the missing keys; a role with no lane has no order. Show every other stderr line (a migration line, a usage-limited role warning, a legacy-order note) as printed. Name every entry saved
 untested at Step 2.5 ("untested: `<key>` — its availability is unverified") and every entry saved without a vendor at Step 2.3 ("vendor unknown: `<key>` — the cross-vendor filter cannot exclude it").
 
 Only after a confirmed write (exit 0, with or without `WARNING:` lines), run `python3 "$TOOLS_PY" config-status --cwd <project root>` (read-only, no probe) and show each `capability <runtime>/<model> <role>: <summary>` line it prints: one per lane of an `active` roster, review and execute lanes alike, in config order. The lines show that project's effective roster (project over user, per `strategy`), not only the file just written: label them so, and after a global write say when a `local-only` project file hides the saved lanes there. A `pending` or `none` roster prints no capability line: say that the capability view appears once the roster is active. On a non-zero exit, quote its stderr and say the capability view is unavailable. When the owner sorted skills at Step 1.6, also list each role it wrote (`confirmed <name> role=<role>`), each confirm that failed with its stderr (an earlier confirm stays written), and each skill left unsorted.
 
 **When the write target was local** (`./.aikit/config.toml`), check whether it holds a
-command-bearing entry. **Command-bearing** (the one definition, same as
-[`references/config-file.md`](references/config-file.md) and `trust.command_lanes_bytes`): an
-entry with a `command`, or an entry whose `key` equals the `key` of a `command` entry in this
-file or in the user layer (only without `strategy = "local-only"`): the user `config.toml`'s
-`[lanes]`, or, when it has none, an old `review-spec.toml` beside it pending migration, read in memory, in any
-role (its fields fill that command's placeholders, so a
-`runtime` entry that overrides a user command entry counts). A plain (runtime, model) pair with
-its own key is not command-bearing. With none, the file needs no trust and is active at once.
+command-bearing entry, as defined once in the Trust section of
+[`references/config-file.md`](references/config-file.md) (read it now): an entry with a `command`,
+or one whose `key` matches a `command` entry of this file or, only without
+`strategy = "local-only"`, of the user layer (including a pending old user roster). With none, the
+file needs no trust and is active at once; `config-status` above shows the roster's actual state.
 When it holds at least one, tell the user the whole project `[lanes]` table stays inactive for
 cross-AI review until trusted, then **MANDATORY read**
 [`references/trust-flow.md`](references/trust-flow.md) and follow its steps in order: preview
@@ -438,5 +424,5 @@ Finally, `rm -rf "$SCRATCH"` after a successful write. A failed write keeps it f
 
 ## Evidence
 
-- The bare-model rule for codex was confirmed live with a real model id, shown here with invented placeholders: codex rejects an effort suffix on the model id.
+- The bare-model rule for codex was confirmed live with a real model id, shown here with invented placeholders: codex rejects an effort suffix on the model id. A newer codex may differ; Step 2.5's test call is the check for the installed binary.
 - Until 2026-08-29 an earlier design gave host-run entries an automatic guaranteed-baseline slot in `double` mode regardless of ladder position; a real config hit this and got a silently reordered ladder, so it was removed.

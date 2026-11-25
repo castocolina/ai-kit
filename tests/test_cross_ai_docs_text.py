@@ -181,10 +181,14 @@ class SpecConfigAndConfigDocs(unittest.TestCase):
     def test_sorting_step_has_both_paths_and_the_confirm(self):
         sec = section_text(SPEC_CONFIG_SKILL.read_text(encoding="utf-8"),
                            "### Step 1.6 — Sort unknown skills (optional)", stop=("## ", "### "))
+        # Loop 39.1.3: the sorting procedure moved to a reference that Step 1.6 links.
+        self.assertIn("(references/skill-role-sorting.md)", sec)
+        procedure = sec + (SPEC_CONFIG_SKILL.parent / "references/skill-role-sorting.md").read_text(
+            encoding="utf-8")
         for value in ("classify-skills --cwd", "advisory", "jev absent: nothing proposed",
                       "addressable", "Step 2.1", "confirm-skill-role --name", "--global",
                       "[skills.roles]", "user-stated", "never runs", "only after the owner agrees"):
-            self.assertIn(value, sec)
+            self.assertIn(value, procedure)
         # The listing runs before the offer, and nothing is offered when it lists no unsorted skill.
         self.assertIn("without asking", sec)
         self.assertIn("nothing to offer", sec)

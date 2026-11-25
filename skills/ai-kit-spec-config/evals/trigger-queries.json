@@ -10,14 +10,15 @@
   {"query": "Migrate my old review-spec.toml roster to the new config.toml.", "should_trigger": true},
   {"query": "My plan reviews always come from the same vendor; add a model from another vendor to double-check them and a cheaper one to implement.", "should_trigger": true},
   {"query": "Switch my Claude Code session to a different model for the rest of this chat.", "should_trigger": false},
-  {"query": "Create a new SKILL.md for a changelog generator from scratch.", "should_trigger": false},
+  {"query": "My last cross-AI execute run stopped with a quota error on the opencode lane; find out why, and leave my lanes as they are.", "should_trigger": false},
   {"query": "Run a cross-AI review of this plan with the reviewers I already configured.", "should_trigger": false},
   {"query": "Change the [runner] retry settings in .aikit/config.toml, leave the lanes alone.", "should_trigger": false},
   {"query": "Add my Artificial Analysis API key to secrets.env for me.", "should_trigger": false},
-  {"query": "Plan the next GSD phase for the usage metrics dashboard feature.", "should_trigger": false},
+  {"query": "Set the default model of plain opencode sessions in opencode's own config, not ai-kit's lanes.", "should_trigger": false},
   {"query": "Add a new provider block to my opencode.jsonc so opencode can use it.", "should_trigger": false},
   {"query": "Explain why the last cross-AI review picked the second reviewer instead of the first one.", "should_trigger": false},
   {"query": "Pick a review set and a coding set from my model catalog and set each role's order.", "should_trigger": true},
+  {"query": "ugh my plan reviews keep coming back from the same model, can u wire up codex as a 2nd opinion reviewer", "should_trigger": true},
   {"query": "Edit one lane's effort value by hand in my .aikit/config.toml file, nothing else.", "should_trigger": false},
   {"query": "Execute my superpowers plan with the execute lanes that are already configured.", "should_trigger": false}
 ]

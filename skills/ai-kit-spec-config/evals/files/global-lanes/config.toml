@@ -1,0 +1,12 @@
+# The user config.toml (the global layer) before the run: it already has a [lanes] table.
+[lanes]
+
+[[lanes.review]]
+key = "global-review"
+runtime = "pi"
+model = "fake/placeholder-model-3"
+vendor = "fake"
+purpose = "review"
+
+[lanes.policy.review]
+ladder = ["global-review"]

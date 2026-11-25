@@ -24,7 +24,8 @@ file is trusted, its whole project `[lanes]` table stays inactive for cross-AI r
    the review invocation: an execute entry that shares a key with a review entry can be missing,
    and a table-runtime execute entry is shown with its review argv. Compare the lines with the
    file's command-bearing entries in both roles. A `{"key", "error"}` line, and a line that renders
-   a key's review argv for an execute entry of that key, count as no line for that entry.
+   a key's review argv for an execute entry of that key, count as no line for that entry. Keep every
+   field of each command-bearing entry as read here; step 7 compares against it.
 4. **Show what the preview does not render.** For any entry without its own line, show the whole
    entry from the file, every field (its fields fill the command's placeholders), and say the
    preview does not render it. An entry with no `command` of its own fills a user-config command's
@@ -42,12 +43,12 @@ file is trusted, its whole project `[lanes]` table stays inactive for cross-AI r
    call omits `--show`'s `trusted` and `path` fields, and the final `trusted ...` line is a status
    line, not an entry; neither counts as a difference. When an entry differs, is added or is
    missing (the file changed in between), run `trust-local --cwd <project root> --revoke` at once,
-   show the new lines and go back to step 3. For an entry shown at step 4 instead of a preview line,
-   read the file (and the user config, for an inherited command) again after the trusting call and
-   check that every field of each entry shown at step 4 is unchanged since it was shown; on any
-   difference, revoke at once and go back to step 3 the same way. The trust digest is the file's
-   command-bearing entries with every field (`trust.command_lanes_bytes`), so unchanged entries mean
-   the trusted bytes are the approved ones; an inherited user command is outside the digest (the
+   show the new lines and go back to step 3. The argv lines alone do not cover fields that change
+   no argv (a `vendor`, a `purpose`), so then read the file (and the user config, for an inherited
+   command) again and check that every field of every command-bearing entry, rendered or shown at
+   step 4, is unchanged since step 3 read it; on any difference, revoke at once and go back to
+   step 3 the same way. The trust digest is the file's command-bearing entries with every field
+   (`trust.command_lanes_bytes`), so unchanged entries mean the trusted bytes are the approved ones; an inherited user command is outside the digest (the
    user layer needs no trust), and re-checking it only confirms the argv the owner saw. Limit: a change made and undone while the trusting call runs is not
    seen by reads before and after it.
 

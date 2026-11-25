@@ -136,7 +136,7 @@ An example only: the keys are the ones the wizard writes; the ids and values are
 ```
 
 - effort is the lane's effort level in the runtime's own form; effort_source is present only when the level was learned by an accepted test call.
-- escalate_runtime and escalate_model are stored opt-in flags: runtime escalation steps to the next lane of the role with another runtime, model escalation to the next lane with the same runtime and another model; no run reads them yet.
+- escalate_runtime and escalate_model are stored opt-in flags: runtime escalation steps to the next lane of the role with another runtime, model escalation to the next lane with the same runtime and another model; dispatch passes them to the runner, which reports them as ignored and never starts another lane from them.
 - usage_limited is the owner's yes that the lane has a usage cap, with an optional one-line usage_limit_note; pool names the lane's free tier (<provider>:free) and is written on every zero-price lane. A flagged lane falls back to the first lane of its role, in the role's order, that is neither flagged nor in the same pool; no run reads this yet.
 - The data-use record of a free lane has five required keys, data_use, data_use_line, data_use_source, data_use_read and data_use_confirmed (always true), plus data_use_label only when data_use is not unknown. render-toml writes a lane with a pool only together with that record; a lane the owner declined or skipped is not written.
 
@@ -145,14 +145,14 @@ An example only: the keys are the ones the wizard writes; the ids and values are
 These keys sit flat on one lane entry. A project entry that changes a user lane's `runtime`, `command` or `model` drops every one of them that it does not restate.
 
 - `effort`: the lane's effort level, on any runtime. The runner passes it in the runtime's own form where it has a path (codex as a flag; pi, cursor and opencode inside the model id); elsewhere every preview and dispatch prints `ignored: <reason>`. `effort_source` (`accepted by a call on <YYYY-MM-DD>`) is written only after a test call with that effort answered.
-- `escalate_runtime`, `escalate_model`: booleans, written only when `true`; the target is the next lane of the same role, in that role's order, with another runtime or with the same runtime. Informational: no run reads them yet.
+- `escalate_runtime`, `escalate_model`: booleans, written only when `true`; the target is the next lane of the same role, in that role's order, with another runtime or with the same runtime. Informational: dispatch passes them to the runner (`--escalate-runtime`, `--escalate-model`), which reports them as ignored (`recorded_only`) and never starts another lane from them.
 - `usage_limited` (written only as `true`, on the owner's yes) and `usage_limit_note` (display text, never parsed). Informational: no run reads them yet.
 - `pool`: `<provider>:free`, written on every zero-price lane. A usage-limited lane's fallback is the first lane of the same role, in that role's order, that is neither usage-limited nor in the same pool.
 - The data-use record of a zero-price lane, written only on the owner's yes: `data_use` (`zero_retention`, `may_be_kept_or_trained` or `unknown`), `data_use_line`, `data_use_source`, `data_use_read`, `data_use_label` (`verified` or `reported`, absent for `unknown`) and `data_use_confirmed` (`true`). A declined or skipped confirmation writes no lane.
 
 ## Trust
 
-Trust covers the project file's command-bearing lane entries. **Command-bearing** (the same definition as the skill's Step 4 and `trust.command_lanes_bytes`): an entry with a `command`, or an entry whose `key` equals the `key` of a `command` entry in this file or in the user layer (only without `strategy = "local-only"`): the user `config.toml`'s `[lanes]`, or, when it has none, an old `review-spec.toml` beside it pending migration, read in memory (`config_io.cfg_project_trust_bytes`), in any role. Such an entry's fields fill the command's placeholders, so a `runtime` entry that overrides a user command entry counts. A plain (runtime, model) pair with its own key is not command-bearing.
+Trust covers the project file's command-bearing lane entries. **Command-bearing** (the one definition, which the skill's Step 4 uses; the same as `trust.command_lanes_bytes`): an entry with a `command`, or an entry whose `key` equals the `key` of a `command` entry in this file or in the user layer (only without `strategy = "local-only"`): the user `config.toml`'s `[lanes]`, or, when it has none, an old `review-spec.toml` beside it pending migration, read in memory (`config_io.cfg_project_trust_bytes`), in any role. Such an entry's fields fill the command's placeholders, so a `runtime` entry that overrides a user command entry counts. A plain (runtime, model) pair with its own key is not command-bearing.
 
 - Editing another table, a comment or the spacing keeps trust.
 - Changing a command-bearing entry, or adding one, needs a new trust.

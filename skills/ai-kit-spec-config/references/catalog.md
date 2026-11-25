@@ -66,7 +66,7 @@ Only Step 2.5's `check-reviewer --catalog-path` call marks verified. Probe only 
 Skip this section unless the owner corrects one catalog field or changes `[models]`.
 
 - Run: `confirm-model --catalog-path <catalog> --model-id <key> --field class --value <value>`
-- Run: `models-config --sources <source-list>`
-- Run: `models-config --show`
+- Run: `models-config --cwd "<project root>" --sources <source-list>`
+- Run: `models-config --cwd "<project root>" --show`
 
-Use `confirm-model` for one field with provenance. Use `models-config` for `[models]`; never edit the cache or config by script.
+Use `confirm-model` for one field with provenance. Use `models-config` for `[models]`; never edit the cache or config by script. A `[models]` change is its own write, separate from the roster: before it, name the file it writes (`<project root>/.aikit/config.toml` with `--cwd`, or the user config with `--global` in place of `--cwd`, only when the owner picks the user layer) and get the owner's yes.

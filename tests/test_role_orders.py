@@ -367,6 +367,11 @@ ladder = ["listed"]
               redirect_stderr(err)):
             exec(compile(self.snippet(), "check-only-snippet", "exec"), {})
         rows = json.loads(out.getvalue())
+        # Loop 39.1.3: a custom entry also prints every field (they fill its placeholders).
+        for row in rows:
+            fields = row.pop("fields")
+            self.assertEqual((fields["key"], fields["command"], fields["model"]),
+                             (row["key"], row["command"], row["model"]))
         self.assertEqual(rows, [{"key": key, "runtime": None, "model": model,
                                  "command": command, "custom": True}
                                 for key, model, command in [
@@ -385,7 +390,7 @@ ladder = ["listed"]
             text = handle.read()
         self.assertIn('probe-quota --cwd "<project root>" --role both', text)
         self.assertNotIn("$(pwd)", text)
-        self.assertIn("List every such entry with the model and command", text)
+        self.assertIn("List every printed entry with its runtime, model and command", text)
         self.assertIn("A key that names different lanes", text)
         self.assertIn("every `--check-only` run spends one probe per probed lane", text)
         self.assertNotIn("reachable from `policy.ladder`", text)

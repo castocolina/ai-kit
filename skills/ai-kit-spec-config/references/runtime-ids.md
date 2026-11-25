@@ -6,20 +6,22 @@ runtime table. A table runtime still stores only `runtime`, `model` and its knob
 ## codex: the bare model id
 
 **codex's `model` field must be the BARE model id — never suffix an effort/tier tag onto it.**
-A live check confirmed that codex rejects an effort suffix on the model id; shown here with invented
+A live check confirmed that codex rejects an effort suffix on the model id (a newer codex may
+differ: Step 2.5's test call is the check for the installed binary); shown here with invented
 placeholders: `codex exec -m placeholder-model-1-high` is rejected, and the correct pair is
 `model = "placeholder-model-1"` with `effort = "high"` stored on the entry (the lane passes it to the
 runner as `--effort`, and the runner writes codex's own effort setting, not in the model string).
 For cursor below, fast and context sit in the model-id string and the runner composes the lane's
 effort into it at dispatch — never carry that pattern over to codex.
 
-codex has no `models`/`list-models` subcommand (confirmed via `codex --help`), but `detect-runtimes`
-enumerates its user-selectable models from the real binary's `codex debug models` output (entries
-with `visibility: "list"` only) into `clis.codex.models` — when `$RUNTIMES_JSON` carries that list,
-pick the model id from it. When it does not (an older codex without `debug models`, or an
-enumeration that failed and degraded to no list), treat the exact current model id as unfamiliar and
-research it per SKILL.md Step 2.2's rule before proposing it to the user, rather than typing a
-remembered id from training knowledge.
+Decide from Step 1's output, not from a remembered command list: `detect-runtimes` enumerates
+codex's user-selectable models from the installed binary's `codex debug models` output (entries
+with `visibility: "list"` only) into `clis.codex.models`. When `$RUNTIMES_JSON` carries that list,
+pick the model id from it. When it does not (a codex without `debug models`, or an enumeration that
+failed and degraded to no list; the installed binary's `codex debug --help` shows which), ask the
+owner for the exact id as [`cli-model-selection.md`](cli-model-selection.md) item 2 says (web names
+only through `web-query` and `record-web-names`, never a model-specific search), never a remembered
+id from training knowledge.
 
 ## cursor: fast and context inside the id
 

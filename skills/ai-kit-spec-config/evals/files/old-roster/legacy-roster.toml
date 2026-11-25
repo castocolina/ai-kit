@@ -1,0 +1,9 @@
+# The project's old .aikit/review-spec.toml, not migrated yet; the project has no config.toml.
+mode = "single"
+ladder = ["old-a"]
+
+[[reviewers]]
+key = "old-a"
+model = "fake/placeholder-model-1"
+vendor = "fake"
+cli = "opencode"

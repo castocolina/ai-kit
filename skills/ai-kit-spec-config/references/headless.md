@@ -1,6 +1,6 @@
 # No way to ask (spec-config headless stop)
 
-Read this only when the host has no structured-question tool and no plain conversation with the user (a subagent, a print-mode or other headless run). Every later step needs the owner's answers, so the run stops after Step 1's two detection commands: it writes no config, cache or trust record (no runtimes snapshot, no catalog), makes no scratch folder (Step 0 makes it only on first need), and never answers a question for the owner.
+Read this only when the host has no structured-question tool and no plain conversation with the user (a subagent, a print-mode or other headless run). Every later step needs the owner's answers, so the run stops after Step 1's two detection commands: it writes no config, cache or trust record (no runtimes snapshot, no catalog), makes no scratch folder (Step 0 makes it only on first need), and never answers a question for the owner. The detection commands themselves run each CLI's listing: `detect-runtimes` may create ai-kit's cache folder (an empty private working directory for the listing, removed after it), and a CLI may update its own files while it lists models; no ai-kit record is written.
 
 Print this block, filling `<runtime-id>` and `<n>` from the `detect-runtimes` output (one entry per installed runtime: its listed model count, or `no listing`; `none` when nothing is installed):
 

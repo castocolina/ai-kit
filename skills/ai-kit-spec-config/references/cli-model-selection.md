@@ -69,7 +69,20 @@ variable.
    entry in the captured JSON's `unmatched` list (a candidate that matched neither models.dev
    nor Artificial Analysis and has no prior catalog entry — each entry already carries its own
    locally-inferred `is_router`/`batch_mode`/`fallback_quota`, computed by `fetch-model-catalog`
-   itself even though the candidate isn't in the catalog yet): show the owner the candidate with its labels, ask the owner to confirm or correct each uncertain field, and write nothing before that answer. A key the catalog already holds takes one correction per field with `confirm-model --catalog-path <catalog> --model-id <key> --field <field> --value <value>`; `confirm-model` refuses a key the catalog lacks (`unknown catalog key`), so a genuinely new candidate is written once with `confirm-catalog-entry --catalog-path <catalog> --entry-json <file>` (`{"model_id": ..., "entry": {...}}`, keeping any effort data the runtime reported), which rejects an invalid entry. Check the command's result before proposing the candidate. Web names come only through `web-query`'s fixed query and `record-web-names`. Never write a catalog entry by hand and never auto-persist an unmatched candidate.
+   itself even though the candidate isn't in the catalog yet): show the owner the candidate with its labels, ask the owner to confirm or correct each uncertain field, and write nothing before that answer. A key the catalog already holds takes one correction per field with `confirm-model --catalog-path <catalog> --model-id <key> --field <field> --value <value>`; `confirm-model` refuses a key the catalog lacks (`unknown catalog key`), so a genuinely new candidate is written once with `confirm-catalog-entry --catalog-path <catalog> --entry-json <file>` (keeping any effort data the runtime reported as that runtime's `efforts` list), which rejects an invalid entry. Check the command's result before proposing the candidate. Web names come only through `web-query`'s fixed query and `record-web-names`. Never write a catalog entry by hand and never auto-persist an unmatched candidate.
+
+   The `<file>` (written under `$SCRATCH`) holds the canonical key `<provider>/<bare model id>` and the five fields the validator requires (`provider`, a non-empty `runtimes` map from each runtime id to that runtime's own `model_id`, `source` as an object, `confidence` of `high`, `medium` or `low`, and `last_verified` as `YYYY-MM-DD`), plus the heuristic fields the owner confirmed. This shape, with invented placeholders and today's date in `last_verified`, passes `confirm-catalog-entry` against a scratch catalog:
+
+   ```json
+   {"model_id": "fake/placeholder-model-1",
+    "entry": {"provider": "fake",
+              "runtimes": {"opencode": {"model_id": "fake/placeholder-model-1"}},
+              "source": {}, "confidence": "low", "last_verified": "2026-11-25",
+              "is_router": false, "batch_mode": false, "fallback_quota": false,
+              "heuristic_confirmed": ["is_router", "batch_mode", "fallback_quota"]}}
+   ```
+
+   When the owner cannot give a required value (the provider, or the runtime's own id), write no entry: the candidate is not proposed, and the owner names another model or takes the session default (`wizard-flow.md` step 7).
 
 5. **The ranked shortlist comes from `propose-lanes`, never from a hand-built ranking.** Return to [`wizard-flow.md`](wizard-flow.md) step 3: it runs `propose-lanes` once per purpose over the catalog refreshed above, limited to the preferred runtimes, and shows its rows as printed. A runtime-table row never decides which pairs may review or execute: a pair the runner cannot run in a mode is skipped at dispatch with its named reason (route `no_formula`), never dropped from the proposal here.
 

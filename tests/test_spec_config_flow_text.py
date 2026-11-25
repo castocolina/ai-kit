@@ -52,7 +52,8 @@ UNKNOWN_FIELDS_LINE = "An alias row or a model the owner names has no price or e
 PLANTED_BAD_PURPOSE = "- Run: `propose-lanes --purpose both --catalog-path c --detect`"
 PLANTED_OTHER_COMMAND = "- Run: `catalog-report --catalog-path c --detect`"
 NO_EFFORT_LINE = "the runner has no effort flag for <runtime> yet, so no effort is stored"
-ESCALATION_LINE = "stored and informational; no run reads them yet"
+ESCALATION_LINE = ("stored and informational: dispatch passes them to the runner, which reports "
+                   "them as ignored and never starts another lane from them")
 ALLOWANCE_LINE = "This test call spends part of the lane's allowance."
 HERDR_LINE = "never in a herdr pane or by another agent"
 PROPOSAL_KEYS = ("default_view", "pool", "wider", "zero_price", "aliases", "empty", "message",
@@ -312,7 +313,11 @@ class TestSkillSkeleton(unittest.TestCase):
         self.assertGreater(text.rindex(KEEP_ANSWER), text.index('**Replacement gate'))
 
     def test_no_real_alias_names_in_step_2_7(self):
-        text = between(self.skill, '#### Step 2.7', '#### Step 2.8')
+        # Loop 39.1.3: the entry shapes moved to references/session-default.md, read at Step 2.7.
+        step = between(self.skill, '#### Step 2.7', '#### Step 2.8')
+        self.assertIn('(references/session-default.md)', step)
+        reference = SKILL.parent / 'references' / 'session-default.md'
+        text = step + reference.read_text(encoding='utf-8')
         self.assertIn('placeholder-alias-1', text)
         self.assertNotIn('never a full model id like', text)
         self.assertNotIn('pick one of those four', text)
@@ -335,7 +340,7 @@ class TestSkillSkeleton(unittest.TestCase):
 
     def test_render_toml_passes_the_proposal_evidence(self):
         text = between(self.skill, '### Step 3 —', '### Step 4 —')
-        self.assertIn('--catalog-path <catalog> --runtimes-json "$RUNTIMES_JSON"', text)
+        self.assertIn('--catalog-path "<catalog>" --runtimes-json "$RUNTIMES_JSON"', text)
         cli._build_parser().parse_args(['render-toml', '--json-config', 'c.json', '--out', 't.toml',
                                         '--replace', '--keep-backup', '--catalog-path', 'c',
                                         '--runtimes-json', 'r'])

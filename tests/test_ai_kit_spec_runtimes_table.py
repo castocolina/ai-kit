@@ -836,7 +836,9 @@ REWRITTEN = [
 # The canonical paragraph describes dispatch, so only the skills that do dispatch carry it.
 # curated-config is checked for forbidden tokens only.
 # The superpowers adapter points at the contract instead of restating it.
-PAIR_RULE_SKILLS = ["skills/ai-kit-spec-review/SKILL.md", "skills/ai-kit-spec-config/SKILL.md"]
+# Loop 39.1.3: spec-config keeps the paragraph in the reference its Step 2.7 must read.
+PAIR_RULE_SKILLS = ["skills/ai-kit-spec-review/SKILL.md",
+                    "skills/ai-kit-spec-config/references/session-default.md"]
 REFERENCES = [
     "skills/ai-kit-spec-review/references/cross-ai-dispatch.md",
     "skills/ai-kit-spec-review/references/reviewer-prompts.md",

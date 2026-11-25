@@ -124,7 +124,7 @@
     "tests/test_spec_config_lane_json.py"
    ],
    "near_misses": 10,
-   "queries": 21
+   "queries": 22
   },
   "ai-kit-spec-execute": {
    "evals": 6,

@@ -1,0 +1,51 @@
+{
+ "counts": {
+  "ai-kit-spec-config": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": {
+    "critical": 0,
+    "high": 3,
+    "judged_at": null,
+    "percent": 84.0,
+    "source": "verdicts/39.1.2/ai-kit-spec-config/r2/opencode_router-env_my-referee-one.json"
+   },
+   "reasons": [
+    "last verdict had a critical or high finding",
+    "last percent 84.0 is within 7.0 points of 80"
+   ]
+  }
+ },
+ "loop": "39.1.3",
+ "pool": {
+  "judges": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "members": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "native": "native:opus-high",
+  "probes": [
+   {
+    "judge": "opencode:router-env/my-referee-one",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=24s out=2168 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_deda8e474ffe2Cz1HXKOblh6EA applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+    "usable": true
+   },
+   {
+    "judge": "opencode:router-env/my-referee-two",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=23s out=2366 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_deda8e44fffedTTilQO4Jbvhl5 applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+    "usable": true
+   }
+  ],
+  "substitutes": []
+ }
+}

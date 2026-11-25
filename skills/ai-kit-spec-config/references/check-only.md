@@ -15,8 +15,8 @@ the next command that reads it (unless a lane names a removed runtime: such a ro
 lanes are re-saved through the full setup), and list its `[[reviewers]]` entries (read-only).
 Whatever the raw read found (none in this file can still mean lanes in the other layer), the
 lanes' **quota availability** is the core purpose of `--check-only`, but the
-probe is a live call to each CLI, so check write risk first, exactly as SKILL.md Step 2.5 does,
-over exactly the keys `probe-quota` will spawn for. That set comes from the merged view (project
+probe is a live call to each CLI, so ask first (below) and check write risk as SKILL.md Step 2.5
+does, over exactly the keys `probe-quota` will spawn for. That set comes from the merged view (project
 over user) and both roles' orders, not the raw read above, so always list it first. This snippet makes the same resolve and
 route calls `probe-quota` makes before it probes, with no model call and no write. When it prints
 an empty list, nothing would be probed: say so, report each raw-read key as `available: unknown`
@@ -35,7 +35,8 @@ lanes = _probe_lanes(config, 'both')
 routes = _route_reviewers(config, deps, persist=False, lanes=lanes)
 keys = routing.probe_keys([e['key'] for e in lanes], routes)
 by_key = {e['key']: e for e in lanes}
-print(json.dumps([{'key': k, 'runtime': by_key[k].get('runtime'), 'model': by_key[k].get('model', ''), 'command': by_key[k].get('command'), 'custom': 'command' in by_key[k]}
+print(json.dumps([{'key': k, 'runtime': by_key[k].get('runtime'), 'model': by_key[k].get('model', ''), 'command': by_key[k].get('command'), 'custom': 'command' in by_key[k],
+                   'fields': by_key[k] if 'command' in by_key[k] else None}
                   for k in keys if k in by_key]))
 " "$(dirname "$TOOLS_PY")" "<project root>"
 ```
@@ -50,22 +51,28 @@ For each printed entry with a `runtime`, read `read_only` from `$CLI_PROFILES_DI
 (only those profiles). An entry whose profile says `read_only: unconfirmed`, a runtime with no
 profile file and a custom entry (`custom: true`) all run with the CLI's normal write permissions.
 The probe starts each from a private temporary directory, not the working tree, but nothing confines
-those permissions to it; the throwaway paths below keep ai-kit's caches clean, not your files. When
-any such entry exists, use `AskUserQuestion` before any live call: "Note: `<key>` (`<model>` through `<runtime>` or `<command>`) have no
-confirmed read-only invocation — the quota probe runs them from a private temporary directory with
-their normal write permissions, which nothing confines to that directory. Run the probe now, or skip it?" — with "skip the probe" first/default.
-List every such entry with the model and command the snippet printed, so the owner sees the exact lane the probe runs.
+those permissions to it; the throwaway paths below keep ai-kit's caches clean, not your files.
+
+Whenever the printed list is not empty, use `AskUserQuestion` before any live call, even when every
+entry is confirmed read-only, because the probe is never side-effect free: "The quota probe makes
+one live call per lane below, spending part of each lane's allowance; it runs through the cross-AI
+runner, which keeps run state under `${XDG_STATE_HOME:-~/.local/state}/ai-kit/`, and each CLI
+keeps its own side effects. Run the probe now, or skip it?" — with "skip the probe" first/default.
+List every printed entry with its runtime, model and command, and for a custom entry every field
+the snippet printed (its `fields` fill the command's placeholders), so the owner sees the exact
+invocation. When an entry has no confirmed read-only invocation, add before the question: "Note:
+`<key>` (`<model>` through `<runtime>` or `<command>`) has no confirmed read-only invocation — the
+probe runs it from a private temporary directory with its normal write permissions, which nothing
+confines to that directory."
 `probe-quota` cannot probe a subset, so the answer covers the whole probe. On skip, run no
 `probe-quota` call and report every raw-read and printed key as
 `available: unknown (not probed — the write-risk probe was declined)`, then continue with the
 stale-provider report below. The snippet and `probe-quota` resolve separately, so on yes first run
-the snippet again: when its list differs from the one the owner saw (an added key, or another
-runtime, model or command for a key), show the new list and ask again instead of probing. Limit: the re-run compares the printed key,
-runtime, model and command only; a custom command's placeholder filled from another lane field can
-change the launched argv without changing the list, so this check cannot prove the probe runs
-exactly what the owner saw. On yes
-with an unchanged list, or when every printed entry is confirmed read-only (or none was printed),
-probe using a throwaway path:
+the snippet again: when its printed list differs in any value from the one the owner saw (an added
+key, or another runtime, model, command or custom field for a key), show the new list and ask again
+instead of probing. Limit: the probe resolves the roster once more when it starts, so a file
+edited between that re-run and the probe can still change what runs; say so when the roster is
+being edited. On yes with an unchanged list, probe using a throwaway path:
 
 ```bash
 SCRATCH="$(mktemp -d -t ai-kit-spec-config-XXXXXX)"; printf '%s\n' "$SCRATCH"
@@ -85,8 +92,13 @@ behaves as its profile says; say so when reporting the probe. `--no-migrate` rea
 
 `probe-quota` has no `--local`/`--global` flag — it always runs the full `cfg_resolve` merge, so
 output holds the keys printed above, from both local and global configs. Report each probed
-`key`'s `available` boolean, and mark a probed key missing from the raw-read listing
-`(from the merged view)`, so the user sees which reviewers came from the other layer.
+`key`'s `available` boolean against the entry the snippet printed for it (its role, runtime, model
+and command), never against a raw-read lane by key alone. Mark a probed key missing from the
+raw-read listing `(from the merged view)`, so the user sees which reviewers came from the other
+layer. A raw-read lane whose key was probed but whose runtime, model or command differs from the
+printed entry (the other layer's lane with the same key overrides it) is
+`available: unknown (not probed — overridden by the other layer's lane with this key)`; the probed
+result belongs to the overriding entry and is reported under it.
 
 Three edge cases: (1) if `--global` was passed but a local config with `strategy = "local-only"`
 exists, the merge returns only local entries, shadowing the global keys the raw read listed; (2)
