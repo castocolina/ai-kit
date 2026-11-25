@@ -87,6 +87,8 @@ class RunnerSpec(NamedTuple):
     skill_paths: tuple[str, ...] = ()
     skill_names: tuple[str, ...] = ()
     mcp_config: str | None = None
+    # A usage-limited lane's pool, so an ok run clears its blocked-until record.
+    pool: str | None = None
 
     @property
     def role(self) -> str:
@@ -240,6 +242,8 @@ def runner_flags(spec: RunnerSpec) -> list[str]:
         flags += ["--skill-name", name, "--skill-path", path]
     if spec.mcp_config is not None:
         flags += ["--mcp-config", spec.mcp_config]
+    if spec.pool is not None:
+        flags += ["--pool", spec.pool]
     return flags
 
 

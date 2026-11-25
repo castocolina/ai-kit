@@ -9,7 +9,7 @@ import os
 from collections.abc import Callable
 from typing import NamedTuple
 
-from ai_kit_spec import routing
+from ai_kit_spec import lane_settings, routing
 from ai_kit_spec.capability_block import (
     ComposeResult,
     ComposeSeams,
@@ -50,6 +50,18 @@ class ReviewerDispatchSpec(NamedTuple):
     files: tuple | None = ()
 
 
+def row_is_native(row: dict) -> bool:
+    """A native route, or a row with neither a runtime nor a command: the host runs it."""
+    return row.get("route") == "native" or not (row.get("runtime") or row.get("command"))
+
+
+def row_resolved(row: dict) -> ResolvedReviewer:
+    """The ResolvedReviewer of one reviewers.json row."""
+    return ResolvedReviewer(key=row.get("key", ""), model=row.get("model", ""),
+                            vendor=row.get("vendor", ""), runtime=row.get("runtime"),
+                            command=row.get("command"), extra=row.get("extra") or {})
+
+
 def _reviewer_full_prompt(spec: ReviewerDispatchSpec, seams: ReviewerSeams, runner_spec):
     entry = spec.reviewer_entry
     return seams.compose_fn(
@@ -73,10 +85,7 @@ def _dispatch_runtime(runner_spec, spec: ReviewerDispatchSpec, prompt: str,
 
 def _dispatch_custom(entry: dict, spec: ReviewerDispatchSpec, prompt: str,
                      seams: ReviewerSeams) -> dict:
-    resolved = ResolvedReviewer(
-        key=entry.get("key", ""), model=entry.get("model", ""), vendor=entry.get("vendor", ""),
-        runtime=None, command=entry.get("command"), extra=entry.get("extra") or {},
-    )
+    resolved = row_resolved(entry)._replace(runtime=None)
     custom = CustomSpec(
         resolved.key, render_reviewer_command(resolved, prompt), spec.timeout_tiers, cwd=spec.cwd,
     )
@@ -94,7 +103,7 @@ def dispatch_reviewer(
     entry = spec.reviewer_entry
     runtime = entry.get("runtime")
     key = entry.get("key", "")
-    if entry.get("route") == "native" or not (runtime or entry.get("command")):
+    if row_is_native(entry):
         raise ValueError(
             f"reviewer {key} routes native; the host runs it, not dispatch-reviewer"
         )
@@ -106,7 +115,8 @@ def dispatch_reviewer(
     if runtime and not entry.get("model"):
         raise ValueError(f"reviewer {key} names runtime {runtime} but no model")
     runner_spec = (review_spec(runtime, entry["model"], entry.get("extra"),
-                               spec.timeout_tiers[0], cwd=spec.cwd) if runtime else None)
+                               spec.timeout_tiers[0], cwd=spec.cwd)._replace(
+        pool=lane_settings.lane_free_pool(entry.get("extra") or {})) if runtime else None)
     composed = (_reviewer_full_prompt(spec, active, runner_spec) if spec.prompt.strip()
                 else ComposeResult())
     try:

@@ -91,6 +91,8 @@ Runs once per invocation, after Step 0.6.
    # "ai-kit-model-discovery-config".
    FEATURE_SLUG="$(basename "<first DOC_PATHS entry>" .md | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}-//')"
    RUN_TMP_DIR="$(mktemp -d -t "${REPO_NAME}-${BRANCH_SLUG}-${FEATURE_SLUG}-iter-XXXXXX")"
+   # Ownership marker: this run's canonical path, checked before any removal (Cleanup).
+   python3 -c 'import os,sys; d=os.path.realpath(sys.argv[1]); open(os.path.join(d, ".aikit-run-id"), "w").write(d + "\n")' "$RUN_TMP_DIR"
    printf '%s\n' "$RUN_TMP_DIR"
    ```
    Record the absolute path this block prints in this skill's own working notes — **not** a
@@ -162,6 +164,9 @@ Runs once per invocation, after Step 0.6.
      --cross-ai \
      > "$RUN_TMP_DIR/reviewers.json"
    ```
+   `--source-vendor` defaults to `anthropic` because the orchestrator has no way to introspect
+   its own model's vendor; pass the real vendor explicitly when this host's model comes from
+   another vendor. A Claude Code session is one example of an `anthropic` author, not the rule.
    Each object in the output carries a `route` decided for this run and never stored:
    `native` (this host runs the pair itself), `subprocess` (a table runtime through the
    supervised runner), `unverified` (the same runner path, but the runtime's model list was
@@ -186,7 +191,10 @@ Runs once per invocation, after Step 0.6.
    nothing; one JSON line per local reviewer with the argv dispatch would run, merged with the
    global config, the prompt shown as `<prompt>`), ask whether to trust it, and run
    `python3 "$TOOLS_PY" trust-local --cwd <CODEBASE_ROOT>` only after an explicit yes — never
-   trust on the user's behalf, then re-run points 4–5.
+   trust on the user's behalf, then re-run points 4–5. `trust-local --revoke` withdraws trust,
+   even after the file was deleted.
+
+   **Then size the review** (once per invocation, active path only): run `size-review` on the saved file ([command](lane-failure.md#commands)). It may change the lane count or order in `$RUN_TMP_DIR/reviewers.json` within the roster, writes the round-0 sizing event to `$RUN_TMP_DIR/lanes.jsonl` (the round log every later step looks for) and prints `sizing: <lanes> lane(s): <reason>`; the sizing rules are in [lane-failure.md](lane-failure.md#jev-classes-and-sizing).
 6. **(Active cross-AI path only — point 2's degraded path already set
    `REVIEWER_LIST` directly and skipped straight to Step 1.)**
    `$RUN_TMP_DIR/reviewers.json` holds a JSON array of 1 or 2 reviewer
@@ -198,8 +206,15 @@ Runs once per invocation, after Step 0.6.
 ## Step 1 subprocess dispatch — full rationale for `dispatch-reviewer`
 
 SKILL.md's Step 1 (subprocess branch, point 3) gives the exact command for calling
-`dispatch-reviewer`. This section is the rationale behind that command's two hard rules —
-consult it only if you're tempted to deviate from the command as given.
+`dispatch-reviewer`. This section is the rationale behind that command's two hard rules and the
+full handling of each nonzero exit — consult it before handling a nonzero exit, or if you're
+tempted to deviate from the command as given.
+
+**Quoting and `--cwd`.** Substitute each path as its own double-quoted argument, one pair of
+quotes per path, so a checkout or document path with spaces stays one argument
+(`--cwd "/work/my repo"` `--files "/work/my repo/docs/plan one.md" ...`); the same holds in every
+snippet of the references. `--cwd` runs the reviewer, and the runner's read-only tree check, in
+the document's worktree (for a labeled set, the root of `<DOC_PATHS>`'s first entry).
 
 **Why you must not render the command yourself and pass it back in.** `dispatch-reviewer` takes
 the reviewer entry (`--reviewers-json` + `--index`), not a pre-rendered command string. A
@@ -251,11 +266,20 @@ exiting, which is what writes the `.exit` file; the report file's size proves no
 redirect creates it immediately and a working CLI can leave it unchanged for minutes. A dispatch
 whose `.exit` file holds a nonzero code is handled like the nonzero exit below.
 
+**Exit routing (SKILL.md Step 1).** Branch on the exit before deleting anything. Exit 75 with `retry_after_s=` on the last
+`AIKIT-XAI` line, `transient` or `quota`, on any route, gets one one-shot re-invoke of the
+same lane, CLI and model at that delay. **MANDATORY for that case**: follow the
+[pending lane (hard tier)](#pending-lane-hard-tier--lifecycle-and-resume)
+section (keep the slot, merge the sibling as single mode, write the resume files, no fixer).
+A bare exit 75 and any exit 69 (`auth`, `stopped=hard-waits`, `stopped=cap`, a refusal of a
+stopped lane) are owner stops: quote the `.err` evidence lines verbatim and schedule nothing. Exit 65 is the dispatch's own pre-spawn refusal (no lane spawned, see [Lane capability block, lenses and refusals](lane-capabilities.md#lane-capability-block-lenses-and-refusals)): quote its stderr record verbatim and schedule nothing.
+Every nonzero exit except that hard tier deletes `iter<N>-<key>.md`. Without a round log Step 1.5 then fails closed; with one, `merge-reports` records that lane failed and merges the lanes that judged ([Partial status](lane-failure.md#partial-status)).
+
 **If `dispatch-reviewer` exits nonzero** (a config error such as an empty `timeout_tiers` or a
 custom entry whose `command` template is malformed or missing, or one of the runtime stops
 below), this reviewer's slot failed to dispatch. The report body is on stdout, in
 `iter<N>-<key>.md`; only the `AIKIT-XAI` and `cross-ai:` evidence lines are on stderr, in
-`iter<N>-<key>.err`. Read those evidence lines first. Exit 75 is not uniformly terminal: when
+`iter<N>-<key>.err`. When a round log exists and this entry's `extra.usage_limited` is `true`, run `switch-lane` first (SKILL.md Step 1, [Flagged-lane switch](lane-failure.md#flagged-lane-switch)); only a `not switched` answer continues below. Read those evidence lines first. Exit 75 is not uniformly terminal: when
 the last `AIKIT-XAI` line has `retry_after_s=`, on any route and for either soft class
 (`transient` or `quota`), it is the hard tier: keep the report and follow the
 [pending lane](#pending-lane-hard-tier--lifecycle-and-resume) section below. The rules
@@ -266,10 +290,10 @@ the lines its `.err` holds: a stop has `cross-ai: report`, any `cross-ai: upstre
 `AIKIT-XAI`; a refusal of an already stopped lane has only `cross-ai: state`,
 `cross-ai: lane stopped=` and `AIKIT-XAI`, and the path it names is the owner's reset. Every other
 nonzero exit, exit 69 included, deletes `$RUN_TMP_DIR/iter<N>-<key>.md` (the `>` redirect already created it):
-leaving it absent is what makes Step 1.5's `merge-reports` (double mode) exit non-zero and
+leaving it absent is what makes Step 1.5's `merge-reports` without a round log (double mode) exit non-zero and
 print `### Status: Failure — <lanes>` naming the failed lane(s), or the missing-file case
 (single mode) fail closed through Step 2's "No Status line" rule — never treat either outcome
-as Approved.
+as Approved. With a round log, `merge-reports --lane-log` records the lane `failed` (or `never_resolved` when it left no file) and merges the lanes that judged into a partial report ([Partial status](lane-failure.md#partial-status)).
 
 ## Lane capabilities
 
@@ -297,6 +321,8 @@ the child's PATH (`{"mcpServers": {<name>: {"command": <absolute path>, "args": 
 0600, removed on every exit path); a server defined only in a host config is listed as present,
 not enabled. On a claude lane the run-scoped MCP file is passed with `--strict-mcp-config`, so it replaces the host's other MCP servers for that lane. Exit 65 is the dispatch's pre-spawn refusal (no lane spawned; the read-only runner dry
 run may have run); the runner itself never exits 65. A resumed lane exits 65 the same way.
+The block's sections, skill roles, lens notes, refusal reasons and the after-approval pass are in
+[`lane-capabilities.md`](lane-capabilities.md).
 
 ## Pending lane (hard tier) — lifecycle and resume
 
@@ -320,7 +346,7 @@ router`) treats router billing, access and credential rows as quota.
      "$RUN_TMP_DIR/iter<N>-<key>-argv.json" python3 "$TOOLS_PY" dispatch-reviewer \
      --cwd "<CODEBASE_ROOT>" --reviewers-json "$RUN_TMP_DIR/reviewers.json" --index <index> \
      --prompt-file "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt" --timeout-tiers "$TIMEOUT_TIERS" \
-     --files "<each DOC_PATHS entry>" "<each GROUNDING_DOCS entry, if any>" "<CHECKLIST_SKILL_MD>" "<FRAMEWORK_PROFILE_PATH, unless none>" --stdout-only
+     --files "<each DOC_PATHS entry>" "<each GROUNDING_DOCS entry, if any>" "<CHECKLIST_SKILL_MD>" "<FRAMEWORK_PROFILE_PATH, unless none>" --stdout-only --lane-log "$RUN_TMP_DIR/lanes.jsonl" --round <N>
    python3 -c 'import json,sys; a=sys.argv[2:]; json.dump(dict(zip(a[::2], a[1::2])), open(sys.argv[1], "w"), indent=1)' \
      "$RUN_TMP_DIR/resume-<key>.json" iteration "<N>" key "<key>" index "<index>" \
      iteration_cap "<cap>" codebase_root "<CODEBASE_ROOT>" doc_paths "<DOC_PATHS>" \
@@ -329,9 +355,14 @@ router`) treats router billing, access and credential rows as quota.
      checklist_skill_md "$CHECKLIST_SKILL_MD" shared_tooling_path "$SHARED_TOOLING_PATH" \
      unavailable "<the Step 0.7 unavailable lines>" \
      sibling_key "<the sibling's key, or none>" \
+     quota_json "$QUOTA_JSON" lane_log "<$RUN_TMP_DIR/lanes.jsonl, or none without a round log>" \
+     framework_id "<framework id from Step 0.5: superpowers, gsd, ... or none>" \
+     doc_archetypes "<one DOC_PATHS entry=its ARCHETYPE per document, in DOC_PATHS order, separated by a newline>" \
      not_before "<now plus retry_after_s, ISO 8601 with offset>" \
      revisions_authorized "<yes, or no when the request asked only for a review or was unclear>"
    ```
+   Drop --lane-log and --round when no round log exists.
+   The payload is flat string pairs: doc_archetypes holds one line per document, path=archetype, split at the last = sign, so a mixed review keeps each document's own archetype for the fold check, the reviewer prompts' per-document lines and Step 3's fix routing after the resume.
    `REVIEWER_LIST` is the contents of `$RUN_TMP_DIR/reviewers.json`. Each pending lane writes its
    own `iter<N>-<key>-argv.json` and `resume-<key>.json`, so two pending lanes never overwrite
    each other.
@@ -356,24 +387,40 @@ the skill with this resume pointer: RUN_TMP_DIR=<RUN_TMP_DIR>, iteration <N>, re
    `revisions_authorized` is the request's authorization from SKILL.md's Your Task; when it is
    absent or `no`, Step 3 surfaces the findings and asks before any fixer or framework rewrite), remove
    `iter<N>-<key>.exit`, write `iter<N>-<key>.running`, then re-run the recorded argv with no
-   shell (same prompt file, tiers and flags; same CLI and model), backgrounded:
-   ```bash
-   python3 -c 'import json,subprocess,sys; a=json.load(open(sys.argv[1])); rc=subprocess.call(a, stdout=open(sys.argv[2], "w"), stderr=open(sys.argv[3], "w")); open(sys.argv[4], "w").write(f"{rc}\n")' \
-     "$RUN_TMP_DIR/iter<N>-<key>-argv.json" "$RUN_TMP_DIR/iter<N>-<key>.md" \
-     "$RUN_TMP_DIR/iter<N>-<key>.err" "$RUN_TMP_DIR/iter<N>-<key>.exit"
-   ```
-   Wait for `iter<N>-<key>.exit` (its existence still means finished), remove the `.running`
-   marker, then branch on the exit code and the last `AIKIT-XAI` line:
+   shell (same prompt file, tiers and flags; same CLI and model), backgrounded (the Python body
+   starts at column 0, so copy it unindented):
+
+```bash
+python3 -c 'import json,subprocess,sys
+try:
+    a = json.load(open(sys.argv[1]))
+    rc = subprocess.call(a, stdout=open(sys.argv[2], "w"), stderr=open(sys.argv[3], "w"))
+except (OSError, TypeError, ValueError) as e:
+    open(sys.argv[3], "a").write(f"cross-ai: resume launch failed: {e}\n")
+    rc = 127
+open(sys.argv[4], "w").write(f"{rc}\n")' \
+  "$RUN_TMP_DIR/iter<N>-<key>-argv.json" "$RUN_TMP_DIR/iter<N>-<key>.md" \
+  "$RUN_TMP_DIR/iter<N>-<key>.err" "$RUN_TMP_DIR/iter<N>-<key>.exit"
+```
+
+   A launch error (an unreadable or malformed `-argv.json`, a missing binary) still writes a
+   terminal record: 127 in `.exit` and its `cross-ai: resume launch failed:` reason in `.err`.
+   When the host reports the backgrounded wrapper ended and no `.exit` exists (it was killed),
+   write `127` to `.exit` and `cross-ai: resume wrapper ended without a record` to `.err`
+   yourself. An exit 127 has no `AIKIT-XAI` line: it takes the last bullet below, quoting the
+   `.err` reason. Wait for `iter<N>-<key>.exit` (its existence still means finished), remove the
+   `.running` marker on any terminal record, restore `QUOTA_JSON`, the round-log path and the fold-check arguments from `resume-<key>.json`,
+   then branch on the exit code and the last `AIKIT-XAI` line, in this order:
+   - first, on any nonzero exit, when a round log exists and this lane's `extra.usage_limited` is `true` in `reviewers.json`, run `switch-lane` for its index before every bullet below, exactly as on a fresh dispatch (SKILL.md Step 1, [Flagged-lane switch](lane-failure.md#flagged-lane-switch)): `switched <old> -> <new>` re-reads `reviewers.json`, dispatches the new entry now with its own `iter<N>-<new key>` files and schedules nothing for this lane; `not switched ...` continues with the bullets below. In every bullet below, the sibling is the key at the other index of the current `reviewers.json`, re-read now: a switch since the payload was written may have replaced the saved `sibling_key`;
    - exit 75 with `retry_after_s=` again: repeat points 3–4 (one one-shot per hinted exit 75);
    - otherwise, when `sibling_key` names a lane still pending or running (it has a `.running`
      marker, or its `.exit` reads 75 with `retry_after_s=`), record this result and end;
    - otherwise take the merge lock, `mkdir "$RUN_TMP_DIR/iter<N>-merge.lock"`: only the lane whose
      `mkdir` succeeds merges, so two resumes never run the fixer twice;
-   - exit 0: merge this lane with the sibling's report (double mode, or single mode with no
-     sibling) at Step 1.5, then continue the loop from Step 2;
+   - exit 0: run SKILL.md Step 1's fold check first, before Step 1.5 (`check-fold-step` once per `doc_archetypes` line with the saved `framework_id`, into `iter<N>-fold.md` started empty; exit 2 stops the review with its stderr line), then merge this lane with the sibling's report (double mode, or single mode with no sibling) at Step 1.5, with a round log through `merge-reports --lane-log` and with `--extra-findings` when the fold file is non-empty, then continue the loop from Step 2;
    - anything else (an exit 69 after `stopped=hard-waits` or `stopped=cap`, or a
      `cross-ai: lane stopped=` refusal, included): quote those lines verbatim, delete the report,
-     merge the lane as failed and schedule nothing.
+     run the fold check as in the exit 0 bullet, merge the lane as failed and schedule nothing; with a round log the merge is `merge-reports --lane-log` with the sibling's `key=path` passed again, which keeps the sibling's judged report.
 
 ## Outside a git work tree
 
@@ -429,3 +476,16 @@ repo or worktree (a target repo it acts on), don't force a single `--show-toplev
 each declared root from the plan, label which references belong to which root, and pass the set
 so the reviewer grounds each claim against the right checkout instead of chasing references
 across both. If the roots are unclear, run `git worktree list` in each repo and ask once.
+
+## Run folder removal
+
+Run this only from SKILL.md's Cleanup, never at Step 0.7, and never a bare `rm -rf` in its
+place. It deletes `$RUN_TMP_DIR` only when the given path is not a symlink, its canonical path
+sits directly under the canonical temp root (`mktemp -t`'s `$TMPDIR`, else `/tmp`), its name
+carries point 1's `-iter-` form, and its `.aikit-run-id` marker (written by point 1) holds that
+canonical path. Otherwise it deletes nothing, prints `kept <path>: ownership not verified` and
+exits 3, and the Surface message names the kept path.
+
+```bash
+python3 -c 'import os,shutil,sys; d=sys.argv[1]; r=os.path.realpath(d); root=os.path.realpath(os.environ.get("TMPDIR") or "/tmp"); m=os.path.join(r, ".aikit-run-id"); ok=not os.path.islink(d.rstrip("/")) and os.path.dirname(r)==root and "-iter-" in os.path.basename(r) and os.path.isfile(m) and open(m).read().strip()==r; ok and shutil.rmtree(r); ok or print(f"kept {d}: ownership not verified"); sys.exit(0 if ok else 3)' "$RUN_TMP_DIR"
+```

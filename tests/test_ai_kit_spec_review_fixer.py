@@ -15,6 +15,7 @@ REPO = Path(__file__).resolve().parent.parent
 SKILL = REPO / "skills" / "ai-kit-spec-review-fixer"
 SKILL_MD = SKILL / "SKILL.md"
 ORCHESTRATOR_MD = REPO / "skills" / "ai-kit-spec-review" / "SKILL.md"
+APPLY_FINDINGS = REPO / "skills" / "ai-kit-spec-review" / "references" / "apply-findings.md"
 PARSED = ("Edits Applied", "Escalation Required", "No Edits")
 FENCE = re.compile(r"^```")
 
@@ -89,6 +90,19 @@ class TestRules(unittest.TestCase):
             "A MEDIUM or LOW finding is a task if trivial; otherwise defer it under",
             "\n".join(_section(self.text, "Before editing")),
         )
+
+    def test_mechanical_repass_rule(self):
+        lead = (
+            "| When the prompt carries a `Mechanical re-pass:` line, "
+            "process only the findings it names"
+        )
+        rows = [line for line in _section(self.text, "Editing rules") if line.startswith(lead)]
+        self.assertEqual(len(rows), 1)
+        self.assertIn(
+            "leave every other finding of the report as the earlier pass left it", rows[0]
+        )
+        self.assertIn("your Escalation conditions still take precedence over that advice", rows[0])
+        self.assertIn("- Mechanical re-pass:", APPLY_FINDINGS.read_text(encoding="utf-8"))
 
     def test_cross_document_rule_is_an_editing_rule(self):
         self.assertTrue(any(

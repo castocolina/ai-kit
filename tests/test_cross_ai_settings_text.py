@@ -12,6 +12,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 SKILL = REPO / "skills/ai-kit-cross-ai/SKILL.md"
 LAUNCH = REPO / "skills/ai-kit-cross-ai/references/launch-and-wait.md"
+# Detail moved out of SKILL.md behind gated read lines (loop 40 judge round 1, body size).
+HOSTING = REPO / "skills/ai-kit-cross-ai/references/hosting-and-locks.md"
+CHECKS = REPO / "skills/ai-kit-cross-ai/references/execute-checks.md"
+REASONS = REPO / "skills/ai-kit-cross-ai/references/setting-reasons.md"
 TEMPLATE = REPO / "skills/ai-kit-spec-review/references/cross-ai.mjs"
 FENCE_RE = re.compile(r"```(.*?)```", re.DOTALL)
 sys.path.insert(0, str(REPO / "skills/ai-kit-gsd-curated-config"))
@@ -24,6 +28,7 @@ FLAGS = ("--role", "--effort", "--codex-effort", "--context", "--escalate-runtim
          "--mcp-config", "--argv-file", "--describe", "--print-argv")
 
 REASONS_HEADING = "### Settings report"
+REASON_TABLE_HEADING = "## Reasons"
 GROUP_HEADING = "### Status line fields"
 GROUP_KEYS = ("session", "applied", "ignored", "unknown", "escalate")
 
@@ -57,7 +62,8 @@ def describe_json():
 
 
 def reason_rows(text):
-    return re.findall(r"^\| `([a-z_]+)` \|", _section(text, REASONS_HEADING), re.MULTILINE)
+    """The reason table rows of references/setting-reasons.md, in file order."""
+    return re.findall(r"^\| `([a-z_]+)` \|", _section(text, REASON_TABLE_HEADING), re.MULTILINE)
 
 
 def names_sentence(text):
@@ -98,7 +104,7 @@ def group_problem(line, names):
 
 
 STATUS_HEADING = "## 4. Read the result"
-FINDINGS_HEADING = "### Execute result checks"
+FINDINGS_HEADING = "# Execute result checks"
 FLAGS_HEADING = "### Supervision flags"
 
 
@@ -113,6 +119,7 @@ def status_rows(text) -> list[tuple[str, int]]:
 
 
 def finding_rows(text) -> list[tuple[str, str]]:
+    """The finding table rows of references/execute-checks.md (one `# ` title, then the table)."""
     return re.findall(r"^\| \d+\. \| `([a-z_]+)` \| ([a-z_]+) \|",
                       _section(text, FINDINGS_HEADING), re.MULTILINE)
 
@@ -163,7 +170,11 @@ class VocabularyDocs(unittest.TestCase):
             self.assertIn(value, section)
 
     def test_hosting_text_states_switch_and_limits(self):
-        section = _section(self.text, "## 2. Launch")
+        launch = _section(self.text, "## 2. Launch")
+        self.assertIn("(references/hosting-and-locks.md)", launch)
+        for value in ("AIKIT_HOST=none", "--host none", "run.json", "never re-invoke in a loop"):
+            self.assertIn(value, launch)
+        section = launch + HOSTING.read_text(encoding="utf-8")
         for value in ("HERDR_ENV=1", "AIKIT_HOST=none", "--host none", "no_herdr", "host_failed",
                       "cross-ai: host herdr tab=", "ai-kit/spec/host/", "run.json", "setsid",
                       "fish", "nushell", "macOS", "unverified"):
@@ -193,15 +204,25 @@ class SettingsReportDocs(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.text = SKILL.read_text(encoding="utf-8")
+        cls.reasons = REASONS.read_text(encoding="utf-8")
         cls.describe = describe_json()
 
     def test_reason_table_matches_runner_and_describe(self):
-        rows = reason_rows(self.text)
+        self.assertIn("(references/setting-reasons.md)", _section(self.text, REASONS_HEADING))
+        rows = reason_rows(self.reasons)
         self.assertEqual(rows, runner_list("SETTING_REASONS"))
         self.assertEqual(len(rows), 10)
         if self.describe is None:
             self.skipTest("node not on PATH: the --describe leg is skipped")
         self.assertEqual(rows, self.describe["reasons"])
+
+    def test_reasons_named_in_the_skill_are_runner_reasons(self):
+        line = next(line for line in _section(self.text, REASONS_HEADING).splitlines()
+                    if line.startswith("The reasons are a closed list"))
+        named = re.findall(r"`([a-z_]+)` \(", line)
+        self.assertEqual(named, ["id_carries", "mode_forbids", "host_failed"])
+        for reason in named:
+            self.assertIn(reason, runner_list("SETTING_REASONS"))
 
     def test_setting_names_match_runner_and_describe(self):
         names = names_sentence(self.text)
@@ -219,10 +240,10 @@ class SettingsReportDocs(unittest.TestCase):
         self.assertEqual(self.describe["states"], ["applied", "ignored", "unknown"])
 
     def test_lock_catches_a_swapped_or_extra_row(self):
-        rows = [line for line in _section(self.text, REASONS_HEADING).splitlines()
+        rows = [line for line in _section(self.reasons, REASON_TABLE_HEADING).splitlines()
                 if re.match(r"^\| `[a-z_]+` \|", line)]
-        swapped = self.text.replace(rows[0] + "\n" + rows[1], rows[1] + "\n" + rows[0])
-        extra = self.text.replace(rows[-1], rows[-1] + "\n| `made_up` | x |")
+        swapped = self.reasons.replace(rows[0] + "\n" + rows[1], rows[1] + "\n" + rows[0])
+        extra = self.reasons.replace(rows[-1], rows[-1] + "\n| `made_up` | x |")
         for text in (swapped, extra):
             self.assertNotEqual(reason_rows(text), runner_list("SETTING_REASONS"))
 
@@ -231,22 +252,32 @@ class SupervisionDocs(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.text = SKILL.read_text(encoding="utf-8")
+        cls.hosting = HOSTING.read_text(encoding="utf-8")
+        cls.checks = CHECKS.read_text(encoding="utf-8")
         cls.describe = describe_json()
 
     def test_supervision_text_names_each_rule(self):
-        for value in ("--idle-timeout", "CONFIG.idleTimeoutS", "rule=idle-watchdog", "900",
-                      "ai-kit/spec/locks/", "`locked`", "cross-ai: finding reason=", "coverage=",
-                      "findings=", "--sweep", "cross-ai: sweep:", "herdr tab list",
-                      "jev-fast-decision"):
+        # SKILL.md keeps the caller rules; the moved detail lives in the two references.
+        for value in ("--idle-timeout", "CONFIG.idleTimeoutS", "900", "`locked`",
+                      "cross-ai: finding reason=", "coverage=", "findings=", "--sweep",
+                      "cross-ai: sweep:", "jev-fast-decision",
+                      "(references/hosting-and-locks.md)", "(references/execute-checks.md)"):
             self.assertIn(value, self.text)
         self.assertIn("never in a loop", self.text.lower())
+        self.assertIn("never re-invoke in a loop", self.text.lower())
+        for value in ("rule=idle-watchdog", "ai-kit/spec/locks/", "cross-ai: sweep:",
+                      "herdr tab list", "never re-invoke in a loop"):
+            self.assertIn(value, self.hosting)
+        self.assertIn("CONFIG.idleTimeoutS", self.checks)
 
     def test_measured_figures_stated_once(self):
-        self.assertEqual(self.text.count("250 ms"), 1)
-        self.assertEqual(self.text.count("twice the capture cap"), 1)
+        docs = self.text + self.hosting + self.checks
+        self.assertEqual(docs.count("250 ms"), 1)
+        self.assertEqual(docs.count("twice the capture cap"), 1)
 
     def test_watchdog_is_no_longer_denied(self):
-        self.assertIsNone(re.search(r"\bno idle watchdog\b", self.text, re.IGNORECASE))
+        for text in (self.text, self.hosting):
+            self.assertIsNone(re.search(r"\bno idle watchdog\b", text, re.IGNORECASE))
 
     def test_evidence_dates_only_below_evidence(self):
         self.assertIsNone(re.search(r"\d{4}-\d{2}-\d{2}", self.text.split("## Evidence")[0]))
@@ -259,8 +290,16 @@ class SupervisionDocs(unittest.TestCase):
             self.skipTest("node not on PATH: the --describe leg is skipped")
         self.assertEqual(dict(rows), self.describe["statuses"])
 
+    def test_skill_summary_names_every_blocking_finding(self):
+        summary = _section(self.text, "### Execute result checks")
+        self.assertIn("(references/execute-checks.md)", summary)
+        for code, result in finding_rows(self.checks):
+            if result != "info":
+                self.assertIn(f"`{code}`", summary)
+                self.assertIn(f"`{result}`", summary)
+
     def test_finding_rows_match_runner_and_describe(self):
-        rows = finding_rows(self.text)
+        rows = finding_rows(self.checks)
         self.assertEqual([code for code, _ in rows], runner_list("FINDING_CODES"))
         if self.describe is None:
             self.skipTest("node not on PATH: the --describe leg is skipped")
@@ -280,14 +319,15 @@ class SupervisionDocs(unittest.TestCase):
         self.assertNotEqual(dict(status_rows(missing)), runner_statuses())
         duplicate_rows = status_rows(duplicate)
         self.assertNotEqual(len(duplicate_rows), len(dict(duplicate_rows)))
-        lines = self.text.splitlines()
+        lines = self.checks.splitlines()
         first = next(line for line in lines if line.startswith("| 1. | `no_commit`"))
         second = next(line for line in lines if line.startswith("| 2. | `task_uncovered`"))
         ninth = next(line for line in lines if line.startswith("| 9. | `coverage_unchecked`"))
-        extra = self.text.replace(ninth, ninth + "\n| 10. | `extra` | info | extra |")
-        swapped = self.text.replace(first + "\n" + second, second + "\n" + first)
-        self.assertNotEqual(finding_rows(extra), finding_rows(self.text))
-        self.assertNotEqual(finding_rows(swapped), finding_rows(self.text))
+        extra = self.checks.replace(ninth, ninth + "\n| 10. | `extra` | info | extra |")
+        swapped = self.checks.replace(first + "\n" + second, second + "\n" + first)
+        self.assertNotEqual(finding_rows(extra), finding_rows(self.checks))
+        self.assertNotEqual(finding_rows(swapped), finding_rows(self.checks))
+        lines = self.text.splitlines()
         sweep = next(line for line in lines if line.startswith("| `--sweep`"))
         self.assertNotEqual(flag_rows(self.text.replace(sweep, "")), runner_flags())
 

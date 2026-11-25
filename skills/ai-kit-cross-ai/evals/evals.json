@@ -106,6 +106,19 @@
     "Waits exactly retry_after_s once and schedules no wait from the upstream reset time",
     "Says the runner uses a stated time for at most one bounded check and treats it as data"
    ]
+  },
+  {
+   "id": "precise-hard-tier-one-wait-same-lane",
+   "prompt": "My review lane on opencode with fake/capacity stopped; its stderr is evals/files/hard-tier/lane.err. Handle it so the review still gets done.",
+   "expected_output": "Reads exit 75 with retry_after_s=300 as the hard tier: takes exactly one one-shot wait of 300 s, either a confirmed one-shot scheduler job (then stops without also waiting in the session) or the print-and-stop handoff with retry_after_s, the state path and the re-invoke command, and then re-invokes the same runner with runtime opencode, model fake/capacity and role review; schedules no repeated or fixed-interval check and moves the review to no other CLI or model.",
+   "files": [
+    "evals/files/hard-tier/lane.err"
+   ],
+   "assertions": [
+    "Treats exit 75 with retry_after_s=300 as the hard tier and plans exactly one wait of at least 300 s, never a repeated or fixed-interval job",
+    "Uses exactly one wait form: a confirmed one-shot job or the print-and-stop handoff, never both",
+    "Re-invokes the same runtime opencode, model fake/capacity and role review, and proposes no other runtime, model or harness"
+   ]
   }
  ]
 }

@@ -271,12 +271,12 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### Review
 
-- [ ] **REV-01**: When a review lane fails mid-review, spec-review switches to the next lane in the user's preference
+- [x] **REV-01**: When a review lane fails mid-review, spec-review switches to the next lane in the user's preference
   order instead of ending the review. *(amended 2026-11-16, 36 D-16: a lane the owner flagged `usage_limited` switches at
   once to the first unflagged lane of its role, read through one function; an unflagged lane never switches on its own)* *(amended 2026-11-16, free-lane pool study, 38.1 D-23 to D-27 and 36 D-20 to D-22,
-  PROVISIONAL, needs owner confirmation: selection skips a lane whose pool's blocked-until time has not passed, the fallback is
+  confirmed by the owner 2026-11-25 (was PROVISIONAL): selection skips a lane whose pool's blocked-until time has not passed, the fallback is
   a lane of a different pool, and the first selection after the time tries the lane once)*
-- [ ] **REV-02**: jev classifies reviewer-fixer disagreements and gray areas before the user is asked.
+- [x] **REV-02**: jev classifies reviewer-fixer disagreements and gray areas before the user is asked.
 - [x] **REV-03**: Lens skills present in the environment (the ponytail family, reducing-entropy, naming-analyzer,
   simplify, impeccable for UI) reach reviewers by path in the prompt guidance; file-editing lenses run as a pass
   after approval; a lens is inlined in the prompt when the lane's host cannot load it by path (Claude built-ins, pi
@@ -305,16 +305,16 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   closed list with a locking test, seed rows are examples with source labels and never decide presence, a confirmed sort is a
   `[skills.roles]` config entry labeled user-stated, and MCP servers are listed by name only from each host's own config)*
   *(amended 2026-11-23, 39-SPEC "Live facts added 2026-11-23": the table also picks the MCP servers a lane gets: a code_index server whose seed row records a launch form and whose binary is on the child's PATH, written into a run-scoped --mcp-config file)*
-- [ ] **REV-06**: jev picks the reviewer for a plan and how many lanes it gets (one or two) from files touched,
+- [x] **REV-06**: jev picks the reviewer for a plan and how many lanes it gets (one or two) from files touched,
   complexity, task count and category, on top of deterministic signals (security, data, irreversible operations).
-- [ ] **REV-07**: Before a review or judge round, spec-review pings each chosen lane with a short probe, replaces
+- [x] **REV-07**: Before a review or judge round, spec-review pings each chosen lane with a short probe, replaces
   only the blocked ones from the user's preference order, continues with at least one, and records which lanes
   judged; a fake-lane test covers one blocked lane. Pings run at once, each with its own timeout; every ping or lane
   failure records a reason from one closed list that a test locks; a review in which a lane was replaced, failed or
   never resolved is reported partial with the lanes that judged, never as a clean run, and one lane's failure never
   cancels another lane's result. *(amended 2026-11-16, GSD lane-handling study: GSD's lane dispatch is fail-closed in
   this way)*
-- [ ] **REV-08**: spec-review reports a superpowers plan that has no explicit fold step at its end as a finding.
+- [x] **REV-08**: spec-review reports a superpowers plan that has no explicit fold step at its end as a finding.
   *(added 2026-11-03, 29 D-03: owner decision; the fold step itself is Phase 29)*
 
 ### Execute
@@ -1105,14 +1105,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | HUB-08 | Phase 35 | Complete |
 | HUB-09 | Phase 35 | Complete |
 | HUB-10 | Phase 36 | Complete |
-| REV-01 | Phase 40 | Pending |
-| REV-02 | Phase 40 | Pending |
+| REV-01 | Phase 40 | Complete |
+| REV-02 | Phase 40 | Complete |
 | REV-03 | Phase 39 | Complete |
 | REV-04 | Phase 39 | Complete |
 | REV-05 | Phase 39 | Complete |
-| REV-06 | Phase 40 | Pending |
-| REV-07 | Phase 40 | Pending |
-| REV-08 | Phase 40 | Pending |
+| REV-06 | Phase 40 | Complete |
+| REV-07 | Phase 40 | Complete |
+| REV-08 | Phase 40 | Complete |
 | EXE-01 | Phase 41 | Pending |
 | EXE-02 | Phase 42 | Pending |
 | EXE-03 | Phase 42 | Pending |

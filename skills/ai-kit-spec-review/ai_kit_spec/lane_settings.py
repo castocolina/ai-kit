@@ -113,6 +113,19 @@ def lane_escalation(entry: dict) -> Escalation:
                       _bool_setting(entry, "escalate_model"))
 
 
+def lane_free_pool(entry: dict) -> str | None:
+    """The entry's free-pool name when the owner flagged it usage_limited and the pool is
+    well formed; None otherwise, including for a non-boolean flag."""
+    try:
+        limited = lane_usage_limit(entry).limited
+    except LaneSettingError:
+        return None
+    pool = entry.get("pool")
+    if limited and isinstance(pool, str) and POOL_RX.fullmatch(pool):
+        return pool
+    return None
+
+
 def _keyed(role_lanes) -> list:
     """Return keyed lane dicts in order, keeping first occurrences and skipping malformed items."""
     if not isinstance(role_lanes, list):

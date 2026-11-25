@@ -13,6 +13,11 @@ waiting for."""
 
 # Closed reason vocabulary (D-13). Order here is documentation only; classify_error's
 # check order is: timeout, exit 0, auth, quota, dispatch_unavailable, configuration.
+REPLACED = "replaced"
+NEVER_RESOLVED = "never_resolved"
+NO_LANE_LEFT = "no_lane_left"
+PING_TIMEOUT = "ping_timeout"
+
 REASONS = (
     "quota",               # usage or rate limit, already retried by the runner on a router lane
     "auth",                # authentication/entitlement/setup — never fixed by waiting
@@ -23,6 +28,10 @@ REASONS = (
     "capacity",            # provider overloaded; mapped from the runner status line
     "billing_or_access",   # billing / entitlement; mapped from the runner status line
     "git_timeout",         # runner git work-tree check timed out, not the CLI
+    REPLACED,  # the lane was replaced in this round; its cause is recorded separately
+    NEVER_RESOLVED,  # the lane was chosen but left no readable report
+    NO_LANE_LEFT,  # a ping or switch found no lane to run
+    PING_TIMEOUT,  # a ping reached its deadline
 )
 
 # Runner status -> reason (D-12 as amended by 25 D-21; D-34). Values are None (success)

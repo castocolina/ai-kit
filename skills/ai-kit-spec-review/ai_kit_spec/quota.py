@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 from typing import NamedTuple
 
+from ai_kit_spec import lane_settings
 from ai_kit_spec.cache import cache_base
 from ai_kit_spec.commands import ResolvedReviewer, render_reviewer_command
 from ai_kit_spec.config_io import _KNOWN_REVIEWER_FIELDS
@@ -212,6 +213,8 @@ class ProbeSeams(NamedTuple):
     custom_fn: Callable[..., RunnerResult] = run_custom_command
     env_fn: Callable[[], dict] = lambda: dict(os.environ)
     print_fn: Callable[[str], None] | None = None
+    timeout_s: int = 30
+    role: str = ""
 
 
 def _probe_entry(result: RunnerResult, detail: str) -> dict:
@@ -250,14 +253,19 @@ def _collecting_seams(seams: ProbeSeams, lines: list[str], cwd: str) -> RunnerSe
 def _probe_call(resolved, prompt, seams, runner_seams, cwd):
     """The one spawn: the runner for a table runtime, the launcher for a custom command."""
     if resolved.runtime:
-        spec = review_spec(resolved.runtime, resolved.model, resolved.extra, 30, cwd=cwd)
+        spec = review_spec(resolved.runtime, resolved.model, resolved.extra, seams.timeout_s,
+                           cwd=cwd)._replace(
+            pool=(lane_settings.lane_free_pool(resolved.extra or {})
+                  if seams.role == "review" else None))
         return seams.runner_fn(spec, prompt, runner_seams)
     argv = render_reviewer_command(resolved, prompt)
-    return seams.custom_fn(CustomSpec(resolved.key, argv, [30], cwd=cwd), prompt, runner_seams)
+    return seams.custom_fn(CustomSpec(resolved.key, argv, [seams.timeout_s], cwd=cwd),
+                           prompt, runner_seams)
 
 
 def _run_probe(resolved: "ResolvedReviewer", prompt: str, seams: ProbeSeams) -> _ProbeRun:
-    """One 30 s review probe. A private cwd keeps the runner off the caller's git work tree,
+    """One review probe with the seams' timeout (30 s by default). A private cwd keeps the
+    runner off the caller's git work tree,
     so a large repo can never turn the probe into a git timeout (D-34)."""
     lines: list[str] = []
     cwd = tempfile.mkdtemp(prefix="aikit-probe-")
@@ -272,9 +280,10 @@ def probe_reviewer_quota(resolved: "ResolvedReviewer", seams: ProbeSeams | None 
     """A native entry (no runtime, no command) is never probed: nothing to run, and the
     session's own dispatch is not a quota this module can observe.
 
-    A table-runtime entry runs one 30 s review through the runner; a custom entry (a command,
-    no runtime) runs through the launcher with one 30 s tier. Available exactly when that call
-    reports no reason. `detail` is the relayed stderr, truncated."""
+    A table-runtime entry runs one review through the runner; a custom entry (a command,
+    no runtime) runs through the launcher. Both use the seams' timeout (30 s by default).
+    Available exactly when that call reports no reason. `detail` is the relayed stderr,
+    truncated."""
     if not resolved.runtime and not resolved.command:
         return {"available": True, "checked_at": time.time(), "reason": None, "detail": "",
                 "answered": False}

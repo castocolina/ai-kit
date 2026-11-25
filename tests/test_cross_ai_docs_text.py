@@ -21,6 +21,7 @@ TEMPLATE = REPO / "skills/ai-kit-spec-review/references/cross-ai.mjs"
 ERROR_CLASSIFIER_DIR = REPO / "skills/ai-kit-spec-review"
 CURATED_SKILL = REPO / "skills/ai-kit-gsd-curated-config/SKILL.md"
 REVIEW_SKILL = REPO / "skills/ai-kit-spec-review/SKILL.md"
+LANE_CAPS = REPO / "skills/ai-kit-spec-review/references/lane-capabilities.md"
 SECTION = "## Lane capability block, lenses and refusals"
 PROMPTS = REPO / "skills/ai-kit-spec-review/references/reviewer-prompts.md"
 GUIDANCE = REPO / "skills/ai-kit-spec-review/references/tooling-guidance.md"
@@ -238,8 +239,17 @@ class SpecConfigAndConfigDocs(unittest.TestCase):
 
 
 class LaneCapabilitySkillTables(unittest.TestCase):
-    def test_roles_lock_code_seed_file_and_table(self):
+    # Loop 40 round 1: the detail moved from SKILL.md to references/lane-capabilities.md;
+    # SKILL.md keeps the section heading with the rules the loop acts on.
+    def test_skill_keeps_the_refusal_and_owner_started_rules(self):
         sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        for value in (f"exits {review_module('prompt_guard').REFUSED_EXIT}",
+                      "switch no lane", "[review] edit_lens_pass", "never starts it",
+                      "never runs it", "(references/lane-capabilities.md)"):
+            self.assertIn(value, sec)
+
+    def test_roles_lock_code_seed_file_and_table(self):
+        sec = section_text(LANE_CAPS.read_text(encoding="utf-8"), SECTION)
         st = review_module("skill_table")
         self.assertEqual(table_names(sec, "| Role | Meaning |"), list(st.ROLES))
         self.assertEqual(list(st.ROLES),
@@ -249,33 +259,33 @@ class LaneCapabilitySkillTables(unittest.TestCase):
             self.assertNotEqual(row["role"], "unsorted")
 
     def test_refusal_reasons_table_equals_code_list(self):
-        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        sec = section_text(LANE_CAPS.read_text(encoding="utf-8"), SECTION)
         self.assertEqual(table_names(sec, "| Reason | When |"),
                          list(review_module("prompt_guard").REFUSAL_REASONS))
 
     def test_lens_notes_table_equals_code_list(self):
-        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        sec = section_text(LANE_CAPS.read_text(encoding="utf-8"), SECTION)
         self.assertEqual(table_names(sec, "| Note | When |"),
                          list(review_module("lens_delivery").LENS_NOTES))
 
     def test_each_item_has_exactly_one_row(self):
-        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        sec = section_text(LANE_CAPS.read_text(encoding="utf-8"), SECTION)
         names = [name for header in ("| Role | Meaning |", "| Reason | When |", "| Note | When |")
                  for name in table_names(sec, header)]
         self.assertTrue(all(count == 1 for count in collections.Counter(names).values()))
 
     def test_refusal_exit_is_documented(self):
-        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        sec = section_text(LANE_CAPS.read_text(encoding="utf-8"), SECTION)
         self.assertIn(f"exits {review_module('prompt_guard').REFUSED_EXIT}", sec)
 
     def test_block_sections_in_order(self):
-        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        sec = section_text(LANE_CAPS.read_text(encoding="utf-8"), SECTION)
         line = next(line for line in sec.splitlines() if "`LANE`," in line)
         self.assertEqual(re.findall(r"`([A-Z ]+)`", line),
                          list(review_module("capability_block").SECTIONS))
 
     def test_config_keys_and_commands_named(self):
-        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
+        sec = section_text(LANE_CAPS.read_text(encoding="utf-8"), SECTION)
         for value in ("[skills.roles]", "[review] edit_lens_pass", "[[models.context]]",
                       "capability-block", "skill-table", "edit-lens-pass --cwd", "--accept",
                       "--reject", "never starts it", "changed after",
@@ -284,8 +294,8 @@ class LaneCapabilitySkillTables(unittest.TestCase):
             self.assertIn(value, sec)
 
     def test_new_text_names_no_model(self):
-        sec = section_text(REVIEW_SKILL.read_text(encoding="utf-8"), SECTION)
-        self.assertEqual(scan_text(str(REVIEW_SKILL), sec), [])
+        sec = section_text(LANE_CAPS.read_text(encoding="utf-8"), SECTION)
+        self.assertEqual(scan_text(str(LANE_CAPS), sec), [])
 
 
 class LaneCapabilityReferences(unittest.TestCase):

@@ -111,7 +111,7 @@
     {
       "number": "40",
       "name": "Resilient review sized by jev",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "41",
@@ -201,8 +201,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step",
-    "reason": "Phase 24 of 41 · 51% · executing"
+    "label": "Advance to the next step (plan phase 41)",
+    "reason": "Phase 25 of 41 — needs a plan"
   },
-  "updated_at": "2026-11-25T05:19:23.296Z"
+  "updated_at": "2026-11-25T23:59:25.682Z"
 }

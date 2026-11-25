@@ -59,7 +59,7 @@ new jev backend or a change to the shared jev client.
   `blocked_until=<time|-> failures=<n>`), only for a flagged lane that carries a pool; no runner or node, or a missing or
   malformed record, reads as none and never blocks a lane. **Own reasoning:** the record is written by the runner under
   `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/blocked/` and its parser is in `cross-ai.mjs`; a Python re-parse would be a
-  second reader. **PROVISIONAL (needs owner confirmation, as in the SPEC).** Ledger.
+  second reader. **Confirmed by the owner 2026-11-25 (was PROVISIONAL, needs owner confirmation, as in the SPEC).** Ledger.
 
 ### jev
 - **D-06: Both jev uses go through one new module** (name at plan time) built on the existing `jev_names.ask_items` pattern:

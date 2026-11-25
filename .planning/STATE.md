@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 40
-current_phase_name: Resilient review sized by jev
-status: executing
-stopped_at: Phase 39.2 complete, ready to plan Phase 40
-last_updated: "2026-11-25T05:19:23.286Z"
+current_phase: 41
+current_phase_name: Superpowers adapter refactor with spec-config handoff
+status: planning
+stopped_at: Phase 40 complete, ready to plan Phase 41
+last_updated: "2026-11-25T23:59:25.671Z"
 last_activity: 2026-11-25
-last_activity_desc: Phase 39.2 complete, transitioned to Phase 40
-state_head: 8dd828c39fabccdb34ca5529392a98efaaffe029
+last_activity_desc: Phase 40 complete, transitioned to Phase 41
+state_head: 3f2f86a9aa5df275f2c8ddce1eec10b00336a8c1
 progress:
   total_phases: 41
-  completed_phases: 21
+  completed_phases: 22
   total_plans: 303
-  completed_plans: 290
-  percent: 51
+  completed_plans: 303
+  percent: 54
 ---
 
 # Project State
@@ -29,18 +29,18 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 40 (Resilient review sized by jev) — READY TO EXECUTE
+Phase: 41 — Superpowers adapter refactor with spec-config handoff
 Plan: Not started
-Status: Ready to execute
-Last activity: 2026-11-25 — Phase 39.2 complete, transitioned to Phase 40
+Status: Ready to plan
+Last activity: 2026-11-25 — Phase 40 complete, transitioned to Phase 41
 
-Progress: [█████░░░░░] 51%
+Progress: [█████░░░░░] 54%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 223
+- Total plans completed: 236
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -82,6 +82,7 @@ Progress: [█████░░░░░] 51%
 | 39 | 19 | - | - |
 | 39.1 | 13 | - | - |
 | 39.2 | 10 | - | - |
+| 40 | 13 | - | - |
 
 **Recent Trend:**
 
@@ -93,26 +94,7 @@ Progress: [█████░░░░░] 51%
 
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
-| *Archived 2026-11-22 (phase 38 close) and 2026-11-24 (phase 38.1): the per-plan rows are in STATE-ARCHIVE.md* | - | - | - |
-| Phase 39 P01 | 15min | 3 tasks | 5 files |
-| Phase 39 P02 | 15min | 3 tasks | 5 files |
-| Phase 39 P03 | 15min | 2 tasks | 5 files |
-| Phase 39 P04 | 17min | 3 tasks | 3 files |
-| Phase 39 P05 | 12min | 2 tasks | 2 files |
-| Phase 39 P07 | 13min | 2 tasks | 4 files |
-| Phase 39 P08 | 18min | 3 tasks | 6 files |
-| Phase 39 P09 | 16min | 3 tasks | 5 files |
-| Phase 39 P06 | 20min | 3 tasks | 2 files |
-| Phase 39 P10 | 18min | 2 tasks | 4 files |
-| Phase 39 P11 | 22min | 3 tasks | 4 files |
-| Phase 39 P12 | 32min | 3 tasks | 13 files |
-| Phase 39 P13 | 14min | 3 tasks | 10 files |
-| Phase 39 P14 | 17min | 3 tasks | 5 files |
-| Phase 39 P15 | 15min | 2 tasks | 6 files |
-| Phase 39 P16 | 15min | 2 tasks | 8 files |
-| Phase 39 P17 | 36min | 3 tasks | 19 files |
-| Phase 39 P18 | 70min | 2 tasks | 30 files |
-| Phase 39 P19 | 60min | 2 tasks | 4 files |
+| *Archived 2026-11-22 (phase 38 close), 2026-11-24 (phase 38.1) and 2026-11-25 (phase 39): the per-plan rows are in STATE-ARCHIVE.md* | - | - | - |
 | Phase 39.1 P01 | 17min | 3 tasks | 8 files |
 | Phase 39.1 P02 | 13min | 3 tasks | 8 files |
 | Phase 39.1 P03 | 15min | 2 tasks | 12 files |
@@ -136,6 +118,19 @@ Progress: [█████░░░░░] 51%
 | Phase 39.2 P08 | 8min | 2 tasks | 7 files |
 | Phase 39.2 P09 | 40min | 2 tasks | 12 files |
 | Phase 39.2 P10 | 40min | 3 tasks | 1 files |
+| Phase 40 P01 | 23min | 3 tasks | 8 files |
+| Phase 40 P02 | 24min | 3 tasks | 8 files |
+| Phase 40 P03 | 13min | 2 tasks | 6 files |
+| Phase 40 P04 | 18min | 3 tasks | 9 files |
+| Phase 40 P05 | 18min | 2 tasks | 6 files |
+| Phase 40 P06 | 22min | 2 tasks | 6 files |
+| Phase 40 P07 | 22min | 3 tasks | 10 files |
+| Phase 40 P08 | 17min | 3 tasks | 12 files |
+| Phase 40 P09 | 22min | 3 tasks | 7 files |
+| Phase 40 P10 | 11min | 3 tasks | 6 files |
+| Phase 40 P11 | 16min | 2 tasks | 4 files |
+| Phase 40 P12 | 105min | 2 tasks | 22 files |
+| Phase 40 P13 | 20min | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -285,8 +280,8 @@ Phase 16: 4/4 success criteria verified 2026-10-14; the one human item (real cod
 
 ## Session Continuity
 
-Last session: 2026-11-25T02:38:44.123Z
-Stopped at: Phase 39.2 complete, ready to plan Phase 40
+Last session: 2026-11-25T23:37:22.779Z
+Stopped at: Phase 40 complete, ready to plan Phase 41
 Resume file: None
 
 ## Operator Next Steps

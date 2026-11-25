@@ -66,8 +66,8 @@ finding (the fixer rule stays: address it anyway and note the disagreement).
    `usage_limited` fails after dispatch with a quota class, spec-review switches it at once to `lane_fallback` of its role (the
    first unflagged lane of a different pool in the role's order) and the round finishes with that lane; every other failure of a
    lane after dispatch leaves that lane `failed` with a reason, no other lane takes its place in that round, and the owner decides;
-   lane selection skips a lane whose pool's blocked-until time (the 38.1 record) has not passed *(PROVISIONAL, needs owner
-   confirmation)*, tries it once after that time, and a second failure renews the record under the 38.1 rule.
+   lane selection skips a lane whose pool's blocked-until time (the 38.1 record) has not passed *(confirmed by the owner
+   2026-11-25; was PROVISIONAL, needs owner confirmation)*, tries it once after that time, and a second failure renews the record under the 38.1 rule.
    - Current: SKILL.md forbids any switch after a dispatch; `lane_usage_limit` and `lane_fallback` have no caller in spec-review.
    - Target: the SKILL.md hard rule is narrowed to "an unflagged lane never switches" and names the flagged-lane exception; the
      flagged switch calls `lane_usage_limit` and `lane_fallback`.
@@ -178,6 +178,9 @@ finding (the fixer rule stays: address it anyway and note the disagreement).
 - Pings run concurrently under one per-ping timeout; a test seam replaces the clock and the probe (no real model call in tests).
 - No machine-specific absolute path in skill text, tests or fixtures; model names in fixtures are placeholders.
 - The free-lane pool decisions are PROVISIONAL and flagged as such in every artifact until the owner confirms them.
+  *(amended 2026-11-25: confirmed by the owner (was PROVISIONAL): the blocked-until record is read only through
+  `cross-ai.mjs --blocked-status <pool>`, and a missing runner or a bad record never blocks a lane; the artifacts drop
+  the PROVISIONAL label)*
 
 ## Acceptance Criteria
 

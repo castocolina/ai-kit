@@ -77,7 +77,10 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   skill's digest is stale by design until its next loop. With more than 3 such
   findings, the three-round rule applies. A disputed finding counts as refuted
   only through a recorded run (the finding id, `path:line`, the command and its
-  observed output), never through another judge round. SKILL.md describes
+  observed output), never through another judge round. Before each judge round,
+  ping that round's judge lanes with `ai-kit-spec.py ping-lanes` on a judge lane
+  file whose keys no roster uses (so nothing is replaced); a judge whose ping
+  fails is not launched that round. SKILL.md describes
   behaviour; provenance and version history live in a trailing section or a
   reference, and version-specific text appears only as a conditional.
 - Commit one coherent, buildable logical change (a logical commit) with its

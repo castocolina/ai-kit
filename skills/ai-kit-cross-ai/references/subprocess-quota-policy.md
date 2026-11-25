@@ -46,7 +46,9 @@ The catalog classifies each failed attempt:
 - A class is read from stderr and the host's structured events; a catalogue row marked
   `input: stdout` also reads the plain stdout lines of a failed attempt (non-zero exit, parse
   error or timeout), never an attempt that answered with exit 0 nor an exit-0 empty answer without
-  a parse error, and never ends a running lane.
+  a parse error, and never ends a running lane. claude's JSON result also gives
+  `api_error_status` as `status <n>` and `api_error_type` as text, so the status-code rows match
+  it.
 
 ## The soft series
 
@@ -146,6 +148,10 @@ the caller only waits.
   the reset check replaces the wait of the check it comes before; the series then resumes from its own count.
   The report line's `check=` is `first` for every `hard_waits_s` entry, `periodic` for each
   `hard_every_s` wait, `reset` for the extra check and `-` otherwise.
+- When a runner copy's CONFIG `retry` predates `hard_every_s` (a copy upgraded in place keeps its
+  CONFIG), the copy keeps its own `hard_waits_s` list and takes `hard_every_s` 600 from the
+  defaults: a list of 600, 900, 1800 s then checks every 600 s until the cap. To run the defaults
+  above, set `hard_waits_s = [60, 300]` in `[runner.retry]` of ai-kit's `config.toml`.
 - A record whose `last_attempt_at` is older than the cap is a stale episode: it is replaced, the
   call proceeds, and the evidence notes `stale-state-fresh-start`.
 - A stopped record refuses every later call on its lane (checkout, CLI, model, route kind) until
@@ -182,7 +188,7 @@ the caller only waits.
 
 ## Blocked-until record
 
-A quota stop on a lane whose matched row carries a pool, or whose call passes `--pool <provider>:free`, writes one JSON record per pool (mode 0600, atomic) under `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/blocked/`, with `pool`, `blocked_until`, `failures`, `basis`, the row id and `written_at`, and no key, account, path, prompt or model id. `blocked_until` is the stated `retryAfterMs` (capped at 24 hours) plus 120 s, else 24 hours; after a second failure in a row past that time it is at least 24 hours; an ok attempt deletes it only when the call passed `--pool` for that pool (an ok lane of the same provider without `--pool` keeps it), so a caller of a usage-limited lane always passes `--pool`. The pool key is `<provider>:free`. `--blocked-status <provider>:free` prints `blocked_until=<time|-> failures=<n>` and `--blocked-clear <provider>:free` deletes the record, neither spawning a host. A missing or malformed record reads as none, and the runner never refuses or switches a lane because of one.
+A quota stop on a lane whose matched row carries a pool, or whose call passes `--pool <provider>:free`, writes one JSON record per pool (mode 0600, atomic) under `${XDG_STATE_HOME:-~/.local/state}/ai-kit/spec/blocked/`, with `pool`, `blocked_until`, `failures`, `basis`, the row id and `written_at`, and no key, account, path, prompt or model id. `blocked_until` is the stated `retryAfterMs` (capped at 24 hours) plus 120 s, else 24 hours; after a second failure in a row past that time it is at least 24 hours; an ok attempt deletes it only when the call passed `--pool` for that pool (an ok lane of the same provider without `--pool` keeps it), so a caller of a usage-limited lane always passes `--pool`. The pool key is `<provider>:free`. `--blocked-status <provider>:free` prints `blocked_until=<time|-> failures=<n>` and `--blocked-clear <provider>:free` deletes the record, neither spawning a host. A missing or malformed record reads as none, and the runner never refuses or switches a lane because of one. A row's pool takes its provider from the model id's part before `/`, so a lane whose id has no `/` writes one only with `--pool`. The record follows the attempt, not the run's status: a review whose tree changed or a git read that failed afterwards (`contract_violation`, `git_error`, `git_timeout`) still writes or clears it. A client-rule refusal (`FreeTierError`, `MissingSessionID`, the free-tier version gate) is `bad_request` and writes no record; a router lane's quota cycle never writes one.
 
 ## Catalog
 

@@ -32,7 +32,9 @@
     "tests/test_flow_stack_3.py",
     "tests/test_flow_stack_4.py",
     "tests/test_flow_unit_refusals.py",
+    "tests/test_fold_check.py",
     "tests/test_jev_config.py",
+    "tests/test_lane_failure_text.py",
     "tests/test_secret_shapes_copy_install.py",
     "tests/test_setup.py",
     "tests/test_setup_dev.py",
@@ -43,7 +45,7 @@
    "queries": 23
   },
   "ai-kit-cross-ai": {
-   "evals": 10,
+   "evals": 11,
    "modules": [
     "tests/test_ai_kit_spec.py",
     "tests/test_ai_kit_spec_goal_prompt_cli.py",
@@ -56,13 +58,14 @@
     "tests/test_cross_ai_settings_text.py",
     "tests/test_cross_ai_skill_text.py",
     "tests/test_curated_config_script.py",
+    "tests/test_lane_failure_text.py",
     "tests/test_quota_policy_text.py",
     "tests/test_setup.py",
     "tests/test_skill_text_history.py",
     "tests/test_staged_mapper.py"
    ],
-   "near_misses": 8,
-   "queries": 16
+   "near_misses": 10,
+   "queries": 20
   },
   "ai-kit-gsd-curated-config": {
    "evals": 6,
@@ -195,6 +198,7 @@
     "tests/test_arch_no_grok_runtime.py",
     "tests/test_cross_ai_skill_text.py",
     "tests/test_flow_docs.py",
+    "tests/test_fold_check.py",
     "tests/test_lane_settings.py",
     "tests/test_lens_delivery.py",
     "tests/test_quota_policy_text.py",
@@ -267,7 +271,7 @@
    "queries": 20
   },
   "ai-kit-spec-review": {
-   "evals": 15,
+   "evals": 19,
    "modules": [
     "tests/test_ai_kit_commit_fold.py",
     "tests/test_ai_kit_commit_fold_adapters.py",
@@ -375,15 +379,20 @@
     "tests/test_flow_stack_3.py",
     "tests/test_flow_stack_4.py",
     "tests/test_flow_unit_refusals.py",
+    "tests/test_fold_check.py",
     "tests/test_gate_scope.py",
     "tests/test_gsd_curated_eval.py",
     "tests/test_jev_config_parity.py",
+    "tests/test_jev_review.py",
     "tests/test_lane_data_use.py",
     "tests/test_lane_effort.py",
+    "tests/test_lane_failure_text.py",
     "tests/test_lane_order.py",
+    "tests/test_lane_ping.py",
     "tests/test_lane_pool.py",
     "tests/test_lane_price.py",
     "tests/test_lane_settings.py",
+    "tests/test_lane_switch.py",
     "tests/test_lens_delivery.py",
     "tests/test_models_config.py",
     "tests/test_no_seed_refusal.py",
@@ -393,6 +402,8 @@
     "tests/test_propose_cmds.py",
     "tests/test_quota_policy_text.py",
     "tests/test_removed_runtime.py",
+    "tests/test_review_log.py",
+    "tests/test_review_signals.py",
     "tests/test_role_orders.py",
     "tests/test_run_unittest_parallel.py",
     "tests/test_runner_claude_exec.py",
@@ -436,7 +447,7 @@
    "queries": 20
   },
   "ai-kit-spec-review-fixer": {
-   "evals": 7,
+   "evals": 8,
    "modules": [
     "tests/test_ai_kit_spec_review_fixer.py",
     "tests/test_arch_hardcoded_models.py",
@@ -505,6 +516,7 @@
     "tests/test_jev_fast_decision.py",
     "tests/test_jev_fast_decision_guard.py",
     "tests/test_jev_learn.py",
+    "tests/test_jev_review.py",
     "tests/test_jev_skill_install_e2e.py",
     "tests/test_jev_typesafe_models.py",
     "tests/test_judge_loop.py",

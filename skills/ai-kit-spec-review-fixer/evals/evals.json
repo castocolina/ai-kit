@@ -77,6 +77,18 @@
         "No document is edited when the only finding is skipped.",
         "The Status line reads No Edits, because nothing was edited and nothing was escalated."
       ]
+    },
+    {
+      "id": "precise-mechanical-repass-edits-listed",
+      "prompt": "Fix evals/files/plan-bad.md from the review report evals/files/plan-bad-review.md. This is a re-pass; the orchestrator's prompt carries this line:\n- Mechanical re-pass: Goal is a fragment, not a sentence\nYou skipped that MEDIUM finding in the last pass and the advisory classifier marked it mechanical. End with the Fix Summary.",
+      "expected_output": "Only the Goal line changes: it is rewritten as one sentence naming what a user gets with --draft, the MEDIUM finding is listed under Findings addressed and not under Findings skipped, every other finding of the report is left as it is (the line Modify: TBD stays), and the Status line reads Edits Applied.",
+      "files": ["evals/files/plan-bad.md", "evals/files/plan-bad-review.md"],
+      "assertions": [
+        "The Goal line becomes one sentence that names what a user gets with --draft.",
+        "The MEDIUM finding named on the Mechanical re-pass line appears under Findings addressed, not under Findings skipped.",
+        "Processes only the finding the re-pass line names: the line Modify: TBD is left unchanged, because the HIGH finding is not on that line.",
+        "The Status line reads Edits Applied, because the listed finding was edited and nothing was escalated."
+      ]
     }
   ]
 }

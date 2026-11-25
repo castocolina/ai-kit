@@ -32,15 +32,35 @@
   "should_trigger": true
  },
  {
+  "query": "tmp/lanes/review-2/lane.err ends with AIKIT-XAI status=quota cli=pi model=fake/ok exit=75 and no retry_after_s, and GSD is asking retry/skip/abort. what do i answer?",
+  "should_trigger": true
+ },
+ {
+  "query": "Second opinion please: send docs/plans/parser-plan.md to codex as a review lane through cross-ai.mjs with effort high and tell me what it found",
+  "should_trigger": true
+ },
+ {
   "query": "Set up which reviewers and models my project uses for cross-AI review",
   "should_trigger": false
  },
  {
-  "query": "Configure .planning/config.json for GSD with the curated preset",
+  "query": "Add a third reviewer lane on pi with fake/ok to my project's cross-AI review roster",
   "should_trigger": false
  },
  {
-  "query": "Fold the commits of the finished plan into one commit per feature",
+  "query": "Render cross-ai.mjs into .planning/scripts and merge the cross-ai.mjs.new waiting beside it",
+  "should_trigger": false
+ },
+ {
+  "query": "Switch my current opencode chat session to a different model for the rest of this conversation",
+  "should_trigger": false
+ },
+ {
+  "query": "Claude Code itself hit its usage limit in the middle of this run; resume this same session when the limit resets",
+  "should_trigger": false
+ },
+ {
+  "query": "Configure .planning/config.json for GSD with the curated preset",
   "should_trigger": false
  },
  {
@@ -53,10 +73,6 @@
  },
  {
   "query": "Arm a session wake so this run resumes after the usage limit",
-  "should_trigger": false
- },
- {
-  "query": "Show me a dashboard of which AI CLIs I used most last week",
   "should_trigger": false
  },
  {

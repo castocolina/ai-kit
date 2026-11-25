@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
@@ -394,6 +395,137 @@ ladder = ["listed"]
         self.assertIn("A key that names different lanes", text)
         self.assertIn("every `--check-only` run spends one probe per probed lane", text)
         self.assertNotIn("reachable from `policy.ladder`", text)
+
+
+POOL_ROSTER = '''[[lanes.review]]
+key = "r1"
+model = "placeholder-model-1"
+command = "placeholder-cli-1 {model}"
+usage_limited = true
+pool = "fake-provider:free"
+[[lanes.review]]
+key = "r2"
+model = "placeholder-model-2"
+command = "placeholder-cli-1 {model}"
+usage_limited = true
+pool = "fake-provider:free"
+[[lanes.review]]
+key = "r3"
+model = "placeholder-model-3"
+command = "placeholder-cli-1 {model}"
+[lanes.policy.review]
+ladder = ["r1", "r2", "r3"]
+'''
+
+EXECUTE_POOL_ROSTER = '''[[lanes.review]]
+key = "r2"
+model = "placeholder-model-2"
+command = "placeholder-cli-1 {model}"
+[[lanes.execute]]
+key = "r1"
+model = "placeholder-model-1"
+command = "placeholder-cli-1 {model}"
+usage_limited = true
+pool = "fake-provider:free"
+[lanes.policy.review]
+ladder = ["r2"]
+[lanes.policy.execute]
+ladder = ["r1"]
+'''
+
+
+def _quota_failure():
+    return {"available": False, "checked_at": time.time(), "reason": "quota", "detail": "",
+            "answered": False}
+
+
+class TestProbeQuotaBlockedPool(_FileCase):
+    def probe(self, line, *extra, cached=None):
+        quota_path = os.path.join(self.cwd, "quota.json")
+        if cached is not None:
+            self.write(quota_path, json.dumps(cached))
+        unexpected, reads, calls = [], [], []
+
+        def fake_run(argv, *_a, **_k):
+            if argv[0] == "/fake/bin/node" and argv[2:] == ["--describe"]:
+                return subprocess.CompletedProcess(argv, 0, json.dumps({"runtimes": {}}), "")
+            if (line is not None and argv[0] == "/fake/bin/node"
+                    and argv[2:] == ["--blocked-status", "fake-provider:free"]):
+                reads.append(argv)
+                return subprocess.CompletedProcess(argv, 0, line, "")
+            unexpected.append(argv)
+            raise AssertionError(f"unexpected call {argv}")
+
+        def rec(spec, prompt, seams):
+            calls.append(spec.key)
+            return RunnerResult(0, "", {"status": "ok"}, None, False, ["node", "runner"], "")
+
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = cli.main(["probe-quota", "--cwd", self.cwd, "--quota-path", quota_path,
+                             "--no-save-runtimes", *extra],
+                            runner_fn=rec, custom_fn=rec, env_fn=lambda: dict(self.env),
+                            which_fn=lambda name, *_a, **_k: (
+                                "/fake/bin/node" if name == "node" else None),
+                            run_fn=fake_run)
+        self.assertEqual(code, 0)
+        self.assertEqual(unexpected, [])
+        with open(quota_path, encoding="utf-8") as handle:
+            return sorted(calls), json.load(handle), len(reads)
+
+    def test_blocked_pool_is_not_probed_and_cached_unavailable(self):
+        self.write_user(POOL_ROSTER)
+        calls, saved, reads = self.probe("blocked_until=2099-01-01T00:00:00Z failures=1\n")
+        self.assertEqual(calls, ["r3"])
+        self.assertEqual(reads, 1)
+        for key in ("r1", "r2"):
+            self.assertIs(saved[key]["available"], False)
+            self.assertEqual(saved[key]["reason"], "quota")
+            self.assertEqual(saved[key]["detail"],
+                             "pool fake-provider:free blocked until 2099-01-01T00:00:00Z")
+
+    def test_expired_pool_is_retried_by_one_lane(self):
+        self.write_user(POOL_ROSTER)
+        now = time.time()
+        cached_r1 = {
+            "quota failure": _quota_failure(),
+            "fresh success": {"available": True, "checked_at": now, "reason": None,
+                              "detail": "", "answered": True},
+            "fresh auth failure": {"available": False, "checked_at": now, "reason": "auth",
+                                   "detail": "", "answered": False},
+        }
+        for name, entry in cached_r1.items():
+            with self.subTest(name):
+                calls, saved, reads = self.probe(
+                    "blocked_until=2000-01-01T00:00:00Z failures=1\n",
+                    cached={"r1": entry, "r2": _quota_failure()})
+                self.assertEqual(calls, ["r1", "r3"])
+                self.assertEqual(reads, 1)
+                self.assertIs(saved["r1"]["available"], True)
+                self.assertIs(saved["r2"]["available"], False)
+                self.assertEqual(saved["r2"]["reason"], "quota")
+
+    def test_cleared_record_retries_a_cached_quota_failure_once(self):
+        self.write_user(POOL_ROSTER)
+        calls, saved, _ = self.probe("blocked_until=- failures=0\n",
+                                     cached={"r1": _quota_failure()})
+        self.assertEqual(calls, ["r1", "r2", "r3"])
+        self.assertIs(saved["r1"]["available"], True)
+
+    def test_unflagged_lane_keeps_its_fresh_quota_entry(self):
+        self.write_user(POOL_ROSTER)
+        for line in ("blocked_until=- failures=0\n",
+                     "blocked_until=2000-01-01T00:00:00Z failures=1\n"):
+            with self.subTest(line):
+                entry = _quota_failure()
+                calls, saved, _ = self.probe(line, cached={"r3": entry})
+                self.assertNotIn("r3", calls)
+                self.assertEqual(saved["r3"], entry)
+
+    def test_execute_role_has_no_pre_pass(self):
+        self.write_user(EXECUTE_POOL_ROSTER)
+        calls, _, reads = self.probe(None, "--role", "execute")
+        self.assertIn("r1", calls)
+        self.assertEqual(reads, 0)
 
 
 if __name__ == "__main__":
