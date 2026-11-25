@@ -1075,7 +1075,7 @@ Plans:
   7. Lane pings run at once, each with its own timeout, and every ping or lane failure records a reason from one closed list; a test fails when a key is added or removed without the list changing. *(added 2026-11-16, GSD lane-handling study)*
   8. A review in which a lane was replaced, failed or never resolved is reported partial with the lanes that judged, never as a clean run, and one lane's failure never cancels another lane's result (fake lanes cover each case). *(added 2026-11-16, GSD lane-handling study)*
 
-**Plans**: TBD
+**Plans**: 13 plans in 13 waves *(planned 2026-11-25; the plans run one after another because nearly every plan touches `ai_kit_spec/cli.py`; 40-12, the judge loop, and 40-13, the closing gate with the final `make test`, are orchestrator actions; everything about the blocked-until record stays PROVISIONAL)*
 
 ### Phase 41: Superpowers adapter refactor with spec-config handoff
 

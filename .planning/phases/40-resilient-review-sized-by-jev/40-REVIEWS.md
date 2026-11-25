@@ -2,7 +2,7 @@
 phase: 40
 cycle: 1
 reviewers: [referee-one]
-reviewed_at: 2026-11-25T02:17:23-03:00
+reviewed_at: 2026-11-25T02:43:56-03:00
 plans_reviewed: [40-01-PLAN.md, 40-02-PLAN.md, 40-03-PLAN.md, 40-04-PLAN.md, 40-05-PLAN.md, 40-06-PLAN.md, 40-07-PLAN.md, 40-08-PLAN.md, 40-09-PLAN.md, 40-10-PLAN.md, 40-11-PLAN.md, 40-12-PLAN.md, 40-13-PLAN.md]
 models:
   referee-one: "router-env/my-referee-one"
@@ -28,6 +28,15 @@ built by the phase-40 copy of the phase-39 review drivers (verify-against-source
 router-env/my-coding, same-wave overlap check, the local shell rules verbatim, the orchestrator planning rules and locked
 decisions inlined). All four lanes exited 0 (470-693 s) and every review was read in full; findings are path:line grounded.
 The plan checker (sonnet) ran in parallel on the same plans: 0 blockers, 4 warnings, 1 info (folded into the fix pass).
+
+Fix pass (one targeted pass, time rule): the orchestrator's decisions D1-D14 (`tmp/p40-review/c1/fix-brief.md`) were applied
+by four opus fix planners. Plans 40-01..40-04 and 40-06..40-13 were revised; each ends with a `## Review dispositions
+(cycle 1)` section. **Plan 40-05 was NOT revised (time box): its cycle-1 HIGH findings stay OPEN** — the blocked-status read
+must run inside the per-lane ping worker under the same deadline and return the existing unavailable probe-entry shape; at
+most one lane per expired pool may be re-tried per invocation (ping-lanes and the probe-quota pre-pass), proven by a stateful
+fake runner whose first retry renews the record; the CLI tracer fakes must answer `--describe` and `--blocked-status` exactly;
+REV-07 joins its requirements (brief D6, D14). 40-05 must get its targeted fix before wave 5 runs. Review cycle 2 was not
+run (time box); the review drivers are ready (`tmp/p40-review/prep_cycle.py 2 ...`, `run_all.sh 2`, `assemble.py 2`).
 
 ### referee-one
 
@@ -473,16 +482,62 @@ Static, read-only review. No files changed, no suites or live lanes run, and no 
 
 #### Batch A (40-01, 40-02, 40-03)
 
-no dispositions file (fix pass not run)
+40-01: HIGH failed-lane-judged-by-readable-report incorporated (D4: record_merge readable/failed/replaced rule returning judged keys, merge only judged keys, Task 2+3 tests, T-40-03 extended); MEDIUM roster-order incorporated (D3: --cwd required, role_order(cfg_resolve(migrate=False)), reversed/first-slot twins); MEDIUM unusable log objects incorporated (LANE_STATES, round_states validation, _shown_reason, --round<1 exit 2); LOW ev-6-params + HEAD_TASK1 incorporated (5 params, step-0 baseline N+14, fix(40) route); ponytail HIGH T1 incorporated; ponytail MEDIUM T2 incorporated; ponytail LOW T3 rejected (40-R3 needs a REASONS non-vacuity case, tests/test_ai_kit_spec.py:3483-3490); D14 incorporated.
+40-02: HIGH guard blocks first commit incorporated (D1: ALLOWED_READERS in Task 1, test_lane_settings staged and run); HIGH deadline incorporated (D5: one _ping_one/_probe_all path, monotonic clock_fn, exact-deadline test); HIGH probe exception / rejected candidate incorporated (D5: named tuple -> real_error, candidate failed event, tests); HIGH empty input incorporated (exit 3, test); MEDIUM cache reuse incorporated (D5: no reuse after failed/replaced, checked_at newer than log's first event, empty log no reuse, tests; consequence: round 1 after Step 0.7 probes again); MEDIUM routing/migration incorporated (migrate=False, _lazy_routes, CLI judge-file test); MEDIUM Task 1 size/now/--timeout/rg-zero/ordering fixture incorporated (helper split, _positive_int, rg -q, distinct reasons, orchestrator split rule); ponytail T1 MEDIUM, T2 HIGH, T3 MEDIUM incorporated; D14 incorporated.
+40-03: HIGH tracer incorporated (Task 1: --stdout-only fake quota exit 75, switch-lane at the branch point, replacement index dispatched with a key-recording fake, merge with --cwd --lane-log --round; record before the --stdout-only branch; unflagged exit-69 twin keeps the sibling report); HIGH two concurrent switches incorporated (D10: one-writer contract, test_two_failed_slots_switch_one_at_a_time, T-40-11); HIGH lane-reader guard incorporated (D1: ALLOWED_READERS["lane_switch.py"] = {"lane_fallback", "lane_usage_limit"} + planted case, test_lane_settings staged/run, six-path commit); MEDIUM round/index validation incorporated (exit 2 for round<1, index<0); MEDIUM changed lane identity incorporated (_refusal "lane changed"); MEDIUM reason-membership test incorporated (own events); MEDIUM helper split incorporated (_refusal); LOW PROVISIONAL label incorporated; ponytail T1 HIGH incorporated; ponytail T2 MEDIUM incorporated for prompt_over_window, duplicate-pure-cases part rejected (flagged_replacement adds the flag+quota gate over next_lane); config migrate=False; test count 17; D14 incorporated.
 
 #### Batch B (40-04, 40-05, 40-06, 40-07)
 
-no dispositions file (fix pass not run)
+40-04: HIGH --pool reaches execute-role probes incorporated (D2: review_spec(..., pool=None) keyword; ProbeSeams.role trailing after timeout_s; _probe_call passes lane_pool only for role review; _cmd_probe_quota _replace(role=args.role); dispatch_reviewer passes lane_pool(extra); Task 2 fake-runner argv tests for review dispatch/review probe and absence for execute probe and spec_with_effort exec; T-40-15); D1 lane_pool reader incorporated (lane_settings.lane_pool + TestLanePool, READERS + ALLOWED_READERS for lane_switch.py/reviewer_dispatch.py/quota.py in Task 1, replaces _flagged_pool); MEDIUM UnicodeDecodeError incorporated (ValueError catch + test); MEDIUM _read shape/golden/real-Node scope incorporated ((value, calls), literal golden list, no-real-node rule scoped to new tests); effort probe keeps no pool; D-04 truth PROVISIONAL; ponytail T1/T2 incorporated, T3 handed to 40-05 (D6); D14 incorporated.
+40-05: OPEN (time box) - not edited this pass: HIGH CLI tracer fakes return None for --describe (D6: exact --describe/--blocked-status answers, fail on unexpected calls); HIGH blocked check placement and result shape (D6: inside the per-lane worker, existing unavailable quota entry); HIGH two lanes of one expired pool both retried (D6: one lane per pool per invocation, stateful fake test); MEDIUM wrong helper name and worker-order assertion; add REV-07 to requirements; D14. (A2 pass 2026-11-25 ran out of its time box after 40-03/40-04; design hint for the next pass: workers run concurrently, so pick the first lane of each expired pool from row order BEFORE submit and have the other lanes' workers return the unavailable quota entry; the status reader must tell blocked / expired / no record apart; assert the set of probed lanes, never their order; 40-04 now provides lane_settings.lane_pool, review_spec(..., pool=None), ProbeSeams.role, and _read returning (value, calls).)
+40-06: incorporated (A3 fix pass) - HIGH merged-report bullets: D7a regex in Task 1 step 1 + test_merged_report_round_trips_through_the_parser, tracer and Task 2 run on render_merged_report output; HIGH fixer severity: D7b _match (title, then location), unmatched to owner unsent, cap-open identity by report position, SKIPPABLE, test_severity_comes_from_the_report + test_duplicate_or_unknown_titles_go_to_the_owner; HIGH payload: D7e _summary_text drop rules, payload test with path, key=value, quoted value and hex token inside the transmitted title/reason, straddle case with a space; MEDIUM Edits Applied + cwd: D7c contract truth (Status never read, tracer on Edits Applied), D7d --cwd + functools.partial(deps.run_fn, cwd=args.cwd); jev presence resolved once (Classified.jev asked/absent/not needed); rg -q no-match checks; D14 orchestrator steps; Task 1 touches six files (two are generated listings, one a one-line regex). Section: 40-06-PLAN.md ## Review dispositions (cycle 1).
+40-07: incorporated (A3 fix pass) - HIGH quota selection: D8 eligible_keys (quota.resolve_ladder_pick predicate + SKIP_ROUTES), --quota-path, test_quota_excluded_lane_is_never_re_added (probe-quota cache -> real resolve-reviewers -> size-review), test_no_eligible_second_lane_says_so; HIGH payload: opaque p1..p5 tokens, reviewer item omitted below two eligible lanes, ARCHETYPES/FRAMEWORKS else other, strict_run enforces two or more criteria; MEDIUM Task 3 fixtures: SIZE_CONFIG everywhere (acceptance check), both answers supplied, count-changing invalid-pick case; MEDIUM Task 1 design: named helpers, new lists only (test_inputs_are_never_mutated), event only after the write, one trigger table row per alternative; cwd bound with functools.partial; cfg_resolve(..., migrate=False); D14 orchestrator steps; test count 23. Section: 40-07-PLAN.md ## Review dispositions (cycle 1).
 
 #### Batch C (40-08, 40-09)
 
-no dispositions file (fix pass not run)
+# Cycle 1 dispositions, batch C (40-08, 40-09), fix planner B
+
+- 40-08 #1 HIGH fenced example / trailing section suppresses the finding: incorporated (Task 1 `_real_lines` + `_STOP_RE` bound; Task 2 fixtures fold_in_fence.md, fold_under_self_review.md and their test; boundary truth) per brief D9.
+- 40-08 #2 HIGH multi-document identity lost: incorporated (Location `<doc path as given>, last ### Task`; `fold_finding(text, doc)`; `test_two_plans_keep_two_findings` with a reviewer HIGH at another location; T-40-43) per brief D9.
+- 40-08 #3 MEDIUM logged two-lane merge untested in this wave: incorporated (Task 2 `test_logged_two_lane_merge_keeps_the_fold_finding`, with `--cwd` per brief D3).
+- 40-08 #4 LOW stderr import, adapt-assertion wording, weak Task 3 pin: incorporated (import named; no-log failure line asserted exactly with stop-and-report; Task 3 pins the actual final `### Task` heading).
+- 40-08 ponytail Task 1/2/3: incorporated (no second report format; tests spent on boundaries and logged merge; no adapter edit).
+- C batch MEDIUM check-dogfood/SUMMARY ownership and real-Node scope: incorporated in 40-08 and 40-09 orchestrator steps per brief D14.
+- C batch MEDIUM five-file budget: rejected (extra files are fixtures and generated listings; each task stays one lane).
+- 40-09 #1 HIGH exit/resume branches contradict switch-first and partial merge; serialize switch-lane: incorporated (Task 2 step 5b edits the "Every nonzero exit" sentence in place; Task 2 step 5 serializes switch-lane with a re-read; Task 3 steps 1/1b edit the dispatch reference exit paragraph, resume argv `--lane-log/--round`, resume branch) per brief D10.
+- 40-09 #2 HIGH disagreements bypass jev, cap, Step 5 templates: incorporated (trigger per brief D7c in lane-failure.md; SKILL.md Step 2 cap row, Step 4, Step 5 owner/fixer/skipped moved to 40-10 Task 2 for lane size; cap parse is 40-06 Task 1 per brief D7a).
+- 40-09 #3 HIGH summaries-only stronger than the payload control: incorporated on the doc side (dropped token classes named); payload construction and test owned by 40-06 per brief D7e.
+- 40-09 #4 HIGH ping exit 2 / fold exit 2 lack a safe branch, native-only fold, no-helper fallback: incorporated (Task 1 ping (c), Commands (4)/(5), intro; Task 2 steps 3 and 7) per brief D5, D9, D10.
+- 40-09 #5 MEDIUM rejected candidate not logged, cache after failure, roster order: incorporated on the doc side; behaviour owned by 40-02 (brief D5) and 40-01 (brief D3, D4).
+- 40-09 #6 MEDIUM sizing owner, cross-repo root, fold reset, contract mismatch, fallback filters: incorporated (sizing once at point 5; first-document root in intro; fold reset rule; contract-mismatch stop; unflagged and different-pool filters per lane_settings.py:133-136).
+- 40-09 #7 LOW section 1/4 pointers, write-attempt wording, README: section 1 pointer incorporated (Task 3 step 7); section 4 rejected (skills/ai-kit-cross-ai/SKILL.md:203-207 stays true for the runner's caller); README rejected (README.md:34 stays true under Approved (partial)); pool write/clear wording owned by 40-04/40-05.
+- Checker W1 exit-code claims: incorporated (per-route quote of skills/ai-kit-cross-ai/SKILL.md:193-207 and subprocess-quota-policy.md:66-67; switch on any nonzero exit) per brief D10.
+- Checker W2 roster order: incorporated (Partial status sentence, Step 1.5 `--cwd`) per brief D3.
+- Checker W3 ping drops an unreplaceable lane: incorporated (ping (b), Task 2 step 3) per brief D10.
+- Checker W4 classification trigger: incorporated (lane-failure.md jev paragraph and Commands (5); SKILL.md wiring in 40-10 Task 2) per brief D7c.
+- Planner A contract note (round 1 always probes; 120 s reuse only for probes this review ran): incorporated in 40-09 ping (a) and 40-11 setup.
 
 #### Batch D (40-10, 40-11, 40-12, 40-13)
 
-no dispositions file (fix pass not run)
+# Cycle 1 dispositions, batch D (40-10 .. 40-13), fix planner B
+
+- 40-10 #1 HIGH a fixer skip never reaches jev: incorporated (Task 2 step B Step 4 "Classify first" on any listed skip/escalation, Edits Applied row edited in place; step A cap row with --cap-reached; TestSkillClassifyWiring) per brief D7c.
+- 40-10 #2 HIGH fold handoff loses the document: incorporated (40-08 Location carries the doc path; Task 2 step 5 binds it to that plan; test checks `last ### Task`) per brief D9.
+- 40-10 #3 MEDIUM diagram makes conditional steps unconditional: incorporated (Task 1 `--no-cross-ai` and `round log exists` edges, pending-lane edges kept, test_logged_path_is_conditional; edge counts replaced by branch greps).
+- 40-10 #4 MEDIUM `rg -c -F "- Mechanical ..."` exits 2; fixer test misses the safety clause: incorporated (`-e` per brief D14; Task 3 test asserts both safety sentences).
+- 40-10 ponytail Task 1/2/3: incorporated (no new diagram system; no third classifier authority; one row and one test).
+- 40-11 #5 HIGH blocked-ping eval expects the wrong report reason: incorporated (three assertions: stdout auth, log cause=auth, report `review-second (replaced, by review-third)`) per brief D13.
+- 40-11 #6 MEDIUM scenarios do not pin pre-round state: incorporated (pair, no sizing change, round-1 probe); distinct vendors rejected (the scenario names the pair directly, no vendor filter decides it).
+- 40-11 #7 MEDIUM simulated responses, post-wave gate, PROVISIONAL fixture: incorporated (simulated sentences, PROVISIONAL comment in config.toml, unit/arch gate in verification and orchestrator steps) per brief D13, D14.
+- 40-11 #8 LOW fixer eval misses the HIGH assertion: incorporated (Modify: skills/commit-message/SKILL.md, from plan-bad-review.md:11).
+- 40-12 #9 HIGH real-HOME ping not read-only: incorporated (--cwd tmp/judge-40/ping/project with no config, quota and lane log under tmp/judge-40/ping/, real-HOME exception limited to the runner's lane probe, audit after every ping) per brief D11.
+- 40-12 #10 HIGH collision scan / per-round recount: incorporated (copy_drivers.py substitution and verdict_facts.py split path enumerated and hand-edited; pool and count in round 1 only; survivors re-pinged and reassigned) per brief D11.
+- 40-12 #11 HIGH closing check does not enforce the bar: incorporated (closing.sh rewritten with --gate; unmet is fatal; no-rejudge fix never turns unmet into met) per brief D11.
+- 40-12 #12 MEDIUM count-one for one skill only; exactly-once third lane: incorporated (advisory_extra_<skill>.py per skill with its own ADV folder; third_lane_once.py) per brief D11.
+- 40-12 REV-07 in frontmatter: incorporated.
+- 40-13 #13 HIGH scratch check can hit a real CLI or its own stubs: incorporated (write_tripwire + baseline_env from tools/run_unittest_parallel.py, PATH = stubs + python3, synthetic runtime cache asserted fresh) per brief D12.
+- 40-13 #14 HIGH restart reuses old reports: incorporated (reports-<candidate SHA>/, must not pre-exist) per brief D12.
+- 40-13 #15 MEDIUM real-tools claim checks exit codes only: incorporated (ran >= 1 and no skip for the three real-tool modules) per brief D12.
+- 40-13 #16 MEDIUM evidence printing, exact statuses, same-SHA before the live write: incorporated (evidence lines before layout: ok, exact Judged by line and exit codes 0/1/2/3, --cwd on merge-reports; HEAD == tip == candidate before the live link and before the tick) per brief D3, D12.
+- D cross-plan R4 roster-order and R3 failed-candidate event coverage: owned by 40-01/40-02 per brief D3, D5 (not in this range).
+- D cross-plan R5 payload and severity reconciliation: owned by 40-06 per brief D7b, D7e.
