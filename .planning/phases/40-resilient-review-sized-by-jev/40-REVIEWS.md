@@ -2,7 +2,7 @@
 phase: 40
 cycle: 1
 reviewers: [referee-one]
-reviewed_at: 2026-11-25T02:43:56-03:00
+reviewed_at: 2026-11-25T02:51:52-03:00
 plans_reviewed: [40-01-PLAN.md, 40-02-PLAN.md, 40-03-PLAN.md, 40-04-PLAN.md, 40-05-PLAN.md, 40-06-PLAN.md, 40-07-PLAN.md, 40-08-PLAN.md, 40-09-PLAN.md, 40-10-PLAN.md, 40-11-PLAN.md, 40-12-PLAN.md, 40-13-PLAN.md]
 models:
   referee-one: "router-env/my-referee-one"
@@ -30,13 +30,14 @@ decisions inlined). All four lanes exited 0 (470-693 s) and every review was rea
 The plan checker (sonnet) ran in parallel on the same plans: 0 blockers, 4 warnings, 1 info (folded into the fix pass).
 
 Fix pass (one targeted pass, time rule): the orchestrator's decisions D1-D14 (`tmp/p40-review/c1/fix-brief.md`) were applied
-by four opus fix planners. Plans 40-01..40-04 and 40-06..40-13 were revised; each ends with a `## Review dispositions
-(cycle 1)` section. **Plan 40-05 was NOT revised (time box): its cycle-1 HIGH findings stay OPEN** — the blocked-status read
-must run inside the per-lane ping worker under the same deadline and return the existing unavailable probe-entry shape; at
-most one lane per expired pool may be re-tried per invocation (ping-lanes and the probe-quota pre-pass), proven by a stateful
-fake runner whose first retry renews the record; the CLI tracer fakes must answer `--describe` and `--blocked-status` exactly;
-REV-07 joins its requirements (brief D6, D14). 40-05 must get its targeted fix before wave 5 runs. Review cycle 2 was not
-run (time box); the review drivers are ready (`tmp/p40-review/prep_cycle.py 2 ...`, `run_all.sh 2`, `assemble.py 2`).
+by five opus fix planners to all 13 plans; each plan ends with a `## Review dispositions (cycle 1)` section (rejections carry
+path:line evidence: the five-file budget for fixtures and generated listings, the ai-kit-cross-ai section 4 pointer, the root
+README row, distinct eval vendors, the duplicate pure-function switch cases, dropping the REASONS non-vacuity case). The plan
+checker re-checked the revised plans: 0 blockers, 0 warnings (40-05 checked separately after its own fix). Contract change
+accepted by the orchestrator: before round 1 every chosen non-native lane is probed (the 120-second cache reuse applies only to
+probes this review ran itself). Review cycle 2 was NOT run (time box); the review drivers are ready
+(`tmp/p40-review/prep_cycle.py 2 ...`, `run_all.sh 2`, `assemble.py 2`). Open concerns: none recorded as unaddressed; the
+fixes themselves are unreviewed by referee-one.
 
 ### referee-one
 
@@ -489,7 +490,7 @@ Static, read-only review. No files changed, no suites or live lanes run, and no 
 #### Batch B (40-04, 40-05, 40-06, 40-07)
 
 40-04: HIGH --pool reaches execute-role probes incorporated (D2: review_spec(..., pool=None) keyword; ProbeSeams.role trailing after timeout_s; _probe_call passes lane_pool only for role review; _cmd_probe_quota _replace(role=args.role); dispatch_reviewer passes lane_pool(extra); Task 2 fake-runner argv tests for review dispatch/review probe and absence for execute probe and spec_with_effort exec; T-40-15); D1 lane_pool reader incorporated (lane_settings.lane_pool + TestLanePool, READERS + ALLOWED_READERS for lane_switch.py/reviewer_dispatch.py/quota.py in Task 1, replaces _flagged_pool); MEDIUM UnicodeDecodeError incorporated (ValueError catch + test); MEDIUM _read shape/golden/real-Node scope incorporated ((value, calls), literal golden list, no-real-node rule scoped to new tests); effort probe keeps no pool; D-04 truth PROVISIONAL; ponytail T1/T2 incorporated, T3 handed to 40-05 (D6); D14 incorporated.
-40-05: OPEN (time box) - not edited this pass: HIGH CLI tracer fakes return None for --describe (D6: exact --describe/--blocked-status answers, fail on unexpected calls); HIGH blocked check placement and result shape (D6: inside the per-lane worker, existing unavailable quota entry); HIGH two lanes of one expired pool both retried (D6: one lane per pool per invocation, stateful fake test); MEDIUM wrong helper name and worker-order assertion; add REV-07 to requirements; D14. (A2 pass 2026-11-25 ran out of its time box after 40-03/40-04; design hint for the next pass: workers run concurrently, so pick the first lane of each expired pool from row order BEFORE submit and have the other lanes' workers return the unavailable quota entry; the status reader must tell blocked / expired / no record apart; assert the set of probed lanes, never their order; 40-04 now provides lane_settings.lane_pool, review_spec(..., pool=None), ProbeSeams.role, and _read returning (value, calls).)
+40-05: incorporated (A4 fix pass) - HIGH CLI tracer fakes: exact --describe ({"runtimes": {}}) and --blocked-status answers, any other call recorded and raised, unexpected == [] asserted (Task 1 test_cli_reads_the_runner_line, Task 2 probe helper); HIGH placement and shape: status read inside _ping_one under the per-lane deadline via PingSeams.status_fn, result lane_switch.quota_entry (existing unavailable quota shape) through the normal replacement path, pooled rows never skipped by fresh/120 s reuse; HIGH one retry per expired pool: lane_switch.pool_status (blocked/expired/none), pool_keys, PingSeams.retry_keys = first key per pool from row order before submit (config only), stateful fake test_second_lane_of_a_renewed_pool_is_not_probed (set of probed lanes), Step 0.7 blocked_cache_entries walks the ladder with one retry per expired pool and functools.cache(reader), test_expired_pool_is_retried_by_one_lane; MEDIUM helper/order: run(...)._replace(config=...), sets/sorted only; REV-07 added; D1 guards: no reader or usage_limited literal in lane_ping.py/cli.py (rg -q acceptance), ALLOWED_READERS extension rule stated, tests.test_lane_settings in both verifies; D14 orchestrator steps; T-40-18..20 reused. Section: 40-05-PLAN.md ## Review dispositions (cycle 1).
 40-06: incorporated (A3 fix pass) - HIGH merged-report bullets: D7a regex in Task 1 step 1 + test_merged_report_round_trips_through_the_parser, tracer and Task 2 run on render_merged_report output; HIGH fixer severity: D7b _match (title, then location), unmatched to owner unsent, cap-open identity by report position, SKIPPABLE, test_severity_comes_from_the_report + test_duplicate_or_unknown_titles_go_to_the_owner; HIGH payload: D7e _summary_text drop rules, payload test with path, key=value, quoted value and hex token inside the transmitted title/reason, straddle case with a space; MEDIUM Edits Applied + cwd: D7c contract truth (Status never read, tracer on Edits Applied), D7d --cwd + functools.partial(deps.run_fn, cwd=args.cwd); jev presence resolved once (Classified.jev asked/absent/not needed); rg -q no-match checks; D14 orchestrator steps; Task 1 touches six files (two are generated listings, one a one-line regex). Section: 40-06-PLAN.md ## Review dispositions (cycle 1).
 40-07: incorporated (A3 fix pass) - HIGH quota selection: D8 eligible_keys (quota.resolve_ladder_pick predicate + SKIP_ROUTES), --quota-path, test_quota_excluded_lane_is_never_re_added (probe-quota cache -> real resolve-reviewers -> size-review), test_no_eligible_second_lane_says_so; HIGH payload: opaque p1..p5 tokens, reviewer item omitted below two eligible lanes, ARCHETYPES/FRAMEWORKS else other, strict_run enforces two or more criteria; MEDIUM Task 3 fixtures: SIZE_CONFIG everywhere (acceptance check), both answers supplied, count-changing invalid-pick case; MEDIUM Task 1 design: named helpers, new lists only (test_inputs_are_never_mutated), event only after the write, one trigger table row per alternative; cwd bound with functools.partial; cfg_resolve(..., migrate=False); D14 orchestrator steps; test count 23. Section: 40-07-PLAN.md ## Review dispositions (cycle 1).
 
