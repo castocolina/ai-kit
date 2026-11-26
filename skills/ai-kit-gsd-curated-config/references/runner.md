@@ -1,4 +1,4 @@
-# Runner details (template 13)
+# Runner details (template 14)
 
 Read when a runner upgrade, a `.new` merge, `ensure-runner`, the template flags, the live
 timeout, hand-edited CONFIG `extraArgs`, retry tuning ([runner.retry] in ai-kit's config.toml), or a dispatch
@@ -79,7 +79,7 @@ see what a project actually runs is the active runner's line-2 `template=<n>` he
 comes from the JSON it prints (`ready`, `runner`, `notes`), not from whether a `.new` file
 exists. A user-edited runner already on the current template is kept as-is and reported ready,
 with no `.new` file. An edited runner on an older template gets a `.new` file plus the printed
-notes. The shipped template is template 13 (the run lock, the idle watchdog, the execute result checks, `--sweep`, the closed class list with `bad_request`, the periodic hard tier, the blocked-until record and the `--print-argv` capabilities line; no builder emits their flags), so the readiness floor stays template 9, the first that takes the flags ai-kit's builders emit (`--role`, `--host auto` and the lane settings); template 8 added `--runtime` and the retry config. Template 7
+notes. The shipped template is template 14 (the run lock, the idle watchdog, the execute result checks, `--sweep`, the closed class list with `bad_request`, the periodic hard tier, the blocked-until record, the `--print-argv` capabilities line and the real-home guard for exec lanes inside an ai-kit checkout; no builder emits their flags), so the readiness floor stays template 9, the first that takes the flags ai-kit's builders emit (`--role`, `--host auto` and the lane settings); template 8 added `--runtime` and the retry config. Template 7
 has neither `--runtime` nor the configurable retry series; it carries only the fixed
 `sameSessionRetries`/`cooldownS` knobs. A hook built with `--runtime` against a project's template-7 copy fails with `unknown
 argument` (exit 2) until `ensure-runner` re-renders it: a pristine copy upgrades in place, while an

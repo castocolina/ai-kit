@@ -34,7 +34,7 @@ NEW_FLOW_PHRASES = (
     ("precise-per-role-orders", "[lanes.policy.review]"),
     ("edge-claude-effort-not-asked", "no effort flag for"),
     ("precise-escalation-only-with-two-lanes",
-     "stored and informational: dispatch passes them to the runner, which reports them as ignored"),
+     "the superpowers execute adapter reads them at fix rounds 4 and 5"),
     ("precise-zero-price-data-use-yes", "data_use_confirmed"),
     ("edge-zero-price-data-use-declined", "writes no lane"),
     ("edge-migration-deleted-unless-keep-backup", "--keep-backup"),

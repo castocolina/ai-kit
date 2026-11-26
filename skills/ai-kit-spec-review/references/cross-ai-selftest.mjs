@@ -1875,6 +1875,15 @@ const FAKE_MODES = {
     fs.appendFileSync('a.txt', 'm\n');
     process.stdout.write('# Summary\nok');
   },
+  realhome: () => {
+    fs.writeFileSync((process.env.HOME || '.') + '/realhome.seen', process.env.AI_KIT_REFUSE_REAL_HOME ?? '<unset>');
+    fs.appendFileSync('a.txt', 'r\n');
+    process.stdout.write('# Summary\nok');
+  },
+  'review-realhome': () => {
+    fs.writeFileSync((process.env.HOME || '.') + '/realhome.seen', process.env.AI_KIT_REFUSE_REAL_HOME ?? '<unset>');
+    process.stdout.write('# Review\nok');
+  },
   'stderr-then-ok': () => {
     process.stderr.write('tool bash: cat /root/x: Permission denied\n');
     fs.appendFileSync('a.txt', 'ok-line\n');
@@ -2818,6 +2827,13 @@ function waitFor(pred, ms) {
     };
     tick();
   });
+}
+
+function writeRealhomeMarkers(repo) {
+  for (const rel of ['skills/ai-kit-spec-review/ai_kit_spec/detection.py', 'tools/setup.py']) {
+    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    fs.writeFileSync(path.join(repo, rel), '');
+  }
 }
 
 const caseRunners = new Set();
@@ -9387,6 +9403,134 @@ async function blackBoxSelfTest(listOnly = false) {
         check: (_r, ctx) => {
           const seen = readOr(path.join(ctx.repo, 'marker.seen'), '<missing>');
           return seen === '1' ? null : `marker.seen=${JSON.stringify(seen)}`;
+        },
+      },
+      {
+        name: 'realhome-exec-checkout-root',
+        kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/realhome'],
+        setup: (c) => {
+          writeRealhomeMarkers(c.repo);
+          return null;
+        },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/realhome exit=0 .* action=stop$/,
+        check: (_r, c) => {
+          const seen = readOr(path.join(c.home, 'realhome.seen'), '<missing>');
+          return seen === '1' ? null : `realhome.seen=${JSON.stringify(seen)}`;
+        },
+      },
+      {
+        name: 'realhome-exec-checkout-subdir',
+        kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/realhome'],
+        setup: (c) => {
+          writeRealhomeMarkers(c.repo);
+          c.cwd = path.join(c.repo, 'src', 'deep');
+          fs.mkdirSync(c.cwd, { recursive: true });
+          c.env.GIT_CEILING_DIRECTORIES = c.repo;
+          return null;
+        },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/realhome exit=0 .* action=stop$/,
+        check: (_r, c) => {
+          const seen = readOr(path.join(c.home, 'realhome.seen'), '<missing>');
+          return seen === '1' ? null : `realhome.seen=${JSON.stringify(seen)}`;
+        },
+      },
+      {
+        name: 'realhome-exec-inherited-zero',
+        kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/realhome'],
+        env: { AI_KIT_REFUSE_REAL_HOME: '0' },
+        setup: (c) => {
+          writeRealhomeMarkers(c.repo);
+          return null;
+        },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/realhome exit=0 .* action=stop$/,
+        check: (_r, c) => {
+          const seen = readOr(path.join(c.home, 'realhome.seen'), '<missing>');
+          return seen === '1' ? null : `realhome.seen=${JSON.stringify(seen)}`;
+        },
+      },
+      {
+        name: 'realhome-exec-linked-worktree',
+        kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/realhome'],
+        setup: (c) => {
+          const wt = path.join(c.tmp, 'wt-realhome-exec-linked-worktree');
+          spawnSync('git', ['worktree', 'add', '-q', wt], { cwd: c.repo, env: c.env });
+          writeRealhomeMarkers(wt);
+          c.cwd = wt;
+          return null;
+        },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/realhome exit=0 .* action=stop$/,
+        check: (_r, c) => {
+          const wtGit = path.join(c.tmp, 'wt-realhome-exec-linked-worktree', '.git');
+          if (!fs.statSync(wtGit).isFile()) return 'worktree .git is not a file';
+          const seen = readOr(path.join(c.home, 'realhome.seen'), '<missing>');
+          return seen === '1' ? null : `realhome.seen=${JSON.stringify(seen)}`;
+        },
+      },
+      {
+        name: 'realhome-exec-plain-repo',
+        kind: 'logic',
+        args: ['--runtime', 'pi', '--model', 'fake/realhome'],
+        setup: (c) => {
+          writeRealhomeMarkers(c.repo);
+          const inner = path.join(c.repo, 'nested');
+          fs.mkdirSync(inner, { recursive: true });
+          spawnSync('git', ['init', '-q'], { cwd: inner, env: c.env });
+          fs.writeFileSync(path.join(inner, 'a.txt'), 'base\n');
+          spawnSync('git', ['add', 'a.txt'], { cwd: inner, env: c.env });
+          spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: inner, env: c.env });
+          c.cwd = inner;
+          return null;
+        },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/realhome exit=0 .* action=stop$/,
+        check: (_r, c) => {
+          const seen = readOr(path.join(c.home, 'realhome.seen'), '<missing>');
+          return seen === '<unset>' ? null : `realhome.seen=${JSON.stringify(seen)}`;
+        },
+      },
+      {
+        name: 'realhome-exec-hosted',
+        kind: 'runtime',
+        args: ['--runtime', 'pi', '--model', 'fake/realhome', '--host', 'auto'],
+        env: { HERDR_ENV: '1', PATH: hostedPath },
+        setup: (c) => {
+          writeRealhomeMarkers(c.repo);
+          return null;
+        },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/realhome exit=0 .* action=stop$/,
+        check: (r, c) => {
+          if (hostedUsable(c)) {
+            if (!r.stderr.includes('cross-ai: setting host=herdr applied')) return 'hosted run lacks host=herdr';
+          } else {
+            const failed = hostFailedOnly(r, c);
+            if (failed) return failed;
+          }
+          const seen = readOr(path.join(c.home, 'realhome.seen'), '<missing>');
+          return seen === '1' ? null : `realhome.seen=${JSON.stringify(seen)}`;
+        },
+      },
+      {
+        name: 'realhome-review-checkout',
+        kind: 'logic',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-realhome'],
+        setup: (c) => {
+          writeRealhomeMarkers(c.repo);
+          return null;
+        },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/review-realhome exit=0 .* action=stop$/,
+        check: (_r, c) => {
+          const seen = readOr(path.join(c.home, 'realhome.seen'), '<missing>');
+          return seen === '<unset>' ? null : `realhome.seen=${JSON.stringify(seen)}`;
         },
       },
       {

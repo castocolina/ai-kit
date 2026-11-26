@@ -2,7 +2,8 @@
 
 **Created:** 2026-11-23
 **Ambiguity score:** 0.31 (gate: ≤ 0.20) — gate not passed: requirement 5 is flagged below minimum and its open questions go to the researcher
-**Requirements:** 10 locked (requirement 5's six items are assumptions until the researcher answers them)
+**Requirements:** 10 locked (requirement 5's six items are assumptions until the researcher answers them) *(2026-11-25:
+answered; see "Amendments")*
 
 ## Goal
 
@@ -15,7 +16,7 @@ fallback.
 ## Background
 
 Requirements EXE-01, EXE-04, EXE-05, EXE-08 and EXE-09 (REQUIREMENTS.md) and the ROADMAP's Phase 41 criteria 1 to 6, including the
-amendments of 2026-11-16 (Phase 36 D-03: the no-config check already sits in the adapter; the free-lane pool study, PROVISIONAL).
+amendments of 2026-11-16 (Phase 36 D-03: the no-config check already sits in the adapter; the free-lane pool study, PROVISIONAL; confirmed by the owner 2026-11-25 for EXE-09).
 Phase 36 stores `usage_limited`, `escalate_runtime` and `escalate_model` per lane and left their reading to later phases.
 
 **The owner's decisions (highest priority):**
@@ -144,8 +145,9 @@ observation, never a gate, because a host may rewrite its own config during a la
      touches nothing reports no change; the audit lists only files, never recurses into session or log folders; the report
      states the observation label.
 
-8. **A flagged executor lane that hits quota moves to a fallback of a different pool (EXE-09)** *(PROVISIONAL, needs owner
-   confirmation)*: when an execute lane stops on a quota error, the adapter reads `lane_usage_limit` and `lane_fallback` and the
+8. **A flagged executor lane that hits quota moves to a fallback of a different pool (EXE-09)** *(confirmed by the owner
+   2026-11-25 (was PROVISIONAL): the same rule as Phase 40 D-05; the record is read only through `cross-ai.mjs
+   --blocked-status <pool>`, and a missing runner or a bad record never blocks a lane)*: when an execute lane stops on a quota error, the adapter reads `lane_usage_limit` and `lane_fallback` and the
    pool's blocked-until record (through the runner's `--blocked-status <pool>`): a flagged lane moves at once to the fallback, a
    lane whose blocked-until time has not passed is skipped at selection, the first selection after that time tries it once, and
    an unflagged lane keeps stopping and reporting.
@@ -169,6 +171,66 @@ observation, never a gate, because a host may rewrite its own config during a la
     - Acceptance: the judge records meet the bar of AGENTS.md and `make check-dogfood` validates them; `evals.json` gains one
       eval each for the fallback, the flag-gated escalation, a flagged-lane switch and the host-config audit.
 
+## Amendments (2026-11-25, after research; `41-RESEARCH.md` holds the evidence)
+
+The requirement texts above stay verbatim; these dated notes fix their meaning where research contradicted a premise or the
+SPEC left a choice open. Decided by own reasoning at plan time unless marked otherwise; the owner may overrule.
+
+1. **Background correction (open question for the owner).** The runner does build an executor prompt: `EXEC_PREAMBLE` in
+   `skills/ai-kit-spec-review/references/cross-ai.mjs` is prepended to an exec prompt unless `--no-preamble` is passed. The
+   Python dispatch always passes `--no-preamble`; a GSD lane started through `workflow.cross_ai_command` gets the preamble. So
+   ai-kit ships two executor briefs: `dispatch_guidance.py` and `EXEC_PREAMBLE`. Requirements 4 and 5 keep the scope the owner
+   confirmed at the gate (`dispatch_guidance.py`); `EXEC_PREAMBLE` is not changed by this phase. Whether the owner's answer 3
+   ("the two briefs ai-kit ships") also wants the preamble to name the gates and the guard is returned to the owner.
+2. **Requirement 1.** Eleven existing doc-contract pins in `tests/test_ai_kit_spec_superpowers.py` require the same resume
+   sentences in SKILL.md, `escalation.md` and `state-management.md`. Keeping one definition is the behavior change this
+   requirement names: those pins move to the single location and assert the copies are gone. SKILL.md keeps its 300-line cap.
+   The single homes are the headings `## Pinned resume` (`references/state-management.md`) and `## Owner stop`
+   (`references/resolution-stops.md`).
+3. **Requirement 2 (direction).** `escalation_target` walks the lanes after a key, while the round 4 and 5 rule bumps only to a
+   lane ranked strictly above the stuck one (the anchor) in the execute order. Reading: the candidates stay the keys ranked
+   strictly above the anchor; `escalate_runtime` alone keeps those whose runtime differs from the anchor's, `escalate_model`
+   alone keeps those with the anchor's runtime and another model (the kind rule of `escalation_target`, applied over the
+   anchor followed by the keys above it, nearest first); both flags on keep today's candidate set and order unchanged
+   (`resolve-injection` still picks); both off keep the anchor's lane for the round and print a notice naming the stuck task.
+   The flags are read from the anchor's execute lane. A native round on Claude Code keeps subagent-driven-development's own
+   model choice.
+4. **Requirement 3.** The flag is `session_fallback = true` under `[lanes.policy.execute]`, written only when true;
+   `render-toml` drops a false value and refuses a non-boolean with the key named. The jev pick applies only on a Claude Code
+   host (the only host that takes a model per native call); elsewhere the fallback runs the session default and asks no jev.
+5. **Requirement 4 (native path).** A native dispatch gets the same gate and guard text through a printing subcommand of the
+   adapter (the composed gates and guard blocks only), called by the native branch of Step 3.
+6. **Requirement 5, the meaning of each item** (research: items (a) to (e) were observed as defects of GSD's plan template and
+   executor, which this phase does not edit):
+   (a) the gates block states once that a gate is judged by its exit code alone, never by the tail of its output, so a version
+   banner after the summary line never fails it; (b) the commit-guard block, given the owner's config paths by the caller,
+   states that a clean-tree check leaves them out (`git status --porcelain -- . ':!<path>'`) and that they are never staged,
+   committed or reverted; the superpowers adapter passes `.aikit/config.toml`; the runner's informational `uncommitted_edits`
+   finding is unchanged; (c) the runner's `coverage=` reads `<task>` blocks, which a superpowers prompt does not carry, so a
+   superpowers dispatch reports `coverage=n/a` by design and no counter claims a progress it cannot see; the adapter's
+   references state this, and a test pins that the composed superpowers prompt carries no `<task>` block (wrapping the task
+   would turn a missed commit into a `partial` stop; the owner may choose that later); (d) and (e) no ai-kit code holds an
+   agent-branch regex (GSD's `agent-*` rule would refuse every unit branch); the caller-fed commit-guard block is composed at the
+   one composition point and reaches the first dispatch, a fix round, a resumed dispatch and a native dispatch identically;
+   (f) the gates block of requirement 4.
+7. **Requirement 6.** The guard is set by the runner template itself: in `--mode exec`, when the lane's working directory is
+   inside an ai-kit checkout, the child environment gets `AI_KIT_REFUSE_REAL_HOME=1` (an inherited other value is replaced).
+   This covers the adapter's dispatch and any lane started directly through the runner, including GSD's
+   `workflow.cross_ai_command`. The marker: walking up from the working directory, the first folder that holds both
+   `skills/ai-kit-spec-review/ai_kit_spec/detection.py` and `tools/setup.py` (a subdirectory and a linked worktree resolve the
+   same way). *(refined 2026-11-25 after review cycle 1: the walk stops at the first folder holding a `.git` entry, a folder
+   or a linked worktree's file, and the lane is in a checkout only when that folder holds both markers; no
+   `GIT_CEILING_DIRECTORIES` handling, so a ceiling can never switch the guard off, and a plain repository nested inside a
+   checkout is not one.)* The template version is bumped and the project's runner copy is re-rendered. The variable makes
+   `tools/setup.py` refuse a real-home run; it does not block other writes, which is why requirement 7's audit exists.
+8. **Requirement 7.** The audit list (HOME-relative files, in this order): `.claude/settings.json`, `.claude.json`,
+   `.config/opencode/opencode.json`, `.config/opencode/opencode.jsonc`, `.codex/config.toml`, `.cursor/cli-config.json`,
+   `.cursor/mcp.json`, `.cursor/hooks.json`, `.copilot/mcp-config.json`, `.gsd/defaults.json`. Config-folder overrides
+   (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `XDG_CONFIG_HOME`, `OPENCODE_CONFIG_DIR`) are not followed; the report says so. It runs
+   inside `dispatch-task` for an external lane and through a snapshot and compare subcommand around a native dispatch.
+9. **Requirement 8.** Confirmed by the owner 2026-11-25. The switch also widens the owner's exception sentence in
+   `skills/ai-kit-cross-ai/SKILL.md` section 8 (today it names only ai-kit-spec-review), so that skill is judged too.
+
 ## Boundaries
 
 **In scope:**
@@ -190,7 +252,8 @@ observation, never a gate, because a host may rewrite its own config during a la
 - A lane switch or fallback stays inside the owner's roster, and the session-model fallback runs only when the owner's flag is on.
 - Tests use fake lanes, a scratch HOME and synthetic config files; no test touches a real host config.
 - No machine-specific absolute path in skill text, tests or fixtures; model names in fixtures are placeholders.
-- The free-lane pool items stay PROVISIONAL in every artifact until the owner confirms them.
+- The free-lane pool items stay PROVISIONAL in every artifact until the owner confirms them. *(2026-11-25: requirement 8
+  (EXE-09) confirmed by the owner 2026-11-25 (was PROVISIONAL); this line no longer applies to it.)*
 
 ## Acceptance Criteria
 
@@ -207,7 +270,7 @@ observation, never a gate, because a host may rewrite its own config during a la
 
 ## Edge Coverage
 
-**Coverage:** 36/42 applicable edges resolved (23 covered or backstop, 13 dismissed with the owner's approval of 2026-11-23) · 6 unresolved (all of requirement 5, flagged assumptions until the researcher answers open questions 2 to 5)
+**Coverage:** 42/42 applicable edges resolved (29 covered or backstop, 13 dismissed with the owner's approval of 2026-11-23) · 0 unresolved *(2026-11-25: the six requirement 5 rows resolved after research, amendment 6)*
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -229,12 +292,12 @@ observation, never a gate, because a host may rewrite its own config during a la
 | empty | R4 | ✅ covered | R4 acceptance: a builder returns nothing when the caller supplies none. |
 | encoding | R4 | 🧪 backstop | Held-out fixture: caller text containing braces or markup is framed verbatim, with no format interpolation. |
 | ordering | R4 | ✅ covered | R4 acceptance: the composed guidance keeps its fixed order. |
-| boundary | R5 | ⚠ UNRESOLVED | Edge unresolved — planner must treat as assumption (researcher open questions 2 to 5). |
-| adjacency | R5 | ⚠ UNRESOLVED | Edge unresolved — planner must treat as assumption (researcher open questions 2 to 5). |
-| empty | R5 | ⚠ UNRESOLVED | Edge unresolved — planner must treat as assumption (researcher open questions 2 to 5). |
-| ordering | R5 | ⚠ UNRESOLVED | Edge unresolved — planner must treat as assumption (researcher open questions 2 to 5). |
-| precision | R5 | ⚠ UNRESOLVED | Edge unresolved — planner must treat as assumption (researcher open questions 2 to 5). |
-| concurrency | R5 | ⚠ UNRESOLVED | Edge unresolved — planner must treat as assumption (researcher open questions 2 to 5). |
+| boundary | R5 | ✅ covered | ~~Edge unresolved — planner must treat as assumption~~ *(superseded, research 2026-11-25)* R5 amendment 6 (f): with no gate text the gates block is absent and the composed guidance is byte-identical to today's. |
+| adjacency | R5 | ✅ covered | ~~Edge unresolved — planner must treat as assumption~~ *(superseded, research 2026-11-25)* R5 amendment 6: gate and guard text both supplied are framed once each, the gates block before the guard block. |
+| empty | R5 | ✅ covered | ~~Edge unresolved — planner must treat as assumption~~ *(superseded, research 2026-11-25)* R5 amendment 6 (b): with no owner config path the clean-tree sentence is absent; with one, the pathspec names it verbatim. |
+| ordering | R5 | ✅ covered | ~~Edge unresolved — planner must treat as assumption~~ *(superseded, research 2026-11-25)* R5 amendment 6: gates and guard sit after failure reporting and before the output format, which stays last. |
+| precision | R5 | 🧪 backstop | ~~Edge unresolved — planner must treat as assumption~~ *(superseded, research 2026-11-25)* Held-out fixture: gate text holding a `tail -n 3 | grep` verify line is framed verbatim under the one exit-code sentence, never rewritten. |
+| concurrency | R5 | ✅ covered | ~~Edge unresolved — planner must treat as assumption~~ *(superseded, research 2026-11-25)* R5 amendment 6 (d), (e): the first dispatch, a fix round, a resumed dispatch and the native print carry identical gate and guard blocks. |
 | adjacency | R6 | 🧪 backstop | Held-out fixture: a subdirectory or a linked worktree of an ai-kit checkout is detected as one. |
 | empty | R6 | 🧪 backstop | Held-out fixture: an inherited `AI_KIT_REFUSE_REAL_HOME` with another value is set to 1 in the lane environment. |
 | ordering | R6 | ⛔ dismissed | An environment variable; no order semantics. |

@@ -1,0 +1,14 @@
+[lanes.policy.execute]
+ladder = ["execute-strong", "execute-primary"]
+
+[[lanes.execute]]
+key = "execute-strong"
+runtime = "opencode"
+model = "fake/placeholder-model-3"
+purpose = "execute"
+
+[[lanes.execute]]
+key = "execute-primary"
+runtime = "opencode"
+model = "fake/placeholder-model-2"
+purpose = "execute"

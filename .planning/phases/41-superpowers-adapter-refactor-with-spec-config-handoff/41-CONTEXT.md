@@ -46,6 +46,9 @@ the audit.
   `escalation_target(role_lanes, key, kind)` (`lane_settings.py`), kind `runtime` for `escalate_runtime` and `model` for
   `escalate_model`; both off keeps the lane and reports the stuck task. *(owner answer 2026-11-23, recommended option)*
   - **Reversibility:** costly — a behavior change from today's automatic escalation for every existing lane roster.
+  - *(amended 2026-11-25 after research, own reasoning, the owner may overrule: `escalation_target` walks lanes after a key
+    while the round 4-5 floor bumps only above the stuck lane, so the kind rule of `escalation_target` is applied over the stuck
+    lane followed by the lanes ranked above it, nearest first; both flags on keep today's candidates; SPEC amendment 3.)*
 - **D-03: The session-model fallback flag is a lane-table boolean** read by one reader next to `lane_usage_limit` (written only
   when true, a non-boolean refused with the key named, the existing `_bool_setting` rule); spec-config's execute-role step asks
   the question (off by default). jev's haiku-or-sonnet pick uses the `jev_names` pattern: summaries only, classes `haiku` and
@@ -68,7 +71,7 @@ the audit.
 ### Executor switch and ordering
 - **D-07: The executor switch reuses the flagged-lane switch module of Phase 40** (D-04 there) and the runner's
   `--blocked-status <pool>` reader; the dispatch of a flagged lane passes `--pool <provider>:free`. Phase 41 therefore depends on
-  Phase 40, and the ROADMAP's "Depends on" line is amended (this commit). **Own reasoning.** Ledger. PROVISIONAL, as the SPEC.
+  Phase 40, and the ROADMAP's "Depends on" line is amended (this commit). **Own reasoning.** Ledger. Confirmed by the owner 2026-11-25 (was PROVISIONAL), as the SPEC.
 - **D-08: Build order is a vertical slice.** (1) the behavior-preserving consolidation with its doc-contract tests; (2) flag-gated
   escalation; (3) the fallback flag, the jev pick and the spec-config question; (4) the guidance builders; (5) the guard and the
   audit; (6) the executor switch; (7) evals, docs and the skill-judge loops of `ai-kit-spec-execute-superpowers` and

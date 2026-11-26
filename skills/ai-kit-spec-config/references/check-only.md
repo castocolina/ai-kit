@@ -1,13 +1,16 @@
 # `--check-only` branch
 
-Read this only when `--check-only` was passed. It reports reviewer availability and stops: no
+Read this only when `--check-only` was passed (for a migrate-only or stale-provider-only request, read only its last section). It reports reviewer availability and stops: no
 config write, no runtimes snapshot, no trust record. `$TOOLS_PY` and `$CLI_PROFILES_DIR` are
 the literal paths SKILL.md Step 0 printed, `$SCRATCH` is made only by the probe below, and
 `<project root>` is the one path
 Step 0 resolved (`./.aikit/config.toml` below means `<project root>/.aikit/config.toml`).
 
 Report which CLIs are installed (Step 1's `detect-runtimes` output). Then read the target config
-file (the user `${XDG_CONFIG_HOME:-~/.config}/ai-kit/config.toml` if `--global` was passed, else
+file (if `--global` was passed, the user `config.toml` by the "Layers" path rule of
+[`config-file.md`](config-file.md), the path the quota preflight resolves: `$XDG_CONFIG_HOME/ai-kit/config.toml`
+only when `XDG_CONFIG_HOME` is absolute, else `~/.config/ai-kit/config.toml`, so `XDG_CONFIG_HOME=rel/dir` reads
+`~/.config/ai-kit/config.toml`; else
 `./.aikit/config.toml` by default) and note each `[[lanes.review]]` and `[[lanes.execute]]` entry's `key`/`runtime` (or
 legacy `cli`) with its role, if it exists. (This is a raw on-disk read only, not `cfg_resolve`'s merged view.) When that
 config.toml has no `[lanes]` table and an old `review-spec.toml` sits beside it, report that the old roster migrates on
@@ -36,7 +39,7 @@ routes = _route_reviewers(config, deps, persist=False, lanes=lanes)
 keys = routing.probe_keys([e['key'] for e in lanes], routes)
 by_key = {e['key']: e for e in lanes}
 print(json.dumps([{'key': k, 'runtime': by_key[k].get('runtime'), 'model': by_key[k].get('model', ''), 'command': by_key[k].get('command'), 'custom': 'command' in by_key[k],
-                   'fields': by_key[k] if 'command' in by_key[k] else None}
+                   'fields': by_key[k]}
                   for k in keys if k in by_key]))
 " "$(dirname "$TOOLS_PY")" "<project root>"
 ```
@@ -58,9 +61,10 @@ entry is confirmed read-only, because the probe is never side-effect free: "The 
 one live call per lane below, spending part of each lane's allowance; it runs through the cross-AI
 runner, which keeps run state under `${XDG_STATE_HOME:-~/.local/state}/ai-kit/`, and each CLI
 keeps its own side effects. Run the probe now, or skip it?" — with "skip the probe" first/default.
-List every printed entry with its runtime, model and command, and for a custom entry every field
-the snippet printed (its `fields` fill the command's placeholders), so the owner sees the exact
-invocation. When an entry has no confirmed read-only invocation, add before the question: "Note:
+List every printed entry with its runtime, model and command, and every field the snippet printed
+in its `fields` (the whole effective lane: the probe passes each one to the call, such as a table
+runtime's `effort`, `service_tier`, `cursor_mode` or `pool`, or a custom entry's template fields),
+so the owner sees the exact invocation. When an entry has no confirmed read-only invocation, add before the question: "Note:
 `<key>` (`<model>` through `<runtime>` or `<command>`) has no confirmed read-only invocation — the
 probe runs it from a private temporary directory with its normal write permissions, which nothing
 confines to that directory."
@@ -69,7 +73,8 @@ confines to that directory."
 `available: unknown (not probed — the write-risk probe was declined)`, then continue with the
 stale-provider report below. The snippet and `probe-quota` resolve separately, so on yes first run
 the snippet again: when its printed list differs in any value from the one the owner saw (an added
-key, or another runtime, model, command or custom field for a key), show the new list and ask again
+key, or another runtime, model, command or `fields` value for any key, a table-runtime lane's
+effort, tier or mode included), show the new list and ask again
 instead of probing. Limit: the probe resolves the roster once more when it starts, so a file
 edited between that re-run and the probe can still change what runs; say so when the roster is
 being edited. On yes with an unchanged list, probe using a throwaway path:
@@ -126,3 +131,15 @@ shown with that wording, never upgraded to "verified" or called "stale".
 
 Then, when the probe made `$SCRATCH`, `rm -rf "$SCRATCH"`, and stop; do not save the runtimes snapshot, matching this skill's
 `--check-only` contract.
+
+## Migrate-only and stale-provider-only requests
+
+Read this section alone, not the `--check-only` steps above, when SKILL.md Step 1 sends a migrate-only or stale-provider-only request here. Both run only the read-only report:
+
+```bash
+python3 "$TOOLS_PY" check-providers --cwd "<project root>"
+```
+
+**A migrate-only request is not this wizard's write.** When the user only asks to migrate an old `review-spec.toml`, first run the read-only `check-providers` report above and relay its `cross-reference:` lines that say `scanned (migration pending: <old file>)` or `scanned (migration held: <old file>)`; when neither appears, say there is no old `review-spec.toml` to migrate, and stop. For a pending one, report `migration pending`, say that the next command that reads the roster (`probe-quota`, `resolve-reviewers` or a review run) migrates it, and stop: run no `detect-runtimes --save`, no catalog step and no write. Run the full setup only if the user also wants the lanes replaced. An old roster with a lane that names a removed runtime is held instead ("Migration from review-spec.toml" in [`config-file.md`](config-file.md)): say so instead of promising a migration, and offer the full setup to re-save those lanes.
+
+**A stale-provider-only request is not this wizard's write either.** When the user only asks which lane providers opencode no longer lists, run the `check-providers` report above, relay its lines with their certainty labels, and stop: no `detect-runtimes --save`, no catalog step, no question and no write. Run the full setup only if the user also wants lanes set up or changed.

@@ -28,7 +28,7 @@ Every kept zero-price lane gets `pool` set to its row's `pool_key` as printed, w
 
 ## d. Fallback rule
 
-Say in one line: "A usage-limited lane's fallback is the first lane of the same role, in that role's order, that is neither usage-limited nor in the same pool; it is stored and informational; no run reads it yet."
+Say in one line: "A usage-limited lane's fallback is the first lane of the same role, in that role's order, that is neither usage-limited nor in the same pool; the review run and the execute adapter move to it after that lane's quota stop."
 
 ## e. Alternative lane
 

@@ -18,9 +18,10 @@ REVIEW_SKILL = REPO / "skills/ai-kit-spec-review/SKILL.md"
 DISPATCH = REPO / "skills/ai-kit-spec-review/references/cross-ai-dispatch.md"
 CROSS_AI_SKILL = REPO / "skills/ai-kit-cross-ai/SKILL.md"
 EXCEPTION = (
-    "The one exception is the owner's own choice: ai-kit-spec-review runs the configured "
-    "fallback of a lane the owner flagged usage_limited after that lane's quota stop "
-    "(its references/lane-failure.md)."
+    "The one exception is the owner's own choice: ai-kit-spec-review and "
+    "ai-kit-spec-execute-superpowers run the configured fallback of a lane the owner flagged "
+    "usage_limited after that lane's quota stop (their references/lane-failure.md and "
+    "references/dispatch-external-cli.md)."
 )
 SWITCH_FIRST_RESUME = "first, on any nonzero exit, when a round log exists"
 EXIT75_BULLET = "   - exit 75 with `retry_after_s=` again:"
@@ -202,6 +203,15 @@ class TestWiringDocs(unittest.TestCase):
         sec = section(CROSS_AI_SKILL.read_text(encoding="utf-8"), "## 8. Never switch")
         self.assertIn(EXCEPTION, sec)
         self.assertIn("Never switch harness, provider or model", sec)
+
+    def test_cross_ai_quota_precedence_names_both_skills(self):
+        text = " ".join(CROSS_AI_SKILL.read_text(encoding="utf-8").split())
+        self.assertIn(
+            "Precedence for an ai-kit-spec-review or ai-kit-spec-execute-superpowers lane "
+            "the owner flagged",
+            text,
+        )
+        self.assertIn("(the same exception as section 8)", text)
 
     def test_resume_switches_first_and_folds_before_merge(self):
         text = DISPATCH.read_text(encoding="utf-8")

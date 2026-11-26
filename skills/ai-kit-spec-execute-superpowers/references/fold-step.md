@@ -48,10 +48,16 @@ exit $?
   `flow checkpoint <unit>:`. Each report's last line is `outcome: <unit> <done | nothing to do |
   skipped (no consent) | refused <reason>>`. A `skipped (no consent)` outcome means no push ran: the
   owner has not granted push consent yet.
-- A refusal changes nothing, so the branch stays where it was. Show the report, name the reason (the
-  fold skill's `SKILL.md`, "Read the report", lists what to tell the user for each one, and
-  `references/unit-contract.md` lists the flow's reason codes) and stop the run. Never move the
-  branch by hand. A refused `ready` leaves the PR a draft.
+- A refusal does not undo the steps before it: a catch-up push, the checkpoint's fold or its push
+  can already be done when a later stage refuses, and the refusal report shows only its `refused:`
+  line. Show the report, name the failed stage (`checkpoint` or `ready`) and the reason (the fold
+  skill's `SKILL.md`, "Read the report", lists what to tell the user for each one, and
+  `references/unit-contract.md` lists the flow's reason codes). Before telling the owner what
+  completed, check read-only: the local tip (`git -C "$CWD" rev-parse HEAD`), the recorded unit
+  state and PR number (`fold.py show --plan "$PLAN_FILE" --repo "$CWD"`, the `fold.py` the block found;
+  it makes no remote call) and, when a push or `ready` may have run, the remote branch tip and the
+  PR's state on the remote host. Then stop the run. Never move
+  the branch by hand. A refused `ready` leaves the PR a draft.
 - With `UNIT_FLOW=0` (Step 1's start was refused `no_remote` or `no_trunk` and the user chose to
   go on), the block folds with `fold.py superpowers --plan` and runs no `ready`; nothing is pushed.
 - superpowers' finishing step is not used to merge, push or open a PR for this unit. A plan run

@@ -1037,6 +1037,17 @@ def _role_source(role: str, raw, legacy: list, rejections: list) -> tuple[dict, 
     return {k: v for k, v in raw.items() if k != "ladder"}, raw["ladder"]
 
 
+def _execute_extra(extra: dict, rejections: list) -> dict:
+    """Keep the fallback flag only as true; drop false silently; refuse any other value."""
+    key = lane_settings.SESSION_FALLBACK_KEY
+    if key not in extra or extra[key] is True:
+        return extra
+    result = {k: v for k, v in extra.items() if k != key}
+    if extra[key] is not False:
+        rejections.append(f"policy.execute.{key}: must be true or false; not written")
+    return result
+
+
 def _cfg_lanes_policy(policy, dropped_keys: set, rejections: list, role_keys: dict) -> dict | None:
     """Write flat keys and nonempty per-role orders, filtering rejected and unknown lanes."""
     if not policy:
@@ -1052,6 +1063,8 @@ def _cfg_lanes_policy(policy, dropped_keys: set, rejections: list, role_keys: di
     written = {k: v for k, v in policy.items() if k != "ladder" and k not in role_orders.ROLES}
     for role in role_orders.ROLES:
         extra, source = _role_source(role, policy.get(role), legacy, rejections)
+        if role == "execute":
+            extra = _execute_extra(extra, rejections)
         if policy.get(role) is not None:
             _report_drops(f"policy.{role}.ladder", f"{role} lane",
                           _ladder_drops(source, role_keys[role], dropped_keys), rejections)

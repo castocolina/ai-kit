@@ -7,7 +7,7 @@ step of the `"quota"` branch in `references/dispatch-external-cli.md`). The sche
 
 ```text
 Quota wake for this one task. For this re-dispatch only: do not resolve a candidate, do not
-read the plan, do not re-run the session-wake arm block and do not enter Step 2. Load the
+read the plan, do not re-run the session-wake arm block and do not enter Step 2. The Flagged switch step of Classify is the one exception. Load the
 ai-kit-spec-execute-superpowers skill, then:
 1. Bind SKILL_DIR=<SKILL_DIR>, SHIM=<SHIM>, TOOLS_PY=<TOOLS_PY>, CWD=<CWD>, QUOTA_PATH=<QUOTA_PATH>,
    DISPATCH_BASE=<DISPATCH_BASE>, PROMPT_FILE=<PROMPT_FILE>, FORMAT_BLOCK_FILE=<FORMAT_BLOCK_FILE>,
@@ -24,7 +24,7 @@ ai-kit-spec-execute-superpowers skill, then:
 3. If PROMPT_FILE still says WRITE the report, replace only that sentence with the APPEND
    sentence; leave the <objective> block byte-identical.
 4. Read references/dispatch-external-cli.md, then run its Dispatch step (both blocks, the
-   dispatch backgrounded) and its Classify step as written. Every Bash call starts a fresh
+   dispatch backgrounded) and its Classify step as written; before Classify, bind BRIEF_FILE to ${REPORT_FILE%-report.md}-brief.md (the brief the report path was derived from) and add it to the scalars file, so the Flagged switch can resolve. Every Bash call starts a fresh
    shell: open each with the scalar loader (SCALARS literal from step 2); step 1's values and the
    task-paths block's PLAN_FILE and TASK_N are then in the file too.
 5. On "ok", load superpowers:subagent-driven-development, restore its ledger for PLAN_FILE and
@@ -41,14 +41,14 @@ value), `<DISPATCH_BASE>` is the one Step 3 printed, and the four `WAKE_*` value
 block printed (an empty `<WAKE_HOST>`/`<WAKE_ID>` with `WAKE_OWNED=0` is correct). Without the `WAKE_*`
 values the woken run skips the re-arm on a second quota stop and never closes the wake when the job ends.
 
-The objective block stays byte-identical to the dispatch that just stopped: the runner reuses its
-session only when the task digest matches, and rewriting the objective would start a different
-task on the same lane. The report sentence sits outside it, so switching WRITE to APPEND never
-overwrites the partial report.
+The objective block stays byte-identical to the dispatch that just stopped: an unchanged task
+digest keeps the task's identity on the lane (the runner's stored baseline), and rewriting the
+objective would start a different task there. The digest alone does not keep the CLI session: codex here always
+runs sandboxed (`--codex-sandbox`), which has no resume form, so the wake re-dispatches in a fresh
+codex session; for any runtime, claim continuity only from the runner's own `session` line. The
+report sentence sits outside the objective, so switching WRITE to APPEND never overwrites the
+partial report.
 
 ## Resume of that wake
 
-Restoring `$RESUME_STATE_PATH` for this re-invoke keeps `injection_json` pinned and does not enter
-Step 2. An owner's plain resume keeps it pinned too; Step 2 re-resolves only when the owner names a
-replacement pair (`references/state-management.md`). A stop on the re-dispatched run re-enters the
-same quota branch; it does not pick another candidate.
+Restoring `$RESUME_STATE_PATH` for this re-invoke follows [`state-management.md#pinned-resume`](state-management.md#pinned-resume): the injection stays pinned and Step 2 is not entered. A stop on the re-dispatched run re-enters the same quota branch; apart from its Flagged switch step it does not pick another candidate.

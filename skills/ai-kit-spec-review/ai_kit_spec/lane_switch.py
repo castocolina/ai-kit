@@ -1,5 +1,5 @@
 """Lane selection shared by the pre-round ping and the flagged-lane switch: always inside the
-owner's review roster and order."""
+owner's roster and order for the role (review by default)."""
 
 import functools
 import json
@@ -27,25 +27,26 @@ _STATUS_RE = re.compile(
     r"^blocked_until=(-|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) failures=\d+$")
 
 
-def review_lane(config: dict, key) -> dict | None:
-    """The roster's review lane with this key, or None."""
-    return next((item for item in config.get("review", [])
+def review_lane(config: dict, key, role: str = "review") -> dict | None:
+    """The roster's lane of this role with this key, or None."""
+    return next((item for item in config.get(role, [])
                  if isinstance(item, dict) and item.get("key") == key), None)
 
 
-def _route(config: dict, key: str, route_fn) -> str | None:
+def _route(config: dict, key: str, route_fn, role: str = "review") -> str | None:
     route = route_fn(key)
     if route is not None:
         return route
-    lane = review_lane(config, key) or {}
+    lane = review_lane(config, key, role) or {}
     command = lane.get("command")
     return ("custom" if isinstance(command, str) and command and lane.get("runtime") is None
             else None)
 
 
-def next_lane(config: dict, base_key: str, exclude, route_fn) -> str | None:
-    ordered = lane_settings.selectable_lanes("review", config.get("review"),
-                                             role_orders.role_order(config, "review"))
+def next_lane(config: dict, base_key: str, exclude, route_fn,
+              role: str = "review") -> str | None:
+    ordered = lane_settings.selectable_lanes(role, config.get(role),
+                                             role_orders.role_order(config, role))
     if base_key not in {lane["key"] for lane in ordered}:
         return None
     excluded = set(exclude) - {base_key}
@@ -54,7 +55,7 @@ def next_lane(config: dict, base_key: str, exclude, route_fn) -> str | None:
                                             if lane["key"] not in excluded], base_key)
         if pick is None:
             return None
-        route = _route(config, pick, route_fn)
+        route = _route(config, pick, route_fn, role)
         if route is not None and route not in routing.SKIP_ROUTES:
             return pick
         excluded.add(pick)
@@ -179,18 +180,40 @@ def blocked_cache_entries(lanes: list, ladder: list, existing: dict, now_s: floa
     return updated
 
 
-def flagged_replacement(config: dict, key: str, reason, exclude, route_fn) -> str | None:
-    """The owner's flag alone permits a switch after quota; other lanes or reasons do not."""
+def flagged_lane(config: dict, key: str, reason, role: str = "review") -> dict | None:
+    """The lane when the owner's flag permits a switch after quota; None for another reason, an
+    unknown lane, an unflagged lane or a bad setting."""
     if reason != "quota":
         return None
-    lane = review_lane(config, key)
+    lane = review_lane(config, key, role)
     if lane is None:
         return None
     try:
         limited = lane_settings.lane_usage_limit(lane).limited
     except lane_settings.LaneSettingError:
         return None
-    return next_lane(config, key, exclude, route_fn) if limited else None
+    return lane if limited else None
+
+
+def flagged_replacement(config: dict, key: str, reason, exclude, route_fn) -> str | None:
+    """The owner's flag alone permits a switch after quota; other lanes or reasons do not."""
+    return (next_lane(config, key, exclude, route_fn)
+            if flagged_lane(config, key, reason) is not None else None)
+
+
+def fallback_outcome(config: dict, key: str, quota_proven: bool, exclude,
+                     route_fn) -> tuple[str | None, str]:
+    """The executor quota-stop switch: (new key, "") when the runner result proved quota, the owner
+    flagged the lane and an eligible fallback exists, else (None, why) with why one of: not quota,
+    unknown lane, unflagged, no fallback."""
+    if not quota_proven:
+        return None, "not quota"
+    if review_lane(config, key, "execute") is None:
+        return None, "unknown lane"
+    if flagged_lane(config, key, "quota", role="execute") is None:
+        return None, "unflagged"
+    new = next_lane(config, key, exclude, route_fn, role="execute")
+    return (new, "") if new else (None, "no fallback")
 
 
 def _refusal(row: dict, states: dict, config: dict) -> str | None:
@@ -208,12 +231,12 @@ def _refusal(row: dict, states: dict, config: dict) -> str | None:
     return None
 
 
-def replacement_row(config: dict, key: str, route_fn) -> dict:
-    lane = review_lane(config, key)
+def replacement_row(config: dict, key: str, route_fn, role: str = "review") -> dict:
+    lane = review_lane(config, key, role)
     if lane is None:
         raise KeyError(key)
     row = dict(quota.to_resolved(lane)._asdict())
-    row["route"] = _route(config, key, route_fn)
+    row["route"] = _route(config, key, route_fn, role)
     return row
 
 
@@ -227,14 +250,14 @@ def review_routes(config: dict, deps) -> dict:
                              routing.host_context("review", deps.env_fn(), seams, False))
 
 
-def lazy_routes(config: dict, deps):
+def lazy_routes(config: dict, deps, routes_fn=None):
     """A route lookup that runs route discovery only on its first call."""
     routes = None
 
     def route(key):
         nonlocal routes
         if routes is None:
-            routes = review_routes(config, deps)
+            routes = (routes_fn or review_routes)(config, deps)
         return routes.get(key)
     return route
 

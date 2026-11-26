@@ -6,7 +6,7 @@ ai-kit-cross-ai skill's Call settings and Settings report use them ([`../SKILL.m
 
 ## Model preflight
 
-A model id is checked only by the live preflight: when the runtime's model listing succeeds, an id missing from it ends the call with `bad_model` (exit 69) before any model runs. For a runtime whose ids carry a variant suffix (opencode's `#<variant>`) the preflight checks the id without the suffix and prints `cross-ai: <runtime> preflight checks <base id>; the suffix <suffix> is not validated`: a passing preflight never validates the suffix, so read the final `AIKIT-XAI` line for that. When the listing fails the runner prints `cross-ai: <runtime> model list unavailable (<reason>); not preflighted` and runs the id as given, and a runtime with no listing command runs it unchecked.
+An id that fails the runner's syntax floor is refused as `usage` (exit 2) before any spawn, and an unusual but valid shape only prints a note; past those, the live preflight checks it: when the runtime's model listing succeeds, an id missing from it ends the call with `bad_model` (exit 69) before any model runs. For a runtime whose ids carry a variant suffix (opencode's `#<variant>`) the preflight checks the id without the suffix and prints `cross-ai: <runtime> preflight checks <base id>; the suffix <suffix> is not validated`: a passing preflight never validates the suffix, so read the final `AIKIT-XAI` line for that. When the listing fails the runner prints `cross-ai: <runtime> model list unavailable (<reason>); not preflighted` and runs the id as given, and a runtime with no listing command runs it unchecked.
 
 ## Reasons
 

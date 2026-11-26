@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": "casual-run-superpowers-plan",
-      "prompt": "Run this superpowers plan for me under subagent-driven-development, I want the whole thing done. The plan is at evals/files/plan-two-features.md (repo-relative; treat it as docs/superpowers/plans/2026-11-04-demo.md in the checkout).",
+      "prompt": "Run this superpowers plan for me under subagent-driven-development, I want the whole thing done. The plan is at evals/files/plan-two-features.md (repo-relative; treat it as docs/superpowers/plans/2026-11-04-demo.md in the checkout). No cross-AI lanes are configured; when you ask about setup, I pick the second option.",
       "expected_output": "The agent probes that superpowers:subagent-driven-development loads, resolves the shim in Step 0, records the scalars, resolves a (runtime, model) pair for each of the two tasks before each implementer dispatch, and reports the run's progress without dispatching a task that has no resolved pair.",
       "files": [
         "evals/files/plan-two-features.md"
@@ -52,7 +52,7 @@
     },
     {
       "id": "edge-plan-without-fold-step",
-      "prompt": "The plan at evals/files/plan-two-features.md has only two feature tasks and no fold step. Start its run under subagent-driven-development and make sure the commits end up folded when it finishes.",
+      "prompt": "The plan at evals/files/plan-two-features.md has only two feature tasks and no fold step. Start its run under subagent-driven-development and make sure the commits end up folded when it finishes. No cross-AI lanes are configured; when you ask about setup, I pick the second option.",
       "expected_output": "The agent adds a final in-memory todo named Fold the plan's commits (ai-kit-commit-fold) to the task list, leaves the plan file byte-for-byte unchanged, records FOLD_BASE before the first task, and runs the fold at Step 5.",
       "files": [
         "evals/files/plan-two-features.md"
@@ -159,6 +159,49 @@
       "assertions": [
         "Runs config-status for the execute role and reads none although the project holds a review lane",
         "Asks the three-answer setup question once before fold.py start instead of treating the review lane as an execute roster"
+      ]
+    },
+    {
+      "id": "precise-session-fallback-runs-native",
+      "prompt": "Run task 1 of the superpowers plan docs/superpowers/plans/demo.md under subagent-driven-development; this session runs on an opencode host, not Claude Code. Setup: copy evals/files/session-fallback/project to a scratch project root, rename its aikit/ folder to .aikit/, copy evals/files/plan-two-features.md to docs/superpowers/plans/demo.md inside that root, and run from that root. Faked calls and their scripted responses (no host CLI runs): the quota probe of execute-primary answers unavailable with reason quota; Step 2's resolve-injection prints {\"mode\": \"native\", \"key\": \"\", \"runtime\": \"\", \"model\": \"\", \"ladder_keys\": [\"execute-primary\"], \"fallback\": \"session\", \"fallback_note\": \"host takes no model\"} with stderr ai-kit-spec: no execute lane is available; this task runs on the session model (host takes no model) and exit 0.",
+      "expected_output": "The agent dispatches task 1 natively on the session's own model with the model omitted, relays the stderr notice that no execute lane is available and the task runs on the session model to the owner, and makes no owner stop.",
+      "files": ["evals/files/plan-two-features.md", "evals/files/session-fallback/project/aikit/config.toml"],
+      "assertions": [
+        "Runs the task natively on the session model instead of stopping",
+        "Shows the notice that no execute lane is available and the task runs on the session model"
+      ]
+    },
+    {
+      "id": "edge-escalation-flags-off-keeps-lane",
+      "prompt": "Continue the superpowers plan docs/superpowers/plans/demo.md under subagent-driven-development. Setup: copy evals/files/escalation-off/project to a scratch project root, rename its aikit/ folder to .aikit/, copy evals/files/plan-two-features.md to docs/superpowers/plans/demo.md inside that root, and run from that root. Task 1 reached fix round 4 on execute-primary, its last ok dispatch, so the escalation anchor is execute-primary. Faked calls and their scripted responses (no host CLI runs): escalation-gate prints {\"escalate\": false, \"allowed\": [\"execute-primary\"], \"exclude\": [\"execute-strong\"], \"reason\": \"off\"} with stderr ai-kit-spec: fix round stays on execute-primary: escalation is off for this lane and exit 0, and leaves ESCALATION_EXCLUDE_JSON.json holding [\"execute-strong\"] and ESCALATION_ALLOWED_JSON.json holding [\"execute-primary\"] in the run folder; the re-resolve with the floor prints {\"mode\": \"external_cli\", \"key\": \"execute-primary\", \"runtime\": \"opencode\", \"model\": \"fake/placeholder-model-2\", \"effort\": null, \"service_tier\": null, \"pool\": null, \"ladder_keys\": [\"execute-strong\", \"execute-primary\"]} with exit 0, so the allowed-key check passes; the round 4 dispatch of execute-primary returns ok.",
+      "expected_output": "The agent runs escalation-gate before the round 4 dispatch, re-resolves with the floor, passes the allowed-key check, dispatches round 4 on execute-primary as a normal fix round, tells the owner that task 1 stays on its lane, and never dispatches the more capable execute-strong.",
+      "files": ["evals/files/plan-two-features.md", "evals/files/escalation-off/project/aikit/config.toml"],
+      "assertions": [
+        "Calls escalation-gate before the round 4 dispatch",
+        "Dispatches round 4 on execute-primary and shows the stays-on notice",
+        "Never dispatches execute-strong when both escalation flags are off"
+      ]
+    },
+    {
+      "id": "edge-flagged-lane-quota-switch",
+      "prompt": "Continue the superpowers plan docs/superpowers/plans/demo.md under subagent-driven-development. Setup: copy evals/files/flagged-quota/project to a scratch project root, rename its aikit/ folder to .aikit/, copy evals/files/plan-two-features.md to docs/superpowers/plans/demo.md inside that root, and run from that root. The external_cli dispatch of execute-primary for task 1 stopped. Faked calls and their scripted responses (no host CLI runs): the saved dispatch result is {\"returncode\": 69, \"status\": {\"status\": \"quota\"}, \"reason\": \"quota\"}; classify-dispatch-failure prints {\"class\": \"quota\", \"retry_after_s\": null, \"cycle\": null}; executor-fallback prints {\"switched\": true, \"key\": \"execute-backup\", \"exclude\": [\"execute-primary\"]} with exit 0; its re-resolve prints {\"mode\": \"external_cli\", \"key\": \"execute-backup\", \"runtime\": \"codex\", \"model\": \"fake/placeholder-model-4\", \"effort\": null, \"service_tier\": null, \"pool\": null, \"ladder_keys\": [\"execute-primary\", \"execute-backup\"]} with exit 0; the dispatch of execute-backup returns ok.",
+      "expected_output": "After Relay, the agent runs the Flagged switch step before Read tokens, any wait or any owner stop; the replacement validates, so it tells the owner in one line that execute-primary moved to execute-backup because of its usage_limited flag and the quota the runner reported, dispatches execute-backup in the same round, and writes no resume file for execute-primary.",
+      "files": ["evals/files/plan-two-features.md", "evals/files/flagged-quota/project/aikit/config.toml"],
+      "assertions": [
+        "Runs the Flagged switch step before scheduling a wait or stopping",
+        "Passes the exclude list [\"execute-primary\"] to resolve-injection as --escalation-excluded-keys-json with --no-fallback",
+        "Dispatches execute-backup in the same round after the replacement validates",
+        "Writes no resume file for execute-primary"
+      ]
+    },
+    {
+      "id": "precise-host-config-audit-observation",
+      "prompt": "You are running a superpowers plan under subagent-driven-development, and task 1's external_cli dispatch has just returned. Faked calls and their scripted responses (no host CLI runs): dispatch-task finished with runner status ok, and its .err file holds these two host-config audit lines, in this order: ai-kit-spec: observation: <scratch HOME>/.claude/settings.json changed during the lane; a host may rewrite its own config, so this does not show the lane changed it, then ai-kit-spec: observation: config folders moved by CLAUDE_CONFIG_DIR, CODEX_HOME, XDG_CONFIG_HOME or OPENCODE_CONFIG_DIR are not checked; classify-dispatch-failure prints {\"class\": \"ok\", \"retry_after_s\": null, \"cycle\": null}; implementer-status prints DONE.",
+      "expected_output": "Right after dispatch-task returns, the agent relays both observation lines verbatim with the lane report and labels them observations (a host may rewrite its own config), then continues task 1 through Classify ok and the review with no stop, retry or reclassification.",
+      "files": [],
+      "assertions": [
+        "Relays both observation lines verbatim with the lane report",
+        "Continues the task; never stops, retries or reclassifies on the audit lines"
       ]
     }
   ]

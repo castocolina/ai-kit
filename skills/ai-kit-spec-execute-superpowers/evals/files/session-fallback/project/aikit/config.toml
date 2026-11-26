@@ -1,0 +1,9 @@
+[lanes.policy.execute]
+ladder = ["execute-primary"]
+session_fallback = true
+
+[[lanes.execute]]
+key = "execute-primary"
+runtime = "opencode"
+model = "fake/placeholder-model-2"
+purpose = "execute"

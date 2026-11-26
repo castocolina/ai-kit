@@ -13,17 +13,20 @@ either (removed a prior revision, CRITICAL finding) -- dispatch-task already com
 tooling guidance inputs itself; a standalone subcommand whose output nothing read was dead code
 invoking a subcommand that never actually existed."""
 import argparse
+import contextlib
+import functools
 import json
 import os
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from typing import Any, NamedTuple, TextIO
 
-from ai_kit_spec import capability_block, prompt_guard
+from ai_kit_spec import capability_block, host_config, lane_switch, prompt_guard
 from ai_kit_spec.cache import cache_read_json, cache_write_json
-from ai_kit_spec.config_io import ConfigError
+from ai_kit_spec.config_io import ConfigError, cfg_resolve_quiet
 from ai_kit_spec.detection import (
     CBM_NAME,
     LOOPBACK_URLOPEN,
@@ -33,7 +36,13 @@ from ai_kit_spec.detection import (
     run_cbm_index,
     runtime_id,
 )
+from ai_kit_spec.dispatch_guidance import (
+    build_commit_guard_guidance,
+    build_gates_guidance,
+    checked_owner_config_paths,
+)
 from ai_kit_spec.execute_selection import ExecuteSelectionError
+from ai_kit_spec.lane_settings import LaneSettingError
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
 from ai_kit_spec.routing import (
     RuntimesSeams,
@@ -44,6 +53,7 @@ from ai_kit_spec.routing import (
 )
 
 from ai_kit_spec_superpowers.dispatch_injection import (
+    NO_CANDIDATE_PREFIX,
     BuildInjectionOptions,
     BuildInjectionRequest,
     DispatchTaskRequest,
@@ -56,8 +66,11 @@ from ai_kit_spec_superpowers.dispatch_injection import (
     derive_files_touched_sizes,
     dispatch_classification,
     dispatch_superpowers_task,
+    escalation_gate,
     implementer_status,
+    quota_evidence,
     reasons_summary,
+    session_fallback_injection,
 )
 from ai_kit_spec_superpowers.task_classification import classify_task
 
@@ -65,6 +78,18 @@ _REPORT_FALLBACK_MARKER = (
     "[ai-kit-spec-execute-superpowers: no report file was written by the dispatched CLI -- "
     "falling back to captured stdout]\n\n"
 )
+
+
+_GATE_STOP = ("ai-kit-spec: STOP: empty or unknown ESCALATION_ANCHOR_KEY; "
+              "ask the owner, do not resolve")
+_FALLBACK_ON = ("ai-kit-spec: no execute lane is available; this task runs on the session model "
+                "({note})")
+_FALLBACK_OFF = ("ai-kit-spec: no execute lane is available; run ai-kit-spec-config to add one "
+                 "or to turn on the session-model fallback")
+_GATE_NOTES = {
+    "off": "escalation is off for this lane",
+    "no-target": "no lane above it matches the lane's escalation flags",
+}
 
 
 class CliDeps(NamedTuple):
@@ -92,6 +117,7 @@ class CliDeps(NamedTuple):
     urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN
     env_fn: Callable[[], dict] = lambda: dict(os.environ)
     stdout: TextIO = sys.stdout
+    clock_fn: Callable[[], float] = time.time
 
 
 class QuotaExhaustionEmitContext(NamedTuple):
@@ -190,7 +216,7 @@ def _refresh_quota_for_candidates(
 def _handle_build_value_error(
     exc: ValueError, task_type: str | None, ladder_keys: list, deps: CliDeps,
 ) -> int:
-    if str(exc).startswith("no execute candidate survived"):
+    if str(exc).startswith(NO_CANDIDATE_PREFIX):
         deps.stdout.write(json.dumps({
             "mode": "no_candidate", "task_type": task_type, "detail": str(exc),
             "ladder_keys": ladder_keys,
@@ -242,13 +268,61 @@ def _quota_emit_from_loaded(
         tried, reasons, loaded.escalation_exclude)
 
 
+def _emit_or_fallback(
+    deps: CliDeps, args: argparse.Namespace, loaded: ResolveTaskLoadResult,
+    emit: Callable[[], object],
+) -> int:
+    """Print today's no-lane output, or the session-model injection when the owner turned the
+    fallback on. Only a plain resolution may fall back: a fix round of 4 or more, escalation keys
+    or --no-fallback print today's output with no config read and no jev call."""
+    if args.no_fallback or args.fix_round >= 4 or loaded.escalation_exclude:
+        emit()
+        return 0
+    summary = (f"Task type: {loaded.task_type or 'unknown'}. Files named: {len(loaded.sizes)}. "
+               f"Fix round: {args.fix_round}.")
+    try:
+        injection = session_fallback_injection(
+            cfg_resolve_quiet(args.cwd, deps.env_fn()), loaded.ladder_keys, summary,
+            deps.env_fn(), functools.partial(deps.run_fn, cwd=args.cwd))
+    except LaneSettingError as exc:
+        print(f"ai-kit-spec: {exc}", file=sys.stderr)
+        return 2
+    if injection is not None:
+        deps.stdout.write(json.dumps(injection))
+        print(_FALLBACK_ON.format(note=injection["fallback_note"]), file=sys.stderr)
+        return 0
+    emit()
+    print(_FALLBACK_OFF, file=sys.stderr)
+    return 0
+
+
+def _blocked_pool_quota(
+    deps: CliDeps, loaded: ResolveTaskLoadResult, request: BuildInjectionRequest,
+    existing_quota: dict,
+) -> dict:
+    """Stamp a ranked, eligible, spawned flagged lane whose pool is still blocked; an expired pool
+    is retried by its first such lane. The keys come from the same narrowing the final pick uses,
+    run on the remaining candidates; excluded and native lanes never take part."""
+    try:
+        keys = deps.compute_ladder_keys_fn(request, loaded.routes)
+    except ValueError:
+        return existing_quota
+    by_key = {c["key"]: c for c in loaded.candidates}
+    ranked = probe_keys([k for k in keys if k in by_key], loaded.routes)
+    lanes = [by_key[k]["roster_entry"] for k in ranked
+             if isinstance(by_key[k].get("roster_entry"), dict)]
+    return lane_switch.blocked_cache_entries(
+        lanes, ranked, existing_quota, deps.clock_fn(), lane_switch.blocked_reader(deps))
+
+
 def _run_resolve_injection_build(deps: CliDeps, inputs: ResolveInjectionRunInputs) -> int:
     loaded = inputs.loaded
-    existing_quota = deps.cache_read_json_fn(inputs.args.quota_path) or {}
-    quota = _refresh_quota_for_candidates(
-        deps, inputs.args.quota_path, loaded.candidates, existing_quota, loaded.routes)
     request = BuildInjectionRequest(
         loaded.task_markdown, loaded.candidates, loaded.sizes, {}, loaded.top_n_keys)
+    existing_quota = _blocked_pool_quota(
+        deps, loaded, request, deps.cache_read_json_fn(inputs.args.quota_path) or {})
+    quota = _refresh_quota_for_candidates(
+        deps, inputs.args.quota_path, loaded.candidates, existing_quota, loaded.routes)
     try:
         result = deps.build_dispatch_injection_fn(
             request, BuildInjectionOptions(quota=quota, routes=loaded.routes))
@@ -256,10 +330,13 @@ def _run_resolve_injection_build(deps: CliDeps, inputs: ResolveInjectionRunInput
         deps.stdout.write(json.dumps(result))
         return 0
     except QuotaExhaustedError as exc:
-        _emit_quota_exhausted(
-            deps, _quota_emit_from_loaded(loaded, exc.tried, exc.reasons))
-        return 0
+        return _emit_or_fallback(
+            deps, inputs.args, loaded,
+            functools.partial(
+                _emit_quota_exhausted, deps,
+                _quota_emit_from_loaded(loaded, exc.tried, exc.reasons)))
     except ValueError as exc:
+        # narrowing left no lane (no_candidate): the owner's curation stop, never the fallback
         return _handle_build_value_error(
             exc, loaded.task_type, loaded.ladder_keys, deps)
 
@@ -269,8 +346,9 @@ def _cmd_resolve_injection(args: argparse.Namespace, deps: CliDeps) -> int:
     if isinstance(loaded, int):
         return loaded
     if not loaded.candidates:
-        _emit_quota_exhausted(deps, _quota_emit_from_loaded(loaded, [], {}))
-        return 0
+        return _emit_or_fallback(
+            deps, args, loaded,
+            lambda: _emit_quota_exhausted(deps, _quota_emit_from_loaded(loaded, [], {})))
     return _run_resolve_injection_build(deps, ResolveInjectionRunInputs(args, loaded))
 
 
@@ -322,8 +400,29 @@ def _load_dispatch_task_files(args: argparse.Namespace) -> tuple[dict, str, str]
     return injection, prompt, format_block
 
 
+def _read_optional(flag: str, path: str | None) -> str | None:
+    """The text of an optional guidance file; an explicit file that cannot be read is an error,
+    never an empty block."""
+    if path is None:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"ai-kit-spec: {flag}: unreadable file {path}") from exc
+
+
+def _guidance_inputs(args: argparse.Namespace) -> tuple:
+    return (
+        _read_optional("--gates-file", args.gates_file),
+        _read_optional("--guard-file", args.guard_file),
+        checked_owner_config_paths(args.owner_config),
+    )
+
+
 def _dispatch_guidance_for_cli(
     deps: CliDeps, args: argparse.Namespace, injection: dict, format_block: str,
+    inputs: tuple,
 ) -> SuperpowersDispatchGuidance:
     return SuperpowersDispatchGuidance(
         format_block=format_block,
@@ -331,6 +430,9 @@ def _dispatch_guidance_for_cli(
         agents_tooling_path=deps.resolve_agents_tooling_path_fn(),
         code_index_registered=_code_index_registered_for_cli(
             injection["runtime"], args.target_dir, deps),
+        gates_text=inputs[0],
+        guard_text=inputs[1],
+        owner_config_paths=inputs[2],
     )
 
 
@@ -345,8 +447,13 @@ def _maybe_write_report_fallback(
 
 def _cmd_dispatch_task(args: argparse.Namespace, deps: CliDeps) -> int:
     injection, prompt, format_block = _load_dispatch_task_files(args)
+    try:
+        inputs = _guidance_inputs(args)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
     report_before = _read_report_snapshot(args.report_file)
-    guidance = _dispatch_guidance_for_cli(deps, args, injection, format_block)
+    guidance = _dispatch_guidance_for_cli(deps, args, injection, format_block, inputs)
     dispatch_request = DispatchTaskRequest(
         injection, prompt, args.target_dir, args.timeout)
     try:
@@ -359,6 +466,21 @@ def _cmd_dispatch_task(args: argparse.Namespace, deps: CliDeps) -> int:
         return prompt_guard.REFUSED_EXIT
     _maybe_write_report_fallback(args, result, report_before)
     deps.stdout.write(json.dumps(result))
+    return 0
+
+
+def _cmd_print_guidance(args: argparse.Namespace, deps: CliDeps) -> int:
+    """The gates and guard blocks a native dispatch puts in its brief, identical to an external
+    dispatch."""
+    try:
+        gates_text, guard_text, paths = _guidance_inputs(args)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    blocks = [build_gates_guidance(gates_text), build_commit_guard_guidance(guard_text, paths)]
+    text = "\n\n".join(b for b in blocks if b)
+    if text:
+        deps.stdout.write(text + "\n")
     return 0
 
 
@@ -382,11 +504,192 @@ def _cmd_resume_exclusions(args: argparse.Namespace, deps: CliDeps) -> int:
     return 0
 
 
+_AUDIT_UNAVAILABLE = "ai-kit-spec: observation: host-config audit unavailable: {reason}"
+
+
+def _is_audit_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    return value is None or isinstance(value, int) or value == host_config.UNAVAILABLE
+
+
+def _is_audit_snapshot(data: Any) -> bool:
+    """True for a dict of exactly the listed paths holding an int, None or UNAVAILABLE."""
+    if not isinstance(data, dict) or set(data) != set(host_config.HOST_CONFIG_FILES):
+        return False
+    return all(_is_audit_value(v) for v in data.values())
+
+
+def _cmd_host_config_audit(args: argparse.Namespace, deps: CliDeps) -> int:
+    """An observation only: always exit 0, never read a host config file."""
+    env = deps.env_fn()
+    if args.snapshot:
+        try:
+            deps.cache_write_json_fn(os.path.abspath(args.snapshot), host_config.snapshot(env))
+        except OSError as exc:
+            reason = f"cannot write {args.snapshot}: {exc.strerror or exc}"
+            deps.stdout.write(_AUDIT_UNAVAILABLE.format(reason=reason) + "\n")
+        return 0
+    before = deps.cache_read_json_fn(args.compare)
+    if before is None:
+        reason = f"cannot read {args.compare}"
+    elif not _is_audit_snapshot(before):
+        reason = f"{args.compare} is not a host-config snapshot"
+    else:
+        after = host_config.snapshot(env)
+        for line in host_config.observation_lines(
+            env, host_config.changed(before, after), host_config.unavailable(before, after)
+        ):
+            deps.stdout.write(line + "\n")
+        return 0
+    deps.stdout.write(_AUDIT_UNAVAILABLE.format(reason=reason) + "\n")
+    return 0
+
+
 def _cmd_write_resumable_state(args: argparse.Namespace, deps: CliDeps) -> int:
     state = json.loads(args.state_json)
     deps.write_resumable_state_fn(args.path, state)
     deps.stdout.write(json.dumps({"written": True, "path": args.path}))
     return 0
+
+
+def _read_json_input(deps: CliDeps, command: str, flag: str, path: str, valid) -> Any:
+    """The file's JSON when `valid` accepts it; else None after one stderr line naming the
+    command, the flag and the file."""
+    data = deps.cache_read_json_fn(path)
+    if data is None or not valid(data):
+        print(f"ai-kit-spec: {command}: unreadable {flag} {path}", file=sys.stderr)
+        return None
+    return data
+
+
+def _is_str_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(k, str) for k in value)
+
+
+def _is_injection(value: Any) -> bool:
+    return isinstance(value, dict) and _is_str_list(value.get("ladder_keys"))
+
+
+def _write_gate_files(out_dir: str, gate: dict) -> str | None:
+    """Write both gate files under temporary names, then rename them; on a failure remove both
+    temporary names and both gate files, so no mixed or stale pair is left. The path that
+    failed, or None."""
+    pairs = [(os.path.join(out_dir, "ESCALATION_EXCLUDE_JSON.json"), gate["exclude"]),
+             (os.path.join(out_dir, "ESCALATION_ALLOWED_JSON.json"), gate["allowed"])]
+    current = out_dir
+    try:
+        for path, value in pairs:
+            current = path + ".tmp"
+            with open(current, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(value))
+        for path, _value in pairs:
+            current = path
+            os.replace(path + ".tmp", path)
+    except OSError:
+        for path, _value in pairs:
+            for leftover in (path + ".tmp", path):
+                with contextlib.suppress(OSError):
+                    os.remove(leftover)
+        return current
+    return None
+
+
+def _cmd_escalation_gate(args: argparse.Namespace, deps: CliDeps) -> int:
+    injection = _read_json_input(deps, "escalation-gate", "--injection-file",
+                                 args.injection_file, _is_injection)
+    if injection is None:
+        return 2
+    ladder_keys = injection["ladder_keys"]
+    lanes = cfg_resolve_quiet(args.cwd, deps.env_fn()).get("execute", [])
+    try:
+        gate = escalation_gate(lanes, args.anchor_key, ladder_keys)
+    except LaneSettingError as exc:
+        print(f"ai-kit-spec: {exc}", file=sys.stderr)
+        return 2
+    except ValueError:
+        print(_GATE_STOP, file=sys.stderr)
+        return 3
+    failed = _write_gate_files(args.out_dir, gate)
+    if failed is not None:
+        print(f"ai-kit-spec: escalation-gate: cannot write {failed}", file=sys.stderr)
+        return 2
+    deps.stdout.write(json.dumps(gate))
+    if not gate["escalate"]:
+        print(f"ai-kit-spec: fix round stays on {args.anchor_key}: "
+              f"{_GATE_NOTES[gate['reason']]}", file=sys.stderr)
+    return 0
+
+
+def _load_fallback_inputs(args: argparse.Namespace, deps: CliDeps) -> list | None:
+    """(dispatch result, excluded keys, injection), or None after the stderr text."""
+    reads = [(args.dispatch_result, "--dispatch-result", lambda v: isinstance(v, dict))]
+    reads += [(path, "--exclude-keys-file", _is_str_list) for path in args.exclude_keys_file]
+    reads.append((args.injection_file, "--injection-file", _is_injection))
+    loaded = []
+    for path, flag, valid in reads:
+        data = _read_json_input(deps, "executor-fallback", flag, path, valid)
+        if data is None:
+            return None
+        loaded.append(data)
+    return [loaded[0], [key for keys in loaded[1:-1] for key in keys], loaded[-1]]
+
+
+def _execute_roster(config: dict) -> list:
+    return [lane for lane in config.get("execute", []) if isinstance(lane, dict)]
+
+
+def _cmd_executor_fallback(args: argparse.Namespace, deps: CliDeps) -> int:
+    loaded = _load_fallback_inputs(args, deps)
+    if loaded is None:
+        return 2
+    result, exclude_keys, injection = loaded
+    config = cfg_resolve_quiet(args.cwd, deps.env_fn())
+    held = set(injection["ladder_keys"])
+    exclude = set(exclude_keys) | {
+        lane.get("key") for lane in _execute_roster(config) if lane.get("key") not in held}
+    route = lane_switch.lazy_routes(
+        config, deps, routes_fn=lambda cfg, d: _routes_for(d, _execute_roster(cfg)))
+    new, why = lane_switch.fallback_outcome(config, args.key, quota_evidence(result), exclude,
+                                            route)
+    if new:
+        deps.stdout.write(json.dumps({"switched": True, "key": new,
+                                      "exclude": sorted(held - {new})}))
+        return 0
+    deps.stdout.write(json.dumps({"switched": False, "reason": why}))
+    return 1
+
+
+def _add_guidance_args(parser) -> None:
+    parser.add_argument(
+        "--gates-file", default=None,
+        help="file of gate commands the implementer must run; framed once in the guidance")
+    parser.add_argument(
+        "--guard-file", default=None,
+        help="file of commit-guard rules; framed once in the guidance")
+    parser.add_argument(
+        "--owner-config", action="append", default=None,
+        help="an owner config path the implementer is told never to stage and to leave out of "
+             "clean-tree checks; repeatable")
+
+
+def _add_fallback_parser(sub) -> None:
+    p_fallback = sub.add_parser(
+        "executor-fallback",
+        help="after a quota stop proven by the runner result, move a lane the owner flagged "
+             "usage_limited to its configured fallback; other lanes and transient failures are "
+             "not switched")
+    p_fallback.add_argument("--cwd", required=True)
+    p_fallback.add_argument("--key", required=True)
+    p_fallback.add_argument("--dispatch-result", required=True,
+                            help="the saved dispatch result JSON file")
+    p_fallback.add_argument("--exclude-keys-file", required=True, action="append",
+                            help="repeatable: the task's EXCLUDED_KEYS_JSON.json and, at fix "
+                                 "rounds 4-5, the escalation gate's ESCALATION_EXCLUDE_JSON.json; "
+                                 "every listed key is excluded")
+    p_fallback.add_argument("--injection-file", required=True,
+                            help="the task's saved INJECTION_JSON.json; its ladder_keys are the "
+                                 "task-narrowed candidates")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -428,6 +731,14 @@ def _build_parser() -> argparse.ArgumentParser:
              "user as needing a fix, and must never be carried into resume-exclusions' persisted "
              "excluded_keys set as if it had genuinely failed.")
 
+    p_resolve.add_argument(
+        "--fix-round", type=int, default=0,
+        help="the task's fix round; at 4 or more the session-model fallback is never used")
+    p_resolve.add_argument(
+        "--no-fallback", action="store_true",
+        help="never use the owner's session-model fallback in this call; the escalation re-run "
+             "block passes it")
+
     p_dispatch = sub.add_parser("dispatch-task")
     p_dispatch.add_argument("--injection-json", required=True)
     p_dispatch.add_argument("--prompt-file", required=True)
@@ -435,6 +746,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dispatch.add_argument("--heartbeat-interval", type=int, required=True)
     p_dispatch.add_argument("--timeout", type=int, required=True)
     p_dispatch.add_argument("--format-block-file", required=True)
+    _add_guidance_args(p_dispatch)
     p_dispatch.add_argument(
         "--report-file", required=True,
         help="the same path subagent-driven-development's own task-brief-named report file "
@@ -449,6 +761,11 @@ def _build_parser() -> argparse.ArgumentParser:
              "on a fix round destroys the implementer-authored report (and any earlier rounds' "
              "evidence) subagent-driven-development's own task review / re-review reads as the "
              "task's persistent memory.")
+
+    p_guidance = sub.add_parser(
+        "print-guidance",
+        help="print the gates and commit-guard blocks for a native dispatch")
+    _add_guidance_args(p_guidance)
 
     p_classify = sub.add_parser("classify-dispatch-failure")
     p_classify.add_argument("--dispatch-result-json", required=True)
@@ -473,16 +790,41 @@ def _build_parser() -> argparse.ArgumentParser:
     p_resume.add_argument("--path", required=True)
     p_resume.add_argument("--state-json", required=True)
 
+    p_audit = sub.add_parser(
+        "host-config-audit",
+        help="snapshot or compare the modification times of the listed host-config files "
+             "(an observation, never a stop)")
+    audit_mode = p_audit.add_mutually_exclusive_group(required=True)
+    audit_mode.add_argument("--snapshot", help="write the snapshot to this file")
+    audit_mode.add_argument("--compare", help="compare against the snapshot in this file")
+
+    p_gate = sub.add_parser(
+        "escalation-gate",
+        help="which keys a rounds 4-5 fix round may move to, from the stuck lane's escalation "
+             "flags")
+    p_gate.add_argument("--cwd", required=True)
+    p_gate.add_argument("--anchor-key", required=True,
+                        help="the stuck lane's key; an empty value stops with exit 3")
+    p_gate.add_argument("--injection-file", required=True,
+                        help="the saved INJECTION_JSON.json, never JSON text on argv")
+    p_gate.add_argument("--out-dir", required=True, help="the task's run folder")
+
+    _add_fallback_parser(sub)
+
     return parser
 
 
 _COMMANDS = {
     "resolve-injection": _cmd_resolve_injection,
     "dispatch-task": _cmd_dispatch_task,
+    "print-guidance": _cmd_print_guidance,
     "classify-dispatch-failure": _cmd_classify_dispatch_failure,
     "implementer-status": _cmd_implementer_status,
     "resume-exclusions": _cmd_resume_exclusions,
     "write-resumable-state": _cmd_write_resumable_state,
+    "escalation-gate": _cmd_escalation_gate,
+    "executor-fallback": _cmd_executor_fallback,
+    "host-config-audit": _cmd_host_config_audit,
 }
 
 

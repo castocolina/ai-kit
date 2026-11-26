@@ -40,7 +40,7 @@ Neither the runner nor a caller changes them in response to a failure: a failure
 
 ### Call settings
 
-Settings come from the owner's lane configuration or the calling skill's decision; the runner never chooses one and never checks an effort value against a list of levels. A model id is checked only by the live preflight: when the runtime's model listing succeeds, an id missing from it ends the call with `bad_model` (exit 69) before any model runs, and a variant suffix (opencode's `#<variant>`) is never validated. Read [`references/setting-reasons.md`](references/setting-reasons.md), Model preflight, when a preflight line must be explained.
+Settings come from the owner's lane configuration or the calling skill's decision; the runner never chooses one and never checks an effort value against a list of levels. A model id meets three checks: one that fails the runner's syntax floor (`cross-ai: the model for <runtime> must match <pattern>`) is refused as `usage` (exit 2) before any spawn; one that passes it with an unusual shape only prints the note in the table below; and when the runtime's model listing succeeds, an id missing from it ends the call with `bad_model` (exit 69) before any model runs. A variant suffix (opencode's `#<variant>`) is never validated. Read [`references/setting-reasons.md`](references/setting-reasons.md), Model preflight, when a preflight line must be explained.
 
 | Flag | Value | Setting |
 |---|---|---|
@@ -82,7 +82,7 @@ Resolve one runner path, `$RUNNER`, before any check: the project copy
 of the sibling `ai-kit-spec-review` skill (`skills/ai-kit-spec-review/references/cross-ai.mjs` in
 an ai-kit checkout); stop when neither exists. Use that same `$RUNNER` for the header check and
 in every launch, preview and re-invocation. Before the first launch in a project, check its
-line-2 header (`sed -n 2p "$RUNNER"`): this contract needs `template=13` or later. A lower template, or a `cross-ai.mjs.new` waiting beside it, is not this
+line-2 header (`sed -n 2p "$RUNNER"`): this contract needs `template=14` or later. A lower template, or a `cross-ai.mjs.new` waiting beside it, is not this
 contract: stop and route the owner to `ai-kit-gsd-curated-config` `ensure-runner`.
 
 The prompt always goes on stdin; the runner has no prompt flag. For copilot the runner itself
@@ -147,7 +147,7 @@ Read [`references/hosting-and-locks.md`](references/hosting-and-locks.md) when a
 ## 3. Wait
 
 The outer deadline is `min(CONFIG outerTimeoutS, GSD's workflow.cross_ai_timeout)`; when that key
-is absent the runner uses its own 300 s fallback, the value the installed gsd-core falls back to
+gives no usable positive number the runner uses its own 300 s fallback, the value the installed gsd-core falls back to
 too (see Evidence). `--outer-timeout` replaces that lookup and the CONFIG cap. `--timeout` sets the
 inner deadline and can only lower it, never raise it. A launch prints the effective values as
 `cross-ai: deadline <inner>s (outer <outer>s)`: read them there, not from this text.
@@ -194,7 +194,7 @@ Exit codes, and what the caller does with each:
 | 1 | `no_change`, `empty_answer`, `crash`, `contract_violation`, `git_error`, `git_timeout`, `partial` | report the lines; stop (`partial`: section 5) |
 | 2 | `usage`, `no_model`, `empty_stdin` | the call was refused; fix the invocation, do not retry |
 | 69 | `permission_blocked`, `bad_model`, `bad_request`, `auth`, `billing`, and every hard-tier stop | owner stop: notice, then stop |
-| 75 | `quota`, `transient`, `locked` | with `retry_after_s=`, the hard tier (section 6); a bare 75, every `locked` included, is an owner stop: report it, or start the run after the other run's own exit |
+| 75 | `quota`, `transient`, `locked` | with `retry_after_s=`, the hard tier (section 6); a bare 75 is an owner stop: report it. Only after `status=locked` may the caller start the run again, once the other run has exited by itself; a quota stop off a router lane, the dirty-tree gate or an unwritable state file is never re-launched by the caller |
 | 124 | `timeout` | the deadline or the idle watchdog won; report it |
 | 127 | `not_installed` | the runtime's binary is missing |
 | 128+n | `signal` | the runner itself caught SIGTERM, SIGINT or SIGHUP (n = 15, 2 or 1) and ended the lane; report it. A child that dies on a signal by itself is a failed attempt, classified like any other (its `cross-ai: <cli> failed (exit <code> <signal>, ...)` line) |
@@ -260,7 +260,7 @@ After `escalate=` and before `retry_after_s=` comes a second group:
 
 ### Execute result checks
 
-After a spawned execute run the runner checks the result against the prompt's plan and the commits since the run's baseline, and prints one `cross-ai: finding reason=<code> detail=<text>` line per finding before the status line. `no_commit`, `task_uncovered` and `admits_skipped` make the run `partial` (exit 1) and `forbidden_path` makes it `contract_violation`, which wins over `partial`; `no_change` (a clean tree) wins over both, and the other findings are information. `partial` writes no answer to stdout, so GSD cannot record it as a summary; the findings of a run that ends with another status are the missing list for the resume (section 5). Read [`references/execute-checks.md`](references/execute-checks.md) when a finding line must be explained or the call passes `--plan-id`, `--forbid` or `--baseline`.
+After a spawned execute run the runner checks the result against the prompt's plan and the commits since the run's baseline, and prints one `cross-ai: finding reason=<code> detail=<text>` line per finding before the status line. Only on an otherwise successful attempt do `no_commit`, `task_uncovered` and `admits_skipped` make the run `partial` (exit 1) and `forbidden_path` make it `contract_violation`, which wins over `partial`; `no_change` (a clean tree) and unavailable Git evidence (`git_error` or `git_timeout`) win over both, and the other findings are information. `partial` writes no answer to stdout, so GSD cannot record it as a summary. A run that ends with another status, a failed attempt included, keeps that status and exit: route by them, and its findings are evidence and the missing list for the resume (section 5), never a reason to take the `partial` path. Read [`references/execute-checks.md`](references/execute-checks.md) when a finding line must be explained or the call passes `--plan-id`, `--forbid` or `--baseline`.
 
 Outside a Git work tree (`cross-ai: <cwd> is not inside a git work tree`) there is no baseline: the check gets no tasks, commits or changed paths, so the run can end `ok` with `tree=unknown` and `coverage=n/a` though the prompt has tasks. An execute lane whose plan, baseline or forbidden paths must be verified therefore needs a Git work tree, and such an `ok` is unchecked: never merge it or mark the plan complete on it alone.
 
@@ -294,9 +294,9 @@ An exit 75 whose `AIKIT-XAI` line carries `retry_after_s=` is the hard tier. A r
 AIKIT-XAI status=transient cli=opencode model=fake/capacity exit=75 cli_rc=1 elapsed=0s out=0 tree=clean action=stop route=unknown rule=text-service-unavailable pattern=verified attempts=1 cycles=0 session=- applied=model,provider,role ignored=- unknown=- escalate=- coverage=- findings=- retry_after_s=60 cycle=0
 ```
 
-Precedence for an ai-kit-spec-review lane the owner flagged `usage_limited`: its configured quota
-fallback (`switch-lane`, that skill's references/lane-failure.md) runs first, and a successful
-switch schedules nothing for the original lane. Otherwise the steps below apply.
+Precedence for an ai-kit-spec-review or ai-kit-spec-execute-superpowers lane the owner flagged
+`usage_limited` (the same exception as section 8): its configured fallback runs first, as
+section 8 says. Otherwise the steps below apply.
 
 Wait once, for exactly `retry_after_s` seconds, then re-invoke the same lane, the same CLI and
 the same model. The runner counts the cycles. This is one one-shot wait per `retry_after_s`,
@@ -359,14 +359,14 @@ is unverified.
 
 Never switch harness, provider or model, on any failure, in the runner or in a caller. Never move
 the work to the native session. The only action past a stop is to notify the owner. Do not pick
-another CLI, another model or another harness to finish the lane. The one exception is the owner's own choice: ai-kit-spec-review runs the configured fallback of a lane the owner flagged usage_limited after that lane's quota stop (its references/lane-failure.md). That switch comes before the section 6 hard tier, and a successful switch schedules nothing for the original lane; with no switch, the regular exit routing applies.
+another CLI, another model or another harness to finish the lane. The one exception is the owner's own choice: ai-kit-spec-review and ai-kit-spec-execute-superpowers run the configured fallback of a lane the owner flagged usage_limited after that lane's quota stop (their references/lane-failure.md and references/dispatch-external-cli.md). That switch comes before the section 6 hard tier, and a successful switch schedules nothing for the original lane; with no switch, the regular exit routing applies.
 
 ## Pitfalls
 
 - An `ignored` or `unknown` setting line is not a failure; an `unknown` provider with `no_provider_form` is expected on codex, cursor, claude and copilot, whose ids have no provider part.
 
 - Copilot's prompt ends up on argv (the runner puts it there), so the process table shows it.
-- Two timeouts, not one; the runner's 300 s fallback applies only when `workflow.cross_ai_timeout` is absent, and the `cross-ai: deadline` line shows the values in force.
+- Two timeouts, not one; the runner's 300 s fallback applies whenever `workflow.cross_ai_timeout` gives no usable positive number (absent, null, non-numeric, zero or negative, or in an unreadable config file), and the `cross-ai: deadline` line shows the values in force.
 - The idle watchdog is off unless a call or CONFIG turns it on. A review lane on a host that prints nothing until the end has no activity signal.
 - The run lock stops runners, not humans: a commit or an edit a human makes during a run reads as the lane's.
 - A lock record that cannot be created (an unwritable or full state home) does not stop the run: the runner prints `cross-ai: run lock not taken (<code>); running without a lock` and runs unlocked.
@@ -376,7 +376,7 @@ another CLI, another model or another harness to finish the lane. The one except
 - Executor guards: never stash (a stash hides the lane's own tree changes from the tree and
   coverage checks and mixes them with the owner's dirty work), and check a "pre-existing" claim against a clean run before
   writing it down. In an ai-kit checkout, `AI_KIT_REFUSE_REAL_HOME=1` makes `tools/setup.py`
-  refuse a run whose HOME is the real home.
+  refuse a run whose HOME is the real home. The runner sets it in the environment of every exec lane whose working directory is inside an ai-kit checkout (the nearest folder above it that holds `.git` also holds `skills/ai-kit-spec-review/ai_kit_spec/detection.py` and `tools/setup.py`).
 - Atomic rewrites keep the file mode. Replacing a config or state file by hand can drop it.
 
 ## References

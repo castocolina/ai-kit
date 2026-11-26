@@ -176,11 +176,12 @@
     {
       "id": "precise-escalation-only-with-two-lanes",
       "prompt": "Set up one review lane and two execute lanes on different runtimes, and turn on escalation where it makes sense. Other answers: skip skill sorting; review runtimes: opencode; execute runtimes: pi and opencode; review set: zen/placeholder-model-2 via opencode; execute set: zen/placeholder-model-4 via pi and opencode/placeholder-free-1 via opencode; the vendor of every zen/* model is zen and of opencode/placeholder-free-1 is opencode; skip every live test call and keep the lanes untested; no strength; no effort; no session-default lane; mode single, the default strategy and the default timeouts.",
-      "expected_output": "Asks the escalation question only for the execute role, which holds two lanes, with no as the default; says the flags are stored and informational: dispatch passes them to the runner, which reports them as ignored and never starts another lane from them; writes escalate_runtime or escalate_model only on an explicit yes.",
+      "expected_output": "Asks the escalation question only for the execute role, which holds two lanes, with no as the default, as a move at fix rounds 4 and 5 to a more capable lane ranked above the stuck one (another runtime, the same runtime with another model, or either); says the superpowers execute adapter reads them at fix rounds 4 and 5 and the runner reports them as ignored; writes escalate_runtime or escalate_model only on an explicit yes.",
       "files": [],
       "assertions": [
         "Asks no escalation question for the review role, which holds one lane",
-        "Writes escalate_runtime or escalate_model only on an explicit yes and says the flags are stored and informational: dispatch passes them to the runner, which reports them as ignored and never starts another lane from them"
+        "Writes escalate_runtime or escalate_model only on an explicit yes and says the superpowers execute adapter reads them at fix rounds 4 and 5",
+        "Asks whether a stuck task may move to a more capable lane ranked above it at fix rounds 4 and 5, not whether to escalate to the next lane when a dispatch fails"
       ]
     },
     {

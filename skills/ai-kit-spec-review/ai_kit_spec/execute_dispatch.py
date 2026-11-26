@@ -74,6 +74,9 @@ class ExecuteDispatchSpec(NamedTuple):
     agents_tooling_path: object = None
     code_index_registered: bool = False
     files: tuple | None = ()
+    gates_text: str | None = None
+    guard_text: str | None = None
+    owner_config_paths: tuple = ()
 
 
 def build_execute_guidance(
@@ -86,7 +89,8 @@ def build_execute_guidance(
     """
     candidate = spec.candidate
     reinforcement = seams.build_reinforcement_fn(
-        f"{candidate['runtime']}, model {candidate['model']}", spec.format_block
+        f"{candidate['runtime']}, model {candidate['model']}", spec.format_block,
+        spec.gates_text, spec.guard_text, spec.owner_config_paths,
     )
     text = reinforcement + "\n\n" + spec.prompt
     if not spec.prompt.strip():
@@ -104,9 +108,11 @@ def build_execute_guidance(
 
 
 def _runner_spec(candidate: dict, spec: ExecuteDispatchSpec) -> RunnerSpec:
-    """One exec-mode runner spec; runner_flags adds codex's OS write confinement (D-27)."""
+    """One exec-mode runner spec; runner_flags adds codex's OS write confinement and,
+    for a flagged pooled lane, --pool."""
     return spec_with_effort(candidate["runtime"], candidate["model"], "exec", spec.timeout,
-                            {**candidate, "cwd": spec.target_dir})
+                            {**candidate, "cwd": spec.target_dir})._replace(
+        pool=candidate.get("pool"))
 
 
 def _refuse_candidate(candidate: dict, target_dir: str) -> str:

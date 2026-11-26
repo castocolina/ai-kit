@@ -56,7 +56,7 @@ says under "When `arm` prints a companion time" only; Do NOT load the rest of ai
 ## Close the session wake
 
 When this skill's job ends (the final whole-branch review finished, which the caller runs and
-this skill never does, or a stop ended the run: STOP this wave, or an owner stop) and only when
+this skill never does, or a stop ended the run: STOP this wave, or an owner stop of [`resolution-stops.md#owner-stop`](resolution-stops.md#owner-stop)) and only when
 `WAKE_OWNED=1`, run:
 
 ```bash
