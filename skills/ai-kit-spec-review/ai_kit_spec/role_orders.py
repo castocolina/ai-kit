@@ -41,8 +41,12 @@ def _table_ladder(policy: dict, role: str, warn_fn) -> list | None:
     return None
 
 
-def role_orders(policy: dict, role_lanes: dict, warn_fn) -> dict:
-    """One order per role; role tables win from either layer, legacy fills the rest."""
+def role_orders(policy: dict, role_lanes: dict, warn_fn, removed: dict | None = None) -> dict:
+    """One order per role; role tables win from either layer, legacy fills the rest.
+
+    Keys in removed leave the order with no second note (39.1).
+    """
+    skip = removed or {}
     orders, legacy_roles = {}, []
     for role in ROLES:
         allowed = _lane_keys(role_lanes.get(role, []))
@@ -51,6 +55,8 @@ def role_orders(policy: dict, role_lanes: dict, warn_fn) -> dict:
             legacy_roles.append(role)
         else:
             orders[role], dangling = _keep(ladder, allowed)
+            dangling = [key for key in dangling
+                        if not (isinstance(key, str) and key in skip.get(role, ()))]
             if dangling:
                 warn_fn(f"ai-kit-spec: [lanes.policy.{role}] ladder names no {role} lane: "
                         f"{dangling}; dropped")
@@ -66,6 +72,8 @@ def role_orders(policy: dict, role_lanes: dict, warn_fn) -> dict:
         allowed = (_lane_keys(role_lanes.get("review", []))
                    | _lane_keys(role_lanes.get("execute", [])))
         _, dangling = _keep(legacy, allowed)
+        dangling = [key for key in dangling
+                    if not (isinstance(key, str) and any(key in keys for keys in skip.values()))]
         if dangling:
             warn_fn(f"ai-kit-spec: [lanes.policy] ladder names no lane: {dangling}; dropped")
     elif legacy:

@@ -2,7 +2,7 @@ import shlex
 from typing import NamedTuple
 
 from ai_kit_spec import runner_facts
-from ai_kit_spec.detection import runtime_id
+from ai_kit_spec.detection import removed_runtime_message, runtime_id
 
 # ── Policy resolution ────────────────────────────────────────────────────────
 
@@ -18,22 +18,6 @@ class ResolvedReviewer(NamedTuple):
     runtime: str | None
     command: str | None
     extra: dict
-
-
-# Table runtimes have no command string: the runner builds their argv. Only grok, which has
-# no runner formula, still generates a custom-entry template here (D-21, D-29).
-
-def build_grok_command() -> str:
-    """The command a custom grok entry stores. Grok has no runner formula (D-21).
-
-    Corrected 2026-08-29 by live re-reproduction: `-p -` does NOT read the prompt from
-    stdin -- `-p`/`--single <PROMPT>` is a required VALUE, and passing a literal `-` sends
-    the two-character string "-" as the prompt itself (confirmed live: grok replied "A
-    single dash is too little to act on"). The `-p -` design here was an earlier unverified
-    assumption inherited from this builder before it was ever run against a real grok CLI.
-    render_reviewer_command substitutes {prompt} raw into one argv element (no shell, no
-    quoting), delivered as a real positional argument value, never via stdin."""
-    return "grok -p {prompt} -m {model} --output-format plain"
 
 
 def split_command_template(key: str, template: str | None) -> list[str]:
@@ -60,10 +44,14 @@ def split_command_template(key: str, template: str | None) -> list[str]:
 
 
 def execute_cli_error(cli, fact=None) -> str | None:
-    """None unless a recorded runner fact says the runner has no exec formula for `cli`
-    (a legacy name maps to its runtime id; 37 R9). An absent fact never refuses: the runner
-    refuses at run time with its own named reason."""
+    """None unless `cli` names a removed runtime (39.1 D-02: the one removal message, before any
+    spawn) or a recorded runner fact says the runner has no exec formula for it (a legacy name
+    maps to its runtime id; 37 R9). An absent fact never refuses: the runner refuses at run time
+    with its own named reason."""
     runtime = runtime_id(cli)
+    removed = removed_runtime_message(runtime)
+    if removed is not None:
+        return removed
     if runner_facts.runner_has_exec(fact, runtime) is False:
         return (f"{cli!r} has no exec formula in the runner (route no_formula): "
                 f"{runner_facts.FACT_SOURCE}")

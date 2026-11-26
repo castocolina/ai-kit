@@ -126,7 +126,8 @@ def _scan_lanes(path: str, env: dict, lanes: dict, gate_trust: bool) -> tuple:
 
 def _scan_pending(path: str, env: dict, gate_trust: bool) -> tuple:
     """No [lanes] in config.toml: a pending old roster is read in memory and reported (migration
-    pending, nothing written); with no old roster the source is absent."""
+    pending, or held when it names a removed runtime; nothing written); with no old roster the
+    source is absent."""
     old = config_migrate.pending(path)
     if old is None:
         return SourceStatus("absent"), [], None, False
@@ -137,7 +138,8 @@ def _scan_pending(path: str, env: dict, gate_trust: bool) -> tuple:
     if found is None:  # removed between the two reads
         return SourceStatus("absent"), [], None, False
     lanes, raw = found
-    status = SourceStatus(f"scanned (migration pending: {old})")
+    held = "held" if config_io.cfg_names_removed_runtime(lanes) else "pending"
+    status = SourceStatus(f"scanned (migration {held}: {old})")
     refs = _opencode_refs(old, lanes)
     if not gate_trust:
         return status, refs, lanes, True
@@ -223,7 +225,7 @@ def served_providers(deps, env: dict, cwd: str) -> tuple[set[str] | None, str, b
 
 def _global_source(path: str, env: dict, local_only: bool) -> tuple[SourceStatus, list]:
     status, refs, _lanes, _trusted = scan_config(path, env)
-    if local_only and (status == "scanned" or status.startswith("scanned (migration pending")):
+    if local_only and (status == "scanned" or status.startswith("scanned (migration ")):
         status = SourceStatus("scanned-inactive", reason=LOCAL_ONLY_REASON)
     return status, refs
 

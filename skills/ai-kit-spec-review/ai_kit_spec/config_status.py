@@ -6,15 +6,19 @@ cli.py registers it; this module never imports cli.
 
 import os
 
-from ai_kit_spec import capability_block, config_io, config_migrate, trust
+from ai_kit_spec import capability_block, config_io, config_migrate, detection, trust
 
 _ROLES = ("review", "execute")
-_PENDING = frozenset({"untrusted", "pending-migration"})
+# An untrusted held project roster is ignored by every load, like an untrusted config.toml.
+_PENDING = frozenset({"untrusted", "pending-migration", "migration-held-untrusted"})
+# A held old roster is read in memory on every load.
+_IN_USE = frozenset({"lanes", "migration-held"})
 
 
 def _has_lane(lanes: dict, roles: tuple) -> bool:
     return any(isinstance(entries, list) and any(
-        isinstance(entry, dict) and isinstance(entry.get("key"), str) for entry in entries
+        isinstance(entry, dict) and isinstance(entry.get("key"), str)
+        and config_io.cfg_removed_runtime(entry) is None for entry in entries
     ) for entries in (lanes.get(role) for role in roles))
 
 
@@ -29,10 +33,22 @@ def _old_roster_status(path: str) -> str | None:
     if config_migrate.pending(path) is None:
         return None
     try:
-        config_migrate.read_legacy(path)
+        found = config_migrate.read_legacy(path)
     except config_migrate.LegacyRosterError as exc:
         raise config_io.ConfigError(exc.path, exc.message) from exc
+    if found is not None and config_io.cfg_names_removed_runtime(found[0]):
+        return "migration-held"
     return "pending-migration"
+
+
+def _held_project_status(path: str, env: dict, roles: tuple) -> str:
+    """migration-held, or migration-held-untrusted when a remaining lane of the asked roles needs
+    trust that the old file does not have (the config.toml twin reports untrusted)."""
+    found = config_migrate.read_legacy(path)
+    if found is None or not _has_lane(found[0], roles) or config_io.cfg_legacy_project_trusted(
+            path, found[0], found[1], env):
+        return "migration-held"
+    return "migration-held-untrusted"
 
 
 def _lane_less_status(path: str, lanes: dict | None, legacy: str | None) -> str:
@@ -43,6 +59,8 @@ def _lane_less_status(path: str, lanes: dict | None, legacy: str | None) -> str:
 
 def _project_status(path: str, env: dict, roles: tuple) -> tuple[str, dict]:
     legacy = _old_roster_status(path)
+    if legacy == "migration-held":
+        legacy = _held_project_status(path, env, roles)
     lanes = _read_lanes(path)
     if lanes is not None and _has_lane(lanes, roles):
         canonical = config_io.cfg_project_trust_bytes(lanes, env)
@@ -61,10 +79,25 @@ def _user_status(path: str, roles: tuple) -> str:
     return _lane_less_status(path, lanes, legacy)
 
 
+def _merged_has_lane(resolved: dict, roles: tuple) -> bool:
+    """Count effective lanes after project overrides and removed lanes are applied."""
+    return any(isinstance(entry, dict) for role in roles for entry in resolved.get(role) or [])
+
+
+def removal_notes(notes: list[str]) -> list[str]:
+    """The removal notes among one load's notes."""
+    texts = tuple(filter(None, map(detection.removed_runtime_message, detection.REMOVED_RUNTIMES)))
+    return [line for line in notes if any(text in line for text in texts)]
+
+
 def config_status(
-    cwd: str, env: dict, role: str | None = None
+    cwd: str, env: dict, role: str | None = None, resolved: dict | None = None
 ) -> tuple[str, list[tuple[str, str, str]]]:
-    """Report active, pending or none, optionally filtering lanes by role."""
+    """Report active, pending or none, optionally filtering lanes by role.
+
+    `resolved` is the roster one load already resolved; without it a quiet resolve is made only
+    when needed.
+    """
     roles = (role,) if role else _ROLES
     user_path = config_io.cfg_global_path(env)
     project_path = os.path.abspath(config_io.cfg_local_path(cwd))
@@ -74,13 +107,15 @@ def config_status(
         else _user_status(user_path, roles)
     )
     statuses = {project, user}
-    state = "pending" if statuses & _PENDING else "active" if "lanes" in statuses else "none"
+    state = "pending" if statuses & _PENDING else "active" if statuses & _IN_USE else "none"
+    if state == "active" and not _merged_has_lane(
+            config_io.cfg_resolve_quiet(cwd, env) if resolved is None else resolved, roles):
+        state = "none"
     return state, [("project", project_path, project), ("user", user_path, user)]
 
 
-def capability_lines(cwd: str, env: dict, role: str | None) -> list[str]:
+def capability_lines(resolved: dict, cwd: str, env: dict, role: str | None) -> list[str]:
     """Return previews for the effective lanes in configuration order."""
-    resolved = config_io.cfg_resolve(cwd, env, warn_fn=lambda _line: None, migrate=False)
     lines = []
     for each_role in ((role,) if role else _ROLES):
         for entry in resolved.get(each_role) or []:
@@ -94,11 +129,15 @@ def capability_lines(cwd: str, env: dict, role: str | None) -> list[str]:
 def cmd_config_status(args, deps) -> int:
     """Print the state, checked paths and effective lane previews."""
     env = deps.env_fn()
-    state, checked = config_status(args.cwd, env, args.role)
-    lines = capability_lines(args.cwd, env, args.role) if state == "active" else []
+    notes: list[str] = []
+    resolved = config_io.cfg_resolve(args.cwd, env, warn_fn=notes.append, migrate=False)
+    state, checked = config_status(args.cwd, env, args.role, resolved)
+    lines = capability_lines(resolved, args.cwd, env, args.role) if state == "active" else []
     print(state)
     for layer, path, status in checked:
         print(f"checked {layer} {path} {status}")
+    for line in removal_notes(notes):
+        print(line)
     for line in lines:
         print(line)
     return 0

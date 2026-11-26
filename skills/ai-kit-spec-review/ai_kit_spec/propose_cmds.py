@@ -117,14 +117,15 @@ def _alternative(pool, filters):
 
 def _proposal(args, judge, inputs, filters) -> dict:
     entries, snapshot, fresh = inputs
-    split = lane_pool.split_pools(
-        lane_pool.build_rows(entries, snapshot, tuple(args.runtime) if args.runtime else None),
-        args.purpose, snapshot, entries, fresh)
+    # A catalog written before a runtime was removed still holds its rows (39.1 D-03).
+    rows = [row for row in lane_pool.build_rows(
+        entries, snapshot, tuple(args.runtime) if args.runtime else None)
+        if row.runtime not in detection.REMOVED_RUNTIMES]
+    split = lane_pool.split_pools(rows, args.purpose, snapshot, entries, fresh)
     ranked, wider_pairs, prices, offers = _ranked(args, judge, split, entries, snapshot)
     pool = _render(ranked, prices, offers)
     wider = _render([lane_order.Ranked(row, score, None, None, "scorer", WIDER_REASON, False)
                      for row, score in wider_pairs], prices, offers)
-    zero = [row for row in pool if row["price"]["state"] == "zero"][:ZERO_GROUP_MAX]
     return {"purpose": args.purpose, "default_view": DEFAULT_VIEW,
             "ranking": "jev" if any(x.ranked_by == "jev" for x in ranked) else "scorer",
             "jev": {"requested": args.jev, "found": judge is not None,
@@ -132,7 +133,8 @@ def _proposal(args, judge, inputs, filters) -> dict:
                     "answered": sum(x.ranked_by == "jev" for x in ranked),
                     "window": lane_order.JEV_WINDOW, "stable_top": lane_order.STABLE_TOP},
             "stale_checked": fresh, "pool": pool,
-            "zero_price": [{**row, "group_rank": i} for i, row in enumerate(zero, 1)],
+            "zero_price": [{**row, "group_rank": i} for i, row in enumerate(
+                [row for row in pool if row["price"]["state"] == "zero"][:ZERO_GROUP_MAX], 1)],
             "aliases": [_alias_json(row, note) for row, note in split.aliases], "wider": wider,
             "alternative": _alternative(pool, filters), "empty": not pool,
             "message": EMPTY_POOL if not pool else ""}

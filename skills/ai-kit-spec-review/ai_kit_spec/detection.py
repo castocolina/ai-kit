@@ -89,11 +89,10 @@ class Runtime(NamedTuple):
     native_selectors: tuple[str, ...] = ()
     model_suffix: str | None = None
     multi_provider: bool = False
-    runner: bool = True
     advice: Advice | None = None
 
 
-# Insertion order is host precedence. grok is a row, never a detected host (D-03).
+# Insertion order is host precedence.
 # 35 R11: seed data labeled by its _LABEL_* source strings; the claude native selectors and
 # CLAUDE_FALLBACK_MODEL_IDS are deciding lists kept in the guard baseline for Phase 36.
 RUNTIMES: dict[str, Runtime] = {
@@ -131,17 +130,22 @@ RUNTIMES: dict[str, Runtime] = {
         advice=Advice("usually the main agent in this host", "seed row"),
     ),
     # copilot has no known host signal (unverified) and its runner rows are unverified.
-    "copilot": Runtime(
-        ("copilot",), (), runner=True),
-    "grok": Runtime(
-        ("grok",),
-        (),
-        scrub_signals=("GROK_AGENT",),
-        runner=False,
-    ),
+    "copilot": Runtime(("copilot",), ()),
 }
 
 KNOWN_CLIS = tuple(RUNTIMES)
+
+# 39.1 D-02: runtimes ai-kit removed, mapped to the runtimes that still reach their models.
+REMOVED_RUNTIMES: dict[str, tuple[str, ...]] = {"grok": ("opencode", "pi", "cursor-agent")}
+
+
+def removed_runtime_message(rid: object) -> str | None:
+    """The one removal message for an exact removed runtime id, else None (39.1 D-02)."""
+    if not isinstance(rid, str) or rid not in REMOVED_RUNTIMES:
+        return None
+    return (f"runtime {rid!r} was removed from ai-kit; its models stay usable through the "
+            f"{', '.join(REMOVED_RUNTIMES[rid])} runtimes: pick one and re-save the lane with "
+            "the ai-kit-spec-config wizard or render-toml --out <file> --replace")
 
 
 def advice_line(runtime: str) -> str | None:
@@ -241,8 +245,8 @@ _RUNTIME_ENV_SIGNALS = tuple(
 )
 
 # Every variable runtime detection reads (D-14), plus host identity markers not tied to a
-# specific runtime (AI_AGENT, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_SSE_PORT, CODEX_SANDBOX,
-# GROK_AGENT), so a cross-AI child spawned by dispatch never mistakes itself for the host.
+# specific runtime (AI_AGENT, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_SSE_PORT, CODEX_SANDBOX),
+# so a cross-AI child spawned by dispatch never mistakes itself for the host.
 # The runner template's literal `scrubEnv` array is kept equal to this authoritative set.
 HOST_SIGNAL_ENV_VARS = frozenset(
     {var for _rid, var in _RUNTIME_ENV_SIGNALS}
@@ -1237,7 +1241,8 @@ def detect_unlisted_runtimes(ids, which_fn=shutil.which) -> dict:
     """Report valid user-named runtime ids outside RUNTIMES without executing them."""
     result = {}
     for rid in ids:
-        if not isinstance(rid, str) or not _EXTRA_RUNTIME_RX.fullmatch(rid) or rid in RUNTIMES:
+        if (not isinstance(rid, str) or not _EXTRA_RUNTIME_RX.fullmatch(rid)
+                or rid in RUNTIMES or rid in REMOVED_RUNTIMES):
             continue
         path = which_fn(rid)
         result[rid] = ({"installed": True, "path": path, "listing": "none",
@@ -1548,7 +1553,8 @@ def find_code_index_alternative(
     cli: str, model: str, runtimes_snapshot: dict, env=None
 ) -> str | None:
     """Best-effort only (design spec §8, §14): when `cli` has no codebase-memory-mcp registration
-    reader (not in CBM_REGISTRATION_KEYS; today grok, which gets the CLI form only) but a
+    reader (not in CBM_REGISTRATION_KEYS: a custom entry or an id outside the table, which gets
+    the CLI form only) but a
     substring match suggests the SAME base model is reachable through a multi-provider CLI
     that has codebase-memory-mcp registered (read from its config), return that CLI's name --
     informational only, never a

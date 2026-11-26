@@ -71,7 +71,6 @@ from ai_kit_spec.capability_block import ComposeResult, ComposeSeams
 from ai_kit_spec.cli import main
 from ai_kit_spec.commands import (
     ResolvedReviewer,
-    build_grok_command,
     render_reviewer_command,
 )
 from ai_kit_spec.config_io import (
@@ -1373,7 +1372,7 @@ class TestRuntimePrecedenceMatrix(unittest.TestCase):
     def test_known_clis_follow_runtime_table(self):
         self.assertEqual(
             detection.KNOWN_CLIS,
-            ("pi", "opencode", "cursor", "codex", "claude", "copilot", "grok"),
+            ("pi", "opencode", "cursor", "codex", "claude", "copilot"),
         )
 
     def test_docstring_confidence_labels_for_pi_and_codex_thread_id(self):
@@ -1813,16 +1812,19 @@ class TestFindCodeIndexAlternative(unittest.TestCase):
                 "opencode": {"installed": True, "models": ["opencode-go/qwen3.8-max"]},
             }
         }
-        result = detection.find_code_index_alternative("grok", "grok-4.6", snapshot, self.env)
+        result = detection.find_code_index_alternative(
+            "placeholder-cli-1", "grok-4.6", snapshot, self.env)
         self.assertEqual(result, "cursor")
 
     def test_an_alternative_without_the_server_registered_is_not_offered(self):
         snapshot = {"clis": {"cursor-agent": {"installed": True, "models": ["cursor-grok-4.6"]}}}
         self.assertIsNone(
-            detection.find_code_index_alternative("grok", "grok-4.6", snapshot, self.env))
+            detection.find_code_index_alternative(
+                "placeholder-cli-1", "grok-4.6", snapshot, self.env))
         host_fakes.write_cbm_registration(self.home, ["cursor"], disabled=["cursor"])
         self.assertIsNone(
-            detection.find_code_index_alternative("grok", "grok-4.6", snapshot, self.env))
+            detection.find_code_index_alternative(
+                "placeholder-cli-1", "grok-4.6", snapshot, self.env))
 
     def test_returns_none_when_the_cli_has_a_registration_reader(self):
         snapshot = {"clis": {"cursor-agent": {"installed": True, "models": ["cursor-grok-4.6"]}}}
@@ -1836,12 +1838,12 @@ class TestFindCodeIndexAlternative(unittest.TestCase):
                 "opencode": {"installed": True, "models": ["opencode-go/qwen3.8-max"]},
             }
         }
-        result = detection.find_code_index_alternative("grok", "grok-4.6", snapshot)
+        result = detection.find_code_index_alternative("placeholder-cli-1", "grok-4.6", snapshot)
         self.assertIsNone(result)
 
     def test_skips_a_multi_provider_cli_that_is_not_installed(self):
         snapshot = {"clis": {"cursor-agent": {"installed": False}}}
-        result = detection.find_code_index_alternative("grok", "grok-4.6", snapshot)
+        result = detection.find_code_index_alternative("placeholder-cli-1", "grok-4.6", snapshot)
         self.assertIsNone(result)
 
 
@@ -1849,7 +1851,10 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
     def test_marks_missing_clis_not_installed(self):
         snapshot = build_runtimes_snapshot(
             which_fn=lambda *_a, **_k: None, run_fn=lambda *a, **k: None)
-        self.assertFalse(snapshot["clis"]["grok"]["installed"])
+        self.assertEqual(
+            snapshot["clis"], {rid: {"installed": False} for rid in detection.RUNTIMES}
+        )
+        self.assertNotIn("grok", snapshot["clis"])
 
     def test_lists_opencode_models_when_installed(self):
         class FakeResult:
@@ -3158,16 +3163,6 @@ class TestFilterLadderByPurpose(unittest.TestCase):
         result, fell_back = quota._filter_ladder_by_purpose(reviewers, ["a"], "review")
         self.assertEqual(result, ["a"])
         self.assertFalse(fell_back)
-
-
-class TestBuildGrokCommand(unittest.TestCase):
-    def test_grok_command_shape(self):
-        # corrected 2026-08-29: `-p -` does NOT read from stdin -- it sends the literal
-        # string "-" as the prompt (confirmed live). {prompt} is the correct placeholder,
-        # substituted raw into one argv element by render_reviewer_command.
-        self.assertEqual(
-            build_grok_command(), "grok -p {prompt} -m {model} --output-format plain"
-        )
 
 
 class TestRenderReviewerCommand(unittest.TestCase):
@@ -4631,6 +4626,36 @@ class TestMainCli(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIsNone(json.loads(buf.getvalue())["vendor"])
 
+    def test_infer_vendor_maps_claude_aliases_on_the_claude_runtime(self):
+        import io
+        from contextlib import redirect_stdout
+
+        from ai_kit_spec.detection import CLAUDE_MODEL_ALIASES
+
+        self.assertTrue(CLAUDE_MODEL_ALIASES)
+        for alias in CLAUDE_MODEL_ALIASES:
+            with self.subTest(alias=alias):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = main(["infer-vendor", "--model", alias, "--runtime", "claude"])
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(buf.getvalue()), {"vendor": "anthropic"})
+
+    def test_infer_vendor_alias_needs_the_claude_runtime(self):
+        import io
+        from contextlib import redirect_stdout
+
+        from ai_kit_spec.detection import CLAUDE_MODEL_ALIASES
+
+        alias = CLAUDE_MODEL_ALIASES[0]
+        for runtime_args in ([], ["--runtime", "opencode"]):
+            with self.subTest(runtime_args=runtime_args):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = main(["infer-vendor", "--model", alias, *runtime_args])
+                self.assertEqual(code, 0)
+                self.assertIsNone(json.loads(buf.getvalue())["vendor"])
+
     def test_build_command_codex_prints_runner_argv(self):
         import io
         from contextlib import redirect_stderr, redirect_stdout
@@ -4663,21 +4688,6 @@ class TestMainCli(unittest.TestCase):
         argv = body["argv"]
         self.assertEqual(argv[argv.index("--cursor-mode") + 1], "plan")
         self.assertIn("a config.toml lane stores runtime and model", err.getvalue())
-
-    def test_build_command_grok_prints_custom_template(self):
-        import io
-        from contextlib import redirect_stderr, redirect_stdout
-
-        out, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            code = main(["build-command", "--runtime", "grok"])
-        self.assertEqual(code, 0)
-        body = json.loads(out.getvalue())
-        self.assertEqual(body, {
-            "kind": "custom",
-            "command": "grok -p {prompt} -m {model} --output-format plain",
-        })
-        self.assertIn("custom entry", err.getvalue())
 
     def test_build_command_unknown_runtime_exits_nonzero(self):
         import io
@@ -4824,7 +4834,8 @@ class TestBuildToolingGuidance(unittest.TestCase):
 
     def test_empty_when_nothing_confirmed(self):
         result = tooling_guidance.build_tooling_guidance(
-            "grok", tool_availability={}, agents_tooling_path=None, code_index_registered=False
+            "placeholder-cli-1", tool_availability={}, agents_tooling_path=None,
+            code_index_registered=False
         )
         self.assertEqual(result, "")
 
@@ -4844,7 +4855,8 @@ class TestBuildToolingGuidance(unittest.TestCase):
                     rid, {"codebase-memory-mcp": True}, None, True
                 )
                 if rid not in detection.CBM_REGISTRATION_KEYS:
-                    # No registration reader (grok): the CLI form only, never the MCP list.
+                    # No registration reader (outside CBM_REGISTRATION_KEYS): the CLI form
+                    # only, never the MCP list.
                     self.assertIn(self.CLI_FORM, result)
                     self.assertNotIn("configured for this CLI", result)
                     continue
@@ -4903,12 +4915,12 @@ class TestBuildToolingGuidance(unittest.TestCase):
 
     def test_build_tooling_guidance_always_includes_shared_reference_when_given(self):
         guidance = tooling_guidance.build_tooling_guidance(
-            "grok", {}, None, False, shared_reference_path="/fake/tooling-guidance.md"
+            "placeholder-cli-1", {}, None, False, shared_reference_path="/fake/tooling-guidance.md"
         )
         self.assertIn("Read /fake/tooling-guidance.md", guidance)
 
     def test_build_tooling_guidance_omits_shared_reference_line_when_not_given(self):
-        guidance = tooling_guidance.build_tooling_guidance("grok", {}, None, False)
+        guidance = tooling_guidance.build_tooling_guidance("placeholder-cli-1", {}, None, False)
         self.assertNotIn("tooling-guidance.md", guidance)
 
     def test_surfaces_tool_availability_as_a_named_variable_the_reviewer_can_check(self):
@@ -4916,12 +4928,12 @@ class TestBuildToolingGuidance(unittest.TestCase):
         # equivalent being "confirmed in tool_availability" -- the map has to actually reach
         # the dispatched reviewer under that name or the rule can never fire.
         guidance = tooling_guidance.build_tooling_guidance(
-            "grok", {"rg": True, "fd": False}, None, False
+            "placeholder-cli-1", {"rg": True, "fd": False}, None, False
         )
         self.assertIn('TOOL_AVAILABILITY = {"fd":false,"rg":true}', guidance)
 
     def test_omits_the_tool_availability_line_when_nothing_was_detected(self):
-        guidance = tooling_guidance.build_tooling_guidance("grok", {}, None, False)
+        guidance = tooling_guidance.build_tooling_guidance("placeholder-cli-1", {}, None, False)
         self.assertNotIn("TOOL_AVAILABILITY", guidance)
 
     def test_paths_are_emitted_as_named_variables_not_only_bare_paths(self):
@@ -5288,15 +5300,6 @@ class TestExecuteCliRejection(unittest.TestCase):
         self.assertIn("no capability block built", stderr)
         self.assertEqual(len(calls), 1)
 
-    def test_grok_keeps_its_custom_entry_generator(self):
-        # R10/D-29 boundary: the table builders are gone; grok still generates the custom
-        # command a config.toml entry stores.
-        self.assertEqual(
-            commands.build_grok_command(),
-            "grok -p {prompt} -m {model} --output-format plain",
-        )
-
-
 class TestExecuteLadderScreen(unittest.TestCase):
     """D-15: unsupported CLIs in the execute ladder are screened loudly, never silently."""
 
@@ -5329,9 +5332,10 @@ class TestExecuteLadderScreen(unittest.TestCase):
         self.assertEqual([c["key"] for c in result], ["cla", "oc"])
         self.assertEqual(warnings, [])
 
-    def test_purpose_both_grok_entry_is_skipped_with_a_warning(self):
+    def test_purpose_both_unknown_runtime_entry_is_skipped_with_a_warning(self):
         warnings = []
-        candidates = [{"key": "gk", "runtime": "grok", "model": "m", "purpose": "both"}]
+        candidates = [{"key": "gk", "runtime": "placeholder-cli-1",
+                       "model": "m", "purpose": "both"}]
         result = self._screen(candidates, warn_fn=warnings.append)
         self.assertEqual(result, [])
         self.assertEqual(len(warnings), 1)
@@ -5620,7 +5624,7 @@ class TestDispatchReviewer(unittest.TestCase):
                     "key": "grok-flagship",
                     "model": "grok-4.6",
                     "vendor": "xai",
-                    "command": "grok -p {prompt} -m {model}",
+                    "command": "my-cli -p {prompt} -m {model}",
                     "extra": {},
                 },
                 prompt="Read the checklist and review...",
@@ -5717,8 +5721,8 @@ class TestDispatchReviewer(unittest.TestCase):
                             "key": "grok-flagship",
                             "model": "grok-4.6",
                             "vendor": "xai",
-                            "cli": "grok",
-                            "command": "grok -p {prompt} -m {model}",
+                            "cli": "placeholder-cli-1",
+                            "command": "my-cli -p {prompt} -m {model}",
                             "extra": {},
                         }
                     ],
@@ -5755,7 +5759,7 @@ class TestDispatchReviewer(unittest.TestCase):
                 )
         self.assertEqual(code, 0)
         self.assertEqual(out.getvalue(), "### Status: Approved\n")
-        self.assertEqual(seen["entry"]["cli"], "grok")
+        self.assertEqual(seen["entry"]["cli"], "placeholder-cli-1")
 
     def test_dispatch_reviewer_cli_subcommand_reports_a_malformed_entry_cleanly(self):
         import io
@@ -5911,8 +5915,8 @@ class TestTimeoutTiers(unittest.TestCase):
                             "key": "grok-flagship",
                             "model": "grok-4.6",
                             "vendor": "xai",
-                            "cli": "grok",
-                            "command": "grok -p {prompt} -m {model}",
+                            "cli": "placeholder-cli-1",
+                            "command": "my-cli -p {prompt} -m {model}",
                             "extra": {},
                         }
                     ],
@@ -8636,21 +8640,22 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                 {"runtime": "codex", "model_id": "vendor/already-registered"}, result["discovered"]
             )
 
-    def test_custom_grok_entry_model_is_discovered_through_its_command(self):
+    def test_custom_entry_model_is_discovered_through_its_command(self):
         from contextlib import redirect_stdout
 
-        # A grok entry stores a custom command and no runtime; its model must still reach
-        # discovery, or a refresh run silently drops it from ranking.
+        # A custom entry stores a command and no runtime; its model is still discovered
+        # through the binary its command launches.
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
             self._write_current_schema_catalog(catalog_path)
             self._write_fresh_fetch_meta(catalog_path)
-            runtimes_path = self._write_runtimes(d, {"grok": {"installed": True}})
+            runtimes_path = self._write_runtimes(d, {"codex": {"installed": True}})
             local_cfg = config_io.cfg_local_path(d)
             os.makedirs(os.path.dirname(local_cfg))
             raw = (
-                b'[[lanes.review]]\nkey = "grok-flagship"\nmodel = "grok-x"\nvendor = "xai"\n'
-                b'command = "grok -p {prompt} -m {model} --output-format plain"\n'
+                b'[[lanes.review]]\nkey = "cx-custom"\nmodel = "fake-model-1"\n'
+                b'vendor = "fake-vendor-1"\n'
+                b'command = "codex exec -m {model} {prompt}"\n'
                 b'[[lanes.review]]\nkey = "script"\nmodel = "m"\nvendor = "v"\n'
                 b'command = "my-script {model} {prompt}"\n'
             )
@@ -8669,7 +8674,7 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                 )
             self.assertEqual(code, 0)
             discovered = json.loads(buf.getvalue())["discovered"]
-            self.assertIn({"runtime": "grok", "model_id": "grok-x"}, discovered)
+            self.assertIn({"runtime": "codex", "model_id": "fake-model-1"}, discovered)
             self.assertNotIn("m", [row["model_id"] for row in discovered])
 
     def test_confirm_catalog_entry_rejects_invalid_entry_with_nonzero_exit(self):
@@ -11481,7 +11486,6 @@ class TestChildEnv(unittest.TestCase):
                 "PI_CODING_AGENT",
                 "CODEX_THREAD_ID",
                 "CODEX_SANDBOX",
-                "GROK_AGENT",
                 "CODEX_VERSION",
             },
         )
@@ -11508,7 +11512,7 @@ class TestChildEnv(unittest.TestCase):
 
 
 class TestDispatchReviewerRealChild(unittest.TestCase):
-    """R9 tracer: a REAL custom child spawned through dispatch_reviewer with all eleven host
+    """R9 tracer: a REAL custom child spawned through dispatch_reviewer with all ten host
     signal variables set sees none of them; PATH and HOME pass through. The marker rides the
     child's argv so a leak check can find this process if it outlives the test."""
 
@@ -11537,7 +11541,6 @@ class TestDispatchReviewerRealChild(unittest.TestCase):
                 "PI_CODING_AGENT",
                 "CODEX_THREAD_ID",
                 "CODEX_SANDBOX",
-                "GROK_AGENT",
                 "CODEX_VERSION",
             ]
             env = dict(os.environ)
@@ -11773,8 +11776,7 @@ class TestCrossAiTemplateText(unittest.TestCase):
         start = text.index('"scrubEnv"')
         end = text.index("\n// </config>", start)
         region = text[:start] + text[end:]
-        region_no_grok_agent = region.replace('"GROK_AGENT"', "")
-        self.assertIsNone(re.search("grok", region_no_grok_agent, re.I))
+        self.assertIsNone(re.search("grok", region, re.I))
         cfg_start = text.index("const CONFIG = ") + len("const CONFIG = ")
         cfg_end = text.index("\n// </config>")
         cfg = json.loads(text[cfg_start:cfg_end].rstrip(";"))

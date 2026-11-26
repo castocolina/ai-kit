@@ -119,7 +119,7 @@ class GroupingTest(unittest.TestCase):
 
 class GroupModeTest(unittest.TestCase):
     def test_arch_group_passes(self) -> None:
-        # Two one-test arch modules in a foreign folder: --group arch picks both and runs them
+        # One-test arch modules in a foreign folder: --group arch picks them and runs them
         # there. The arch tier runs the real modules; running them here too only cost time.
         runner = load_runner()
         with tempfile.TemporaryDirectory() as tmp:
@@ -130,13 +130,17 @@ class GroupModeTest(unittest.TestCase):
             (tests_dir / "test_arch_hardcoded_models.py").write_text(
                 _PASSING.format(body="        pass")
             )
+            (tests_dir / "test_arch_no_grok_runtime.py").write_text(
+                _PASSING.format(body="        pass")
+            )
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 rc = runner.main(["--group", "arch"], pathlib.Path(tmp))
         self.assertEqual(rc, 0, out.getvalue())
         self.assertIn("=== tests.test_arch: ok", out.getvalue())
         self.assertIn("=== tests.test_arch_hardcoded_models: ok", out.getvalue())
-        self.assertIn("2/2 modules passed", out.getvalue())
+        self.assertIn("=== tests.test_arch_no_grok_runtime: ok", out.getvalue())
+        self.assertIn("3/3 modules passed", out.getvalue())
 
     def test_unknown_group_is_usage_error(self) -> None:
         self.assertEqual(run("--group", "nope").returncode, 2)

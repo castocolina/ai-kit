@@ -63,6 +63,8 @@ class TestStaleOnProof(unittest.TestCase):
         ])
         self.assertEqual(_by_id(rows, "router-env/placeholder-model-2").stale,
                          "stale (not in the listing of listing-time; last seen seen-2)")
+        self.assertEqual(_by_id(rows, "router-env/placeholder-model-2").listing, "not listed")
+        self.assertEqual(_by_id(rows, "router-env/placeholder-model-1").listing, "listed")
         failed = _by_id(rows, "router-env/placeholder-model-3")
         self.assertEqual(failed.stale, "not checked")
         self.assertEqual(failed.listing, "listing failed: exit 1: boom")
@@ -103,6 +105,13 @@ class TestStaleOnProof(unittest.TestCase):
 
 
 class TestReportStates(unittest.TestCase):
+    def test_cached_listing_without_the_model_is_not_listed(self):
+        catalog = {"fake/placeholder-model-1": _entry("router-env/placeholder-model-1", "pi")}
+        clis = {"pi": {"installed": True, "listing": "ok",
+                       "models": ["router-env/placeholder-model-2"]}}
+        row = _by_id(_rows(catalog, clis), "router-env/placeholder-model-1")
+        self.assertEqual(row.listing, "not listed")
+
     def test_non_dict_cli_row_is_skipped(self):
         self.assertEqual(report_rows({}, {"clis": {"pi": "oops"}}), [])
 

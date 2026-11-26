@@ -1,6 +1,6 @@
 """HARD-04 (D-14/R9) end-to-end pin: a REAL child process spawned through every cross-AI
 dispatcher (the runner, the custom launcher, quota.probe_reviewer_quota,
-execute_dispatch.dispatch_execute, reviewer_dispatch.dispatch_reviewer) with all eleven
+execute_dispatch.dispatch_execute, reviewer_dispatch.dispatch_reviewer) with all ten
 host-signal variables set in the parent environment sees none of them, while PATH and HOME
 pass through; with no host signal set, the child sees the same names the parent had.
 
@@ -164,9 +164,9 @@ class TestHostSignalScrubAllDispatchers(unittest.TestCase):
     """R9/HARD-04 tracer: real children through all five dispatchers never see a host signal."""
 
     def test_signal_set_is_the_table_set(self):
-        self.assertEqual(len(HOST_SIGNALS), 11)
+        self.assertEqual(len(HOST_SIGNALS), 10)
 
-    def test_child_sees_none_of_the_eleven_host_signals(self):
+    def test_child_sees_none_of_the_ten_host_signals(self):
         with tempfile.TemporaryDirectory() as tmp:
             script = _write_env_dump_script(tmp)
             results = _run_all_dispatchers(script, tmp)

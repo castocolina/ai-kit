@@ -1,0 +1,11 @@
+[
+ {
+  "skill": "ai-kit-spec-config",
+  "round": 2,
+  "judge": "opencode:router-env/my-referee-two",
+  "finding": "D8-1",
+  "location": "skills/ai-kit-spec-config/references/check-only.md:80",
+  "command": "bash tmp/judge-39.1.1/helper.sh -m unittest -v tests.test_role_orders.TestProbeQuotaRole.test_usage_limited_lane_is_probed_like_any_other (roster PROBE_ROSTER with e1 usage_limited = true, beside the unflagged execute lanes both1 and same1, no pool; probe-quota --role execute)",
+  "output": "ok (Ran 1 test, OK): the probe calls include ('e1', ['placeholder-cli-1', '--exec', 'placeholder-model-3']) although unflagged execute lanes outside its pool exist; cli.py _probe_role_keys orders execute keys through lane_settings.selectable_lanes, which applies no usage-limited filter. A usage-limited lane is probed like any other, as check-only.md line 80 states."
+ }
+]

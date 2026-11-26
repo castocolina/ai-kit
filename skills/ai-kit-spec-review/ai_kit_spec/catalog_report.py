@@ -154,13 +154,16 @@ class _RowInputs(NamedTuple):
 def _runtime_row(inputs: _RowInputs) -> ReportRow:
     key, entry, rid, rt_row, cli_row, stale_prefixes, fresh = inputs
     model_id = rt_row.get("model_id", "")
+    listing = listing_state(cli_row)
+    if listing == "listed" and model_id not in cli_row.get("models", []):
+        listing = "not listed"
     stale = stale_state(model_id, cli_row, rt_row.get("last_seen"), fresh)
     provider = model_id.split("/", 1)[0] if isinstance(model_id, str) and "/" in model_id else None
     if provider in stale_prefixes:
         stale = f"stale-provider (no listed model from {provider})"
     match_fact = rt_row.get("match")
     return ReportRow(
-        rid, model_id, key, listing_state(cli_row), listed_from_text(cli_row, rt_row),
+        rid, model_id, key, listing, listed_from_text(cli_row, rt_row),
         usability_state(rt_row, cli_row, model_id), stale, marked_state(entry),
         context_line(rt_row), ", ".join(rt_row.get("efforts", [])), facts_text(entry),
         show(match_fact) if match_fact is not None else "",

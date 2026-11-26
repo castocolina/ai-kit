@@ -28,3 +28,5 @@ tests, `cursor-agents/grok-worker.md`), which Phase 39.1 deletes. The grok MODEL
 opencode or pi are unaffected. Plans for 36, 37 and 38.1 must not add grok work.
 
 Severity is the orchestrator's suggestion from an unattended run; confirm it at triage.
+
+Resolved 2026-11-23 by Phase 39.1: the five documents carry the 39.1 amendment and the grok runtime code is removed.

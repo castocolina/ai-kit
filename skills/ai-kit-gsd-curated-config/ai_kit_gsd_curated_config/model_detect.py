@@ -78,7 +78,7 @@ def build_candidate_pool(runtimes_snapshot):
     runtimes always (cursor's binary is `cursor-agent`), and since Phase 16 also codex
     (when `codex debug models` enumerates its user-selectable slugs) and claude (when its
     snapshot entry carries a models list) -- never an empty-list placeholder for a CLI
-    that was never enumerable in the first place (grok never appears as a key). An
+    that was never enumerable in the first place (such a CLI never appears as a key). An
     installed CLI whose `"models"` key is present but genuinely empty (`[]`) DOES appear
     as a key with an empty list -- that is a real "installed, zero models detected"
     result, distinct from "never enumerable". The ladder walk searches `opencode` then

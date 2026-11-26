@@ -115,7 +115,9 @@ existing requirement in the stable spec.
 **HIGH:**
 - **Not testable** — "fast", "user-friendly", "robust" with no measurable criterion.
 - **Wrong/absent requirement syntax for the framework** — e.g. Kiro requirement not in an
-  EARS shape; OpenSpec requirement missing "SHALL"; one clause bundling several behaviors.
+  EARS shape; OpenSpec requirement with no RFC-2119 keyword (SHALL or MUST for mandatory
+  behavior, per the resolved profile), or whose keyword states a weaker strength than the behavior
+  needs; one clause bundling several behaviors.
 - **Acceptance criteria missing** when the framework expects them (Given/When/Then, EARS).
 - **Implementation detail leaking into a spec** when the framework forbids it (OpenSpec:
   `spec.md` is behavior, not how).
@@ -215,7 +217,7 @@ B310` on a URL from app config, not user input). "Required for functionality" or
 
 ## Operating under a turn/token budget (external CLI dispatch)
 
-When you were dispatched via a headless CLI (`codex exec`, `grok`, etc.) rather than as a
+When you were dispatched via a headless CLI (`codex exec`, etc.) rather than as a
 native subagent, your transcript itself consumes the same limited budget you're reviewing
 against — verbose narration or full-file echoes can burn enough of it that you never reach
 `### Status:`, silently losing the whole review. Two rules, load-bearing for exactly this
@@ -326,7 +328,7 @@ Approved shape — don't carry "previously flagged, now fixed" forward.
 | Classifying by folder name | Use the profile's `doc_types`; folder names mislead (Spec Kit `plan.md` = design). |
 | Plan-level strictness on a design or intent | Missing code/file paths isn't a defect there. An `intent`/CONTEXT doc is judged on why/what clarity — never demand tasks or exact files. |
 | "Correcting" a declared worktree/target path to match `.claude/worktrees` / `CLAUDE.md` | The plan's declared paths win. Only flag internal inconsistency or hard-constraint violations. |
-| Ignoring the framework's requirement syntax | A non-EARS Kiro requirement / SHALL-less OpenSpec requirement is a real finding. |
+| Ignoring the framework's requirement syntax | A non-EARS Kiro requirement / an OpenSpec requirement with no SHALL or MUST is a real finding; MUST is valid OpenSpec syntax, not a defect. |
 | Leaving `[NEEDS CLARIFICATION]` unflagged | Unresolved ambiguity marker → HIGH — the next reader inherits the same confusion, and no tooling can resolve it downstream. |
 | Confirming a referenced file exists without reading it | Read its content. Wrong claim → CRITICAL. |
 | Reviewing a `constitution`/`state` doc as if it were a spec | Those are context — read, don't review. |

@@ -9,25 +9,28 @@
       "assertions": [
         "Runs detect-runtimes before asking any reviewer question",
         "Runs check-providers after detection and shows its lines without blocking setup",
-        "Asks the preferred runtimes for review and for execute first, then shows one propose-lanes shortlist per purpose and writes nothing before both sets are confirmed"
+        "Asks the preferred runtimes for review and for execute first, then shows one propose-lanes shortlist for each purpose that has a chosen runtime and writes nothing before every proposed set is confirmed"
       ]
     },
     {
       "id": "casual-check-only",
       "prompt": "Just check which reviewers are available, and do not change anything.",
-      "expected_output": "Runs the --check-only path: detection, a quota probe on a throwaway path, and check-providers, with no writes to config or caches.",
+      "expected_output": "Runs the --check-only path: detection, the roster read and check-providers without a live call, then asks before the quota probe with skip first/default even when every lane is confirmed read-only; on a skip it reports every listed key as unknown, and on a yes it probes on a throwaway path. No config, cache, snapshot or trust write.",
       "files": [],
       "assertions": [
         "Asks the write-risk question before probe-quota when a listed entry has no confirmed read-only invocation, and on a skip runs no probe and reports every listed key as unknown",
-  "Keeps the run read-only and removes its scratch path before stopping",
+        "Asks before probe-quota even when every listed entry is confirmed read-only, naming the allowance it spends and the runner state it keeps, with skip the probe as the default",
+        "Leaves config.toml, the runtimes snapshot, the model catalog and the trust records unchanged (no detect-runtimes --save, no render-toml, no trusting trust-local) and removes its scratch path before stopping",
         "Runs check-providers in the --check-only branch and relays its lines"
       ]
     },
     {
       "id": "precise-global-write",
-      "prompt": "Write my reviewer config to the global config.toml in the ai-kit config directory, not the project. That file already has a [lanes] table.",
+      "prompt": "Write my reviewer config to the global config.toml in the ai-kit config directory, not the project. That file already has a [lanes] table: its content is evals/files/global-lanes/config.toml.",
       "expected_output": "Asks before replacing the existing global roster, and runs check-providers after detection in the normal setup branch.",
-      "files": [],
+      "files": [
+        "evals/files/global-lanes/config.toml"
+      ],
       "assertions": [
         "Asks for explicit replacement consent before writing over the existing [lanes] table in the global config.toml",
         "Runs check-providers --cwd after detect-runtimes --save in the normal branch"
@@ -57,9 +60,11 @@
     },
     {
       "id": "edge-existing-local-config-replace",
-      "prompt": "There is already a ./.aikit/config.toml with a [lanes] table in this project. Set up my reviewers again.",
+      "prompt": "There is already a ./.aikit/config.toml with a [lanes] table in this project; its content is evals/files/existing-local/config.toml. Set up my reviewers again.",
       "expected_output": "Asks before replacing the existing local config, and still runs check-providers as part of the setup.",
-      "files": [],
+      "files": [
+        "evals/files/existing-local/config.toml"
+      ],
       "assertions": [
         "Asks before replacing the existing local [lanes] table",
         "Runs check-providers during setup even when the local config already exists"
@@ -67,9 +72,11 @@
     },
     {
       "id": "edge-old-roster-migration-pending",
-      "prompt": "Just check my reviewers. This project still has an old .aikit/review-spec.toml that has not migrated yet, and no config.toml.",
+      "prompt": "Just check my reviewers. This project still has an old .aikit/review-spec.toml (its content is evals/files/old-roster/legacy-roster.toml) that has not migrated yet, and no config.toml. If you ask whether to run the quota probe: run it.",
       "expected_output": "Runs the read-only check, reports that the old roster migrates on the next command that reads it, and writes nothing.",
-      "files": [],
+      "files": [
+        "evals/files/old-roster/legacy-roster.toml"
+      ],
       "assertions": [
         "Reports the pending migration of the old review-spec.toml and names both files",
         "Passes --no-migrate to probe-quota and writes no config or trust file"
@@ -77,9 +84,11 @@
     },
     {
       "id": "edge-unconfirmed-read-only-asks-before-test",
-      "prompt": "Set up an opencode reviewer on fake/placeholder-model-1 for this project and test it.",
-      "expected_output": "Reads opencode's profile, sees read_only: unconfirmed, and asks whether to run the live test call before running check-reviewer; on a skip it saves the entry as untested and names it in the report.",
-      "files": [],
+      "prompt": "Set up an opencode reviewer on fake/placeholder-model-1 for this project and test it. opencode's profile reads as in evals/files/unconfirmed-test/opencode-profile.md; when you ask whether to run the live test call, I answer: skip the test. Other answers: skip skill sorting; review only, no execute lanes; the vendor of fake/placeholder-model-1 is fake; send project content to it: yes; usage-limited: no; no strength; no effort; no session-default lane; mode single, the default strategy and the default timeouts.",
+      "expected_output": "Reads opencode's profile, sees read_only: unconfirmed, and asks whether to run the live test call before running check-reviewer; on the skip it saves the entry as untested and names it in the report.",
+      "files": [
+        "evals/files/unconfirmed-test/opencode-profile.md"
+      ],
       "assertions": [
         "Asks about the unconfirmed read-only invocation before any check-reviewer call",
         "On a declined test, runs no check-reviewer call and reports the entry as untested"
@@ -87,24 +96,28 @@
     },
     {
       "id": "edge-catalog-stale-report-and-usability",
-      "prompt": "Set up lanes on a machine whose opencode listing dropped a model.",
-      "expected_output": "Runs the catalog step, shows the catalog-report row as stale with its last-seen time, shows attribution lines, and does not mark a model verified without check-reviewer.",
-      "files": [],
+      "prompt": "Set up lanes on a machine whose opencode listing dropped a model: the cached catalog is evals/files/catalog-stale/model-catalog.json, and the live opencode listing now prints only evals/files/catalog-stale/opencode-models.txt, so fake/placeholder-model-2 is gone.",
+      "expected_output": "Runs the catalog step with a fresh listing, shows the fake/placeholder-model-2 catalog-report row as stale with its last-seen time 2026-11-01T09:00:00Z, relays whatever attribution lines catalog-report prints, and does not mark a model verified without check-reviewer.",
+      "files": [
+        "evals/files/catalog-stale/model-catalog.json",
+        "evals/files/catalog-stale/opencode-models.txt"
+      ],
       "assertions": [
         "Runs the catalog step and shows the stale catalog-report row with its last-seen time",
-        "Shows attribution lines",
+        "Relays the attribution lines catalog-report prints verbatim, or says in one line that it printed none (the fixture's entries carry no source facts)",
         "Does not mark a model verified without check-reviewer"
       ]
     },
     {
       "id": "edge-router-alias-assumed",
-      "prompt": "Set up my lanes again. The project's config already holds the lane in evals/files/router-alias/lanes.md, whose model is an owner-defined router alias.",
-      "expected_output": "If the proposal prints an alias group, shows it with the printed label assumed: router-env alias naming, unranked and unscored, and asks no heuristic question about the alias.",
+      "prompt": "Set up my lanes again. The project's config already holds the lane in evals/files/router-alias/lanes.md, whose model is an owner-defined router alias. Replace the existing roster when you ask; review runtimes: opencode; no execute lanes; skip skill sorting.",
+      "expected_output": "Shows the propose-lanes aliases group exactly as printed: its rows with the label assumed: router-env alias naming, unranked and unscored, or, when the printed aliases list is empty, says in one line that no alias group was printed. Never gives the roster's router alias a rank or a score and asks no heuristic question about it.",
       "files": [
         "evals/files/router-alias/lanes.md"
       ],
       "assertions": [
-        "If the proposal shows an alias group, it carries the printed label assumed: router-env alias naming and its rows are neither ranked nor scored",
+        "Reports the printed aliases group either way: its rows carry the label assumed: router-env alias naming and no rank or score, or an empty aliases list is stated in one line",
+        "Never shows the roster's router alias lane from lanes.md with a rank or a score",
         "Asks no heuristic question about the alias"
       ]
     },
@@ -131,27 +144,28 @@
     {
       "id": "edge-no-way-to-ask-stops-after-detection",
       "prompt": "You are running as a subagent with no way to ask the user anything. Set up the cross-AI lanes for this project.",
-      "expected_output": "Runs the two detection commands, then stops: prints the headless block that starts with ai-kit-spec-config cannot ask here; no config, cache or trust record was written., lists the installed runtimes and the questions it would ask, ends with A person must run ai-kit-spec-config., and writes no config, cache or trust record; its own scratch folder is removed.",
+      "expected_output": "Runs the two detection commands, then stops: prints the headless block that starts with ai-kit-spec-config cannot ask here; no config, cache or trust record was written., lists the installed runtimes and the questions it would ask, ends with A person must run ai-kit-spec-config., and writes no config, cache or trust record, and makes no scratch folder.",
       "files": [],
       "assertions": [
         "Prints the line ai-kit-spec-config cannot ask here; no config, cache or trust record was written. and the numbered questions it would ask",
-        "Runs no detect-runtimes --save, no catalog step and no render-toml, and writes no config, cache or trust record (only its own scratch folder existed, and it is removed)"
+        "Runs no detect-runtimes --save, no catalog step and no render-toml, and writes no config, cache or trust record, and makes no ai-kit-spec-config scratch folder"
       ]
     },
     {
       "id": "precise-per-role-orders",
-      "prompt": "Set up lanes: two review models and one coding model, plus a session-default lane as the last review fallback.",
+      "prompt": "Set up lanes: two review models and two coding models, plus a session-default lane as the last review fallback. Other answers: skip skill sorting; review runtimes: opencode and pi; execute runtimes: pi; review set: zen/placeholder-model-2 via opencode and fake/placeholder-model-3 via pi; execute set: zen/placeholder-model-4 via pi and fake/placeholder-model-5 via pi; the session-default lane uses the sonnet alias, for review; the vendor of every zen/* model is zen and of every fake/* model is fake; skip every live test call and keep the lanes untested; no strength; no effort; no escalation; mode single, the default strategy and the default timeouts.",
       "expected_output": "Asks the review order and the execute order as two separate numbered lists, writes only the chosen lanes with the review ladder under [lanes.policy.review] and the execute ladder under [lanes.policy.execute], and reports both orders read back from the written file.",
       "files": [],
       "assertions": [
         "Asks the review order and the execute order in two separate questions and echoes each as a numbered list",
         "Writes only the chosen lanes, each role's ladder under [lanes.policy.review] and [lanes.policy.execute], and no flat ladder",
-        "Reports both orders as read from the written file, not retyped"
+        "Reports both orders as read from the written file, not retyped",
+        "The JSON passed to render-toml gives every lane an explicit purpose, and the session-default lane is the claude alias pair runtime claude, model sonnet, vendor anthropic, purpose review (on a claude host), or has no runtime and an empty model elsewhere"
       ]
     },
     {
       "id": "edge-claude-effort-not-asked",
-      "prompt": "Add an execute lane on claude with one of its short aliases and give it high effort.",
+      "prompt": "Add an execute lane on claude with one of its short aliases and give it high effort. Other answers: skip skill sorting; use the sonnet alias; no review lanes and no other execute lanes; skip the live test call and keep the lane untested; no strength; mode single, the default strategy and the default timeouts.",
       "expected_output": "Asks no effort question for the claude lane, says in one line that the runner has no effort flag for claude yet, so no effort is stored, and writes the lane without an effort key.",
       "files": [],
       "assertions": [
@@ -161,17 +175,17 @@
     },
     {
       "id": "precise-escalation-only-with-two-lanes",
-      "prompt": "Set up one review lane and two execute lanes on different runtimes, and turn on escalation where it makes sense.",
-      "expected_output": "Asks the escalation question only for the execute role, which holds two lanes, with no as the default; says the flags are stored and informational; no run reads them yet; writes escalate_runtime or escalate_model only on an explicit yes.",
+      "prompt": "Set up one review lane and two execute lanes on different runtimes, and turn on escalation where it makes sense. Other answers: skip skill sorting; review runtimes: opencode; execute runtimes: pi and opencode; review set: zen/placeholder-model-2 via opencode; execute set: zen/placeholder-model-4 via pi and opencode/placeholder-free-1 via opencode; the vendor of every zen/* model is zen and of opencode/placeholder-free-1 is opencode; skip every live test call and keep the lanes untested; no strength; no effort; no session-default lane; mode single, the default strategy and the default timeouts.",
+      "expected_output": "Asks the escalation question only for the execute role, which holds two lanes, with no as the default; says the flags are stored and informational: dispatch passes them to the runner, which reports them as ignored and never starts another lane from them; writes escalate_runtime or escalate_model only on an explicit yes.",
       "files": [],
       "assertions": [
         "Asks no escalation question for the review role, which holds one lane",
-        "Writes escalate_runtime or escalate_model only on an explicit yes and says the flags are stored and informational; no run reads them yet"
+        "Writes escalate_runtime or escalate_model only on an explicit yes and says the flags are stored and informational: dispatch passes them to the runner, which reports them as ignored and never starts another lane from them"
       ]
     },
     {
       "id": "precise-zero-price-data-use-yes",
-      "prompt": "Set up lanes. The review proposal shows fake/placeholder-model-1 via opencode with a zero price and I pick it. My answers: this host cannot read web pages; send project content to this lane: yes; usage-limited: yes, with the note daily cap.",
+      "prompt": "Set up lanes. The review proposal shows fake/placeholder-model-1 via opencode with a zero price and I pick it. My answers: this host cannot read web pages; send project content to this lane: yes; usage-limited: yes, with the note daily cap. Other answers: skip skill sorting; review runtimes: opencode; no execute lanes; the vendor of fake/placeholder-model-1 is fake; no alternative lane for it, explicitly none; skip the live test call and keep the lane untested; no strength; no effort; no session-default lane; mode single, the default strategy and the default timeouts.",
       "expected_output": "Reads free-lanes.md and shows the data-use note before any other question about the lane: unknown with source none, because no page can be read, never treated as safe. On the yes it shows the shared-pool warning and asks the usage-limit question; the written review lane then holds data_use = unknown, data_use_line, data_use_source = none, data_use_read, data_use_confirmed = true and no data_use_label, plus pool from the row's pool_key, usage_limited = true and usage_limit_note = daily cap.",
       "files": [],
       "assertions": [
@@ -182,7 +196,7 @@
     },
     {
       "id": "edge-zero-price-data-use-declined",
-      "prompt": "Set up lanes. The review proposal shows fake/placeholder-model-1 via opencode with a zero price and I pick it, but when you ask whether to send project content to this lane I answer no.",
+      "prompt": "Set up lanes. The review proposal shows fake/placeholder-model-1 via opencode with a zero price and I pick it, but when you ask whether to send project content to this lane I answer no. Other answers: skip skill sorting; review runtimes: opencode; no execute lanes; also keep zen/placeholder-model-2 via opencode in the review set; the vendor of every zen/* model is zen and of every fake/* model is fake; skip every live test call and keep the lanes untested; no strength; no effort; no session-default lane; mode single, the default strategy and the default timeouts.",
       "expected_output": "Shows the data-use note first and asks to confirm; on the no it drops the lane from the set and asks no usage-limit or effort question about it; the written config holds no lane for that model, and so no usage_limited flag, no pool key and no data-use keys for it.",
       "files": [],
       "assertions": [
@@ -192,7 +206,7 @@
     },
     {
       "id": "edge-migration-deleted-unless-keep-backup",
-      "prompt": "This project has an old .aikit/review-spec.toml that has not migrated yet and no config.toml. Set up my lanes and replace the old roster.",
+      "prompt": "This project has an old .aikit/review-spec.toml that has not migrated yet and no config.toml. Set up my lanes and replace the old roster. Other answers: skip skill sorting; review runtimes: opencode; no execute lanes; review set: zen/placeholder-model-2 via opencode; the vendor of every zen/* model is zen; skip the live test call and keep the lane untested; no strength; no effort; no session-default lane; mode single, the default strategy and the default timeouts.",
       "expected_output": "Asks the replacement question with stop first, says the old roster migrates first and is deleted once the migration's value check passes, offers the answer that keeps a review-spec.toml.migrated copy, and passes --replace, plus --keep-backup only for that answer, to render-toml.",
       "files": [],
       "assertions": [

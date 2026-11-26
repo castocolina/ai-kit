@@ -89,7 +89,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
 
 # arch-test tier: the AST architecture-fitness modules (35: the hardcoded-model guard).
-ARCH_MODULES = frozenset({"tests.test_arch", "tests.test_arch_hardcoded_models"})
+ARCH_MODULES = frozenset({
+    "tests.test_arch", "tests.test_arch_hardcoded_models", "tests.test_arch_no_grok_runtime",
+})
 # Needs PyYAML or LibCST, which only the uv env provides.
 UNIT_UV_MODULES = frozenset({
     "tests.test_cst_refactor_codemods",  # needs LibCST from the uv dev group (32.1)
@@ -175,12 +177,12 @@ E2E_RECORDED_SECS = {
     "tests.test_cross_ai_selftest_logic_2_e2e": 43,
     "tests.test_cross_ai_selftest_logic_3_e2e": 43,
     "tests.test_cross_ai_selftest_logic_4_e2e": 43,
-    "tests.test_cross_ai_selftest_logic_5_e2e": 40,
+    "tests.test_cross_ai_selftest_logic_5_e2e": 43,
     "tests.test_cross_ai_selftest_runtime_1_e2e": 40,
     "tests.test_cross_ai_selftest_runtime_2_e2e": 40,
     "tests.test_cross_ai_selftest_runtime_3_e2e": 40,
-    "tests.test_cross_ai_selftest_runtime_4_e2e": 40,
-    "tests.test_cross_ai_selftest_runtime_5_e2e": 40,
+    "tests.test_cross_ai_selftest_runtime_4_e2e": 39,
+    "tests.test_cross_ai_selftest_runtime_5_e2e": 39,
     "tests.test_cross_ai_selftest_runtime_6_e2e": 39,
     "tests.test_cross_ai_selftest_runtime_7_e2e": 39,
     "tests.test_curated_config_apply_e2e": 29,
@@ -238,7 +240,7 @@ EXPLICIT_GROUPS = {
 # Host CLI binary names the tripwire stubs: copied from the RUNTIMES binaries plus the
 # goal-prompt HOST_BINARY values (cursor-agent comes from the table); pinned by a drift test.
 HOST_CLI_NAMES = frozenset({
-    "agent", "claude", "codex", "copilot", "cursor-agent", "grok", "opencode", "pi",
+    "agent", "claude", "codex", "copilot", "cursor-agent", "opencode", "pi",
 })
 # Non-host tools a test may reach only through a fake (tests/index_fakes.py); kept apart from
 # HOST_CLI_NAMES, which a drift test pins to the RUNTIMES binaries.
@@ -248,7 +250,7 @@ TRIPWIRE_MAX_LINES = 20
 # must not make a module believe it runs inside a host.
 HOST_SIGNAL_VARS = frozenset({
     "AI_AGENT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CODEX_SANDBOX",
-    "CODEX_THREAD_ID", "CODEX_VERSION", "CURSOR_AGENT", "GROK_AGENT", "OPENCODE",
+    "CODEX_THREAD_ID", "CODEX_VERSION", "CURSOR_AGENT", "OPENCODE",
     "PI_CODING_AGENT",
 })
 # Env names product code reads as a host config dir, XDG home, credential file, tooling path or

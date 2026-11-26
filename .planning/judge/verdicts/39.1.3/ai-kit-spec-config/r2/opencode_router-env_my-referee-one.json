@@ -1,0 +1,202 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=560s out=1358187 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_ded95489effePyMBZJYOVH9PjR applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-spec-config\",\"judge\":\"opencode:router-env/my-referee-one\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":19,\"D2\":14,\"D3\":15,\"D4\":14,\"D5\":12,\"D6\":13,\"D7\":13,\"D8\":8},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":108,\"max_total\":125,\"percent\":86.4,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":16,\"evidence\":\"“Bash, AskUserQuestion (with multiSelect) and Read name the host's shell, structured-question and file-reading tools.” The tool definitions restate what the harness already exposes; the numbered fallback and owner-consent rule are the useful parts.\",\"fix\":\"Condense this to the portability rule: if no structured question tool exists, ask in numbered plain text, accept multiple numbers for multi-select, and wait for the owner. Record the removal of the generic tool definitions.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":177,\"evidence\":\"“Steps 2.3 to 2.8 hold the per-topic rules it points to.” The routing table helps locate a topic but does not show which checkpoints must be complete before the multi-document wizard advances to the write phase.\",\"fix\":\"Add a short checkpoint checklist at the start of Step 3: target and replacement decision recorded; both sets resolved; per-lane confirmations and test outcomes recorded; role orders echoed. Point each item to its existing step rather than repeating the questions.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":3,\"evidence\":\"“Detects installed CLIs and models, proposes a review set and an execute set from the model catalog for the owner to pick, asks each role's order, effort and opt-in flags” describes the wizard's mechanics before the trigger. The valid 1,013-character description buries the user's intent.\",\"fix\":\"Use when the owner wants to set up, refresh, or check ai-kit's cross-AI reviewers or implementers, choose which models review plans or write code, or set each role's fallback order—even without saying lanes. Configure [lanes] in .aikit/config.toml or the user config.toml, with explicit consent before replacing a roster. Also use when ai-kit-spec-review or ai-kit-spec-execute-superpowers reports no lanes, when an OpenCode provider disappears, or when asked about migrating review-spec.toml. --check-only reports availability without changing config; --local and --global select the target, not permission to replace it. Not for running configured lanes, hand-editing one lane value, or changing [runner] or opencode.jsonc.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":320,\"evidence\":\"“When the captured host is ‘claude’” introduces a long conditional branch in the always-loaded body. The 418-line file is under the line limit but exceeds the recommended token budget: it contains over 6,600 words even before any references load.\",\"fix\":\"Keep the mandatory session-default offer, literal host annotation, and purpose requirement in Step 2.7. Move the accepted-entry construction, Claude alias testing, and nested-host correction into a session-default reference loaded only when the owner accepts the offer. Move the vendor-null picker and its single/double implications into a reference gated on infer-vendor returning null.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":199,\"evidence\":\"“Only an explicit ‘replace’ (either form) lets Step 3 pass --replace.” Approval binds to a path, not to the roster the owner saw. If the roster at that path changes during the wizard, render-toml still accepts --replace and can overwrite the newer version.\",\"fix\":\"Record the roster identity at approval and require it to match under the writer's existing lock before replacement. If it changed, show the change and ask again. When an approved catalog read migrates the roster, carry forward the resulting identity without treating unrelated changes as approved.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/evals/evals.json\",\"line\":119,\"evidence\":\"“or an empty aliases list is stated in one line” lets the alias regression case pass without ever exercising rendering of an unranked alias row. Its fixture supplies a roster excerpt, not a deterministic proposal containing that alias.\",\"fix\":\"Seed or stub a proposal with the fixture alias and require the actual unranked row and label. Keep the empty-list behavior in a separate case.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/evals/evals.json\",\"line\":107,\"evidence\":\"“Shows attribution lines” is asserted for the stale-listing case, but the supplied cached entries have no facts with recognized source provenance. catalog-report does not emit an attribution section when no recognized source contributed.\",\"fix\":\"Give the cached fixture a recognized source on a retained fact, make the live listing and external-source responses deterministic, and assert that the emitted attribution is relayed verbatim alongside the stale row.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":130,\"evidence\":\"“Otherwise, persist the snapshot before continuing to Step 2.” A request only to identify stale OpenCode providers is a positive trigger, but is not necessarily an availability check or a migration request. It falls through to cache writes, catalog work, and setup questions it never requested.\",\"fix\":\"Before the snapshot save, route standalone stale-provider requests to check-providers, relay its certainty labels, and stop. Keep the existing live-probe consent path for availability checks and the full flow for setup or refresh.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-config/references/check-only.md\",\"line\":93,\"evidence\":\"“Report each probed key's available boolean, and mark a probed key missing from the raw-read listing (from the merged view).” If the global and local rosters reuse a key with different models, --global lists the global lane while the probe tests the local override. Matching by key alone can report the override's result as the global lane's availability.\",\"fix\":\"Compare each raw lane with the effective probe entry by role and resolved invocation, not key alone. Show the effective probe result separately and mark a shadowed raw lane ‘available: unknown (not probed — overridden)’, even when the keys match.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":402,\"evidence\":\"“an entry with a command, or one whose key matches a command entry of this file or of the user layer, including a pending old user roster.” This restatement drops the local-only exception in config-file.md and cfg_project_trust_bytes. A local-only roster sharing only a key with a user command can be falsely reported as inactive.\",\"fix\":\"Use the Trust section's definition without restating it, or explicitly exclude user-layer command keys when strategy is local-only. Report the actual active state from config-status.\"},{\"id\":\"D8-4\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-config/references/wizard-flow.md\",\"line\":73,\"evidence\":\"“These flags are stored and informational; no run reads them yet.” runner_dispatch.py reads both flags and passes them to the runner, which reports them but does not start another lane. The wizard gives the owner an incorrect account of the opt-in.\",\"fix\":\"Say the runner reads and reports the flags but does not use them to start another lane. Align the config reference and the escalation eval with that distinction.\"}]}"
+  }
+ ],
+ "digest": "88ca35fad1cb02521d11409c8c1d90986b4210ab7b1b9f0b571828b54b2c632b",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "6ea8501f787b45784deeb066b2a9c0b2e473e656d03aa342f54e4153130d889f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-one",
+ "loop": "39.1.3",
+ "modules": [
+  "tests/test_ai_kit_spec_check_providers.py",
+  "tests/test_ai_kit_spec_runtimes_table.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_arch_no_grok_runtime.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_role_orders.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_spec_chain_text.py",
+  "tests/test_spec_config_catalog_text.py",
+  "tests/test_spec_config_flow_text.py",
+  "tests/test_spec_config_lane_json.py"
+ ],
+ "prompt_sha256": "4a6aa0cb4f205faa72cbb2599fd6a962800259efa67ee1d4ea4a0ee4d1e3fbed",
+ "round": 2,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-spec-config",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "“Bash, AskUserQuestion (with multiSelect) and Read name the host's shell, structured-question and file-reading tools.” The tool definitions restate what the harness already exposes; the numbered fallback and owner-consent rule are the useful parts.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Condense this to the portability rule: if no structured question tool exists, ask in numbered plain text, accept multiple numbers for multi-select, and wait for the owner. Record the removal of the generic tool definitions.",
+    "id": "D1-1",
+    "line": 16,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "“Steps 2.3 to 2.8 hold the per-topic rules it points to.” The routing table helps locate a topic but does not show which checkpoints must be complete before the multi-document wizard advances to the write phase.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Add a short checkpoint checklist at the start of Step 3: target and replacement decision recorded; both sets resolved; per-lane confirmations and test outcomes recorded; role orders echoed. Point each item to its existing step rather than repeating the questions.",
+    "id": "D2-1",
+    "line": 177,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "“Detects installed CLIs and models, proposes a review set and an execute set from the model catalog for the owner to pick, asks each role's order, effort and opt-in flags” describes the wizard's mechanics before the trigger. The valid 1,013-character description buries the user's intent.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Use when the owner wants to set up, refresh, or check ai-kit's cross-AI reviewers or implementers, choose which models review plans or write code, or set each role's fallback order—even without saying lanes. Configure [lanes] in .aikit/config.toml or the user config.toml, with explicit consent before replacing a roster. Also use when ai-kit-spec-review or ai-kit-spec-execute-superpowers reports no lanes, when an OpenCode provider disappears, or when asked about migrating review-spec.toml. --check-only reports availability without changing config; --local and --global select the target, not permission to replace it. Not for running configured lanes, hand-editing one lane value, or changing [runner] or opencode.jsonc.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "“When the captured host is ‘claude’” introduces a long conditional branch in the always-loaded body. The 418-line file is under the line limit but exceeds the recommended token budget: it contains over 6,600 words even before any references load.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Keep the mandatory session-default offer, literal host annotation, and purpose requirement in Step 2.7. Move the accepted-entry construction, Claude alias testing, and nested-host correction into a session-default reference loaded only when the owner accepts the offer. Move the vendor-null picker and its single/double implications into a reference gated on infer-vendor returning null.",
+    "id": "D5-1",
+    "line": 320,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "“Only an explicit ‘replace’ (either form) lets Step 3 pass --replace.” Approval binds to a path, not to the roster the owner saw. If the roster at that path changes during the wizard, render-toml still accepts --replace and can overwrite the newer version.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Record the roster identity at approval and require it to match under the writer's existing lock before replacement. If it changed, show the change and ask again. When an approved catalog read migrates the roster, carry forward the resulting identity without treating unrelated changes as approved.",
+    "id": "D6-1",
+    "line": 199,
+    "severity": "high"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“or an empty aliases list is stated in one line” lets the alias regression case pass without ever exercising rendering of an unranked alias row. Its fixture supplies a roster excerpt, not a deterministic proposal containing that alias.",
+    "file": "skills/ai-kit-spec-config/evals/evals.json",
+    "fix": "Seed or stub a proposal with the fixture alias and require the actual unranked row and label. Keep the empty-list behavior in a separate case.",
+    "id": "D7-1",
+    "line": 119,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“Shows attribution lines” is asserted for the stale-listing case, but the supplied cached entries have no facts with recognized source provenance. catalog-report does not emit an attribution section when no recognized source contributed.",
+    "file": "skills/ai-kit-spec-config/evals/evals.json",
+    "fix": "Give the cached fixture a recognized source on a retained fact, make the live listing and external-source responses deterministic, and assert that the emitted attribution is relayed verbatim alongside the stale row.",
+    "id": "D7-2",
+    "line": 107,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“Otherwise, persist the snapshot before continuing to Step 2.” A request only to identify stale OpenCode providers is a positive trigger, but is not necessarily an availability check or a migration request. It falls through to cache writes, catalog work, and setup questions it never requested.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Before the snapshot save, route standalone stale-provider requests to check-providers, relay its certainty labels, and stop. Keep the existing live-probe consent path for availability checks and the full flow for setup or refresh.",
+    "id": "D8-1",
+    "line": 130,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“Report each probed key's available boolean, and mark a probed key missing from the raw-read listing (from the merged view).” If the global and local rosters reuse a key with different models, --global lists the global lane while the probe tests the local override. Matching by key alone can report the override's result as the global lane's availability.",
+    "file": "skills/ai-kit-spec-config/references/check-only.md",
+    "fix": "Compare each raw lane with the effective probe entry by role and resolved invocation, not key alone. Show the effective probe result separately and mark a shadowed raw lane ‘available: unknown (not probed — overridden)’, even when the keys match.",
+    "id": "D8-2",
+    "line": 93,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“an entry with a command, or one whose key matches a command entry of this file or of the user layer, including a pending old user roster.” This restatement drops the local-only exception in config-file.md and cfg_project_trust_bytes. A local-only roster sharing only a key with a user command can be falsely reported as inactive.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Use the Trust section's definition without restating it, or explicitly exclude user-layer command keys when strategy is local-only. Report the actual active state from config-status.",
+    "id": "D8-3",
+    "line": 402,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“These flags are stored and informational; no run reads them yet.” runner_dispatch.py reads both flags and passes them to the runner, which reports them but does not start another lane. The wizard gives the owner an incorrect account of the opt-in.",
+    "file": "skills/ai-kit-spec-config/references/wizard-flow.md",
+    "fix": "Say the runner reads and reports the flags but does not use them to start another lane. Align the config reference and the escalation eval with that distinction.",
+    "id": "D8-4",
+    "line": 73,
+    "severity": "high"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-one",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 86.4,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 19,
+   "D2": 14,
+   "D3": 15,
+   "D4": 14,
+   "D5": 12,
+   "D6": 13,
+   "D7": 13,
+   "D8": 8
+  },
+  "skill": "ai-kit-spec-config",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 108
+ }
+}

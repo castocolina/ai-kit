@@ -241,6 +241,26 @@ class TestLegacyLoad(unittest.TestCase):
             self.assertEqual(resolved["policy"]["ladder"], ["b", "a"])
 
 class TestLegacyForms(unittest.TestCase):
+    def test_unknown_cli_with_a_command_is_kept_as_a_custom_entry(self):
+        command = "my-cli -p {prompt} -m {model}"
+        normalized, notes = normalize_legacy_reviewers([
+            {"key": "u1", "cli": "placeholder-cli-1", "model": "fake-model-1", "command": command}
+        ])
+        self.assertIn("u1: cli=placeholder-cli-1 is not in the runtime table; "
+                      "kept as a custom command entry", notes)
+        self.assertNotIn("runtime", normalized[0])
+        self.assertNotIn("cli", normalized[0])
+        self.assertEqual(normalized[0]["command"], command)
+
+    def test_unknown_cli_without_a_command_names_the_custom_lane(self):
+        normalized, notes = normalize_legacy_reviewers([
+            {"key": "u2", "cli": "placeholder-cli-1", "model": "fake-model-1"}
+        ])
+        self.assertIn("u2: cli=placeholder-cli-1 is not in the runtime table and has no command; "
+                      "store a custom `command` lane for it", notes)
+        self.assertEqual(normalized[0]["runtime"], "placeholder-cli-1")
+        self.assertNotIn("cli", normalized[0])
+
     def test_legacy_form_matrix(self):
         cases = [
             ({"key": "a", "native_runtime": "claude", "model": "opus"}, "claude"),
@@ -250,8 +270,8 @@ class TestLegacyForms(unittest.TestCase):
             (
                 {
                     "key": "e",
-                    "cli": "grok",
-                    "command": "grok -p {prompt} -m {model} --output-format plain",
+                    "cli": "placeholder-cli-1",
+                    "command": "my-cli -p {prompt} -m {model} --output-format plain",
                 },
                 None,
             ),
@@ -327,13 +347,6 @@ class TestLegacyForms(unittest.TestCase):
         decision = route(RouteInput.of(inferred[0]), "codex", "review",
                          Inventory(frozenset(), {}))
         self.assertEqual(decision, "unknown_runtime")
-
-    def test_grok_without_a_command_points_at_the_generator_and_save_rejects_it(self):
-        # B-WR-04: a runner-less row is never saved as a pinned pair.
-        mapped, notes = normalize_legacy_entry({"key": "g", "cli": "grok", "model": "grok-4"})
-        self.assertIn("build-command --runtime grok", notes[0])
-        self.assertIn("has no runner formula; store a custom `command` lane instead (no 'runtime')",
-                      validate_reviewer_fields(mapped) or "")
 
     def test_native_runtime_unknown_keeps_an_explicit_runtime(self):
         # B-WR-05: the new-form field wins over a stale legacy one.

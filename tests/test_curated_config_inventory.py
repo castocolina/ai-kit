@@ -1094,6 +1094,22 @@ class TestBuildCandidates(unittest.TestCase):
         with open(catalog_path, encoding="utf-8") as fh:
             self.assertIn("cursor-agent", json.load(fh)["acme/m"]["runtimes"])
 
+    def test_stale_removed_runtime_row_yields_no_candidate(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        runtimes_path = os.path.join(home, "runtimes.json")
+        catalog_path = os.path.join(home, "model-catalog.json")
+        with open(runtimes_path, "w", encoding="utf-8") as fh:
+            json.dump({"clis": {"grok": {"installed": True, "models": ["fake-model-9"]},
+                                "pi": {"installed": True, "models": ["fake/fake-model-8"]}}}, fh)
+        with open(catalog_path, "w", encoding="utf-8") as fh:
+            json.dump({"_meta": {"schema_version": 2}}, fh)
+        paths = catalog_adapter._RefreshPaths("spec", runtimes_path, catalog_path, home)
+        runtimes, entries = catalog_adapter._read_cache(spec_cache, model_catalog, paths)
+        self.assertEqual(sorted(runtimes["clis"]), ["pi"])
+        out = catalog_adapter.build_candidates(runtimes, entries, "claude", self._weights())
+        self.assertEqual({c["runtime"] for c in out}, {"pi"})
+
 
 _BOTH = {"is_router": True, "fallback_quota": True}
 _ALIAS = {"value": "router", "label": "assumed", "source": "router-env alias naming"}

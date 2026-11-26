@@ -2665,7 +2665,7 @@ def _drop_model_less_rows(runtimes: dict) -> dict:
 
     Such a row is the only trigger of `_discovered_catalog_candidates`'s `cfg_resolve`, which
     reads the ambient `config.toml` roster before any freshness check (review cycle 3). The
-    shipped fixture's `grok` is the only such row, and no scenario runs it."""
+    shipped fixture holds no such row, and no scenario runs one."""
     clis = {}
     for name, row in (runtimes.get("clis") or {}).items():
         if isinstance(row, dict) and row.get("installed") and "models" not in row:

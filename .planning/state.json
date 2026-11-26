@@ -81,17 +81,17 @@
     {
       "number": "35",
       "name": "Model discovery and catalog",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "36",
       "name": "spec-config as the hub",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "37",
       "name": "Shared runner options and session ids",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "38",
@@ -101,7 +101,7 @@
     {
       "number": "38.1",
       "name": "Runner error classification and retry policy",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "39",
@@ -201,8 +201,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (verify)",
-    "reason": "Phase 16 of 41 · 41% · ready to verify"
+    "label": "Advance to the next step (plan phase 39.2)",
+    "reason": "Phase 23 of 41 — needs a plan"
   },
-  "updated_at": "2026-11-23T20:32:09.180Z"
+  "updated_at": "2026-11-24T16:07:47.010Z"
 }

@@ -68,6 +68,8 @@ class TestWizardLaneJson(unittest.TestCase):
                          "usage_limited", "usage_limit_note", "pool",
                          *lane_data_use.DATA_USE_KEYS} <= keys)
         for lane in lanes:
+            if lane.get("model"):
+                self.assertTrue(lane.get("vendor"), lane["key"])
             for flag in ("escalate_runtime", "escalate_model", "usage_limited"):
                 if flag in lane:
                     self.assertIs(lane[flag], True)

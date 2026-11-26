@@ -1,0 +1,175 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=47s out=130063 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_ded872511ffe2DFFIoM0AxbcFl applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-spec-config\",\"judge\":\"opencode:router-env/my-referee-three\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":16,\"D2\":13,\"D3\":14,\"D4\":14,\"D5\":12,\"D6\":14,\"D7\":13,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":109,\"max_total\":125,\"percent\":87.2,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":93,\"evidence\":\"\\\"Every `Bash` call starts a fresh shell, so every `$TOOLS_PY`/`$CLI_PROFILES_DIR`/`$RUNTIMES_JSON` below means \\\\\\\"the literal path captured here\\\\\\\"\\\" and the parenthetical rationale in Step 1 (lines 138-140) re-explain shell and caching basics the agent already knows\",\"fix\":\"Shorten each explanation to one clause, such as \\\"record the three printed paths and substitute them literally in later calls\\\". Keep every rule. Record the shortened rationale in the skill's audit record.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":196,\"evidence\":\"Step 2.1 case 4 and the Replacement gate (lines 196-203) pack a four-way decision, three answer forms and migration side effects into two very long paragraphs\",\"fix\":\"Recast Step 2.1 as a short decision table (flags → target → which gate question, with which answers) and keep the full prose. The process pattern then reads as checkpoints instead of dense paragraphs.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":35,\"evidence\":\"\\\"Never skip announcing the target path before asking reviewer questions — user must know where config is headed from the start.\\\" restates Step 2.1 line 205 and gives only a generic reason\",\"fix\":\"Keep the item and add its concrete failure mode, such as answers given for a global roster while the owner assumed a project one. Otherwise, keep the rule only in Step 2.1 and record why the NEVER entry was removed.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":3,\"evidence\":\"The description is 1013 of 1024 characters, mostly implementation mechanics such as \\\"asks each role's order, effort and opt-in flags, and writes the [lanes] table\\\", and leaves almost no room for later edits\",\"fix\":\"Use this skill to set up, refresh or check ai-kit's cross-AI lanes: which models review plans, which implement them, and each role's fallback order. Use when the user wants cross-AI review or execute lanes set up, refreshed or checked, wants a second-vendor reviewer or a fallback executor, when ai-kit-spec-review or ai-kit-spec-execute-superpowers reports that no lanes exist, to find lane providers opencode no longer lists, or to migrate an old review-spec.toml, even without the word lanes. Writes the [lanes] table of ./.aikit/config.toml (or the user config.toml with --global) and asks before it replaces a roster. --check-only reports availability and writes nothing. Not for running a review or execute with configured lanes, hand-editing one lane value, or editing [runner] or opencode.jsonc.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":null,\"evidence\":\"SKILL.md has 426 lines and about 6,500 words (roughly 8,500 tokens), well above the spec's recommended limit of about 5,000 tokens for the body. Steps 2.5, 2.8, 3 and 4 hold long paragraphs that are needed only on some paths.\",\"fix\":\"Move the detail that runs only on some paths into references loaded at the step that needs it. Candidates are the custom-entry and usability-recording detail in Step 2.5 (to references/runtime-ids.md or a new references/test-call.md), the per-lane timeout_tiers explanation in Step 2.8 (to references/config-file.md \\\"Lane entry fields\\\"), and the config-status and capability rules in Step 4. Keep in SKILL.md a one-line rule plus a read trigger for each, and record each move.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":294,\"evidence\":\"Step 2.6 offers `strength` as \\\"`\\\\\\\"ui\\\\\\\"`, `\\\\\\\"coding\\\\\\\"`, `\\\\\\\"planning\\\\\\\"`, or free text (not validated)\\\". The skill says no resolution logic reads the field, yet this informational offer still takes a question turn in a long wizard.\",\"fix\":\"State the default (none) as the pre-selected answer and fold the offer into the Step 2.2 per-lane question, so it costs no extra turn. Keep the statement that resolution ignores the field.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/evals/evals.json\",\"line\":null,\"evidence\":\"Of the 21 evals, several flag-path and failure-path evals (for example edge-no-way-to-ask-stops-after-detection and edge-migrate-only-runs-no-setup) have no input file, and none covers a nonzero render-toml exit or a WARNING: line handled by references/write-failures.md\",\"fix\":\"Add an eval where render-toml exits nonzero or prints a WARNING: line (fixture stderr under evals/files/), with these assertions: no trust offer after a nonzero exit; the warning is reported; $SCRATCH is kept and its path is named.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":12,\"evidence\":\"\\\"Run Steps 0 to 4 in order (locate, detect, ask, write, report)\\\" leaves out Steps 1.5 and 1.6 and the three early-stop branches in Step 1 (headless, --check-only, migrate-only and stale-provider-only), so the routing exists only inside long paragraphs\",\"fix\":\"Replace line 12 with a short ordered checklist: Step 0 locate; Step 1 detect, then stop for headless, --check-only, migrate-only or stale-provider-only requests; Step 1.5 catalog; Step 1.6 optional skill sort; Step 2 ask; Step 3 write; Step 4 report and clean up $SCRATCH.\"}]}"
+  }
+ ],
+ "digest": "b59463442d66d3ddb293aa915677fc34dd8d6e85bc8597f567443371f95c0d1c",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "6ea8501f787b45784deeb066b2a9c0b2e473e656d03aa342f54e4153130d889f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-three",
+ "loop": "39.1.3",
+ "modules": [
+  "tests/test_ai_kit_spec_check_providers.py",
+  "tests/test_ai_kit_spec_runtimes_table.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_arch_no_grok_runtime.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_role_orders.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_spec_chain_text.py",
+  "tests/test_spec_config_catalog_text.py",
+  "tests/test_spec_config_flow_text.py",
+  "tests/test_spec_config_lane_json.py"
+ ],
+ "prompt_sha256": "75159402403e765200222a1f4c26573d2574341774cfb50bebda0f29036da484",
+ "round": 3,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-spec-config",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "\"Every `Bash` call starts a fresh shell, so every `$TOOLS_PY`/`$CLI_PROFILES_DIR`/`$RUNTIMES_JSON` below means \\\"the literal path captured here\\\"\" and the parenthetical rationale in Step 1 (lines 138-140) re-explain shell and caching basics the agent already knows",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Shorten each explanation to one clause, such as \"record the three printed paths and substitute them literally in later calls\". Keep every rule. Record the shortened rationale in the skill's audit record.",
+    "id": "D1-1",
+    "line": 93,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "Step 2.1 case 4 and the Replacement gate (lines 196-203) pack a four-way decision, three answer forms and migration side effects into two very long paragraphs",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Recast Step 2.1 as a short decision table (flags → target → which gate question, with which answers) and keep the full prose. The process pattern then reads as checkpoints instead of dense paragraphs.",
+    "id": "D2-1",
+    "line": 196,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "\"Never skip announcing the target path before asking reviewer questions — user must know where config is headed from the start.\" restates Step 2.1 line 205 and gives only a generic reason",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Keep the item and add its concrete failure mode, such as answers given for a global roster while the owner assumed a project one. Otherwise, keep the rule only in Step 2.1 and record why the NEVER entry was removed.",
+    "id": "D3-1",
+    "line": 35,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description is 1013 of 1024 characters, mostly implementation mechanics such as \"asks each role's order, effort and opt-in flags, and writes the [lanes] table\", and leaves almost no room for later edits",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Use this skill to set up, refresh or check ai-kit's cross-AI lanes: which models review plans, which implement them, and each role's fallback order. Use when the user wants cross-AI review or execute lanes set up, refreshed or checked, wants a second-vendor reviewer or a fallback executor, when ai-kit-spec-review or ai-kit-spec-execute-superpowers reports that no lanes exist, to find lane providers opencode no longer lists, or to migrate an old review-spec.toml, even without the word lanes. Writes the [lanes] table of ./.aikit/config.toml (or the user config.toml with --global) and asks before it replaces a roster. --check-only reports availability and writes nothing. Not for running a review or execute with configured lanes, hand-editing one lane value, or editing [runner] or opencode.jsonc.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "SKILL.md has 426 lines and about 6,500 words (roughly 8,500 tokens), well above the spec's recommended limit of about 5,000 tokens for the body. Steps 2.5, 2.8, 3 and 4 hold long paragraphs that are needed only on some paths.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Move the detail that runs only on some paths into references loaded at the step that needs it. Candidates are the custom-entry and usability-recording detail in Step 2.5 (to references/runtime-ids.md or a new references/test-call.md), the per-lane timeout_tiers explanation in Step 2.8 (to references/config-file.md \"Lane entry fields\"), and the config-status and capability rules in Step 4. Keep in SKILL.md a one-line rule plus a read trigger for each, and record each move.",
+    "id": "D5-1",
+    "line": null,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "Step 2.6 offers `strength` as \"`\\\"ui\\\"`, `\\\"coding\\\"`, `\\\"planning\\\"`, or free text (not validated)\". The skill says no resolution logic reads the field, yet this informational offer still takes a question turn in a long wizard.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "State the default (none) as the pre-selected answer and fold the offer into the Step 2.2 per-lane question, so it costs no extra turn. Keep the statement that resolution ignores the field.",
+    "id": "D6-1",
+    "line": 294,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "Of the 21 evals, several flag-path and failure-path evals (for example edge-no-way-to-ask-stops-after-detection and edge-migrate-only-runs-no-setup) have no input file, and none covers a nonzero render-toml exit or a WARNING: line handled by references/write-failures.md",
+    "file": "skills/ai-kit-spec-config/evals/evals.json",
+    "fix": "Add an eval where render-toml exits nonzero or prints a WARNING: line (fixture stderr under evals/files/), with these assertions: no trust offer after a nonzero exit; the warning is reported; $SCRATCH is kept and its path is named.",
+    "id": "D7-1",
+    "line": null,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "\"Run Steps 0 to 4 in order (locate, detect, ask, write, report)\" leaves out Steps 1.5 and 1.6 and the three early-stop branches in Step 1 (headless, --check-only, migrate-only and stale-provider-only), so the routing exists only inside long paragraphs",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Replace line 12 with a short ordered checklist: Step 0 locate; Step 1 detect, then stop for headless, --check-only, migrate-only or stale-provider-only requests; Step 1.5 catalog; Step 1.6 optional skill sort; Step 2 ask; Step 3 write; Step 4 report and clean up $SCRATCH.",
+    "id": "D8-1",
+    "line": 12,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-three",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 87.2,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 16,
+   "D2": 13,
+   "D3": 14,
+   "D4": 14,
+   "D5": 12,
+   "D6": 14,
+   "D7": 13,
+   "D8": 13
+  },
+  "skill": "ai-kit-spec-config",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 109
+ }
+}

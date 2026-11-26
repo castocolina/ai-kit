@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=12 sha256=23b09a529c6d21c0f1669ed88abecc0a5c18ac5babc2f57fa4aca01abaa84b47
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=13 sha256=dbd96b003c2c14f0c56fa59f9c91c0d553eacd804ca28a903f37ac471f10a6ba
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v12).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v13).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
@@ -146,7 +146,6 @@ const CONFIG = {
     "CODEX_THREAD_ID",
     "CODEX_VERSION",
     "CURSOR_AGENT",
-    "GROK_AGENT",
     "OPENCODE",
     "PI_CODING_AGENT"
   ],

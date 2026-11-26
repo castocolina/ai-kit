@@ -1,0 +1,130 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=182s out=324837 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_ded95489cffedqOfDzcFvx6biD applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-spec-config\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":18,\"D2\":14,\"D3\":15,\"D4\":15,\"D5\":13,\"D6\":15,\"D7\":15,\"D8\":15},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":120,\"max_total\":125,\"percent\":96.0,\"grade\":\"A\",\"findings\":[{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":307,\"evidence\":\"The body is ~41.9k characters (about 10,500 tokens), roughly twice the spec's about-5,000-token guidance for the SKILL.md layer, and point-of-use detail duplicates reference-level content inline, e.g. line 307: \\\"When several CLIs are nested, their environment markers accumulate and the command returns the first marker in a fixed precedence (pi > opencode > cursor > codex > claude); it does not verify which CLI is the immediate parent.\\\" restates the Gotcha at line 50.\",\"fix\":\"Move the Step 2.7 host-precedence paragraph and similar point-of-use restatements into references/ (a session-default section of references/wizard-flow.md, or references/runtime-ids.md), keeping the one-line Gotcha and the existing read-trigger inline; record each move in the removal record.\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":52,\"evidence\":\"Invariants are stated two or three times across the body: the timeout-tier sum appears in the Gotchas (line 52, \\\"timeout_tiers are cumulative attempts, so the default can run 60 minutes, not 30\\\") and again at Step 2.8 (line 342, \\\"the worst case is their **sum** (60 minutes), not a 30-minute ceiling\\\"); the replace-consent rule appears in the NEVER list (line 28) and twice more at Step 2.1/Step 3 (lines 196-199, 363-364).\",\"fix\":\"Keep the one-line rule at its point of decision and the Gotcha, and replace each additional full restatement with a short pointer to it; record each removal in the removal record.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-config/SKILL.md\",\"line\":353,\"evidence\":\"The body is mechanics-dense: the judgment prompts that transfer expert weighing live only in references/wizard-flow.md (step 3's \\\"is this lane's quota reliable enough to be a primary pick, or only worth keeping as a fallback?\\\" and step 9's order weighing), while Step 3 opens straight with \\\"Build the JSON shape python3 \\\"$TOOLS_PY\\\" render-toml expects\\\".\",\"fix\":\"Add one judgment line at Step 3 mirroring wizard-flow.md step 3/9 (before building the JSON, confirm each lane's ladder position still matches its quota reliability and strength for its purpose), and keep it to one line so the mindset travels with the mechanics.\"}]}"
+  }
+ ],
+ "digest": "88ca35fad1cb02521d11409c8c1d90986b4210ab7b1b9f0b571828b54b2c632b",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "6ea8501f787b45784deeb066b2a9c0b2e473e656d03aa342f54e4153130d889f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "39.1.3",
+ "modules": [
+  "tests/test_ai_kit_spec_check_providers.py",
+  "tests/test_ai_kit_spec_runtimes_table.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_arch_no_grok_runtime.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_role_orders.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_spec_chain_text.py",
+  "tests/test_spec_config_catalog_text.py",
+  "tests/test_spec_config_flow_text.py",
+  "tests/test_spec_config_lane_json.py"
+ ],
+ "prompt_sha256": "ae0cbe43a6f09b5b291a2c19174fec423d56bba43d8ec7c335eacc42a2a5f231",
+ "round": 2,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-spec-config",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D5",
+    "evidence": "The body is ~41.9k characters (about 10,500 tokens), roughly twice the spec's about-5,000-token guidance for the SKILL.md layer, and point-of-use detail duplicates reference-level content inline, e.g. line 307: \"When several CLIs are nested, their environment markers accumulate and the command returns the first marker in a fixed precedence (pi > opencode > cursor > codex > claude); it does not verify which CLI is the immediate parent.\" restates the Gotcha at line 50.",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Move the Step 2.7 host-precedence paragraph and similar point-of-use restatements into references/ (a session-default section of references/wizard-flow.md, or references/runtime-ids.md), keeping the one-line Gotcha and the existing read-trigger inline; record each move in the removal record.",
+    "id": "D5-1",
+    "line": 307,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "Invariants are stated two or three times across the body: the timeout-tier sum appears in the Gotchas (line 52, \"timeout_tiers are cumulative attempts, so the default can run 60 minutes, not 30\") and again at Step 2.8 (line 342, \"the worst case is their **sum** (60 minutes), not a 30-minute ceiling\"); the replace-consent rule appears in the NEVER list (line 28) and twice more at Step 2.1/Step 3 (lines 196-199, 363-364).",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Keep the one-line rule at its point of decision and the Gotcha, and replace each additional full restatement with a short pointer to it; record each removal in the removal record.",
+    "id": "D1-1",
+    "line": 52,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "The body is mechanics-dense: the judgment prompts that transfer expert weighing live only in references/wizard-flow.md (step 3's \"is this lane's quota reliable enough to be a primary pick, or only worth keeping as a fallback?\" and step 9's order weighing), while Step 3 opens straight with \"Build the JSON shape python3 \"$TOOLS_PY\" render-toml expects\".",
+    "file": "skills/ai-kit-spec-config/SKILL.md",
+    "fix": "Add one judgment line at Step 3 mirroring wizard-flow.md step 3/9 (before building the JSON, confirm each lane's ladder position still matches its quota reliability and strength for its purpose), and keep it to one line so the mindset travels with the mechanics.",
+    "id": "D2-1",
+    "line": 353,
+    "severity": "low"
+   }
+  ],
+  "grade": "A",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 96.0,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 18,
+   "D2": 14,
+   "D3": 15,
+   "D4": 15,
+   "D5": 13,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "skill": "ai-kit-spec-config",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 120
+ }
+}

@@ -209,7 +209,7 @@ each setting the entry names (`--effort`, `--context`, `--escalate-runtime`, `--
 and the entry's timeout. A reviewer passes no `--session-id`, so each review starts a fresh
 session; its status line still prints the `session=` it used. A `custom` entry (a `command`, no `runtime`) is rendered by `render_reviewer_command`
 *after* the tooling guidance is prefixed onto the prompt, then run by the fixed-argv launcher on
-the same supervision core. That ordering is load-bearing for a custom entry: some of them (grok)
+the same supervision core. That ordering is load-bearing for a custom entry: some of them (for example `my-cli -p {prompt} -m {model}`)
 inline the prompt via `{prompt}` rather than reading stdin, so guidance composed after the render
 would never reach them, and pre-rendering the argv yourself bypasses the single split point
 (templates become argv the way a shell splits words; `{prompt}` is one argument with no extra

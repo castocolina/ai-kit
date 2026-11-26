@@ -39,7 +39,6 @@ _SCRUB_NAMES = {
     "PI_CODING_AGENT",
     "CODEX_THREAD_ID",
     "CODEX_SANDBOX",
-    "GROK_AGENT",
     "CODEX_VERSION",
 }
 
@@ -80,18 +79,18 @@ class TestRuntimeTable(unittest.TestCase):
     def test_ids_follow_host_precedence_and_known_clis(self):
         self.assertEqual(
             list(detection.RUNTIMES),
-            ["pi", "opencode", "cursor", "codex", "claude", "copilot", "grok"],
+            ["pi", "opencode", "cursor", "codex", "claude", "copilot"],
         )
         self.assertEqual(detection.KNOWN_CLIS, tuple(detection.RUNTIMES))
-        self.assertFalse(detection.RUNTIMES["grok"].runner)
         self.assertEqual(detection.RUNTIMES["cursor"].model_suffix, r"\[[^\]]*\]$")
 
-    def test_grok_agent_is_never_a_detected_host(self):
+    def test_unknown_signal_is_never_a_detected_host(self):
         self.assertEqual(detection.detect_current_runtime({"GROK_AGENT": "1"}), "unknown")
+        self.assertEqual(detection.detect_current_runtime({"GROK_AGENT": ""}), "unknown")
 
-    def test_scrub_set_keeps_the_same_eleven_names(self):
+    def test_scrub_set_keeps_the_same_ten_names(self):
         self.assertEqual(detection.HOST_SIGNAL_ENV_VARS, _SCRUB_NAMES)
-        self.assertEqual(len(detection.HOST_SIGNAL_ENV_VARS), 11)
+        self.assertEqual(len(detection.HOST_SIGNAL_ENV_VARS), 10)
 
     def test_codex_labels_are_live_verified(self):
         labels = dict(detection.RUNTIMES["codex"].host_signals)
@@ -410,7 +409,7 @@ class TestLegacyEntryPoints(unittest.TestCase):
             host_fakes.write_cbm_registration(tmp, ["cursor"])
             self.assertEqual(
                 detection.find_code_index_alternative(
-                    "grok", "grok-4.6", snapshot, {"HOME": tmp}),
+                    "placeholder-cli-1", "grok-4.6", snapshot, {"HOME": tmp}),
                 "cursor",
             )
 
@@ -614,7 +613,7 @@ def model_suffix_mismatches(text):
     """Runtimes whose template modelSuffix source differs from the Python table."""
     suffixes = template_model_suffixes(text)
     names = set(suffixes) | {
-        name for name, spec in detection.RUNTIMES.items() if spec.runner
+        name for name in detection.RUNTIMES
     }
     bad = []
     for name in sorted(names):
@@ -666,7 +665,7 @@ def template_bins_and_list_argv(text):
 def binary_and_listing_mismatches(text):
     """Runner runtimes whose template bins or listing argv differ from the Python table."""
     found = template_bins_and_list_argv(text)
-    names = set(found) | {name for name, spec in detection.RUNTIMES.items() if spec.runner}
+    names = set(found) | set(detection.RUNTIMES)
     bad = []
     for name in sorted(names):
         spec = detection.RUNTIMES.get(name)
@@ -837,7 +836,9 @@ REWRITTEN = [
 # The canonical paragraph describes dispatch, so only the skills that do dispatch carry it.
 # curated-config is checked for forbidden tokens only.
 # The superpowers adapter points at the contract instead of restating it.
-PAIR_RULE_SKILLS = ["skills/ai-kit-spec-review/SKILL.md", "skills/ai-kit-spec-config/SKILL.md"]
+# Loop 39.1.3: spec-config keeps the paragraph in the reference its Step 2.7 must read.
+PAIR_RULE_SKILLS = ["skills/ai-kit-spec-review/SKILL.md",
+                    "skills/ai-kit-spec-config/references/session-default.md"]
 REFERENCES = [
     "skills/ai-kit-spec-review/references/cross-ai-dispatch.md",
     "skills/ai-kit-spec-review/references/reviewer-prompts.md",
@@ -846,7 +847,6 @@ REFERENCES = [
     "skills/ai-kit-spec-review/references/cli-profiles/codex.md",
     "skills/ai-kit-spec-review/references/cli-profiles/cursor.md",
     "skills/ai-kit-spec-review/references/cli-profiles/opencode.md",
-    "skills/ai-kit-spec-review/references/cli-profiles/grok.md",
     "skills/ai-kit-spec-config/references/cli-model-selection.md",
     "skills/ai-kit-spec-execute-superpowers/references/escalation.md",
     "skills/ai-kit-spec-execute-superpowers/references/design-notes.md",

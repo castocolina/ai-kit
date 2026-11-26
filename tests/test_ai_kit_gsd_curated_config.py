@@ -770,8 +770,20 @@ class TestReviewerSlug(unittest.TestCase):
 
     def test_id_matches_the_legacy_name_and_unknown_names_are_none(self):
         self.assertEqual(cross_ai_build.reviewer_slug("cursor"), "cursor")
-        self.assertIsNone(cross_ai_build.reviewer_slug("grok"))
+        self.assertIsNone(cross_ai_build.reviewer_slug("placeholder-cli-1"))
         self.assertIsNone(cross_ai_build.reviewer_slug("codex"))
+
+
+class TestRejectExecuteCli(unittest.TestCase):
+    def test_removed_runtime_is_refused_with_the_shared_removal_message(self):
+        detection = importlib.import_module("ai_kit_spec.detection")
+        message = detection.removed_runtime_message("grok")
+        assert message is not None
+        self.assertTrue(message.startswith("runtime 'grok' was removed from ai-kit"))
+        self.assertEqual(cross_ai_build.reject_execute_cli("grok"), message)
+
+    def test_supported_runtime_is_not_refused(self):
+        self.assertIsNone(cross_ai_build.reject_execute_cli("pi"))
 
 
 class TestApplyExecutionCli(unittest.TestCase):
@@ -1153,13 +1165,13 @@ class TestApplyReviewCli(unittest.TestCase):
                 ]
                 self.assertEqual(json.loads(review_writes[0][4]), ["cursor"])
 
-    def test_grok_exits_2_and_lists_reviewer_slugs(self):
+    def test_unknown_cli_exits_2_and_lists_reviewer_slugs(self):
         run = make_fake_run([])
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             exit_code = cli.main(
                 ["apply-review", "--project-dir", "/fake/project",
-                 "--cli", "grok", "--model", "m"],
+                 "--cli", "placeholder-cli-1", "--model", "m"],
                 which_fn=_which_stub(),
                 run_fn=run,
                 env_fn=self.env_fn,

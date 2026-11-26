@@ -366,6 +366,7 @@ later unit's carried amendment adds to this file. Live facts: `37-SPEC.md` Backg
   amendment names (38.1 D-30 lists grok for `tests/fixtures/cli_help/`; that entry is superseded too, handed to 38.1 below).
   Existing grok code stays (the run's rail); Phase 39.1 removes the runtime (RUN-15). This file had no grok mention on this
   branch when amended. Owner directive (2026-11-20).
+  *(amended 2026-11-23, 39.1: Phase 39.1 removed the grok runtime code this note kept; grok models stay usable through opencode, pi and cursor-agent)*
 
 Handoffs added 2026-11-21 (the full list with the facts is in `37-DISCUSSION-LOG.md`, update of 2026-11-21):
 

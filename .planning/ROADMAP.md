@@ -127,7 +127,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 38: Runner hardening and run safety** - Idle watchdog, the Phase 25 cleanup, a run lock with a tree baseline, and a plan-versus-commits check before done (completed 2026-11-22)
 - [x] **Phase 38.1: Runner error classification and retry policy (INSERTED)** - Wider error catalogue, stdout limit matching, router cooldowns and the owner's retry policy (completed 2026-11-23)
 - [x] **Phase 39: Lane capability blocks and lens skills** - Each lane is told only the tools it really has; lens skills reach reviewers (completed 2026-11-23)
-- [ ] **Phase 39.1: Remove the grok runtime (INSERTED)** - The grok CLI runtime leaves detection, command building, the runner table, profiles, docs and tests; its models stay reachable through opencode, pi and cursor-agent *(inserted 2026-11-19, owner decision)*
+- [x] **Phase 39.1: Remove the grok runtime (INSERTED)** - The grok CLI runtime leaves detection, command building, the runner table, profiles, docs and tests; its models stay reachable through opencode, pi and cursor-agent *(inserted 2026-11-19, owner decision)*
 - [ ] **Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)** - The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks *(inserted 2026-11-23, owner decision)*
 - [ ] **Phase 40: Resilient review sized by jev** - A failing lane no longer ends a review; jev sizes and classifies
 - [ ] **Phase 41: Superpowers adapter refactor with spec-config handoff** - One resume path, one stop path, session-model fallback, complete executor briefs
@@ -1013,7 +1013,20 @@ Plans:
   3. The "grok is not a target" notes of Phases 36, 37 and 38.1 are superseded by this removal, and the pending todo "Cursor subagents pinned to non-fast composer-2.5 and grok" is re-read: its grok half (a model, not the runtime) is kept or dropped explicitly.
   4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 
-**Plans**: TBD
+**Plans**: 13/13 plans complete
+- [x] 39.1-01-PLAN.md (wave 1): unknown-runtime pins, `REMOVED_RUNTIMES` and message helper, stale lane dropped at load after the layer merge, refused at save
+- [x] 39.1-02-PLAN.md (wave 2): `build-command` and `detect-runtimes` report the removed runtime; grok command builder deleted; config-status and silent previews
+- [x] 39.1-03-PLAN.md (wave 3): grok table row removed with every mirror list (host CLIs, scrub signals, template `scrubEnv`, drift exceptions)
+- [x] 39.1-04-PLAN.md (wave 4): `runner` field, `_RUNNER_RUNTIMES` and runner-formula branches deleted (D-01)
+- [x] 39.1-05-PLAN.md (wave 5): skill text: ai-kit-spec-config, ai-kit-spec-review-checklist, model selection, resolution stops
+- [x] 39.1-06-PLAN.md (wave 6): grok CLI profile deleted; cursor profile, dispatch reference and code comments reworded
+- [x] 39.1-07-PLAN.md (wave 7): spec-review tests use invented ids instead of grok as a runtime
+- [x] 39.1-08-PLAN.md (wave 8): curated-config fixture loses its grok runtime row; tests use an invented id
+- [x] 39.1-09-PLAN.md (wave 9): arch guard against grok returning as a runtime, with non-vacuity class
+- [x] 39.1-10-PLAN.md (wave 10): dated amendments in 36, 37 and 38.1 documents; todos resolved
+- [x] 39.1-11-PLAN.md (wave 11): template 12 to 13, live copy re-rendered, shard times re-recorded (D-05)
+- [x] 39.1-12-PLAN.md (wave 12): judge loop for the changed skills (orchestrator action)
+- [x] 39.1-13-PLAN.md (wave 13): closing gate: installed-layout check, suites, RUN-15 checked (orchestrator action)
 
 ### Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)
 
@@ -1384,7 +1397,7 @@ Open entries only. An entry a v2.0 requirement absorbs moves to **Absorbed into 
 (moved there 2026-11-07: 999.2, 999.5, 999.7 to 999.17 and 999.19), with the requirement and phase
 that track it. 999.6 stays open (secondary runtime); 999.20 (Claude extra-usage segment) was added
 2026-11-07, 999.21 (runner temp directories) at the Phase 32 close-out, and 999.22 (headless installer agents) at the
-32.1 discuss, 999.23 (the checklist's open judge notes) at the 32.2 close-out, and 999.24 (whether codebase-memory-mcp makes graphify redundant) at the 32.5 plan. The Playwright MCP Chrome path row in 999.1 is
+32.1 discuss, 999.23 (the checklist's open judge notes) at the 32.2 close-out, and 999.24 (whether codebase-memory-mcp makes graphify redundant) at the 32.5 plan; 999.26 and 999.27 (two CLI checks behind skill-text limits) came from loop 39.1 round 3 on 2026-11-24. The Playwright MCP Chrome path row in 999.1 is
 the FEAT-06 owner decision; the whole-tree layering suite once named 999.3 is ARCH-01 (Phase 52).
 Finished entries move to **Done** at the end of this section, with the date and what delivered them.
 
@@ -1484,6 +1497,46 @@ Plans:
 ### Phase 999.25: Free-tier fallback lanes beyond opencode (BACKLOG)
 
 **Goal:** [Captured for future planning] A free opencode lane has a usage limit it shares across its free models (Phase 38.1's blocked-until record and Phase 36's different-pool fallback handle it), so a free lane needs a fallback from another pool, and the runner supports no free route except opencode's today. Evaluate and, when it pays, add free-tier lanes from other providers, named by the owner as the first two to check: OpenRouter's free models (documented limits: 20 requests per minute, 50 requests per day with under 10 credits ever bought and 1000 per day with at least 10, HTTP 429 with `X-RateLimit-Reset` in milliseconds since the epoch and a `Retry-After` header, and a readable counter at `GET /api/v1/key`) and Gemini's free tier (per-model limits listed on the provider's rate-limit page, daily quota reset at midnight Pacific time, error `429 RESOURCE_EXHAUSTED`; whether free-tier prompts may be used by the vendor was not checked and must be before any code is sent). For each, record: which runtime reaches it (a host the runner already has, or a new row through `--argv-file`), the machine-readable reset it gives (it feeds the same blocked-until record instead of a 24-hour default), its data-use statement (Phase 36's confirmation applies), and the pool key it takes, with every figure labeled verified or reported with its read date. A route that needs a new runner formula, a live probe or a key becomes its own phase with the owner's decision; this entry adds no lane. Source and labels: `.planning/research/2026-11-16-opencode-free-models.md` (section 4, read 2026-11-16; other vendors such as Groq, Cloudflare and Mistral were not researched there). Added 2026-11-16 (owner decision, free-lane pool study).
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.26: The trust walk checks the trusted digest, not only the preview lines (BACKLOG)
+
+**Goal:** [Captured for future planning] `trust-local --show` prints the canonical trust digest that `trust-local` will record (both roles, every field the digest covers), and `trust-local` accepts that digest back (for example `--expect-digest <sha256>`) and records nothing when the file's current canonical bytes give another digest, printing the new preview instead. The ai-kit-spec-config trust walk (`references/trust-flow.md` step 7) then passes the shown digest instead of comparing preview lines, so a change to a field the preview does not print (an execute entry that shares a review entry's key, for example) can no longer be trusted unseen between the preview and the trusting call. A scratch-HOME test changes such a field between the two calls and shows the refusal. Found 2026-11-24 in loop 39.1 round 3 (referee-one D8-3); the skill text states the current limit until then.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.27: probe-quota checks a consent fingerprint of what it spawns (BACKLOG)
+
+**Goal:** [Captured for future planning] The `--check-only` write-risk consent covers exactly the invocations `probe-quota` then runs: the preview prints a fingerprint of each listed lane's resolved argv and its inputs (custom-command placeholders filled from other lane fields included), and `probe-quota` accepts it back (for example `--expect-fingerprint`) and aborts before any spawn when the roster it resolves gives another fingerprint. `references/check-only.md` then passes the fingerprint instead of re-running the snippet and comparing key, runtime, model and command. A scratch-HOME test with a fake CLI changes a placeholder field between the preview and the probe and shows the abort with no spawn. Found 2026-11-24 in loop 39.1 round 3 (referee-one D8-5); the skill text states the current limit until then.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.28: Fold checkpoints keep whole commit titles and keep a plan's paired files together (BACKLOG)
+
+**Goal:** [Captured for future planning] A GSD fold checkpoint names each folded commit with a complete subject line (the commit subject of the plan's own commits or a shortened title the namer rewrites, never a task name cut with `...`), and the rules grouping never splits one original commit across two folded commits when that leaves an intermediate commit that fails the project's own checks (phase 39.1 plan 11: the template-13 bump and the re-rendered live runner copy landed in two folded commits, so the first pairs template 13 with live copy 12 and fails `make check-dogfood`). A fold test over a fixture plan shows whole titles and keeps a commit's files in one folded commit; a reword path for already-folded titles is part of the flow, so a branch never needs a hand rebase. Found 2026-11-24 in the phase 39.1 run (eleven truncated titles on the unit branch).
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.29: A read-only subcommand prints the --check-only probe set (BACKLOG)
+
+**Goal:** [Captured for future planning] `ai-kit-spec.py` gains a read-only subcommand (for example `probe-keys --cwd <project root> --role both`) that prints the keys `probe-quota` would spawn for, each with its runtime, model, command and custom flag, from the same resolve and route calls `probe-quota` makes, with no model call and no write. `skills/ai-kit-spec-config/references/check-only.md` then calls it instead of its inline `python3 -c` snippet, which imports the module's private helpers (`_probe_lanes`, `_route_reviewers`) and breaks on a rename there. A test runs the subcommand on a scratch roster and compares its list with the keys a faked `probe-quota` run spawns. Found 2026-11-24 in loop 39.1.1 round 3 (referee-two D6-1); the reference states the current limit until then.
 **Requirements:** TBD
 **Plans:** 0 plans
 

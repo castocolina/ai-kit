@@ -50,7 +50,6 @@ from ai_kit_spec.catalog_facts import FactsInputs
 from ai_kit_spec.catalog_labels import now_iso
 from ai_kit_spec.commands import (
     ResolvedReviewer,
-    build_grok_command,
     execute_cli_error,
     render_reviewer_command,
     split_command_template,
@@ -74,6 +73,7 @@ from ai_kit_spec.config_io import (
     resolve_timeout_tiers,
 )
 from ai_kit_spec.detection import (
+    CLAUDE_MODEL_ALIASES,
     LOOPBACK_URLOPEN,
     RUNTIMES,
     OpencodeSeams,
@@ -86,6 +86,7 @@ from ai_kit_spec.detection import (
     find_code_index_alternative,
     group_models_by_family,
     normalize_runtime_keys,
+    removed_runtime_message,
     runtime_id,
 )
 from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
@@ -238,7 +239,7 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
     p_catalog.add_argument(
         "--extra-candidate", action="append", default=[], metavar="CLI:MODEL_ID",
         help="repeatable; a wizard-typed single-provider-CLI candidate not yet in "
-             "the config.toml [lanes] roster (e.g. a first-time codex/grok setup with "
+             "the config.toml [lanes] roster (e.g. a first-time codex setup with "
              "nothing registered yet) -- still goes through the same matching/enrichment "
              "path as anything else.")
     p_catalog.add_argument(
@@ -364,6 +365,8 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
 
     p_vendor = sub.add_parser("infer-vendor")
     p_vendor.add_argument("--model", required=True)
+    p_vendor.add_argument("--runtime", default="",
+                          help="the lane's runtime; a claude short alias resolves to anthropic")
 
     p_build_cmd = sub.add_parser("build-command")
     p_build_cmd.add_argument("--runtime", "--cli", dest="runtime", required=True,
@@ -556,6 +559,7 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
                                         opencode=OpencodeSeams(deps.popen_fn, deps.urlopen_fn,
                                                                deps.env_fn()))
     snapshot["clis"].update(detect_unlisted_runtimes(args.extra_runtime, deps.which_fn))
+    _drop_removed_runtimes(args.extra_runtime)
     runner_facts.refresh_fact(snapshot, deps.which_fn, deps.run_fn)
     save_path = args.if_stale or args.save
     if save_path:
@@ -565,8 +569,17 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
 
 
 
+def _drop_removed_runtimes(ids) -> None:
+    """Say on stderr, once per id, why a removed runtime id named with --runtime is not detected
+    (39.1 D-02); detect_unlisted_runtimes already leaves it out of the snapshot."""
+    for rid in dict.fromkeys(ids):
+        message = removed_runtime_message(rid)
+        if message is not None:
+            print(f"detect-runtimes: {message}", file=sys.stderr)
+
+
 def _custom_entry_runtime(reviewer: dict) -> str | None:
-    """The table runtime whose binary a custom entry's `{model}` command launches (a grok
+    """The table runtime whose binary a custom entry's `{model}` command launches (a custom
     entry stores a command and no runtime), else None."""
     command = reviewer.get("command")
     if reviewer.get("runtime") or not isinstance(command, str) or "{model}" not in command:
@@ -582,7 +595,9 @@ def _custom_entry_runtime(reviewer: dict) -> str | None:
 def _discovered_catalog_candidates(
     runtimes: dict, args: argparse.Namespace, deps: CliDeps
 ) -> list:
-    clis = normalize_runtime_keys(runtimes.get("clis"))
+    # A cache written before 39.1 can still hold a removed runtime's row (39.1 D-02).
+    clis = {rid: data for rid, data in normalize_runtime_keys(runtimes.get("clis")).items()
+            if removed_runtime_message(rid) is None}
     discovered = [
         {"runtime": cli_name, "model_id": model_id}
         for cli_name, cli_data in clis.items()
@@ -602,7 +617,10 @@ def _discovered_catalog_candidates(
                 discovered.append({"runtime": runtime, "model_id": reviewer["model"]})
     for raw in args.extra_candidate:
         cli_name, _, model_id = raw.partition(":")
-        if cli_name and model_id:
+        removed = removed_runtime_message(cli_name)
+        if removed is not None:
+            print(f"fetch-model-catalog: {removed}", file=sys.stderr)
+        elif cli_name and model_id:
             discovered.append({"runtime": cli_name, "model_id": model_id})
     return discovered
 
@@ -1187,13 +1205,22 @@ def _cmd_trust_local(args: argparse.Namespace, deps: CliDeps) -> int:
     return 0
 
 def _cmd_infer_vendor(args: argparse.Namespace, deps: CliDeps) -> int:
-    print(json.dumps({"vendor": infer_vendor_from_model(args.model)}))
+    vendor = infer_vendor_from_model(args.model)
+    # A short alias carries no vendor prefix; on the claude runtime it names an Anthropic model.
+    if (vendor is None and runtime_id(args.runtime) == "claude"
+            and args.model in CLAUDE_MODEL_ALIASES):
+        vendor = "anthropic"
+    print(json.dumps({"vendor": vendor}))
     return 0
 
 def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
+    removed = removed_runtime_message(args.runtime)
+    if removed is not None:
+        print(f"build-command: {removed}", file=sys.stderr)
+        return 1
     rid = runtime_id(args.runtime)
     row = RUNTIMES.get(rid)
-    if row is not None and row.runner:
+    if row is not None:
         spec = spec_with_effort(rid, "{model}",
                                 "exec" if args.role == "execute" else "review", 600, {
             "effort": args.effort, "service_tier": args.service_tier,
@@ -1204,12 +1231,7 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
         print(f"build-command: a config.toml lane stores runtime and model for {rid}; "
               f"the runner builds this argv at dispatch", file=sys.stderr)
         return 0
-    if rid == "grok":
-        print(json.dumps({"kind": "custom", "command": build_grok_command()}))
-        print("build-command: grok has no runner formula; store this as a custom entry's "
-              "command with no runtime (trust-gated like any custom command)", file=sys.stderr)
-        return 0
-    print(f"build-command: {rid} has no runner formula; register it as a custom entry with a "
+    print(f"build-command: {rid} is not in the runtime table; register it as a custom entry with a "
           f"hand-written command", file=sys.stderr)
     return 1
 

@@ -87,8 +87,8 @@ use of `cursor-agent`) can change it first.
 multiple `gpt-5.x-codex-*`/`gpt-5.6-*` tiers (OpenAI), `claude-opus-5-*`/
 `claude-sonnet-5-*`/`claude-fable-5-*` (Anthropic, several effort tiers
 each, `-fast` variants, some with `1M`/thinking context variants),
-`cursor-grok-4.5/4.6-*` (xAI, Cursor's own routing prefix — not the
-standalone `grok` CLI), `composer-2.5*` (Cursor's own model),
+`cursor-grok-4.5/4.6-*` (xAI, Cursor's own routing prefix),
+`composer-2.5*` (Cursor's own model),
 `gemini-3.7-flash-high` (Google), `glm-5.2-high`/`glm-5.2-max` (Zhipu),
 `kimi-k3-low`/`-high`/`-max`, `kimi-k2.7-code` (Moonshot). Vendor
 attribution for all of these is in `ai_kit_spec/vendor.py`'s
