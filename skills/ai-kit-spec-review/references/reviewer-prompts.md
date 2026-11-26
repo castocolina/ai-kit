@@ -9,6 +9,28 @@ every external CLI can do; no skill-invocation tool is assumed.
 **Paths only, always:** never put the document content, prior reports, the conversation, or the
 author's intent into either prompt.
 
+**One archetype value or one line per document.** `<ARCHETYPE>` is the single value when every
+document under review has the same archetype(s), always so for one document. When they differ,
+substitute `per document:` followed by one line per DOC_PATHS entry, `<path>=<archetype(s)>`
+(the form of the resume payload's `doc_archetypes`; a fused document joins its archetypes with
+`+`, e.g. `intent+requirements+design`), so each file is reviewed only at its own
+ceiling. `<FRAMEWORK_PROFILE_PATH>` stays one value: Step 0.5 resolves one framework per
+invocation. Step 3 binds each finding to its document's archetype from the same lines, and a
+resume restores them from `doc_archetypes`. With more than one file under review, both
+templates make every finding's `Location` lead with the file's path, and on a fused document
+(one or several files) they add the finding's archetype, `Location: <path> [<archetype>]:
+<section/lines>`; the merge keys on the Location verbatim, so findings on different files never
+fuse, and Step 3 surfaces a finding whose document or archetype it cannot tell instead of
+dispatching it. Example, a GSD phase's context reviewed beside its
+plan (the plan checklist never reaches the context file):
+
+```
+- ARCHETYPE = per document:
+  /work/repo/.planning/phases/<phase>/NN-CONTEXT.md=intent
+  /work/repo/.planning/phases/<phase>/NN-01-PLAN.md=plan
+- FRAMEWORK_PROFILE_PATH = /abs/path/to/frameworks/gsd.md
+```
+
 ## Subprocess route (`subprocess`, `unverified`, `custom`)
 
 Write this text to `$RUN_TMP_DIR/iter<N>-<key>-prompt.txt` with the host's file-write tool,
@@ -37,7 +59,11 @@ ARCHETYPE is the ceiling per document: judge an upstream doc (e.g.
 intent) only at its own level — never demand downstream detail
 (tasks, exact files, interfaces) it isn't meant to have.
 Emit the report following that skill's Output template strictly, ending
-with the ### Status: line. Do not edit any file under review.
+with the ### Status: line. Whenever more than one file is under review,
+start every finding's Location with that file's path; on a file
+reviewed at several archetypes, also name the finding's archetype in
+square brackets after the path, then a colon and the section or lines.
+Do not edit any file under review.
 ```
 
 ## Native route (fresh-context delegation)
@@ -56,7 +82,7 @@ Step 1: Read the file at <CHECKLIST_SKILL_MD> and follow it exactly (it is the
 ai-kit-spec-review-checklist skill).
 
 Step 2: The orchestrator has pre-resolved:
-- ARCHETYPE = <ARCHETYPE>  (one or more of: intent, requirements, design, plan)
+- ARCHETYPE = <ARCHETYPE>  (one or more of: intent, requirements, design, plan; or "per document:" with one <path>=<archetype(s)> line per file)
 - FRAMEWORK_PROFILE_PATH = <FRAMEWORK_PROFILE_PATH>  (a file path on disk, or "none")
 Trust these — the orchestrator has project context you don't; skip the skill's own
 detection/classification. If FRAMEWORK_PROFILE_PATH is a path, Read it: it encodes this
@@ -91,13 +117,17 @@ flag a path if it's internally inconsistent or violates a hard constraint. For c
 input, ground each reference against the root it belongs to; don't chase references across
 repos.
 
-Step 5: Apply the checklist for each ARCHETYPE (Intent / Requirements / Design / Plan), plus
+Step 5: Apply the checklist for each ARCHETYPE (Intent / Requirements / Design / Plan), to each
+file only its own archetype(s) when ARCHETYPE reads "per document", plus
 the framework conventions from the profile, plus Cross-Document Consistency if multiple files.
 ARCHETYPE is the ceiling per document: judge an upstream doc (e.g. intent) only at its own
 level — never demand downstream detail (tasks, exact files, interfaces) it isn't meant to have.
 
 Step 6: Emit the report following the skill's output template strictly. Record `<framework> ·
-<archetype(s)>` on the `### Document Type` line. End with the `### Status:` line.
+<archetype(s)>` on the `### Document Type` line. Whenever more than one file is under review, start
+every finding's Location with that file's path; on a file reviewed at several archetypes, also
+name the finding's archetype: `Location: <path> [<archetype>]: <section/lines>`. End with the
+`### Status:` line.
 
 Do not assume any context outside what you read. Do not edit any file under review.
 ```

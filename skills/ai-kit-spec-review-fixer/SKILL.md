@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-review-fixer
-description: Use when a review report from `ai-kit-spec-review-checklist` (or equivalent structured review feedback) has been produced for a design or plan document, and the document author needs to address each finding. Intended to be dispatched as a clean-context fixer subagent by an orchestrator (e.g. `/ai-kit-spec-review`). Edits the document in place, addresses every CRITICAL/HIGH finding, respects the source framework's conventions when a framework profile is provided, and produces a per-finding edit summary.
+description: Use when a review report from `ai-kit-spec-review-checklist` (or equivalent structured review feedback) has been produced for a design or plan document, and the document author needs to address each finding. Intended to be dispatched as a clean-context fixer subagent by an orchestrator (e.g. `/ai-kit-spec-review`). Edits the document in place, addresses every CRITICAL/HIGH finding, respects the source framework's conventions when a framework profile is provided, and produces a per-finding edit summary. Not for writing the review itself (that is `ai-kit-spec-review-checklist`) or for a framework-owned revision flow (a GSD plan-checker revision or a framework's own revise command).
 ---
 
 # Applying Review Feedback
@@ -19,7 +19,7 @@ The orchestrator (or invoking caller) must provide:
 
 **Refuse if any document is not on disk.** If the caller passed inline content for a "document to edit," respond with a Fix Summary using `### Status: Failure — document not on disk. Caller must persist the document and re-invoke with a path.` and emit no edits. Editing in-memory content produces a fix that vanishes the moment this subagent ends — the next iteration of review/fix will read the unfixed file and contradict itself.
 
-If any input is missing, stop and ask. Do not guess paths.
+If any input is missing, stop: you run in a clean context and cannot ask, so respond with a Fix Summary using `### Status: Failure — missing input: <input name>` with no edits, and let the caller re-invoke with it. Do not guess paths.
 
 ## Before you touch anything, ask yourself
 
@@ -33,7 +33,7 @@ For each finding in the report, before making any edit, ask:
 1. `Read` the document(s) under the report fresh from disk. Never trust in-context state.
 2. `Read` the review report verbatim.
 3. For every finding that references an external file (codebase grounding findings), `Read` that referenced file too — you cannot satisfy a "Context section must accurately describe X" finding without reading X. Resolve relative paths against the **codebase root the caller gave you** (with worktrees that root is often not your CWD), so you read the worktree's copy, not the main checkout's.
-4. Build an internal checklist: every CRITICAL and every HIGH finding becomes a task. A MEDIUM or LOW finding is a task if trivial; otherwise defer it under `Findings not yet addressed` or, when you disagree, skip it with your reason under `Findings skipped`.
+4. Build an internal checklist: every CRITICAL and every HIGH finding becomes a task, and so does every finding under the report's `### Cross-Document Consistency` heading (it carries no severity label; treat it as HIGH, apply the several-documents rule of the Editing rules, and report it with Severity `CROSS-DOC`, the tag the orchestrator's merge gives it). A MEDIUM or LOW finding is a task if trivial; otherwise defer it under `Findings not yet addressed` or, when you disagree, skip it with your reason under `Findings skipped`.
 
 ## Editing rules
 
@@ -46,6 +46,7 @@ For each finding in the report, before making any edit, ask:
 | Do not re-format, re-style, or re-flow text outside the flagged location. | Style changes hide real edits in the diff. A fixer once reflowed an entire section's bullet punctuation "for consistency" alongside a one-line wording fix — the reviewer rejected the whole diff because the real change was buried in noise, forcing a full re-review of the section instead of a two-line check. |
 | Do not edit the review report itself. | Report is read-only input. |
 | If you disagree with a CRITICAL or HIGH finding, address it anyway and note the disagreement in its `Findings addressed` line. Only a MEDIUM or LOW finding may be skipped, listed under `Findings skipped` with your reason. | Disagreement is fine; silent rejection is not, and a serious defect is never left open. |
+| When the prompt carries a `Mechanical re-pass:` line, process only the findings it names and leave every other finding of the report as the earlier pass left it: the orchestrator's advisory classifier marked each named finding mechanical after you skipped or escalated it, and a named finding is never CRITICAL or HIGH. Edit each named finding; your Escalation conditions still take precedence over that advice, so escalate or skip one again only when one of them applies or the edit is impossible, and say why on its line. | The owner gets one more pass on findings judged to be text edits without a second pass over settled ones; a second skip with no reason ends the loop with nothing fixed. |
 | A finding whose `Location:` spans several documents: when every named document was passed to you and is on disk, edit all of them in one pass so they stay consistent; when any is missing, escalate the whole finding. | A partial fix across documents leaves them inconsistent. |
 | Preserve existing formatting conventions (heading levels, list style, code fences) of the document. | The author chose them. |
 | If a framework profile was provided, keep its conventions: requirement syntax (EARS `WHEN…SHALL`, RFC-2119 SHALL), acceptance-criteria format (Given/When/Then), task-checkbox format and markers (`[P]`, `- [ ] N.N`), delta section headers (`## ADDED/MODIFIED/REMOVED`); never push implementation detail into a behavior-only spec. | The framework's rules are part of "correct" — a fix that satisfies the finding but breaks EARS or leaks impl detail just creates the next finding. |
@@ -74,7 +75,7 @@ After editing, emit a structured summary. The orchestrator parses this to decide
 <absolute path>
 
 ### Findings addressed
-- **<finding title>** — Severity: <CRITICAL|HIGH|MEDIUM|LOW>. Status: addressed. Edit: <one-sentence description of the change made, e.g. "Rewrote Context paragraph to reflect the wait-for-authorization behavior of commit-message/SKILL.md."> Section: <heading or line range>.
+- **<finding title>** — Severity: <CRITICAL|HIGH|MEDIUM|LOW|CROSS-DOC>. Status: addressed. Edit: <one-sentence description of the change made, e.g. "Rewrote Context paragraph to reflect the wait-for-authorization behavior read from the commit-work skill."> Section: <heading or line range>.
 
 ### Findings escalated
 - **<finding title>** — Severity: <X>. Reason for escalation: <one sentence>. Caller decision needed.
@@ -88,14 +89,16 @@ After editing, emit a structured summary. The orchestrator parses this to decide
 ### Status: Edits Applied | Escalation Required | No Edits | Failure
 ```
 
-Pick the Status like this: `Escalation Required` when any finding was escalated, even when others were edited (both lists are then filled); `Edits Applied` when edits were made and nothing was escalated; `No Edits` when nothing was edited and nothing escalated (every remaining finding skipped or deferred); `Failure — <reason>` only when the run could not start (a document not on disk), with no edits. After `Edits Applied` with only MEDIUM/LOW deferrals left, the reviewer can be run again; after `Escalation Required`, the caller decides.
+Pick the Status like this: `Escalation Required` when any finding was escalated, even when others were edited (both lists are then filled); `Edits Applied` when edits were made and nothing was escalated; `No Edits` when nothing was edited and nothing escalated (every remaining finding skipped or deferred); `Failure — <reason>` only when the run could not start (a document not on disk, or a missing input), with no edits. After `Edits Applied` with only MEDIUM/LOW deferrals left, the reviewer can be run again; after `Escalation Required`, the caller decides.
 
 ### Worked example
+
+An illustration from a reviewed project that has a `commit-work` skill (not a file of this repository).
 
 Finding from the report:
 > **Context section omits fallback behavior** — Severity: HIGH. Location: `## Context`, paragraph 2. Required: State that `commit-work` waits for explicit user authorization before running `git commit`; the current text implies it commits automatically.
 
-Edit made: in `## Context`, paragraph 2, changed "the skill commits the staged changes" to "the skill stages the changes and waits for explicit user authorization before running `git commit`" — matching the behavior read from `commit-work/SKILL.md` step 3.
+Edit made: in `## Context`, paragraph 2, changed "the skill commits automatically" to "the skill waits for explicit user authorization before running `git commit`" — only the behavior the finding names, confirmed by reading that project's `commit-work` SKILL.md under the codebase root (step 3); nothing else is added.
 
 Resulting summary line:
 ```

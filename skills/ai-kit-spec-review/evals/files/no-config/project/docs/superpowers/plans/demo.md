@@ -17,3 +17,7 @@
 - Modify: `src/export.py`
 
 - [ ] Return before the file write when `--dry-run` is set.
+
+### Task 3: Fold the plan's commits (ai-kit-commit-fold)
+
+- [ ] Run the ai-kit-commit-fold fold step on this plan's commits.

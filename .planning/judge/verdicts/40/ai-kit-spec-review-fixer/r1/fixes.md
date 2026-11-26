@@ -1,0 +1,9 @@
+# Loop 40 round 1 fixes: ai-kit-spec-review-fixer
+
+Decide row: `fix` (2 critical, important or high findings: referee-one 2, referee-two 0, referee-three 0). No further round (AGENTS.md fix rule); the skill's digest is stale by design until its next loop.
+
+- referee-one D8-1 (high, `SKILL.md:78`): the report's `### Cross-Document Consistency` bucket carries no severity label. Before editing step 4 now makes each of its findings a task, treated as HIGH under the several-documents editing rule, and the Fix Summary template allows Severity `CROSS-DOC` (the merge tag of `review_reports.parse_findings`). File: skills/ai-kit-spec-review-fixer/SKILL.md.
+- referee-one D8-3 (high, `SKILL.md:99`): the worked example cited `commit-work/SKILL.md`, which is not in this repository, and added a staging claim the finding never asked for. It is now labelled an illustration from a reviewed project, the edit states only the authorization wait the finding names, and the template's sample edit names the same commit-work skill (it said commit-message). File: skills/ai-kit-spec-review-fixer/SKILL.md.
+- Shared mediums fixed too (all three judges): D8-1 (referee-one D8-2) "If any input is missing, stop and ask" could not be followed by a clean-context subagent; it now returns `### Status: Failure — missing input: <input name>` with no edits, and the Status rule lists a missing input beside a document not on disk. D4-1: the description now names its near-misses (writing the review, a framework-owned revision flow); 688 characters.
+
+Tests before commit (text-only change, no new test): `bash tmp/judge-40/fix_tests.sh` (tests.test_skill_evals_shape, test_skill_text_history, test_skill_frontmatter, test_lane_failure_text, test_ai_kit_spec_review_fixer, test_cross_ai_skill_text, test_quota_policy_text, test_spec_chain_text, test_ai_kit_spec_review_checklist, test_check_dogfood, test_cross_ai_docs_text): 11/11 modules passed.

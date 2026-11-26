@@ -16,13 +16,18 @@ from ai_kit_spec import (
     config_status,
     edit_pass,
     effort_probe,
+    fold_check,
     jev_names,
+    jev_review,
     lane_effort,
+    lane_ping,
     lane_settings,
+    lane_switch,
     optional_sources,
     prompt_guard,
     propose_cmds,
     provider_check,
+    review_log,
     role_orders,
     routing,
     runner_facts,
@@ -316,6 +321,17 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
     p_merge = sub.add_parser("merge-reports")
     p_merge.add_argument("--doc-paths", required=True)
     p_merge.add_argument("reports", nargs="+", help="key=path/to/report.md")
+    p_merge.add_argument("--extra-findings", type=fold_check.read_extra_findings, default=None,
+                         help="a findings file merged under the reviewer tag fold-check; "
+                         "never a lane")
+    p_merge.add_argument("--lane-log", default=None,
+                         help="the review's round log; with it a failed lane is recorded "
+                              "and the other lanes still merge")
+    p_merge.add_argument("--round", type=int, default=None,
+                         help="the review round of these reports (needs --lane-log)")
+    p_merge.add_argument("--cwd", default=None,
+                         help="the reviewed project root; its review order sorts the Judged by "
+                              "line (needs --lane-log)")
 
     p_toml = sub.add_parser("render-toml")
     p_toml.add_argument("--catalog-path", default=None, help="model catalog for the effort check")
@@ -475,6 +491,10 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
         "--stdout-only", action="store_true",
         help="print ONLY the dispatched reviewer's own stdout and exit with its real "
              "returncode, same contract as dispatch-execute's own --stdout-only")
+    p_dispatch_reviewer.add_argument(
+        "--lane-log", default=None,
+        help="the review's round log; a failed dispatch is recorded there")
+    p_dispatch_reviewer.add_argument("--round", type=int, default=None)
 
     p_check = sub.add_parser("check-reviewer")
     p_check.add_argument("--key", default="candidate")
@@ -510,6 +530,10 @@ def _build_parser() -> argparse.ArgumentParser:
     edit_pass.register_parsers(sub)
     skill_table.register_parsers(sub)
     skill_classify.register_parsers(sub)
+    lane_ping.register_parsers(sub)
+    lane_switch.register_parsers(sub)
+    jev_review.register_parsers(sub)
+    fold_check.register_parsers(sub)
     return parser
 
 def _cmd_cache_path(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -925,9 +949,13 @@ def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
     routes = _route_reviewers(config, deps, persist=not args.no_save_runtimes, lanes=lanes)
     ladder = routing.probe_keys([entry["key"] for entry in lanes], routes)
     existing = cache_read_json(args.quota_path) or {}
+    if args.role == "review":
+        # A blocked pool is never probed; an expired pool is tried once now by one lane.
+        existing = lane_switch.blocked_cache_entries(
+            lanes, ladder, existing, time.time(), lane_switch.blocked_reader(deps))
     updated = refresh_quota_cache(
         {**config, "reviewers": lanes}, ladder, existing, QUOTA_TTL_SECONDS,
-        seams=deps.probe_seams(),
+        seams=deps.probe_seams()._replace(role=args.role),
     )
     cache_write_json(args.quota_path, updated)
     print(json.dumps(updated))
@@ -974,8 +1002,12 @@ def _cmd_resolve_reviewers(args: argparse.Namespace, deps: CliDeps) -> int:
     return 0
 
 def _cmd_merge_reports(args: argparse.Namespace, deps: CliDeps) -> int:
+    if args.lane_log is not None and (args.round is None or args.round < 1 or args.cwd is None):
+        print("merge-reports: --lane-log needs --round <N >= 1> and --cwd", file=sys.stderr)
+        return 2
     reports = []
     failing = []
+    missing = []
     for item in args.reports:
         key, _, path = item.partition("=")
         try:
@@ -983,22 +1015,54 @@ def _cmd_merge_reports(args: argparse.Namespace, deps: CliDeps) -> int:
                 text = f.read()
         except (OSError, UnicodeDecodeError):  # A-WR-05: a non-UTF-8 lane is a named Failure
             failing.append(key)
+            if not os.path.exists(path):
+                missing.append(key)
             continue
         status = report_status(text)
         if status is None or status == "failure":
             failing.append(key)
             continue
         reports.append((key, text))
+    if args.lane_log is not None:
+        return _merge_with_lane_log(args, reports, failing, missing, deps)
     if failing:
         # D-12/R7: any failing or missing lane fails the merge — the Status line is
         # printed so SKILL.md Step 2's fail-closed rule sees a Failure verdict, and
         # the non-zero exit keeps the merge out of any `&&`-chained pipeline.
         print(f"### Status: Failure — {', '.join(failing)}")
         return 1
-    merged = merge_findings(reports)
+    return _print_merged(args, reports)
+
+
+def _print_merged(args, reports: list, **lane_fields) -> int:
+    merged = merge_findings((args.extra_findings or []) + reports)
     any_source_issues = any(report_status(text) == "issues" for _, text in reports)
-    print(render_merged_report(merged, args.doc_paths, any_source_issues))
+    print(render_merged_report(merged, args.doc_paths, any_source_issues, **lane_fields))
     return 0
+
+
+def _merge_with_lane_log(args, reports: list, failing: list, missing: list, deps: CliDeps) -> int:
+    given = {key for key, _ in reports} | set(failing)
+    states = review_log.round_states(review_log.read_events(args.lane_log), args.round)
+    unmerged = [key for key, event in states.items()
+                if event["state"] == "judged" and key not in given]
+    if unmerged:
+        for key in unmerged:
+            print(f"merge-reports: lane {key} judged in round {args.round} "
+                  "but its report is not given", file=sys.stderr)
+        return 2
+    judged = review_log.record_merge(args.lane_log, args.round, [key for key, _ in reports],
+                                     [(key, key in missing) for key in failing], time.time())
+    reports = [(key, text) for key, text in reports if key in judged]
+    roster = role_orders.role_order(cfg_resolve(args.cwd, deps.env_fn(), migrate=False), "review")
+    outcome = review_log.review_outcome(review_log.read_events(args.lane_log), args.round, roster)
+    if outcome.none_judged:
+        print("### Status: Failure — not reviewed: " + ", ".join(
+            f"{key} ({reason})" for key, reason, _by, rnd in outcome.others if rnd == args.round))
+        return 1
+    return _print_merged(args, reports, judged_line=review_log.judged_line(outcome),
+                         partial=outcome.partial)
+
 
 def _checked_target(path: str) -> tuple[str, dict]:
     """The text and parsed document of a render-toml target ("" and {} when it is missing).
@@ -1337,6 +1401,29 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
     print(json.dumps(result))
     return 0
 
+def _record_dispatch(args, key: str, state: str, reason: str | None = None) -> None:
+    """A failed dispatch records its reason; a successful one (`chosen`) supersedes an earlier
+    failed attempt of the same round."""
+    if args.lane_log is not None:
+        review_log.append_event(args.lane_log,
+                                review_log.lane_event(args.round, key, state, time.time(), reason))
+
+
+def _read_dispatch_inputs(args: argparse.Namespace, reviewers: list) -> tuple | None:
+    try:
+        if args.prompt_file == "-":
+            prompt = sys.stdin.read()
+        else:
+            with open(args.prompt_file, encoding="utf-8") as f:
+                prompt = f.read()
+        timeout_tiers = [int(t) for t in args.timeout_tiers.split(",") if t.strip()]
+    except (OSError, ValueError) as exc:
+        _record_dispatch(args, reviewers[args.index].get("key", ""), "failed", "configuration")
+        print(f"dispatch-reviewer: {exc}", file=sys.stderr)
+        return None
+    return prompt, timeout_tiers
+
+
 def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     with open(args.reviewers_json, encoding="utf-8") as f:
         reviewers = json.load(f)
@@ -1344,12 +1431,13 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
         print(f"dispatch-reviewer: no reviewer at index {args.index} "
               f"({len(reviewers)} entries)", file=sys.stderr)
         return 1
-    if args.prompt_file == "-":
-        prompt = sys.stdin.read()
-    else:
-        with open(args.prompt_file, encoding="utf-8") as f:
-            prompt = f.read()
-    timeout_tiers = [int(t) for t in args.timeout_tiers.split(",") if t.strip()]
+    if args.lane_log is not None and (args.round is None or args.round < 1):
+        print("dispatch-reviewer: --lane-log needs --round <N >= 1>", file=sys.stderr)
+        return 2
+    inputs = _read_dispatch_inputs(args, reviewers)
+    if inputs is None:
+        return 1
+    prompt, timeout_tiers = inputs
     if args.tool_availability_json is not None:
         print("ai-kit-spec: --tool-availability-json is ignored: the capability block resolves "
               "tools on the lane's own PATH", file=sys.stderr)
@@ -1371,9 +1459,11 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
                                 compose_seams=capability_block.DEFAULT_SEAMS),
         )
     except LaneRefused as exc:
+        _record_dispatch(args, reviewers[args.index].get("key", ""), "failed", "configuration")
         print(json.dumps(exc.record, sort_keys=True), file=sys.stderr)
         return prompt_guard.REFUSED_EXIT
     except ValueError as exc:
+        _record_dispatch(args, reviewers[args.index].get("key", ""), "failed", "configuration")
         # Deliberately no "### Status:" substring -- same fail-closed convention
         # render-command uses: a malformed reviewer entry (bad/missing command template,
         # empty timeout tiers) leaves this reviewer's report file absent/statusless, which
@@ -1381,6 +1471,14 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
         # already handles with no new special-casing.
         print(f"dispatch-reviewer: {exc}", file=sys.stderr)
         return 1
+    return _finish_dispatch(args, reviewers[args.index].get("key", ""), result)
+
+
+def _finish_dispatch(args: argparse.Namespace, key: str, result: dict) -> int:
+    if result.get("reason") is not None:
+        _record_dispatch(args, key, "failed", result["reason"])
+    else:
+        _record_dispatch(args, key, "chosen")
     if args.stdout_only:
         sys.stdout.write(result["stdout"])
         return result["returncode"] if result["returncode"] is not None else 1
@@ -1460,6 +1558,10 @@ _COMMANDS = {
     **edit_pass.COMMANDS,
     **skill_table.COMMANDS,
     **skill_classify.COMMANDS,
+    **lane_ping.COMMANDS,
+    **lane_switch.COMMANDS,
+    **jev_review.COMMANDS,
+    **fold_check.COMMANDS,
 }
 
 def _dispatch(argv: list, deps: CliDeps) -> int:

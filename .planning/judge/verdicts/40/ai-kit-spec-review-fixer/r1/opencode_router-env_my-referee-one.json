@@ -1,0 +1,176 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=156s out=557797 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_deb61a04cffeqNF8mMlnBgLsc1 applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-spec-review-fixer\",\"judge\":\"opencode:router-env/my-referee-one\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":18,\"D2\":15,\"D3\":15,\"D4\":13,\"D5\":15,\"D6\":13,\"D7\":11,\"D8\":10},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":110,\"max_total\":125,\"percent\":88.0,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":113,\"evidence\":\"“Editing the review report | Never. Report is read-only input.” repeats line 47, and the preceding row repeats the disagreement rule at line 48. Neither adds a new failure mode or decision.\",\"fix\":\"Keep the authoritative rules and their reasons in Editing rules. Record the removal of the duplicate reminders, and update the disagreement contract test to verify the authoritative rule rather than require its repetition. Retain the distinct failure examples.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":3,\"evidence\":\"“or equivalent structured review feedback” does not distinguish this direct-edit fixer from a framework-owned revision flow, a near-miss explicitly labeled negative in the trigger suite. “Addresses every CRITICAL/HIGH finding” also omits the escalation path.\",\"fix\":\"Use when a structured review report already exists for an on-disk design, spec, or implementation plan and the author wants its findings applied directly. Make targeted edits in place using the report's Location and Required fields, preserve any supplied framework conventions, escalate decisions the author must make, and return a per-finding Fix Summary. This is the direct-edit fixer for /ai-kit-spec-review, not a reviewer, a plan executor, or a replacement for a framework's own revision flow.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":45,\"evidence\":\"“Do not add features, components, or sections not present in the original document” treats a new heading as a scope change even when a HIGH finding explicitly calls for a missing section that can be written entirely from existing decisions.\",\"fix\":\"Keep the prohibition on new features, components, and decisions. Allow a missing section only when a finding explicitly requires it and verified material already settles its content; otherwise escalate the whole finding.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-fixer/evals/evals.json\",\"line\":74,\"evidence\":\"The MEDIUM-only skip case has “files”: [] and supplies neither document text nor a report, so the requested No Edits outcome cannot be reached through the input gate. The re-evaluation case at line 30 supplies the plan inputs but omits the source that the report tells the fixer to read.\",\"fix\":\"Supply a persisted plan and a one-finding report for the skip case. For the re-evaluation case, bundle the source fixture, name it relative to the supplied fixture root in the report, and assert that the target document is unchanged.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-spec-review-fixer/evals/trigger-queries.json\",\"line\":9,\"evidence\":\"“escalate the strategy finding and fix the rest” is representative of a balanced 20-query set whose prompts are mostly short commands. Few entries test recognition in a realistic request with document paths, background, or a review-only versus apply distinction.\",\"fix\":\"Keep the 10/10 balance and replace several terse entries on each side with realistic requests that use the same spec-review vocabulary but differ in whether the user wants findings applied, a report written, or a native revision flow.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":78,\"evidence\":\"The addressed template permits only “<CRITICAL|HIGH|MEDIUM|LOW>”. The reviewer and merger also emit a separate “### Cross-Document Consistency” bucket without one of those four labels. The supplied cross-document fixture uses HIGH, so it does not demonstrate what to do with the real bucket.\",\"fix\":\"Explicitly include the Cross-Document Consistency bucket in triage, apply the existing all-or-nothing rule, and use CROSS-DOC as the summary severity for those findings, matching the merger's parsed tag.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":22,\"evidence\":\"“If any input is missing, stop and ask” leaves a clean-context dispatch without a parseable response when its report, codebase root, or supplied framework profile cannot be read. The Failure branch at line 92 only names a document not on disk.\",\"fix\":\"Preflight the required inputs and any supplied profile before editing. In delegated mode, return the Fix Summary with `### Status: Failure — <missing or unreadable input>` and no edits; ask for the missing input only in an interactive invocation.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":99,\"evidence\":\"The example turns a requirement to document an authorization wait into “the skill stages the changes and waits”, then claims this is grounded in `commit-work/SKILL.md` step 3. That source does not resolve in the repository; the related bundled commit-message fixture explicitly says never to stage files.\",\"fix\":\"Use one consistently named, bundled source for the example. Quote the verified authorization behavior and make the sample edit state only that behavior, without adding a staging claim.\"},{\"id\":\"D8-4\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-spec-review-fixer/SKILL.md\",\"line\":69,\"evidence\":\"“After editing, emit a structured summary” skips verification of the written document. In the multi-document branch at line 50, a successful write to one file followed by a failed write to the other can leave a partial fix with no recovery step.\",\"fix\":\"Before marking a finding addressed, re-read every affected location and verify the Required outcome and edit scope. For a multi-document finding, prepare all replacements before writing; if a write or read-back fails, undo only that finding's changes where safe and report any remaining partial state instead of claiming success.\"}]}"
+  }
+ ],
+ "digest": "adcc12c2fb10e41ff793e8dfacc9072e5e048d3ec9d7c7499f61233a37525fc7",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "6ea8501f787b45784deeb066b2a9c0b2e473e656d03aa342f54e4153130d889f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-one",
+ "loop": "40",
+ "modules": [
+  "tests/test_ai_kit_spec_review_fixer.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_arch_no_grok_runtime.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_wizard_pty.py"
+ ],
+ "prompt_sha256": "92c7ccc0d2c76da608a9421e2c74340c626dccb57c4112a12a278363363b4db5",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-spec-review-fixer",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "“Editing the review report | Never. Report is read-only input.” repeats line 47, and the preceding row repeats the disagreement rule at line 48. Neither adds a new failure mode or decision.",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Keep the authoritative rules and their reasons in Editing rules. Record the removal of the duplicate reminders, and update the disagreement contract test to verify the authoritative rule rather than require its repetition. Retain the distinct failure examples.",
+    "id": "D1-1",
+    "line": 113,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "“or equivalent structured review feedback” does not distinguish this direct-edit fixer from a framework-owned revision flow, a near-miss explicitly labeled negative in the trigger suite. “Addresses every CRITICAL/HIGH finding” also omits the escalation path.",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Use when a structured review report already exists for an on-disk design, spec, or implementation plan and the author wants its findings applied directly. Make targeted edits in place using the report's Location and Required fields, preserve any supplied framework conventions, escalate decisions the author must make, and return a per-finding Fix Summary. This is the direct-edit fixer for /ai-kit-spec-review, not a reviewer, a plan executor, or a replacement for a framework's own revision flow.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "“Do not add features, components, or sections not present in the original document” treats a new heading as a scope change even when a HIGH finding explicitly calls for a missing section that can be written entirely from existing decisions.",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Keep the prohibition on new features, components, and decisions. Allow a missing section only when a finding explicitly requires it and verified material already settles its content; otherwise escalate the whole finding.",
+    "id": "D6-1",
+    "line": 45,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The MEDIUM-only skip case has “files”: [] and supplies neither document text nor a report, so the requested No Edits outcome cannot be reached through the input gate. The re-evaluation case at line 30 supplies the plan inputs but omits the source that the report tells the fixer to read.",
+    "file": "skills/ai-kit-spec-review-fixer/evals/evals.json",
+    "fix": "Supply a persisted plan and a one-finding report for the skip case. For the re-evaluation case, bundle the source fixture, name it relative to the supplied fixture root in the report, and assert that the target document is unchanged.",
+    "id": "D7-1",
+    "line": 74,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "“escalate the strategy finding and fix the rest” is representative of a balanced 20-query set whose prompts are mostly short commands. Few entries test recognition in a realistic request with document paths, background, or a review-only versus apply distinction.",
+    "file": "skills/ai-kit-spec-review-fixer/evals/trigger-queries.json",
+    "fix": "Keep the 10/10 balance and replace several terse entries on each side with realistic requests that use the same spec-review vocabulary but differ in whether the user wants findings applied, a report written, or a native revision flow.",
+    "id": "D7-2",
+    "line": 9,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The addressed template permits only “<CRITICAL|HIGH|MEDIUM|LOW>”. The reviewer and merger also emit a separate “### Cross-Document Consistency” bucket without one of those four labels. The supplied cross-document fixture uses HIGH, so it does not demonstrate what to do with the real bucket.",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Explicitly include the Cross-Document Consistency bucket in triage, apply the existing all-or-nothing rule, and use CROSS-DOC as the summary severity for those findings, matching the merger's parsed tag.",
+    "id": "D8-1",
+    "line": 78,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“If any input is missing, stop and ask” leaves a clean-context dispatch without a parseable response when its report, codebase root, or supplied framework profile cannot be read. The Failure branch at line 92 only names a document not on disk.",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Preflight the required inputs and any supplied profile before editing. In delegated mode, return the Fix Summary with `### Status: Failure — <missing or unreadable input>` and no edits; ask for the missing input only in an interactive invocation.",
+    "id": "D8-2",
+    "line": 22,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The example turns a requirement to document an authorization wait into “the skill stages the changes and waits”, then claims this is grounded in `commit-work/SKILL.md` step 3. That source does not resolve in the repository; the related bundled commit-message fixture explicitly says never to stage files.",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Use one consistently named, bundled source for the example. Quote the verified authorization behavior and make the sample edit state only that behavior, without adding a staging claim.",
+    "id": "D8-3",
+    "line": 99,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“After editing, emit a structured summary” skips verification of the written document. In the multi-document branch at line 50, a successful write to one file followed by a failed write to the other can leave a partial fix with no recovery step.",
+    "file": "skills/ai-kit-spec-review-fixer/SKILL.md",
+    "fix": "Before marking a finding addressed, re-read every affected location and verify the Required outcome and edit scope. For a multi-document finding, prepare all replacements before writing; if a write or read-back fails, undo only that finding's changes where safe and report any remaining partial state instead of claiming success.",
+    "id": "D8-4",
+    "line": 69,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-one",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 88.0,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 18,
+   "D2": 15,
+   "D3": 15,
+   "D4": 13,
+   "D5": 15,
+   "D6": 13,
+   "D7": 11,
+   "D8": 10
+  },
+  "skill": "ai-kit-spec-review-fixer",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 110
+ }
+}

@@ -1,0 +1,9 @@
+# Loop 40 round 2 fixes: ai-kit-cross-ai
+
+Decide row: `fix` (3 critical, important or high findings: referee-one 3, referee-two 0, the Opus substitute for referee-three 0). No further round (AGENTS.md fix rule); the skill's digest is stale by design until its next loop. The round's validated score already met the bar (worst B 84.8, loop 39 base 84.8).
+
+- referee-one D8-1 (high, `SKILL.md:70`): the `--forbid` row now describes a post-run check: a change to a forbidden path that the prompt's `<files>` does not name gives a `forbidden_path` finding; it is not a write barrier, and a caller that needs an absolute ban needs verified write containment (runner: `forbiddenHits` skips paths the prompt names; `--forbid` adds to the seed list). File: skills/ai-kit-cross-ai/SKILL.md.
+- referee-one D8-2 (high, `SKILL.md:290`): before the hard-tier wait, a flagged `usage_limited` ai-kit-spec-review lane runs its configured fallback (`switch-lane`) first, and a successful switch schedules nothing for the original lane; otherwise the exit routing below applies. Section 8 keeps its exception sentence and now states the same order. File: skills/ai-kit-cross-ai/SKILL.md.
+- referee-one D8-3 (high, `SKILL.md:342`): the blocked-until promise is limited to quota stops on lanes that are not confirmed router lanes and have a pool; the runner tries to write the record, a busy lock or failed write prints `cross-ai: blocked-until write skipped` or `write failed`, and the caller confirms the `cross-ai: blocked-until pool=<pool>` line or runs `--blocked-status <pool>` before reporting a pool blocked (runner: `blockedAfterStop`). File: skills/ai-kit-cross-ai/SKILL.md.
+
+Tests before commit (text-only change, no test edited): `bash tmp/judge-40/fix_tests.sh tests.test_cross_ai_settings_text tests.test_arch_hardcoded_models tests.test_lane_failure_text`: 14/14 modules passed.

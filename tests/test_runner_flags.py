@@ -14,8 +14,17 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-gsd-curated-config"))
 
 from ai_kit_gsd_curated_config import cross_ai_build
-from ai_kit_spec import execute_dispatch, lane_settings, runner_dispatch, tooling_guidance
+from ai_kit_spec import (
+    effort_probe,
+    execute_dispatch,
+    lane_settings,
+    quota,
+    reviewer_dispatch,
+    runner_dispatch,
+    tooling_guidance,
+)
 from ai_kit_spec.cli import main
+from ai_kit_spec.commands import ResolvedReviewer
 
 from tests.cross_ai_selftest import _real_node_executable
 
@@ -231,6 +240,102 @@ class TestBuilderParity(unittest.TestCase):
         argv = json.loads(out.getvalue())["argv"]
         self.assertEqual(argv[argv.index("--role") + 1], "review")
         self.assertNotIn("--codex-sandbox", argv)
+
+
+POOLED = {"usage_limited": True, "pool": "fake-provider:free"}
+
+
+def _recording_runner():
+    specs = []
+
+    def fake(spec, prompt, seams):
+        del prompt, seams
+        specs.append(spec)
+        return runner_dispatch.RunnerResult(0, "Hello world!", None, None, False, ["node"], "")
+
+    return fake, specs
+
+
+def _resolved(extra):
+    return ResolvedReviewer("lane-a", "fake/placeholder-model-1", "", "pi", None, extra)
+
+
+class TestPoolFlag(unittest.TestCase):
+    def test_review_dispatch_argv_carries_the_pool_after_every_flag(self):
+        specs = []
+
+        def fake_tiers(spec, tiers, prompt, seams):
+            del tiers, prompt, seams
+            specs.append(spec)
+            return runner_dispatch.RunnerResult(0, "ok", None, None, False, [], "")
+
+        entry = {"key": "lane-a", "model": "fake/placeholder-model-1", "vendor": "",
+                 "runtime": "pi", "command": None, "extra": dict(POOLED), "route": "runner"}
+        reviewer_dispatch.dispatch_reviewer(
+            reviewer_dispatch.ReviewerDispatchSpec(
+                reviewer_entry=entry, prompt="Review this.", timeout_tiers=[30],
+                tool_availability={}, agents_tooling_path=None),
+            seams=reviewer_dispatch.ReviewerSeams(
+                runner_tiers_fn=fake_tiers,
+                compose_fn=lambda *_a, **_k: reviewer_dispatch.ComposeResult(block="")),
+        )
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(runner_dispatch.runner_flags(specs[0])[-2:],
+                         ["--pool", "fake-provider:free"])
+
+    def test_review_probe_argv_carries_the_pool_and_others_do_not(self):
+        fake, specs = _recording_runner()
+        quota.probe_reviewer_quota(
+            _resolved(dict(POOLED)), seams=quota.ProbeSeams(runner_fn=fake, role="review"))
+        self.assertEqual(runner_dispatch.runner_flags(specs[0])[-2:],
+                         ["--pool", "fake-provider:free"])
+        for role in ("execute", ""):
+            with self.subTest(role=role):
+                other, seen = _recording_runner()
+                seams = quota.ProbeSeams(runner_fn=other, role=role)
+                quota.probe_reviewer_quota(_resolved(dict(POOLED)), seams=seams)
+                self.assertIsNone(seen[0].pool)
+                self.assertNotIn("--pool", runner_dispatch.runner_flags(seen[0]))
+
+    def test_check_reviewer_never_passes_the_pool(self):
+        fake, specs = _recording_runner()
+        with redirect_stdout(io.StringIO()):
+            code = main(["check-reviewer", "--key", "lane-a", "--model",
+                         "fake/placeholder-model-1", "--runtime", "pi", "--extra-json",
+                         json.dumps(POOLED)], runner_fn=fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(specs), 1)
+        self.assertIsNone(specs[0].pool)
+        self.assertNotIn("--pool", runner_dispatch.runner_flags(specs[0]))
+        fake, specs = _recording_runner()
+        effort_probe.probe_effort(
+            _resolved(dict(POOLED)), "high", "2026-11-20", quota.ProbeSeams(runner_fn=fake),
+            preview_fn=lambda spec: [f"cross-ai: setting effort={spec.effort} applied",
+                                     f"cross-ai: model-id {spec.model}"])
+        self.assertEqual(len(specs), 1)
+        self.assertIsNone(specs[0].pool)
+
+    def test_no_pool_flag_otherwise(self):
+        for extra in ({"pool": "fake-provider:free"}, {"usage_limited": True},
+                      {"usage_limited": True, "pool": "not a pool"}):
+            with self.subTest(extra=extra):
+                fake, specs = _recording_runner()
+                quota.probe_reviewer_quota(
+                    _resolved(extra), seams=quota.ProbeSeams(runner_fn=fake, role="review"))
+                self.assertIsNone(specs[0].pool)
+                self.assertNotIn("--pool", runner_dispatch.runner_flags(specs[0]))
+        spec = runner_dispatch.spec_with_effort(
+            "pi", "fake/placeholder-model-1", "exec", 30, dict(POOLED))
+        self.assertIsNone(spec.pool)
+
+    def test_spec_without_pool_is_byte_equal(self):
+        spec = runner_dispatch.review_spec("pi", "fake/placeholder-model-1", {}, 30)
+        self.assertEqual(
+            runner_dispatch.runner_flags(spec),
+            ["--runtime", "pi", "--model", "fake/placeholder-model-1", "--role", "review",
+             "--host", "auto"])
+        pooled = runner_dispatch.review_spec("pi", "fake/placeholder-model-1", dict(POOLED), 30)
+        self.assertIsNone(pooled.pool)
 
 
 if __name__ == "__main__":

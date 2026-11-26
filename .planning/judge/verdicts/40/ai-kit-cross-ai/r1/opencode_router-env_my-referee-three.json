@@ -1,0 +1,205 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=44s out=122447 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_deb619a3dffeeEbI6aGHYKACEK applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"opencode:router-env/my-referee-three\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":16,\"D2\":13,\"D3\":13,\"D4\":15,\"D5\":8,\"D6\":13,\"D7\":12,\"D8\":12},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":102,\"max_total\":125,\"percent\":81.6,\"grade\":\"B\",\"findings\":[{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"high\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":142,\"evidence\":\"SKILL.md is 414 lines but 48534 bytes (about 12k tokens, over twice the spec's 5000-token guide); single lines run up to 2600+ characters (lines 134, 138, 142, 159), and the full hosted-lane run-safety, run-lock and idle-watchdog detail loads on every run.\",\"fix\":\"Move '### Run lock', '### Hosting in a herdr tab', '### A hosted lane's run safety' and the idle-watchdog detail into a new references/hosting-and-locks.md. In SKILL.md, keep one short summary line for each (for example, 'locked is a bare 75; never loop') and add a gated read: 'read references/hosting-and-locks.md when a lane is hosted in herdr, a lock message appears, or you set --idle-timeout'. Record the move.\"},{\"id\":\"D5-2\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":361,\"evidence\":\"'### Blocked-until record of a limited pool' and the Execute result checks table (lines 273-289) are always loaded, though only usage-limited pools and execute runs need them.\",\"fix\":\"Move both blocks to references/subprocess-quota-policy.md and a new references/execute-checks.md. Add a trigger at the matching step: 'read it when --pool is passed or a quota stop names a pool' and 'read it when an execute run prints a finding line'.\"},{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":26,\"evidence\":\"'## When to use' / 'When a run, a review or an execution step calls an external AI CLI and acts on the result.' only repeats the description, and the body is invisible before the skill triggers.\",\"fix\":\"Delete the section, since the description already carries the trigger, and record the removal.\"},{\"id\":\"D1-2\",\"dimension\":\"D1\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":59,\"evidence\":\"Reference-style catalogs inlined in the body ('--describe prints one JSON object with the setting names, reasons and states, every status with its exit...' plus the full settings-reason table at lines 245-256). These restate what `--describe` prints live and dilute the expert ratio.\",\"fix\":\"Keep the instruction 'read --describe before naming a setting a host may not take' and the few reasons a caller must act on (id_carries, mode_forbids, host_failed). Move the full reason table to a reference file that loads when a setting line reports ignored.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":16,\"evidence\":\"Process pattern (sections 1-8) with checkpoints, but the core decision path (exit code, then status, then caller action) is buried among the subsystem prose. No compact decision tree comes before the detail.\",\"fix\":\"Add a short 'Read the result in this order' checklist at the top of section 4: rc, then the AIKIT-XAI status, then retry_after_s present or bare, then the table action. Then link the detailed subsections.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":379,\"evidence\":\"The '## Pitfalls' list mixes strong items with weak ones. Several items lack the reason ('Atomic rewrites keep the file mode. Replacing a config or state file by hand can drop it.'; 'never stash' gives no why). Other key NEVERs (never schedule on an inferred reset, never answer skip) sit only in sections 4 and 7.\",\"fix\":\"Add the reason to each pitfall (for example, 'never stash: a stash hides the lane's edits from the tree check and the coverage check'). Repeat the two highest-cost NEVERs (answering skip, waiting on an inferred reset_at) as one-line pitfalls with their reasons.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":96,\"evidence\":\"Read-only review containment is left to judgment: 'A review whose child must not write needs containment verified on that host before the launch, or the isolated checkout below.' There is no concrete default check, though writes during a review are high-consequence.\",\"fix\":\"Name the default: 'run --print-argv and stop unless the capabilities line reports write value false; otherwise ask the owner for an isolated checkout'.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/trigger-queries.json\",\"line\":null,\"evidence\":\"16 trigger queries (8 positive, 8 negative), below the about-20 target. All are short, single-sentence prompts with no file paths, typos or backstory. Most eval prompts in evals.json carry only 2 assertions.\",\"fix\":\"Add 4 or more queries with realistic context, such as a pasted AIKIT-XAI line with a path, casual typos, or a GSD retry/skip/abort prompt. Add a third verifiable assertion to the 2-assertion evals, for example 'the answer does not propose another --runtime or --model'.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":150,\"evidence\":\"'GSD's workflow.cross_ai_timeout or gsd-core's 300 s default' is a vendor default stated with no source URL, no checked date and no live read instruction. Pitfalls line 384 repeats it.\",\"fix\":\"Cite the gsd-core source (file or doc URL) with the date checked, or tell the caller to read the effective value live (for example from gsd-core's config defaults) before relying on 300 s.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":159,\"evidence\":\"The idle-watchdog paragraph is one 2400-character line that lists six possible outcomes (124, waitable 75, bare 75, git_error, git_timeout, 69) inline, with no table. A caller has to parse prose to find the action, which risks misreading the dirty-tree bare 75 as waitable.\",\"fix\":\"Split the outcomes into a small table (outcome, exit, caller action) that points back to the section 4 exit table, so each branch reaches one action.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":377,\"evidence\":\"Section 8 names an exception, 'ai-kit-spec-review runs the configured fallback ... (its references/lane-failure.md)'. Pitfalls and section 7 do not say how a caller tells whether it is inside that owner-flagged path, so the absolute 'never switch' rule conflicts with the exception.\",\"fix\":\"Add one line: 'Only ai-kit-spec-review's fallback for a lane whose config sets usage_limited applies the exception; any other caller treats every stop as section 8'.\"}]}"
+  }
+ ],
+ "digest": "5f9f55fdc5d766827e009c72c9027f2bc968436ad60fadd476c0f1733713c5e5",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "6ea8501f787b45784deeb066b2a9c0b2e473e656d03aa342f54e4153130d889f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-three",
+ "loop": "40",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_arch_no_grok_runtime.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_settings_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_lane_failure_text.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_staged_mapper.py"
+ ],
+ "prompt_sha256": "e5f241831d86ca309daca4a3f170405ac8b4823d701e2f43090739118e5dddbb",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D5",
+    "evidence": "SKILL.md is 414 lines but 48534 bytes (about 12k tokens, over twice the spec's 5000-token guide); single lines run up to 2600+ characters (lines 134, 138, 142, 159), and the full hosted-lane run-safety, run-lock and idle-watchdog detail loads on every run.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Move '### Run lock', '### Hosting in a herdr tab', '### A hosted lane's run safety' and the idle-watchdog detail into a new references/hosting-and-locks.md. In SKILL.md, keep one short summary line for each (for example, 'locked is a bare 75; never loop') and add a gated read: 'read references/hosting-and-locks.md when a lane is hosted in herdr, a lock message appears, or you set --idle-timeout'. Record the move.",
+    "id": "D5-1",
+    "line": 142,
+    "severity": "high"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "'### Blocked-until record of a limited pool' and the Execute result checks table (lines 273-289) are always loaded, though only usage-limited pools and execute runs need them.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Move both blocks to references/subprocess-quota-policy.md and a new references/execute-checks.md. Add a trigger at the matching step: 'read it when --pool is passed or a quota stop names a pool' and 'read it when an execute run prints a finding line'.",
+    "id": "D5-2",
+    "line": 361,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "'## When to use' / 'When a run, a review or an execution step calls an external AI CLI and acts on the result.' only repeats the description, and the body is invisible before the skill triggers.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Delete the section, since the description already carries the trigger, and record the removal.",
+    "id": "D1-1",
+    "line": 26,
+    "severity": "low"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "Reference-style catalogs inlined in the body ('--describe prints one JSON object with the setting names, reasons and states, every status with its exit...' plus the full settings-reason table at lines 245-256). These restate what `--describe` prints live and dilute the expert ratio.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Keep the instruction 'read --describe before naming a setting a host may not take' and the few reasons a caller must act on (id_carries, mode_forbids, host_failed). Move the full reason table to a reference file that loads when a setting line reports ignored.",
+    "id": "D1-2",
+    "line": 59,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "Process pattern (sections 1-8) with checkpoints, but the core decision path (exit code, then status, then caller action) is buried among the subsystem prose. No compact decision tree comes before the detail.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Add a short 'Read the result in this order' checklist at the top of section 4: rc, then the AIKIT-XAI status, then retry_after_s present or bare, then the table action. Then link the detailed subsections.",
+    "id": "D2-1",
+    "line": 16,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "The '## Pitfalls' list mixes strong items with weak ones. Several items lack the reason ('Atomic rewrites keep the file mode. Replacing a config or state file by hand can drop it.'; 'never stash' gives no why). Other key NEVERs (never schedule on an inferred reset, never answer skip) sit only in sections 4 and 7.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Add the reason to each pitfall (for example, 'never stash: a stash hides the lane's edits from the tree check and the coverage check'). Repeat the two highest-cost NEVERs (answering skip, waiting on an inferred reset_at) as one-line pitfalls with their reasons.",
+    "id": "D3-1",
+    "line": 379,
+    "severity": "low"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "Read-only review containment is left to judgment: 'A review whose child must not write needs containment verified on that host before the launch, or the isolated checkout below.' There is no concrete default check, though writes during a review are high-consequence.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Name the default: 'run --print-argv and stop unless the capabilities line reports write value false; otherwise ask the owner for an isolated checkout'.",
+    "id": "D6-1",
+    "line": 96,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "16 trigger queries (8 positive, 8 negative), below the about-20 target. All are short, single-sentence prompts with no file paths, typos or backstory. Most eval prompts in evals.json carry only 2 assertions.",
+    "file": "skills/ai-kit-cross-ai/evals/trigger-queries.json",
+    "fix": "Add 4 or more queries with realistic context, such as a pasted AIKIT-XAI line with a path, casual typos, or a GSD retry/skip/abort prompt. Add a third verifiable assertion to the 2-assertion evals, for example 'the answer does not propose another --runtime or --model'.",
+    "id": "D7-1",
+    "line": null,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'GSD's workflow.cross_ai_timeout or gsd-core's 300 s default' is a vendor default stated with no source URL, no checked date and no live read instruction. Pitfalls line 384 repeats it.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Cite the gsd-core source (file or doc URL) with the date checked, or tell the caller to read the effective value live (for example from gsd-core's config defaults) before relying on 300 s.",
+    "id": "D8-1",
+    "line": 150,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The idle-watchdog paragraph is one 2400-character line that lists six possible outcomes (124, waitable 75, bare 75, git_error, git_timeout, 69) inline, with no table. A caller has to parse prose to find the action, which risks misreading the dirty-tree bare 75 as waitable.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Split the outcomes into a small table (outcome, exit, caller action) that points back to the section 4 exit table, so each branch reaches one action.",
+    "id": "D8-2",
+    "line": 159,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "Section 8 names an exception, 'ai-kit-spec-review runs the configured fallback ... (its references/lane-failure.md)'. Pitfalls and section 7 do not say how a caller tells whether it is inside that owner-flagged path, so the absolute 'never switch' rule conflicts with the exception.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Add one line: 'Only ai-kit-spec-review's fallback for a lane whose config sets usage_limited applies the exception; any other caller treats every stop as section 8'.",
+    "id": "D8-3",
+    "line": 377,
+    "severity": "low"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-three",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 81.6,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 16,
+   "D2": 13,
+   "D3": 13,
+   "D4": 15,
+   "D5": 8,
+   "D6": 13,
+   "D7": 12,
+   "D8": 12
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 102
+ }
+}

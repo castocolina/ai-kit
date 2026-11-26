@@ -1,0 +1,208 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": "native Opus high, substitute for referee-three",
+   "status_line": null,
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"native:opus-high\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":17,\"D2\":13,\"D3\":13,\"D4\":14,\"D5\":12,\"D6\":14,\"D7\":13,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":109,\"max_total\":125,\"percent\":87.2,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":362,\"evidence\":\"The first four Pitfalls items ('An `ignored` or `unknown` setting line is not a failure', 'Copilot's prompt ends up on argv', 'Two timeouts, not one', 'The idle watchdog is off unless a call or CONFIG turns it on') restate lines 246, 88-89, 149-153 and 160 almost word for word\",\"fix\":\"Keep each rule once, where the workflow step uses it, and delete the four restatements from Pitfalls (the content stays in sections 2-4, so record the removal as a duplicate). Use the freed lines for landmines that are not yet in Pitfalls, such as the growing in-tree lane.err that voids a review (line 92-94).\"},{\"id\":\"D1-2\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":26,\"evidence\":\"'## When to use' / 'When a run, a review or an execution step calls an external AI CLI and acts on the result.'\",\"fix\":\"The description already carries this trigger, and the body is read only after the skill triggers. Delete the section and record it as a duplicate of the description.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":105,\"evidence\":\"Lines 105-123 are one prose block that mixes the role restriction, write containment, the one-time legacy migration, git object writes and the separate-checkout requirement. The pre-launch decisions the agent must take, in order, are buried inside it.\",\"fix\":\"Turn section 2's pre-launch steps into an ordered sequence with a 'before launching, ask' frame: (1) resolve $RUNNER and check template>=13; (2) settle the role (review unless execute is authorized, else stop and ask); (3) does the review need zero writes? If yes, check for legacy migration files and an approved separate checkout, else stop; (4) does the child need write containment? If yes, verify it or do not launch; (5) make the scratch dir; (6) launch. Keep the reasons as one line per step.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":369,\"evidence\":\"'A grandchild that detached with `setsid` survives both the tab close and a headless group kill.' and line 376 'Atomic rewrites keep the file mode. Replacing a config or state file by hand can drop it.' Both state facts but give no action and no consequence.\",\"fix\":\"Give each item its action and why, for example: 'NEVER report a lane fully stopped after its tab closed or its group was killed when its CLI may spawn `setsid` children: they survive both; check for leftover processes by the lane's own pid tree before claiming cleanup.' and 'NEVER hand-edit a state or config file with an editor that replaces it: the new file loses its 0600 mode and exposes the record; delete it (the owner reset) or use the runner's flags.'\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":3,\"evidence\":\"'Also use when a lane hits quota, a rate limit or a 429 ...' and 'Not for reviewer setup or GSD config'. No boundary covers the host session's own usage limit or wake, or rendering and merging the runner copy, which are near-misses in evals/trigger-queries.json.\",\"fix\":\"Use when you run, wait for, read, retry or chain an external AI CLI (pi, opencode, codex, cursor, copilot, claude) through ai-kit's cross-AI runner (cross-ai.mjs): pick one runtime and model, pass the call's settings (role, effort, context, session id, skills, MCP servers), launch the runner, read its exit code, its per-setting report and its last AIKIT-XAI stderr line, resume a session in a second round, and answer a stop. Also use when a lane hits quota, a rate limit or a 429, exits 75 or 69, ends locked or partial, prints retry_after_s= or a finding, reports a setting ignored, or needs an --argv-file for a CLI the runner has no formula for. Covers the hard-tier wait, the user notice, GSD's retry/skip/abort answer and the rule to never switch harness, provider or model. Not for the host session's own usage limit or wake, reviewer setup, or GSD config and runner rendering (those are ai-kit-spec-config and ai-kit-gsd-curated-config).\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":303,\"evidence\":\"Lines 21-23 say the ladder and config live in references/subprocess-quota-policy.md and 'a plain launch and read does not need it'. Yet line 303 (one paragraph of about 350 tokens) and the [runner.retry] key/default/bounds table at lines 305-314 inline the full hard-tier schedule, which the reference repeats at its lines 75-154. The 400-line body of long lines is well past the spec's roughly 5000-token budget.\",\"fix\":\"In section 6, keep what a caller does: wait exactly retry_after_s once, read check= and stopped=, and the notice. Move the schedule paragraph and the key table into references/subprocess-quota-policy.md, Hard tier (most of it is already there), behind the existing gated read: 'read it when you configure [runner.retry] or must explain check= or stopped=cap'. Apply the same move to the owner-only supervision flags (--blocked-clear, --sweep, lines 65-76): send them to references/hosting-and-locks.md and references/execute-checks.md with a gated pointer.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":108,\"evidence\":\"'A review whose child must not write needs write containment verified on that host before the launch; without it, do not launch.' It names no check and no default for verifying containment, although getting it wrong lets a child write.\",\"fix\":\"Give a default check: run `--print-argv` and require the `cross-ai: capabilities` line's `write` value to be a confirmed `false` (not `unknown`) for that runtime and profile. Name `--tools-profile review` as the default. Escape hatch: when the line reads `unknown`, stop and ask the owner for a sandboxed host.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/files/session-ok/lane.err\",\"line\":4,\"evidence\":\"The fixture's AIKIT-XAI line ends at 'escalate=-' with no 'coverage=- findings=-'. auth-stop/lane.err lines 4 and 7 also lack 'check=-', 'coverage=' and 'findings='. SKILL.md line 250 says the last line 'always carries' these groups, and its own 'real run' examples at lines 172 and 178 show them. The hard-tier fixture has no 'cross-ai: state <path>' line, which the runner prints at its first save (cross-ai.mjs line 5809), yet eval precise-hard-tier-one-wait-same-lane expects the state path in the handoff.\",\"fix\":\"Regenerate the three lane.err fixtures from a hermetic run of the current template (template=13) against the fake opencode, so they carry check=, coverage=, findings= and, for the hard tier, the 'cross-ai: state <path>' line. Add an assertion to the hard-tier eval that the handoff quotes that path.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/evals/trigger-queries.json\",\"line\":3,\"evidence\":\"Most should-trigger queries name the domain outright ('through the cross-AI runner', 'cross-ai lane', 'cross-ai.mjs', 'the runner's setting lines'). Few test a need that is described without naming the runner.\",\"fix\":\"Replace two or three explicit positives with implicit ones that carry realistic context. Examples: 'opencode died halfway through the plan review with exit 75 and a 503, can you get the review finished' and 'have pi double-check docs/plans/auth.md with effort high and paste back what it says'. Keep the 10/10 balance.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":337,\"evidence\":\"The print-and-stop handoff says 'print `retry_after_s`, the state path and the re-invoke command, and stop'. SKILL.md never says where the state path comes from: line 321 gives only a shape with <root-hash> and <model-hash>, which the agent cannot compute. The `cross-ai: state <path>` line appears only in references/subprocess-quota-policy.md line 133.\",\"fix\":\"At line 337 add: 'The state path is the `cross-ai: state <path>` line in lane.err (printed at the run's first save); when it is absent, print the shape from line 321 and say the hashes are unknown, never guess them.'\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":160,\"evidence\":\"'A host that prints nothing until the end (`pi -p`) gives a review lane no activity signal, so keep 900 s or more there.' This states a vendor CLI's output behaviour as fact, while references/hosting-and-locks.md lines 22 and 28 say 'Output timing per host is unverified' and 'Per-host output timing: not measured; every host is unverified.'\",\"fix\":\"Either cite the observation with its source and date (for example the recorded heartbeat 'pi running 30s, stdout +0 bytes' from a named run), or reword it as unverified: 'A host that may print nothing until the end (`pi -p`, unverified) gives no activity signal, so keep 900 s or more there.' Keep the 900 s default.\"}]}"
+  }
+ ],
+ "digest": "80cafd32a04393c3d8a2e165dd7fd6d7000822e1165d7a9881a8ac35dbeabedc",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "6ea8501f787b45784deeb066b2a9c0b2e473e656d03aa342f54e4153130d889f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "native:opus-high",
+ "loop": "40",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_arch_no_grok_runtime.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_settings_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_lane_failure_text.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_staged_mapper.py"
+ ],
+ "prompt_sha256": "ab0061e36b83cb0c68deb1d093b1ecc1ead6ba222473431adfcf2b4135a83fe6",
+ "round": 2,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": {
+  "reason": "referee-three failed after its one retry: both attempts status=ok exit=0, ingest refused: verdict judge 'o<U+200D>pencode:router-env/my-referee-three' is not the lane's judge (zero-width joiner)",
+  "replaces": "opencode:router-env/my-referee-three"
+ },
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "The first four Pitfalls items ('An `ignored` or `unknown` setting line is not a failure', 'Copilot's prompt ends up on argv', 'Two timeouts, not one', 'The idle watchdog is off unless a call or CONFIG turns it on') restate lines 246, 88-89, 149-153 and 160 almost word for word",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Keep each rule once, where the workflow step uses it, and delete the four restatements from Pitfalls (the content stays in sections 2-4, so record the removal as a duplicate). Use the freed lines for landmines that are not yet in Pitfalls, such as the growing in-tree lane.err that voids a review (line 92-94).",
+    "id": "D1-1",
+    "line": 362,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "'## When to use' / 'When a run, a review or an execution step calls an external AI CLI and acts on the result.'",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "The description already carries this trigger, and the body is read only after the skill triggers. Delete the section and record it as a duplicate of the description.",
+    "id": "D1-2",
+    "line": 26,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "Lines 105-123 are one prose block that mixes the role restriction, write containment, the one-time legacy migration, git object writes and the separate-checkout requirement. The pre-launch decisions the agent must take, in order, are buried inside it.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Turn section 2's pre-launch steps into an ordered sequence with a 'before launching, ask' frame: (1) resolve $RUNNER and check template>=13; (2) settle the role (review unless execute is authorized, else stop and ask); (3) does the review need zero writes? If yes, check for legacy migration files and an approved separate checkout, else stop; (4) does the child need write containment? If yes, verify it or do not launch; (5) make the scratch dir; (6) launch. Keep the reasons as one line per step.",
+    "id": "D2-1",
+    "line": 105,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "'A grandchild that detached with `setsid` survives both the tab close and a headless group kill.' and line 376 'Atomic rewrites keep the file mode. Replacing a config or state file by hand can drop it.' Both state facts but give no action and no consequence.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Give each item its action and why, for example: 'NEVER report a lane fully stopped after its tab closed or its group was killed when its CLI may spawn `setsid` children: they survive both; check for leftover processes by the lane's own pid tree before claiming cleanup.' and 'NEVER hand-edit a state or config file with an editor that replaces it: the new file loses its 0600 mode and exposes the record; delete it (the owner reset) or use the runner's flags.'",
+    "id": "D3-1",
+    "line": 369,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "'Also use when a lane hits quota, a rate limit or a 429 ...' and 'Not for reviewer setup or GSD config'. No boundary covers the host session's own usage limit or wake, or rendering and merging the runner copy, which are near-misses in evals/trigger-queries.json.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use when you run, wait for, read, retry or chain an external AI CLI (pi, opencode, codex, cursor, copilot, claude) through ai-kit's cross-AI runner (cross-ai.mjs): pick one runtime and model, pass the call's settings (role, effort, context, session id, skills, MCP servers), launch the runner, read its exit code, its per-setting report and its last AIKIT-XAI stderr line, resume a session in a second round, and answer a stop. Also use when a lane hits quota, a rate limit or a 429, exits 75 or 69, ends locked or partial, prints retry_after_s= or a finding, reports a setting ignored, or needs an --argv-file for a CLI the runner has no formula for. Covers the hard-tier wait, the user notice, GSD's retry/skip/abort answer and the rule to never switch harness, provider or model. Not for the host session's own usage limit or wake, reviewer setup, or GSD config and runner rendering (those are ai-kit-spec-config and ai-kit-gsd-curated-config).",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "Lines 21-23 say the ladder and config live in references/subprocess-quota-policy.md and 'a plain launch and read does not need it'. Yet line 303 (one paragraph of about 350 tokens) and the [runner.retry] key/default/bounds table at lines 305-314 inline the full hard-tier schedule, which the reference repeats at its lines 75-154. The 400-line body of long lines is well past the spec's roughly 5000-token budget.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "In section 6, keep what a caller does: wait exactly retry_after_s once, read check= and stopped=, and the notice. Move the schedule paragraph and the key table into references/subprocess-quota-policy.md, Hard tier (most of it is already there), behind the existing gated read: 'read it when you configure [runner.retry] or must explain check= or stopped=cap'. Apply the same move to the owner-only supervision flags (--blocked-clear, --sweep, lines 65-76): send them to references/hosting-and-locks.md and references/execute-checks.md with a gated pointer.",
+    "id": "D5-1",
+    "line": 303,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "'A review whose child must not write needs write containment verified on that host before the launch; without it, do not launch.' It names no check and no default for verifying containment, although getting it wrong lets a child write.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Give a default check: run `--print-argv` and require the `cross-ai: capabilities` line's `write` value to be a confirmed `false` (not `unknown`) for that runtime and profile. Name `--tools-profile review` as the default. Escape hatch: when the line reads `unknown`, stop and ask the owner for a sandboxed host.",
+    "id": "D6-1",
+    "line": 108,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The fixture's AIKIT-XAI line ends at 'escalate=-' with no 'coverage=- findings=-'. auth-stop/lane.err lines 4 and 7 also lack 'check=-', 'coverage=' and 'findings='. SKILL.md line 250 says the last line 'always carries' these groups, and its own 'real run' examples at lines 172 and 178 show them. The hard-tier fixture has no 'cross-ai: state <path>' line, which the runner prints at its first save (cross-ai.mjs line 5809), yet eval precise-hard-tier-one-wait-same-lane expects the state path in the handoff.",
+    "file": "skills/ai-kit-cross-ai/evals/files/session-ok/lane.err",
+    "fix": "Regenerate the three lane.err fixtures from a hermetic run of the current template (template=13) against the fake opencode, so they carry check=, coverage=, findings= and, for the hard tier, the 'cross-ai: state <path>' line. Add an assertion to the hard-tier eval that the handoff quotes that path.",
+    "id": "D7-1",
+    "line": 4,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "Most should-trigger queries name the domain outright ('through the cross-AI runner', 'cross-ai lane', 'cross-ai.mjs', 'the runner's setting lines'). Few test a need that is described without naming the runner.",
+    "file": "skills/ai-kit-cross-ai/evals/trigger-queries.json",
+    "fix": "Replace two or three explicit positives with implicit ones that carry realistic context. Examples: 'opencode died halfway through the plan review with exit 75 and a 503, can you get the review finished' and 'have pi double-check docs/plans/auth.md with effort high and paste back what it says'. Keep the 10/10 balance.",
+    "id": "D7-2",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The print-and-stop handoff says 'print `retry_after_s`, the state path and the re-invoke command, and stop'. SKILL.md never says where the state path comes from: line 321 gives only a shape with <root-hash> and <model-hash>, which the agent cannot compute. The `cross-ai: state <path>` line appears only in references/subprocess-quota-policy.md line 133.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "At line 337 add: 'The state path is the `cross-ai: state <path>` line in lane.err (printed at the run's first save); when it is absent, print the shape from line 321 and say the hashes are unknown, never guess them.'",
+    "id": "D8-1",
+    "line": 337,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "'A host that prints nothing until the end (`pi -p`) gives a review lane no activity signal, so keep 900 s or more there.' This states a vendor CLI's output behaviour as fact, while references/hosting-and-locks.md lines 22 and 28 say 'Output timing per host is unverified' and 'Per-host output timing: not measured; every host is unverified.'",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Either cite the observation with its source and date (for example the recorded heartbeat 'pi running 30s, stdout +0 bytes' from a named run), or reword it as unverified: 'A host that may print nothing until the end (`pi -p`, unverified) gives no activity signal, so keep 900 s or more there.' Keep the 900 s default.",
+    "id": "D8-2",
+    "line": 160,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "native:opus-high",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 87.2,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 17,
+   "D2": 13,
+   "D3": 13,
+   "D4": 14,
+   "D5": 12,
+   "D6": 14,
+   "D7": 13,
+   "D8": 13
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 109
+ }
+}

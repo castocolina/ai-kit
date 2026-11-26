@@ -9,7 +9,8 @@ _SEVERITY_HEADINGS = {
 _SEVERITY_RE = re.compile(
     r"^### (CRITICAL|HIGH|MEDIUM|LOW|Cross-Document Consistency)\s*$", re.MULTILINE)
 _BULLET_RE = re.compile(
-    r"^- \*\*(.+?)\*\* — Location: (.+?)\. Required: (.+?)\. Why: (.+?)\.\s*$",
+    r"^- \*\*(.+?)\*\* — Location: (.+?)\. Required: (.+?)\. Why: (.+?)\."
+    r"(?: \(Reviewers: [^)\n]*\))?\s*$",
     re.MULTILINE)
 
 
@@ -17,11 +18,12 @@ _STATUS_LINE_RE = re.compile(r"^### Status:\s*(.*)$", re.MULTILINE)
 
 
 _STATUS_SEVERITY = ("approved", "issues", "failure")
+_APPROVED_VALUES = frozenset({"approved", "approved (partial)"})
 
 
 def _status_value(line: str) -> str:
     value = line.strip().lower()
-    if value.startswith("approved"):
+    if value in _APPROVED_VALUES:
         return "approved"
     if value.startswith("failure"):
         return "failure"
@@ -32,8 +34,9 @@ def report_status(report_text: str) -> str | None:
     """The report's declared status, the MOST SEVERE of all its `### Status:` lines
     (failure > issues > approved), so a later duplicated or echoed `Approved` line can
     never downgrade an earlier Issues/Failure (A-WR-06, fail-closed). Closed vocabulary
-    (D-12): "approved" for a lowercase value starting `approved`; "failure" for one starting
-    `failure`; anything else on a Status line ("issues found", unknown text) reads "issues";
+    (D-12): "approved" only for exactly `Approved` or `Approved (partial)` (case and
+    surrounding whitespace ignored); "failure" for a value starting `failure`; anything else
+    on a Status line ("issues found", "Approved pending ...", unknown text) reads "issues";
     no Status line at all returns None. Used by the merge-reports CLI subcommand (D-12/R7)
     so a failed or missing review lane can never merge into a false Approved."""
     values = [_status_value(m) for m in _STATUS_LINE_RE.findall(report_text)]
@@ -101,7 +104,10 @@ def merge_findings(reports: list) -> list:
     return [merged[k] for k in order]
 
 
-def render_merged_report(findings: list, doc_paths: str, any_source_issues: bool = False) -> str:
+def render_merged_report(
+    findings: list, doc_paths: str, any_source_issues: bool = False, *,
+    judged_line: str | None = None, partial: bool | None = None,
+) -> str:
     """Renders CRITICAL/HIGH/MEDIUM/LOW under their own headings and
     CROSS-DOC findings under the same `### Cross-Document Consistency`
     heading the source reports use (never a raw `### CROSS-DOC`, which
@@ -121,12 +127,15 @@ def render_merged_report(findings: list, doc_paths: str, any_source_issues: bool
     status: a report can legitimately say "Issues Found" while containing
     a bullet `_BULLET_RE` fails to parse (wrapped line, off-template
     punctuation), and without this the merge would silently downgrade that
-    to "Approved" purely because no *parsed* finding survived."""
+    to "Approved" purely because no *parsed* finding survived.
+    The keyword-only parameters default to None, preserving output without a round log."""
     by_sev = {"CRITICAL": [], "HIGH": [], "MEDIUM": [], "LOW": [], "CROSS-DOC": []}
     for f in findings:
         sev = f["severity"] if f["severity"] in by_sev else "MEDIUM"
         by_sev[sev].append(f)
     lines = [f"## Review: {doc_paths}", "### Document Type", "cross-ai merged"]
+    if judged_line is not None:
+        lines.append(judged_line)
     any_issues = any(by_sev.values()) or any_source_issues
     heading_for = {"CRITICAL": "### CRITICAL", "HIGH": "### HIGH", "MEDIUM": "### MEDIUM",
                    "LOW": "### LOW", "CROSS-DOC": "### Cross-Document Consistency"}
@@ -140,6 +149,7 @@ def render_merged_report(findings: list, doc_paths: str, any_source_issues: bool
             lines.append(f"- **{f['title']}** — Location: {f['location']}. "
                           f"Required: {f['required']}. Why: {f['why']}. (Reviewers: {tag})")
     lines.append(
-        "### Status: Issues Found — fix and re-invoke" if any_issues else "### Status: Approved"
+        "### Status: Issues Found — fix and re-invoke" if any_issues else
+        "### Status: Approved (partial)" if partial else "### Status: Approved"
     )
     return "\n".join(lines) + "\n"

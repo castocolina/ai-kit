@@ -129,7 +129,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 39: Lane capability blocks and lens skills** - Each lane is told only the tools it really has; lens skills reach reviewers (completed 2026-11-23)
 - [x] **Phase 39.1: Remove the grok runtime (INSERTED)** - The grok CLI runtime leaves detection, command building, the runner table, profiles, docs and tests; its models stay reachable through opencode, pi and cursor-agent *(inserted 2026-11-19, owner decision)*
 - [x] **Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)** - The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks *(inserted 2026-11-23, owner decision)*
-- [ ] **Phase 40: Resilient review sized by jev** - A failing lane no longer ends a review; jev sizes and classifies
+- [x] **Phase 40: Resilient review sized by jev** - A failing lane no longer ends a review; jev sizes and classifies
 - [ ] **Phase 41: Superpowers adapter refactor with spec-config handoff** - One resume path, one stop path, session-model fallback, complete executor briefs
 - [ ] **Phase 42: Code review after execution and jev-picked executors** - Implementation is reviewed in a capped loop; jev picks the executor and lane transport
 - [ ] **Phase 43: curated-config reads docs at the installed tag** - Version-pinned open-gsd docs and a grouped question cascade
@@ -1062,11 +1062,11 @@ Plans:
 
 **Goal**: A review survives a failing lane, and jev sizes the review and classifies disagreements before the owner is asked.
 **Depends on**: Phase 39
-**Requirements**: REV-01, REV-02, REV-06, REV-07, REV-08 *(REV-01 amended 2026-11-16, free-lane pool study: selection also reads the blocked-until record, PROVISIONAL)*
+**Requirements**: REV-01, REV-02, REV-06, REV-07, REV-08 *(REV-01 amended 2026-11-16, free-lane pool study: selection also reads the blocked-until record; confirmed by the owner 2026-11-25, was PROVISIONAL)*
 *(The superpowers fold-step finding was added 2026-11-03 from Phase 29's decision D-03.)*
 **Code anchors**: `skills/ai-kit-spec-review/SKILL.md` loop, `ai_kit_spec/reviewer_dispatch.py`, `quota.py`, `routing.py` (`route_all`); `skills/ai-kit-spec-review-fixer/SKILL.md`; jev through the shared client; new: lane ping before a round, beside `route_all` in `routing.py` and `dispatch_reviewer`; docs: `references/apply-findings.md`, `references/loop-diagram.md`
 **Success Criteria** (what must be TRUE):
-  1. When a lane fails mid-review, spec-review switches to the next lane in the user's preference order and the review finishes. *(amended 2026-11-16, 36 D-16, D-19, owner directive on free models: a lane the owner flagged `usage_limited` in spec-config (a free model often has a daily cap) switches at once, without waiting, to the first unflagged lane of the same role in the role's order, read through `lane_usage_limit` and `lane_fallback`; a lane without the flag never switches on its own, and a direct lane stops at once on quota per 38.1 D-12; which classes justify a switch is this phase's call)* *(amended 2026-11-16, free-lane pool study, 38.1 D-23 to D-27 and 36 D-20 to D-22, PROVISIONAL, needs owner confirmation: lane selection skips a lane whose pool's blocked-until time (38.1 record) has not passed and takes the fallback through `lane_fallback`, which names a lane of a different pool; the first selection after that time tries the lane once, and a second failure renews the record under the 38.1 rule; a free lane is never replaced by another free model of the same pool)*
+  1. When a lane fails mid-review, spec-review switches to the next lane in the user's preference order and the review finishes. *(amended 2026-11-16, 36 D-16, D-19, owner directive on free models: a lane the owner flagged `usage_limited` in spec-config (a free model often has a daily cap) switches at once, without waiting, to the first unflagged lane of the same role in the role's order, read through `lane_usage_limit` and `lane_fallback`; a lane without the flag never switches on its own, and a direct lane stops at once on quota per 38.1 D-12; which classes justify a switch is this phase's call)* *(amended 2026-11-16, free-lane pool study, 38.1 D-23 to D-27 and 36 D-20 to D-22; confirmed by the owner 2026-11-25, was PROVISIONAL: lane selection skips a lane whose pool's blocked-until time (38.1 record) has not passed and takes the fallback through `lane_fallback`, which names a lane of a different pool; the first selection after that time tries the lane once, and a second failure renews the record under the 38.1 rule; a free lane is never replaced by another free model of the same pool)*
   2. jev classifies reviewer-fixer disagreements and gray areas before the owner is asked; without jev the owner is asked as before.
   3. jev picks the reviewer and one or two lanes for a plan from files touched, complexity, task count and category, on top of deterministic signals (security, data, irreversible operations), and the review log shows why.
   4. Before a review or judge round each chosen lane is pinged; a fake blocked lane is replaced from the owner's order, the round continues with at least one lane, and the log records which lanes judged.
@@ -1075,7 +1075,20 @@ Plans:
   7. Lane pings run at once, each with its own timeout, and every ping or lane failure records a reason from one closed list; a test fails when a key is added or removed without the list changing. *(added 2026-11-16, GSD lane-handling study)*
   8. A review in which a lane was replaced, failed or never resolved is reported partial with the lanes that judged, never as a clean run, and one lane's failure never cancels another lane's result (fake lanes cover each case). *(added 2026-11-16, GSD lane-handling study)*
 
-**Plans**: TBD
+**Plans**: 13/13 plans complete in 13 waves *(planned 2026-11-25; the plans run one after another because nearly every plan touches `ai_kit_spec/cli.py`; 40-12, the judge loop, and 40-13, the closing gate with the final `make test`, are orchestrator actions; the blocked-until read was confirmed by the owner 2026-11-25)*
+- [x] 40-01-PLAN.md
+- [x] 40-02-PLAN.md
+- [x] 40-03-PLAN.md
+- [x] 40-04-PLAN.md
+- [x] 40-05-PLAN.md
+- [x] 40-06-PLAN.md
+- [x] 40-07-PLAN.md
+- [x] 40-08-PLAN.md
+- [x] 40-09-PLAN.md
+- [x] 40-10-PLAN.md
+- [x] 40-11-PLAN.md
+- [x] 40-12-PLAN.md
+- [x] 40-13-PLAN.md
 
 ### Phase 41: Superpowers adapter refactor with spec-config handoff
 
@@ -1383,7 +1396,7 @@ Plans:
 | 38. Runner hardening and run safety | 27/27 | Complete    | 2026-11-22 |
 | 38.1. Runner error classification and retry policy | 14/14 | Complete    | 2026-11-23 |
 | 39. Lane capability blocks and lens skills | 19/19 | Complete    | 2026-11-23 |
-| 40. Resilient review sized by jev | 0/TBD | Not started | - |
+| 40. Resilient review sized by jev | 13/13 | Complete    | 2026-11-25 |
 | 41. Superpowers adapter refactor with spec-config handoff | 0/TBD | Not started | - |
 | 42. Code review after execution and jev-picked executors | 0/TBD | Not started | - |
 | 43. curated-config reads docs at the installed tag | 0/TBD | Not started | - |

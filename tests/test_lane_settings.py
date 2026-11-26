@@ -233,7 +233,14 @@ REPO = Path(__file__).resolve().parents[1]
 SCANNED = (REPO / "skills" / "ai-kit-spec-review" / "ai_kit_spec",
            REPO / "skills" / "ai-kit-spec-execute-superpowers" / "ai_kit_spec_superpowers")
 FLAGS = frozenset(lane_settings.LANE_FLAG_KEYS)
-READERS = frozenset({"lane_escalation", "escalation_target", "lane_usage_limit", "lane_fallback"})
+READERS = frozenset({"lane_escalation", "escalation_target", "lane_usage_limit", "lane_fallback",
+                     "lane_free_pool"})
+# the readers each module may call; every other module stays reader-free
+ALLOWED_READERS = {"runner_dispatch.py": frozenset({"lane_escalation"}),
+                   "lane_switch.py": frozenset({"lane_fallback", "lane_usage_limit",
+                                                "lane_free_pool"}),
+                   "reviewer_dispatch.py": frozenset({"lane_free_pool"}),
+                   "quota.py": frozenset({"lane_free_pool"})}
 
 
 def _flag_literal_lines(text: str, *, runner_table: bool = False) -> list[int]:
@@ -247,8 +254,8 @@ def _flag_literal_lines(text: str, *, runner_table: bool = False) -> list[int]:
                   if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in FLAGS)
 
 
-def _reader_lines(text: str, *, allow_escalation: bool = False) -> list[int]:
-    readers = READERS - {"lane_escalation"} if allow_escalation else READERS
+def _reader_lines(text: str, *, allowed: frozenset = frozenset()) -> list[int]:
+    readers = READERS - allowed
     return sorted(n.lineno for n in ast.walk(ast.parse(text))
                   if (isinstance(n, ast.Name) and n.id in readers)
                   or (isinstance(n, ast.Attribute) and n.attr in readers)
@@ -430,6 +437,18 @@ class TestLaneEscalation(_ScratchLayers):
         self.assertEqual(lane_settings.lane_escalation(self.resolve()["review"][0]), (True, False))
 
 
+class TestLanePool(unittest.TestCase):
+    def test_pool_only_for_a_flagged_valid_pool(self):
+        self.assertEqual(lane_settings.lane_free_pool(
+            {"usage_limited": True, "pool": "fake-provider:free"}), "fake-provider:free")
+        for entry in ({"pool": "fake-provider:free"},
+                      {"usage_limited": True},
+                      {"usage_limited": True, "pool": "not a pool"},
+                      {"usage_limited": True, "pool": 3},
+                      {"usage_limited": "yes", "pool": "fake-provider:free"}):
+            self.assertIsNone(lane_settings.lane_free_pool(entry), entry)
+
+
 class TestEscalationTarget(unittest.TestCase):
     def test_runtime_and_model_kinds(self):
         lanes = [_lane("a"), _lane("b", model="placeholder-model-2"),
@@ -463,7 +482,8 @@ class TestNoFlagSetter(unittest.TestCase):
         self.assertTrue(files)
         self.assertEqual([f"{p.relative_to(REPO)}:{lines}" for p in files
                           if (lines := _reader_lines(
-                              p.read_text(), allow_escalation=p.name == "runner_dispatch.py"))], [])
+                              p.read_text(),
+                              allowed=ALLOWED_READERS.get(p.name, frozenset())))], [])
 
     def test_scanners_catch_a_planted_setter_and_reader(self):
         self.assertEqual(_flag_literal_lines('entry["usage_limited"] = True'), [1])
@@ -474,7 +494,26 @@ class TestNoFlagSetter(unittest.TestCase):
                                        'lane_settings.lane_fallback([], "k")'), [2])
         self.assertEqual(_reader_lines('from ai_kit_spec.lane_settings import lane_usage_limit'),
                          [1])
-        self.assertEqual(_reader_lines('lane_fallback([], "k")', allow_escalation=True), [1])
+        self.assertEqual(_reader_lines('lane_fallback([], "k")',
+                                       allowed=ALLOWED_READERS["runner_dispatch.py"]), [1])
+        self.assertEqual(_reader_lines('lane_fallback([], "k")',
+                                       allowed=ALLOWED_READERS["lane_switch.py"]), [])
+        self.assertEqual(_reader_lines('lane_usage_limit({})',
+                                       allowed=ALLOWED_READERS["lane_switch.py"]), [])
+        self.assertEqual(_reader_lines('lane_usage_limit({})',
+                                       allowed=ALLOWED_READERS["runner_dispatch.py"]), [1])
+        self.assertEqual(_reader_lines(
+            'lane_fallback([], "k")',
+            allowed=ALLOWED_READERS.get("lane_ping.py", frozenset())), [1])
+        self.assertEqual(_reader_lines('lane_free_pool({})',
+                                       allowed=ALLOWED_READERS["runner_dispatch.py"]), [1])
+        planted = 'from ai_kit_spec import lane_settings\nlane_settings.lane_free_pool({})'
+        for name in ("lane_order.py", "propose_cmds.py"):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    _reader_lines(planted, allowed=ALLOWED_READERS.get(name, frozenset())), [2])
+        self.assertEqual(_reader_lines('from ai_kit_spec import lane_pool\n'
+                                       'lane_pool.build_rows({}, {})'), [])
 
     def test_writer_and_defaults_set_no_flag(self):
         text, _ = _render({"policy": {"mode": "single"},

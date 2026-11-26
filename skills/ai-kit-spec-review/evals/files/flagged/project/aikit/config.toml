@@ -1,0 +1,26 @@
+[lanes.policy]
+mode = "double"
+
+[lanes.policy.review]
+ladder = ["review-free", "review-second", "review-third"]
+
+[[lanes.review]]
+key = "review-free"
+runtime = "opencode"
+model = "fake/placeholder-model-1"
+purpose = "review"
+usage_limited = true
+usage_limit_note = "a daily cap"
+pool = "fake:free"
+
+[[lanes.review]]
+key = "review-second"
+runtime = "opencode"
+model = "fake/placeholder-model-2"
+purpose = "review"
+
+[[lanes.review]]
+key = "review-third"
+runtime = "opencode"
+model = "fake/placeholder-model-3"
+purpose = "review"

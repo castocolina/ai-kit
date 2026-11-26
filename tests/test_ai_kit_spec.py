@@ -3486,8 +3486,16 @@ class TestErrorClassifier(unittest.TestCase):
             {
                 "quota", "auth", "timeout", "configuration", "dispatch_unavailable",
                 "real_error", "capacity", "billing_or_access", "git_timeout",
+                "replaced", "never_resolved", "no_lane_left", "ping_timeout",
             },
         )
+
+    def test_reason_lock_is_not_vacuous(self):
+        for changed in ((*REASONS, "zzz_added"), tuple(r for r in REASONS if r != "quota")):
+            with (self.subTest(size=len(changed)),
+                  mock.patch.dict(globals(), {"REASONS": changed}),
+                  self.assertRaises(AssertionError)):
+                self.test_reason_vocabulary_is_closed()
 
 
 class TestProbeReason(unittest.TestCase):
@@ -3627,6 +3635,15 @@ class TestReportStatus(unittest.TestCase):
     def test_unknown_status_text_reads_issues(self):
         self.assertEqual(report_status("### Status: Something odd"), "issues")
 
+    def test_only_the_two_closed_approved_values_approve(self):
+        for value in ("Approved", "approved  ", "Approved (partial)", "APPROVED (PARTIAL) "):
+            with self.subTest(value=value):
+                self.assertEqual(report_status(f"### Status: {value}\n"), "approved")
+        for value in ("Approved pending clarification", "Approved with conditions",
+                      "Approved — see HIGH", "Approved (partial) pending a lane"):
+            with self.subTest(value=value):
+                self.assertEqual(report_status(f"### Status: {value}\n"), "issues")
+
     def test_no_status_line_reads_none(self):
         self.assertIsNone(report_status("no status line at all"))
         self.assertIsNone(report_status(""))
@@ -3683,6 +3700,16 @@ class TestMergeReportsFailure(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertIn("### Status: Failure — b", out)
 
+    def test_status_that_only_starts_with_approved_never_merges_clean(self):
+        with tempfile.TemporaryDirectory() as d:
+            files = {
+                "a": self._write(d, "a.md", "### Status: Approved\n"),
+                "b": self._write(d, "b.md", "### Status: Approved pending clarification\n"),
+            }
+            _code, out = self._merge(d, files)
+            self.assertIn("### Status: Issues Found — fix and re-invoke", out)
+            self.assertNotIn("### Status: Approved", out)
+
     def test_lane_without_status_line_fails(self):
         with tempfile.TemporaryDirectory() as d:
             files = {
@@ -3733,6 +3760,243 @@ class TestMergeReportsFailure(unittest.TestCase):
             code, out = self._merge(d, files)
             self.assertEqual(code, 0)
             self.assertIn("### Status: Issues Found", out)
+
+
+class TestMergeReportsLaneLog(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = self.tmp.name
+        self.project = os.path.join(root, "project")
+        os.makedirs(self.project)
+        self.env = {"HOME": os.path.join(root, "home"),
+                    "XDG_CONFIG_HOME": os.path.join(root, "xdg"),
+                    "XDG_CACHE_HOME": os.path.join(root, "cache")}
+        config = config_io.cfg_global_path(self.env)
+        os.makedirs(os.path.dirname(config), exist_ok=True)
+        self._write(os.path.dirname(config), os.path.basename(config), '''[[lanes.review]]
+key = "lane-a"
+model = "placeholder-model-1"
+command = "placeholder-cli-1 {model}"
+[[lanes.review]]
+key = "lane-b"
+model = "placeholder-model-2"
+command = "placeholder-cli-1 {model}"
+[[lanes.review]]
+key = "lane-c"
+model = "placeholder-model-3"
+command = "placeholder-cli-1 {model}"
+[lanes.policy.review]
+ladder = ["lane-a", "lane-b", "lane-c"]
+''')
+
+    def _write(self, tmp, name, text):
+        path = os.path.join(tmp, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def _merge_logged(self, files, log, order=("lane-a", "lane-b")):
+        import io
+        from contextlib import redirect_stdout
+
+        args = ["merge-reports", "--doc-paths", "spec.md", "--cwd", self.project,
+                "--lane-log", log, "--round", "1"]
+        args.extend(f"{key}={files[key]}" for key in order)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = main(args, env_fn=lambda: dict(self.env))
+        return code, buf.getvalue()
+
+    def test_one_failed_lane_still_merges_the_other_and_reads_partial(self):
+        from ai_kit_spec import review_log
+
+        log = os.path.join(self.tmp.name, "lanes.jsonl")
+        for key in ("lane-a", "lane-b"):
+            review_log.append_event(log, {"round": 1, "key": key, "state": "chosen",
+                                          "reason": None, "cause": None, "by": None, "at": 1.0})
+        files = {"lane-a": self._write(self.tmp.name, "a.md", "### Status: Approved\n"),
+                 "lane-b": os.path.join(self.tmp.name, "missing.md")}
+        code, out = self._merge_logged(files, log)
+        self.assertEqual(code, 0)
+        self.assertIn("Judged by: lane-a; not judged: lane-b (never_resolved)", out.splitlines())
+        self.assertIn("### Status: Approved (partial)", out.splitlines())
+        self.assertNotIn("### Status: Approved", out.splitlines())
+
+    def _seed(self, log, keys):
+        from ai_kit_spec import review_log
+
+        for key in keys:
+            review_log.append_event(log, {"round": 1, "key": key, "state": "chosen",
+                                          "reason": None, "cause": None, "by": None, "at": 1.0})
+
+    def _event(self, log, key, state, reason, cause=None, by=None):
+        from ai_kit_spec import review_log
+
+        review_log.append_event(log, {"round": 1, "key": key, "state": state,
+                                      "reason": reason, "cause": cause, "by": by, "at": 2.0})
+
+    def _files(self, a, b):
+        return {"lane-a": self._write(self.tmp.name, "a.md", a),
+                "lane-b": self._write(self.tmp.name, "b.md", b)}
+
+    def test_failure_plus_approved_merges_the_approved_lane(self):
+        log = os.path.join(self.tmp.name, "log")
+        self._seed(log, ("lane-a", "lane-b"))
+        files = self._files("### Status: Failure — input missing\n", "### Status: Approved\n")
+        code, out = self._merge_logged(files, log)
+        self.assertEqual(code, 0)
+        self.assertIn("Judged by: lane-b; not judged: lane-a (real_error)", out.splitlines())
+        self.assertIn("### Status: Approved (partial)", out.splitlines())
+        self.assertNotIn("### Status: Approved", out.splitlines())
+
+    def test_missing_lane_reads_never_resolved_in_either_order(self):
+        for i, order in enumerate((("lane-a", "lane-b"), ("lane-b", "lane-a"))):
+            with self.subTest(order=order):
+                log = os.path.join(self.tmp.name, f"log-{i}")
+                self._seed(log, ("lane-a", "lane-b"))
+                files = {"lane-a": self._write(self.tmp.name, "a.md", "### Status: Approved\n"),
+                         "lane-b": os.path.join(self.tmp.name, "missing")}
+                code, out = self._merge_logged(files, log, order)
+                self.assertEqual(code, 0)
+                self.assertIn("Judged by: lane-a; not judged: lane-b (never_resolved)",
+                              out.splitlines())
+
+    def test_lane_without_status_line_reads_real_error(self):
+        log = os.path.join(self.tmp.name, "log")
+        self._seed(log, ("lane-a", "lane-b"))
+        files = self._files("### Status: Approved\n", "lane error: exploded\n")
+        code, out = self._merge_logged(files, log)
+        self.assertEqual(code, 0)
+        self.assertIn("Judged by: lane-a; not judged: lane-b (real_error)", out.splitlines())
+
+    def test_non_utf8_lane_reads_real_error(self):
+        log = os.path.join(self.tmp.name, "log")
+        self._seed(log, ("lane-a", "lane-b"))
+        files = self._files("### Status: Approved\n", "")
+        with open(files["lane-b"], "wb") as f:
+            f.write(b"\xff\xfe### Status: Approved\n")
+        code, out = self._merge_logged(files, log)
+        self.assertEqual(code, 0)
+        self.assertIn("Judged by: lane-a; not judged: lane-b (real_error)", out.splitlines())
+
+    def test_two_failed_lanes_read_not_reviewed(self):
+        log = os.path.join(self.tmp.name, "log")
+        self._seed(log, ("lane-a", "lane-b"))
+        code, out = self._merge_logged(self._files("### Status: Failure — x\n",
+                                                   "### Status: Failure — x\n"), log)
+        self.assertEqual(code, 1)
+        self.assertEqual(out.strip(), "### Status: Failure — not reviewed: "
+                         "lane-a (real_error), lane-b (real_error)")
+
+    def test_approved_plus_approved_is_clean(self):
+        log = os.path.join(self.tmp.name, "log")
+        self._seed(log, ("lane-a", "lane-b"))
+        files = self._files("### Status: Approved\n", "### Status: Approved\n")
+        code, out = self._merge_logged(files, log)
+        self.assertEqual(code, 0)
+        self.assertIn("Judged by: lane-a, lane-b", out.splitlines())
+        self.assertIn("### Status: Approved", out.splitlines())
+        self.assertNotIn("Approved (partial)", out)
+        self.assertNotIn("not judged", out)
+
+    def test_non_conforming_lane_keeps_the_other_lanes_findings(self):
+        log = os.path.join(self.tmp.name, "log")
+        self._seed(log, ("lane-a", "lane-b"))
+        files = self._files(_REPORT_A, "lane error: usage limit exceeded\n")
+        code, out = self._merge_logged(files, log)
+        self.assertEqual(code, 0)
+        self.assertIn("### CRITICAL", out)
+        self.assertIn("### Status: Issues Found — fix and re-invoke", out.splitlines())
+        self.assertIn("Judged by: lane-a; not judged: lane-b (real_error)", out.splitlines())
+
+    def test_dispatch_reason_survives_the_merge(self):
+        log = os.path.join(self.tmp.name, "log")
+        self._seed(log, ("lane-a", "lane-b"))
+        self._event(log, "lane-b", "failed", "quota")
+        files = {"lane-a": self._write(self.tmp.name, "a.md", "### Status: Approved\n"),
+                 "lane-b": os.path.join(self.tmp.name, "missing")}
+        code, out = self._merge_logged(files, log)
+        self.assertEqual(code, 0)
+        self.assertIn("Judged by: lane-a; not judged: lane-b (quota)", out.splitlines())
+
+    def test_lane_log_without_round_exits_2(self):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        log = os.path.join(self.tmp.name, "log")
+        files = self._files("### Status: Approved\n", "### Status: Approved\n")
+        base = ["merge-reports", "--doc-paths", "spec.md", "--lane-log", log]
+        reports = [f"{key}={path}" for key, path in files.items()]
+        for options in (["--cwd", self.project], ["--cwd", self.project, "--round", "0"],
+                        ["--round", "1"]):
+            with self.subTest(options=options), redirect_stdout(io.StringIO()), \
+                    redirect_stderr(io.StringIO()):
+                self.assertEqual(main(base + options + reports, env_fn=lambda: dict(self.env)), 2)
+
+    def test_failed_lane_with_a_readable_approved_stays_failed(self):
+        log = os.path.join(self.tmp.name, "log")
+        self._seed(log, ("lane-a", "lane-b"))
+        self._event(log, "lane-b", "failed", "quota")
+        code, out = self._merge_logged(self._files(_REPORT_A, "### Status: Approved\n"), log)
+        self.assertEqual(code, 0)
+        self.assertIn("### CRITICAL", out)
+        self.assertIn("Judged by: lane-a; not judged: lane-b (quota)", out.splitlines())
+
+    def test_stale_report_of_a_replaced_lane_adds_no_finding(self):
+        log = os.path.join(self.tmp.name, "log")
+        self._seed(log, ("lane-a", "lane-c"))
+        self._event(log, "lane-b", "replaced", "replaced", "quota", "lane-c")
+        files = self._files("### Status: Approved\n", _REPORT_A)
+        files["lane-c"] = self._write(self.tmp.name, "c.md", "### Status: Approved\n")
+        code, out = self._merge_logged(files, log, ("lane-b", "lane-a", "lane-c"))
+        self.assertEqual(code, 0)
+        self.assertNotIn("### CRITICAL", out)
+        self.assertIn("Judged by: lane-a, lane-c; not judged: lane-b (replaced, by lane-c)",
+                      out.splitlines())
+        self.assertIn("### Status: Approved (partial)", out.splitlines())
+
+    def test_judged_line_follows_the_roster_with_reversed_arguments(self):
+        log = os.path.join(self.tmp.name, "log")
+        self._seed(log, ("lane-a", "lane-b"))
+        files = self._files("### Status: Approved\n", "### Status: Approved\n")
+        code, out = self._merge_logged(files, log, ("lane-b", "lane-a"))
+        self.assertEqual(code, 0)
+        self.assertIn("Judged by: lane-a, lane-b", out.splitlines())
+
+    def test_replacement_in_the_first_slot_keeps_the_roster_order(self):
+        log = os.path.join(self.tmp.name, "log")
+        self._seed(log, ("lane-c", "lane-b"))
+        self._event(log, "lane-a", "replaced", "replaced", "quota", "lane-c")
+        files = self._files("### Status: Approved\n", "### Status: Approved\n")
+        files["lane-c"] = self._write(self.tmp.name, "c.md", "### Status: Approved\n")
+        code, out = self._merge_logged(files, log, ("lane-c", "lane-b"))
+        self.assertEqual(code, 0)
+        self.assertIn("Judged by: lane-b, lane-c; not judged: lane-a (replaced, by lane-c)",
+                      out.splitlines())
+
+    def test_remerge_without_a_judged_lanes_report_exits_2(self):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        log = os.path.join(self.tmp.name, "log")
+        self._seed(log, ("lane-a", "lane-b"))
+        files = self._files(_REPORT_A, "### Status: Approved\n")
+        code, _ = self._merge_logged(files, log)
+        self.assertEqual(code, 0)
+        with open(log, encoding="utf-8") as f:
+            before = len(f.readlines())
+        stdout, stderr = io.StringIO(), io.StringIO()
+        args = ["merge-reports", "--doc-paths", "spec.md", "--cwd", self.project,
+                "--lane-log", log, "--round", "1", f"lane-b={files['lane-b']}"]
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(args, env_fn=lambda: dict(self.env))
+        self.assertEqual(code, 2)
+        self.assertIn("merge-reports: lane lane-a judged in round 1 but its report is not given",
+                      stderr.getvalue())
+        self.assertNotIn("### Status: Approved", stdout.getvalue().splitlines())
+        with open(log, encoding="utf-8") as f:
+            self.assertEqual(len(f.readlines()), before)
 
 
 class TestMergeFindings(unittest.TestCase):
