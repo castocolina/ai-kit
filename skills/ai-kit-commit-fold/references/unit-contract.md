@@ -54,8 +54,20 @@ new branch is deleted and `start` refuses `plan_not_carried`, naming the command
 owner to run; the agent stops and shows them. The record keeps their count as `carried`; a plan-file checkpoint without
 `--base` folds from above them, so the planning commits are never folded.
 
+Before it syncs, `start` of a new unit refuses and changes nothing in two cases: `stale_parent` when
+the newest unmerged unit in the stack record has no local branch (the report names that unit and its
+branch), and `unrecorded_head` when HEAD is a branch that is neither a recorded unit nor a target
+branch and holds commits that no remote branch, no recorded unit and the stack top hold, other than
+the plan commits `start` carries (the report lists up to ten as `<sha12> <subject>`, then how many
+more). `no_trunk` means only that the target has no remote-tracking ref to stack on; in a repository
+whose configured remote is missing, `start` refuses `no_remote` before either check. With a selector
+that a planning tool resolves, that tool's own phase query runs before either refusal and may
+rewrite the tool's own legacy config keys; that is the tool's behaviour: the refusal itself moves no
+branch, edits no stack record and writes no config.
+
 `start` on a recorded unit (a re-discuss) is safe to repeat: an open unit is reused and checked
-out; a `finished` or `ready` unit too while its branch still checks out, otherwise the report
+out, and its deleted local branch is first recreated at its recorded pending or pushed tip, before
+the sync; a `finished` or `ready` unit too while its branch still checks out, otherwise the report
 says so; a `merged` unit is only reported. A report exits 0, changes nothing and stays on HEAD.
 
 ## Boundary (`boundary`)
@@ -126,7 +138,10 @@ What the flow does at each signal:
 - MVP fast path (unit `mvp: true`, and no unmerged unit below it): each checkpoint
   fast-forwards the target to the unit tip and pushes the target. No PR is opened. An MVP unit
   above an unmerged unit is refused `mvp_below_unmerged` and opens a draft PR instead.
-- A checkpoint with no new commits makes no push.
+- A checkpoint with no new commits makes no push. When the fold rewrote the unit and the restack of
+  the units above pushed it with
+  them (one atomic push), the report says `pushed <branch> at <sha12> with the units above` and the
+  outcome is `done`.
 
 ## Stack record and settings
 
@@ -136,6 +151,11 @@ What the flow does at each signal:
   `mvp` flag, the remote sha last pushed by the flow, any pending sha left by a skipped push,
   the backup tags of its folds, the title, the goal, the checkpoint count and `carried` (the
   local planning commits `start` kept below the fold range).
+- All-units view: `fold.py show --all` prints one line per recorded unit in stack order,
+  `unit <id> branch <branch> parent <parent> state <state> exists <yes|no> tip <sha12|none>`
+  (`exists no` and `tip none` when the unit's local branch is gone), or `units: none` when no unit
+  is recorded. It reads the record and the local branches only: no sync, no remote call, no write,
+  no report header; it exits 0.
 - Settings: `.aikit/flow.json` in the main worktree, ignored by git. Keys: `schema`, `repo`,
   push approval (`consent`), `granted`, `remote` (default `origin`), `targets` and `gates`. `gates` holds the
   project's own commands; each command is one argv list.
@@ -150,6 +170,36 @@ What the flow does at each signal:
   is kept as the unit's pending sha.
 - When push consent is granted later, the skipped checkpoints are pushed in stack order,
   bottom up, through the normal checkpoint and cascade rules.
+
+## Restack
+
+`restack` and every command that syncs first (`start`, `checkpoint`, `ready` and `hotfix`) reconcile
+the stack. With push consent they fetch and mark the units merged on the remote. First, when a
+unit's parent branch has moved past the parent tip recorded for that unit (a plain commit on a lower
+unit, or a lower unit folded or amended over its pushed tip), that unit and every unit above it are
+rebased onto the parent's new tip, the highest moved unit first, until each recorded parent tip
+equals its parent's tip. When the restack has no conflict, every unit's own commits are kept, also
+one whose change the new lower tip already holds (it stays as an empty commit); a conflict resolved
+to the lower side drops the commit it empties (the owner's resolution). Before that pass, every open
+unit's branch must exist and hold its recorded parent tip; otherwise the command refuses
+`branch_missing` (the branch is gone) or `wrong_parent` and moves nothing. Then, when the remote
+target has commits the bottom unit lacks, the stack is rebased onto it. When a lower unit was
+restacked, the sync pushes nothing, the rebase onto the target included, also after
+`restack --continue`, so a plain `restack` pushes nothing: the new tip of each unit that has a
+pushed or pending sha is kept as pending, and a unit with neither stays unpushed (a restack never
+makes a unit's first push; that stays with the unit's own checkpoint). The next push under
+push consent (a checkpoint, or the catch-up that `start` runs right after its sync) sends a pending
+tip; the catch-up sends it only when every open stacked unit below it is pushed at its local tip, and
+until then keeps it pending with one report line, so it never publishes a lower unit's unfolded or
+unpushed commits under an upper unit's branch. When no lower unit moved, the rebase onto the target
+is pushed under push consent as before. A conflict pauses as any restack does (`restack --continue`
+or `restack --abort`); until then every syncing command refuses `restack_pending`. The command saves
+every branch tip and the stack record once, before its first rebase: `restack --abort`, or any stop
+that restores, puts every branch and the stack record back as they were when the command started,
+also when a later step paused or refused (for example a branch checked out in another worktree)
+after an earlier step had already moved branches; a refusal before anything moved leaves nothing to
+abort. `restack --continue` finishes the paused step, and the next `restack` (or syncing command)
+restacks any unit still left behind. `guard`, `show`, `boundary` and `merge-chain` never sync.
 
 ## Report
 
@@ -167,11 +217,12 @@ redacted.
 `restack_pending`, `bad_resolution`, `gate_failed`, `unknown_target`, `chain_locked`,
 `base_mismatch`, `branch_in_worktree`, `unrecorded_branch`, `not_hotfix`, `bad_checkpoint`,
 `plan_not_carried`, `no_consent`, `no_pr`, `pr_failed`, `rebase_conflict`, `restack_not_paused`,
+`stale_parent`, `unrecorded_head`,
 and every fold refusal reason, passed through unchanged.
 
 ## Exit codes
 
 - `0`: done, or nothing to do.
 - `1`: refused. Steps finished before the refusal (a catch-up push, a fold, earlier merges)
-  stay done and are listed in the report.
+  stay done; the refusal report shows only its `refused:` line, so check them read-only.
 - `2`: bad input, or the command is not available in this install.

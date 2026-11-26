@@ -128,7 +128,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 38.1: Runner error classification and retry policy (INSERTED)** - Wider error catalogue, stdout limit matching, router cooldowns and the owner's retry policy (completed 2026-11-23)
 - [x] **Phase 39: Lane capability blocks and lens skills** - Each lane is told only the tools it really has; lens skills reach reviewers (completed 2026-11-23)
 - [x] **Phase 39.1: Remove the grok runtime (INSERTED)** - The grok CLI runtime leaves detection, command building, the runner table, profiles, docs and tests; its models stay reachable through opencode, pi and cursor-agent *(inserted 2026-11-19, owner decision)*
-- [ ] **Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)** - The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks *(inserted 2026-11-23, owner decision)*
+- [x] **Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)** - The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks *(inserted 2026-11-23, owner decision)*
 - [ ] **Phase 40: Resilient review sized by jev** - A failing lane no longer ends a review; jev sizes and classifies
 - [ ] **Phase 41: Superpowers adapter refactor with spec-config handoff** - One resume path, one stop path, session-model fallback, complete executor briefs
 - [ ] **Phase 42: Code review after execution and jev-picked executors** - Implementation is reviewed in a capped loop; jev picks the executor and lane transport
@@ -1030,22 +1030,33 @@ Plans:
 
 ### Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)
 
-**Goal**: The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks. *(inserted 2026-11-23, owner decision; no SPEC yet, the SPEC step finalizes the criteria below)*
+**Goal**: The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks. *(inserted 2026-11-23, owner decision; SPEC written 2026-11-23, `39.2-SPEC.md`, 10 requirements)*
 **Depends on**: Phase 39
-**Requirements**: none yet (the SPEC step defines them)
-**Success Criteria** (what must be TRUE; seeded from the 2026-11-23 requirement candidates, the SPEC step finalizes them):
+**Requirements**: the 10 numbered requirements of `39.2-SPEC.md`, cited in plans as `39.2-R1` to `39.2-R10`; JDG-04 for R10 *(amended 2026-11-24, 39.2 planning: the SPEC defined its requirements but no REQUIREMENTS.md id was registered; the plans cite the SPEC numbers and register no new id)*
+**Success Criteria** (what must be TRUE; seeded from the 2026-11-23 requirement candidates and finalized by `39.2-SPEC.md`, which wins where the two differ):
   1. Each file is committed on the branch of the lowest open unit that owns it: a phase's own SPEC, CONTEXT and log on its unit; a cross-phase amendment on the amended phase's branch; REQUIREMENTS, ROADMAP, STATE and the goal file on the lowest open unit; the units above are restacked after each phase step. Test: an eval over three phases where the third amends the first ends with the amendment on the first unit, visible on all three, and no restack conflict.
   2. A read-only where-am-I step runs at setup and before each phase: current branch, stack order with unit states, and the branch holding each phase's documents; it never edits the stack record. Test: a doc-contract test pins the step; an eval checks the printed fields.
   3. Every later step that reads or writes phase N's files first runs `fold.py start --phase N` (reuse and checkout) and `fold.py guard --phase N`; the goal-prompt rails say the same for planning or executing an earlier phase. Test: an eval "plan the first phase after the chain" reads nothing from the top branch.
   4. The end report states the branch the checkout is left on (the lowest phase of the range), the stack order with tips, which branch holds each phase's documents, the goal file's path and branch, and every `unit flow off` line. Test: a doc-contract test pins the fields.
-  5. Before the first `start`, the run stops with a reason when GSD's `git.branching_strategy` is not `none`, or when HEAD is an unrecorded branch with commits the trunk lacks; the agent moves no branch and edits no record. Test: two fixture repos, each refused with its reason.
+  5. Before the first `start`, the run stops with a reason when GSD's `git.branching_strategy` is not `none` and the branch name GSD gives the phase differs from the unit branch the fold flow creates for it, or when HEAD is an unrecorded branch with commits the trunk lacks; the agent moves no branch, edits no record and writes no config. Test: fixture repos, each refused with its reason; strategy `none` and a `phase` template that renders the unit's own name proceed. *(amended 2026-11-24, 39.2 planning, from SPEC R5 as confirmed by the owner 2026-11-23: ai-kit's own `phase` template renders the unit names, so a rule that stops on any strategy other than `none` would stop ai-kit's own runs)*
   6. The fold tool restacks the units above after a plain commit on a lower unit (no fold rewrite, no push), offers a read-only all-units view, and names a stale parent unit instead of `no_trunk`. Test: fixture-repo tests for each, with non-vacuity cases.
   7. A recipe table in a spec-discuss reference maps each refusal or symptom (`ref_mismatch`, `wrong_parent`, `plan_not_carried`, `branch_missing`, stale unit, GSD branching on, unrecorded HEAD branch, inserted phase below open units, paused restack) to the next step. Test: a doc-contract test checks every listed reason appears with an action.
   8. The changed SKILL.md files meet the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 
 **Requirement candidates (captured 2026-11-23, owner request)**: spec-discuss branch strategy for stacked units. No v2.0 phase edits `ai-kit-gsd-spec-discuss` today; inserted as this phase on 2026-11-23, owner decision. Source: `.planning/todos/pending/2026-11-23-spec-discuss-branch-strategy-after-the-chain.md`.
 
-**Plans**: TBD
+**Plans**: 10/10 plans complete
+
+- [x] 39.2-01-PLAN.md (wave 1): tracer: `fold.py show --all`, the read-only all-units view (R7)
+- [x] 39.2-02-PLAN.md (wave 1): `branch_preflight.py`, the GSD branch-name and unrecorded-HEAD start-time checks (R5)
+- [x] 39.2-03-PLAN.md (wave 2): `fold.py restack` restacks the units above a moved lower unit, locally, never pushed (R6)
+- [x] 39.2-04-PLAN.md (wave 3): `start` refusals `stale_parent` and `unrecorded_head`, fold docs, evals and README row (R5, R8)
+- [x] 39.2-05-PLAN.md (wave 4): `references/branches.md`: where-am-I shape, write steps, recipe table, end-report template (R1, R2, R4, R9)
+- [x] 39.2-06-PLAN.md (wave 5): spec-discuss SKILL.md branch rules, ownership rule, end report, README row (R1-R5, R8, R9)
+- [x] 39.2-07-PLAN.md (wave 6): seven spec-discuss evals (R1-R5, R8)
+- [x] 39.2-08-PLAN.md (wave 6): goal-prompt rail line for going back to an earlier phase (R3)
+- [x] 39.2-09-PLAN.md (wave 7): judge loop for the changed skills (orchestrator action, JDG-04)
+- [x] 39.2-10-PLAN.md (wave 8): closing gate: installed-layout check, suites, ROADMAP tick (orchestrator action)
 
 ### Phase 40: Resilient review sized by jev
 
@@ -1397,7 +1408,7 @@ Open entries only. An entry a v2.0 requirement absorbs moves to **Absorbed into 
 (moved there 2026-11-07: 999.2, 999.5, 999.7 to 999.17 and 999.19), with the requirement and phase
 that track it. 999.6 stays open (secondary runtime); 999.20 (Claude extra-usage segment) was added
 2026-11-07, 999.21 (runner temp directories) at the Phase 32 close-out, and 999.22 (headless installer agents) at the
-32.1 discuss, 999.23 (the checklist's open judge notes) at the 32.2 close-out, and 999.24 (whether codebase-memory-mcp makes graphify redundant) at the 32.5 plan; 999.26 and 999.27 (two CLI checks behind skill-text limits) came from loop 39.1 round 3 on 2026-11-24. The Playwright MCP Chrome path row in 999.1 is
+32.1 discuss, 999.23 (the checklist's open judge notes) at the 32.2 close-out, and 999.24 (whether codebase-memory-mcp makes graphify redundant) at the 32.5 plan; 999.26 and 999.27 (two CLI checks behind skill-text limits) came from loop 39.1 round 3 on 2026-11-24; 999.30 to 999.33 (fold push stderr, `--checkpoint` with `--phase`, record re-sync after an outside push, glob-reached doc scans at commit) came from the phase 39.1 ship on 2026-11-24; 999.34 (checkpoint and cascade publish a lower unit's unpushed commits) came from the phase 39.2 code-review fixes on 2026-11-24. The Playwright MCP Chrome path row in 999.1 is
 the FEAT-06 owner decision; the whole-tree layering suite once named 999.3 is ARCH-01 (Phase 52).
 Finished entries move to **Done** at the end of this section, with the date and what delivered them.
 
@@ -1537,6 +1548,56 @@ Plans:
 ### Phase 999.29: A read-only subcommand prints the --check-only probe set (BACKLOG)
 
 **Goal:** [Captured for future planning] `ai-kit-spec.py` gains a read-only subcommand (for example `probe-keys --cwd <project root> --role both`) that prints the keys `probe-quota` would spawn for, each with its runtime, model, command and custom flag, from the same resolve and route calls `probe-quota` makes, with no model call and no write. `skills/ai-kit-spec-config/references/check-only.md` then calls it instead of its inline `python3 -c` snippet, which imports the module's private helpers (`_probe_lanes`, `_route_reviewers`) and breaks on a rename there. A test runs the subcommand on a scratch roster and compares its list with the keys a faked `probe-quota` run spawns. Found 2026-11-24 in loop 39.1.1 round 3 (referee-two D6-1); the reference states the current limit until then.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.30: A failed fold push reports git's whole refusal, not its last line (BACKLOG)
+
+**Goal:** [Captured for future planning] When `git push` fails inside the fold flow, the `push_failed` report carries every line of git's stderr that explains the refusal (the remote's `remote:` lines and git's own error lines, secrets redacted by the existing redaction helper, capped at a fixed number of lines), not only the last line (`flow_git.py` keeps `first[-1]` for the atomic push and for the branch delete). In the 39.1 ship (2026-11-24) GitHub refused four pushes with GH007 (the push would publish a private e-mail address); each report showed only git's last line, so the cause stayed hidden until a hand push captured the full stderr. A fixture test with a fake remote hook that prints a multi-line refusal shows the refusal lines in the report and a planted token redacted. Found 2026-11-24 in the phase 39.1 ship.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.31: `fold.py checkpoint --phase` refuses a `--checkpoint` it would ignore (BACKLOG)
+
+**Goal:** [Captured for future planning] `fold.py checkpoint` with an adapter selector (`--phase`, `--plan`) either honours `--checkpoint FILE|-` the way `--unit` and `--unit-id` do, or refuses it with `bad_value` and a message that names the selector that does take a checkpoint file; it never silently folds the adapter's own selection while a given `--checkpoint` is ignored. In the 39.1 ship (2026-11-24) `checkpoint --phase 39.1 --final --checkpoint <file>` folded only the adapter's plan selection and ignored the file, so the tail had to be re-folded with `--unit-id`. A fold test passes `--phase` with `--checkpoint` and shows the chosen behaviour (fold of the file, or the refusal with nothing rewritten). Found 2026-11-24 in the phase 39.1 ship.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.32: The fold flow re-syncs its record after a push made outside it (BACKLOG)
+
+**Goal:** [Captured for future planning] A read-only check (for example a `fold.py show --all` column or a `guard` note) reports every unit whose recorded `pushed` tip or `parent_tip` differs from the remote head and the parent's tip, and one flow command (for example `fold.py sync-record --unit-id <id>` or a `restack`/`checkpoint` step) updates the record to the remote heads after an owner-approved push made outside the flow, through `write_record`, only when the remote head is a descendant-or-equal of the local branch tip, and never moves a branch. In the 39.1 ship (2026-11-24) an owner-approved hand push of eight units left the record's `pushed` fields stale, and they were set by a one-off script with a backup. A fixture test pushes outside the flow and shows the report, then the re-sync, with branches unmoved and the record equal to the remote. Found 2026-11-24 in the phase 39.1 ship.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.33: The commit-stage test selection reaches doc scans that read skill files through a glob (BACKLOG)
+
+**Goal:** [Captured for future planning] The staged-test mapper (`tools/staged_mapper.py`) selects, at commit, a test module that reaches a staged file only through a glob (for example `skills/*/SKILL.md` or `skills/*/references/*.md`), so a wording change in a skill file runs the doc scans that read it before push. Today this is a documented known limit (AGENTS.md Testing: such a test runs only at push). In the 39.1 ship (2026-11-24) `tests.test_config_callers` failed at push on SKILL.md and reference wording that the commit hook had passed, which cost a push round. The mapper resolves each test module's glob literals against the staged paths (or a declared glob list per module) and `python3 tools/staged_mapper.py --stats` reports the change in selectivity; a mapper test stages a skill file and shows the glob-reaching module selected. Found 2026-11-24 in the phase 39.1 ship.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.34: A consented checkpoint never publishes a lower unit's unpushed commits (BACKLOG)
+
+**Goal:** [Captured for future planning] Phase 39.2 made `start`'s catch-up keep an upper unit pending while an open unit below it is not pushed at its local tip, and stopped a restack from making a first push. `fold.py checkpoint` with push consent still pushes an upper unit's folded tip while the unit below holds plain, unfolded commits, so those commits reach the remote inside the upper branch; the cascade does the same when a middle unit is folded and the units above it are pushed. The 39.2 SPEC kept checkpoint behaviour out of scope. The checkpoint and the cascade apply the catch-up rule (hold the push, keep the tip pending, report the unit below that holds it), a fixture test with consent on shows the remote unchanged, and `references/unit-contract.md` states the rule once for all three paths. Found 2026-11-24 in the phase 39.2 code-review fixes (reading only, not run).
 **Requirements:** TBD
 **Plans:** 0 plans
 

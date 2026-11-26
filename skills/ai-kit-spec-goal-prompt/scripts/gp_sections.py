@@ -77,6 +77,10 @@ RAIL_WAIT = (
 RAIL_PING = (
     "In every progress or resume ping give the local time, the running step and when it started."
 )
+RAIL_BACK = (
+    "Go back to an earlier phase with fold.py start --phase <N>, then fold.py guard --phase <N>, "
+    "before planning or executing it; never move a branch or edit the stack record by hand."
+)
 OBJECTIVE_TAIL = ", each verified. Then leave the repository clean."
 OBJECTIVE_POINTER = " (full text: {path}section Full objective)"
 # Only the `/loop` row is typed as a `/loop` command; a schedule or wake tool never becomes an
@@ -664,7 +668,7 @@ def _rules_and_order(
     skills = detect["candidate_skills"]
     if work.family in GSD_FAMILIES:
         native = bool(answers.get("native_execution"))
-        return plan_rule_lines(skills, native), order_lines(work.phases, native)
+        return [*plan_rule_lines(skills, native), RAIL_BACK], order_lines(work.phases, native)
     if work.family == "superpowers":
         return superpowers_rule_lines(skills), superpowers_order_lines(
             work.plans, execution_order(work.plans)

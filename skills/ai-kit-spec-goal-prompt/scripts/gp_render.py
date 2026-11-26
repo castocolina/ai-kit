@@ -26,6 +26,7 @@ from gp_scope import Plan
 from gp_sections import (
     GSD_FAMILIES,
     LINE_CAP,
+    RAIL_BACK,
     TURN_FLOOR,
     Work,
     assemble_rails,
@@ -243,10 +244,11 @@ def _section_problems(sections: dict[str, list[str]]) -> list[str]:
 def _flag_section(body: list[str]) -> str:
     """The heading above the first flag-like line ("" when none), so the refusal names a field."""
     heading = "the lines before the first heading"
+    # the go-back rail names fold.py --phase on purpose; owner text keeps the refusal
     for line in body:
         if line in HEADINGS:
             heading = line
-        elif FLAG_RE.search(line):
+        elif FLAG_RE.search(line) and line != f"- {RAIL_BACK}":
             return heading
     return ""
 

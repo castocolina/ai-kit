@@ -466,5 +466,57 @@ class TestThirdAdapterFullFlow(_FlowCase):
         self.assertEqual(len(self.merge_calls()), 3)
 
 
+class TestCheckpointAfterLowerMove(_FlowCase):
+    """A consented checkpoint of a lower unit with plain commits under a pushed unit above."""
+
+    def _start(self, unit_id, branch):
+        code, text = self.fold("start", "--unit", self.unit(unit_id, branch))
+        self.assertEqual(code, 0, text)
+
+    def test_one_atomic_push_of_the_folded_unit_and_the_unit_above(self):
+        br_b = "demo/unit-b"
+        self.grant()
+        self._start("unit-a", BRANCH)
+        self.commit({"a.py": b"a\n"}, "feat: add a")
+        code, text = self.checkpoint(self.unit(), candidates=[
+            {"id": "t1", "title": "A", "files": ["a.py"]}])
+        self.assertEqual(code, 0, text)
+        self._start("unit-b", br_b)
+        self.commit({"b2.py": b"b2\n"}, "feat: b2")
+        tip = self.ref_sha("HEAD")
+        cp = f.write_checkpoint(
+            self.dest / "cp-b.json", schema=1, unit="unit-b", ref=f"refs/heads/{br_b}",
+            base=self.ref_sha(f"refs/heads/{BRANCH}"), end=tip, tip=tip, base_branch="main",
+            merged_refs=[], own_merge_subjects=[], docs_paths=[],
+            candidates=[{"id": "t1", "title": "B2", "files": ["b2.py"]}])
+        code, text = self.fold("checkpoint", "--unit", self.unit("unit-b", br_b),
+                               "--checkpoint", str(cp))
+        self.assertEqual(code, 0, text)
+        b_pushed = self.remote_sha(br_b)
+        f.run_git(self.repo, self.env, "switch", "-q", BRANCH)
+        self.commit({"tests/test_a.py": b"ta\n"}, "test: cover a")
+        self.commit({"b.py": b"b\n"}, "feat: add b")
+        self.commit({"tests/test_b.py": b"tb\n"}, "test: cover b")
+        code, text = self.checkpoint(self.unit(), final=True)
+        self.assertEqual(code, 0, text)
+        a_tip = self.ref_sha(f"refs/heads/{BRANCH}")
+        b_tip = self.ref_sha(f"refs/heads/{br_b}")
+        self.assertIn("kept unit-b pending: unit unit-a below is not pushed at its local tip",
+                      text)
+        self.assertNotIn("caught up", text)
+        self.assertIn(f"pushed {BRANCH} at {a_tip[:12]} with the units above", text)
+        self.assertNotIn("nothing to push", text)
+        self.assertEqual(text.strip().splitlines()[-1], "outcome: unit-a done")
+        between = f.run_git(self.repo, self.env, "log", "--format=%s", f"{BRANCH}..{br_b}")
+        self.assertEqual(between.splitlines(), ["feat: b2"])
+        self.assertEqual((self.remote_sha(BRANCH), self.remote_sha(br_b)), (a_tip, b_tip))
+        self.assertNotEqual(b_pushed, b_tip)
+        units = {u["id"]: u for u in self.record()["units"]}
+        for unit_id, tip_now in (("unit-a", a_tip), ("unit-b", b_tip)):
+            self.assertEqual((units[unit_id]["pushed"], units[unit_id]["pending"]),
+                             (tip_now, None))
+        self.assertEqual(units["unit-b"]["parent_tip"], a_tip)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,8 +1,14 @@
 """Stack reconciliation, cascade, conflict resolution and hotfix (plans 29.1-01 and 29.1-03).
 
-`sync` runs first in every flow command except consent, settings and show. With consent it
-fetches and records externally merged units as merged. When the remote trunk carries non-merge
-commits that the bottom unmerged unit does not hold, it cascades the stack onto the trunk.
+`sync` runs first in `start`, `checkpoint`, `ready`, `hotfix` and `restack`; `guard`, `show`,
+`boundary`, `merge-chain`, `consent` and `settings` never sync. With consent it fetches and
+records externally merged units as merged. When the remote trunk carries non-merge commits that
+the bottom unmerged unit does not hold, it cascades the stack onto the trunk. Before that, when a
+unit's parent branch moved past the parent tip recorded for it (a plain commit on a lower unit,
+or a lower unit folded or amended over its pushed tip), it restacks that unit and the units above
+it onto the new tip, keeping every unit's own commits; such a sync pushes nothing, the trunk
+cascade included. A stop restores every branch and the record as they were when the command
+started.
 
 `cascade` restacks the unmerged units above a moved point with one `git rebase --update-refs
 --onto <new> <old> <top>`. A rebase stop pauses it: the conflicting paths and the stage-0 index
@@ -120,6 +126,8 @@ def restore(repo, state):
 def _abort_and_restore(repo, state):
     if _rebase_in_progress(repo):
         run_git(repo, "rebase", "--abort")
+    if state.get("entry_record") is not None:
+        write_record(repo, state["entry_record"])
     restore(repo, state)
 
 
@@ -204,7 +212,11 @@ def _rebase_units(repo, state, top, new, old):
     """git rebase --update-refs over old..top; a conflict pauses, any other stop restores."""
     try:
         run_git(repo, "switch", top)
-        run_git(repo, "rebase", "--update-refs", "--onto", new, old, top)
+        # a lower-unit pass keeps a unit's own commit even when the new lower tip already
+        # holds its patch
+        run_git(repo, "rebase", "--update-refs",
+                *(("--reapply-cherry-picks", "--empty=keep") if state.get("keep") else ()),
+                "--onto", new, old, top)
     except FlowError as exc:
         if _rebase_in_progress(repo):
             _pause(repo, state)
@@ -240,13 +252,16 @@ def _push_refs(repo, rebased, moved_entry):
     return refs
 
 
-def _record_rebase(repo, rebased, pushed_now, moved_entry):
-    """Each restacked unit's parent_tip; pushed or pending tips. Pending is a sha to push later."""
+def _record_rebase(repo, rebased, pushed_now, moved_entry, first_push=True):
+    """Each restacked unit's parent_tip; pushed or pending tips. Pending is a sha to push later.
+    With first_push False (a sync pass that does not publish) a unit with neither a pushed nor a
+    pending sha gets no pending tip: a restack never makes a unit's first push."""
     for entry, tip, parent in rebased:
         entry["parent_tip"] = parent
         if entry["branch"] in pushed_now:
             entry["pushed"], entry["pending"] = tip, None
-        elif tip != entry["pushed"]:
+        elif tip != entry["pushed"] and (first_push or entry["pushed"] is not None
+                                         or entry.get("pending") is not None):
             entry["pending"] = tip
     if moved_entry is not None and moved_entry["branch"] in pushed_now:
         moved_entry["pushed"] = flow_git.rev(repo, f"refs/heads/{moved_entry['branch']}")
@@ -271,9 +286,11 @@ def _publish(repo, settings, record, state):
     above = [find_entry(record, unit_id) for unit_id in state["units"]]
     moved_entry = find_entry(record, state["moved_unit"]) if state["moved_unit"] else None
     rebased = _rebased(repo, above, state["new"], state["old"])
-    refs = _push_refs(repo, rebased, moved_entry) if consented(repo) else []
+    push = consented(repo) and state.get("publish", True)
+    refs = _push_refs(repo, rebased, moved_entry) if push else []
     _push_or_restore(repo, settings, record, state, refs)
-    _record_rebase(repo, rebased, {branch for branch, _expected, _src in refs}, moved_entry)
+    _record_rebase(repo, rebased, {branch for branch, _expected, _src in refs}, moved_entry,
+                   state.get("publish", True))
     write_record(repo, record)
     run_git(repo, "switch", state["branch_before"])
     _clear_state(repo)
@@ -287,7 +304,11 @@ def cascade(repo, settings, record, moved_unit=None, old_tip=None):
     branch, with old_tip (the checkpoint's old boundary). A clean rebase pushes every restacked
     unit that was pushed, plus the moved unit when pushed, in one atomic push leased on the
     recorded `pushed` shas. A rebase stop pauses (see `_pause`). Without consent nothing is
-    pushed and each unit's new tip is kept as pending.
+    pushed and each unit's new tip is kept as pending. settings may carry "restack":
+    {"publish": bool, "keep": bool, "entry": _command_entry(...)}: publish False pushes nothing
+    (also after restack --continue) and keeps the new tip of each unit with a pushed or pending
+    sha as pending, never a first push; keep replays every own commit; the entry tips and
+    record are what a stop restores.
     """
     if _dirty(repo):
         raise FlowError("dirty_tree", "commit or discard the working tree changes first")
@@ -306,12 +327,80 @@ def cascade(repo, settings, record, moved_unit=None, old_tip=None):
         branches.add(moved_entry["branch"])
     top = above[-1]["branch"]
     _preflight(repo, record, branches, old, top)
-    state = {"schema": 1, "branch_before": head, "tips": _tips(repo, branches), "old": old,
-             "new": new, "moved_unit": moved_unit, "units": [e["id"] for e in above],
-             "top": top, "paused": False, "resolved": False}
+    opts = settings.get("restack") or {}
+    state = {"schema": 1, "branch_before": head,
+             "tips": {**_tips(repo, branches), **opts.get("entry", {}).get("tips", {})},
+             "old": old, "new": new, "moved_unit": moved_unit, "units": [e["id"] for e in above],
+             "top": top, "paused": False, "resolved": False,
+             "publish": opts.get("publish", True),
+             "keep": opts.get("keep", False),
+             "entry_record": opts.get("entry", {}).get("entry_record")}
     _save_state(repo, state)
     _rebase_units(repo, state, top, new, old)
     return _publish(repo, settings, record, state)
+
+
+def _moved_lower(repo, record):
+    """(parent unit id, old boundary) of the highest open unit whose parent unit's branch moved
+    past the recorded parent tip, or None; _check_stack refuses a unit that left its boundary."""
+    open_units = [e for e in record["units"] if e["kind"] == "stacked" and e["state"] != "merged"]
+    by_branch = {e["branch"]: e for e in open_units}
+    for entry in reversed(open_units):
+        lower = by_branch.get(entry["parent"])
+        if lower is None:
+            continue
+        tip = flow_git.rev(repo, f"refs/heads/{lower['branch']}")
+        if tip is None or tip == entry["parent_tip"]:
+            continue
+        return lower["id"], entry["parent_tip"]
+    return None
+
+
+def _check_stack(repo, record):
+    """Refuse before any lower-unit pass when an open unit's branch is gone (branch_missing) or
+    does not hold its recorded parent tip (wrong_parent): a pass would move refs git cannot
+    place."""
+    for entry in record["units"]:
+        if entry["kind"] != "stacked" or entry["state"] == "merged":
+            continue
+        ref = f"refs/heads/{entry['branch']}"
+        if flow_git.rev(repo, ref) is None:
+            raise FlowError(
+                "branch_missing",
+                f"unit {entry['id']} branch {entry['branch']} does not exist; start of that "
+                "unit recreates it at its recorded tip; nothing was restacked")
+        if not flow_git.is_ancestor(repo, entry["parent_tip"], ref):
+            raise FlowError(
+                "wrong_parent",
+                f"unit {entry['id']} branch {entry['branch']} does not hold its recorded "
+                f"parent tip {entry['parent_tip'][:12]}; nothing was restacked")
+
+
+def _command_entry(repo, record):
+    """The rollback state of one syncing command, taken once before its first pass: every open
+    unit's tip, HEAD's branch and the record."""
+    branches = {e["branch"] for e in record["units"]
+                if e["kind"] == "stacked" and e["state"] != "merged"}
+    head = flow_git.head_branch(repo)
+    if head:
+        branches.add(head)
+    return {"schema": 1, "branch_before": head,
+            "tips": {b: t for b, t in _tips(repo, branches).items() if t is not None},
+            "entry_record": json.loads(json.dumps(record)), "paused": False, "conflicts": []}
+
+
+def _keep_entry(repo, saved, reason):
+    """After a stop: leave the command-entry state for restack --abort when a branch or the
+    record moved since entry, clear it when nothing moved; a paused pass keeps its own state,
+    which carries the same entry tips and record."""
+    if reason == "conflict":
+        return
+    now = {b: t for b, t in _tips(repo, saved["tips"]).items() if t is not None}
+    if now != saved["tips"] or read_record(repo) != saved["entry_record"]:
+        # parsed content: publish and write_record lay the JSON out differently
+        _save_state(repo, saved)
+    else:
+        _clear_state(repo)
 
 
 def _trunk_has_new_commits(repo, remote, bottom):
@@ -325,8 +414,26 @@ def _trunk_has_new_commits(repo, remote, bottom):
     return proc.stdout.decode("utf-8").strip() not in ("", "0")
 
 
+def _restack_lower(repo, settings, record):
+    """The lower-unit passes of one sync, highest first; the command-entry state is re-saved
+    after each pass; returns the restacked ids."""
+    restacked = []
+    for _ in range(len(record["units"])):
+        moved = _moved_lower(repo, record)
+        if moved is None:
+            break
+        ids = cascade(repo, settings, record, moved_unit=moved[0], old_tip=moved[1])
+        _save_state(repo, settings["restack"]["entry"])
+        if not ids:
+            break
+        restacked += [i for i in ids if i not in restacked]
+    return restacked
+
+
 def _sync_restacked(repo, settings, record):
-    """Fetch with consent, reconcile merges, cascade when the trunk moved; returns the ids."""
+    """Fetch with consent, reconcile merges, restack the units above each moved lower unit
+    (highest first), then cascade a moved trunk; a sync that restacked a lower unit pushes
+    nothing; returns the restacked ids."""
     if _load_state(repo) is not None:
         raise FlowError("restack_pending", "fold.py restack --continue or fold.py restack --abort")
     remote = primary_remote(repo, settings)
@@ -341,13 +448,32 @@ def _sync_restacked(repo, settings, record):
         write_record(repo, record)
     bottom = next((entry for entry in record["units"]
                    if entry["kind"] == "stacked" and entry["state"] != "merged"), None)
-    if bottom is None or not _trunk_has_new_commits(repo, remote, bottom):
+    lower = _moved_lower(repo, record) is not None
+    trunk = bottom is not None and _trunk_has_new_commits(repo, remote, bottom)
+    if not (lower or trunk):
         return []
-    return cascade(repo, settings, record)
+    if lower:
+        _check_stack(repo, record)
+    saved = _command_entry(repo, record)
+    _save_state(repo, saved)
+    try:
+        restacked = _restack_lower(
+            repo, dict(settings, restack={"publish": False, "keep": True, "entry": saved}),
+            record) if lower else []
+        if trunk:
+            restacked += [i for i in cascade(
+                repo, dict(settings, restack={"publish": not lower, "entry": saved}), record)
+                          if i not in restacked]
+    except FlowError as exc:
+        _keep_entry(repo, saved, exc.reason)
+        raise
+    _clear_state(repo)
+    return restacked
 
 
 def sync(repo, settings, record):
-    """Fetch with consent, reconcile merges and cascade a moved trunk (flow_unit reads no value)."""
+    """Fetch with consent, reconcile merges, restack moved lower units and cascade a moved trunk
+    (flow_unit reads no value)."""
     _sync_restacked(repo, settings, record)
 
 
@@ -451,6 +577,11 @@ def _continue(repo, settings, record, args):
     state = _load_state(repo)
     if state is None:
         raise FlowError("restack_not_paused", "no restack is paused")
+    if "units" not in state:
+        raise FlowError(
+            "restack_not_paused",
+            "no pass is paused; fold.py restack --abort restores every branch and the record "
+            "as they were when the command started")
     notes = _parse_notes(args.note)
     if not state.get("resolved"):
         _check_resolution(repo, state, notes)  # a refusal keeps the rebase paused for a retry

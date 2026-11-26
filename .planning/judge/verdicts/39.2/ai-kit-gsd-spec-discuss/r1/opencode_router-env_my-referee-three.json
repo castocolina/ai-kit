@@ -1,0 +1,194 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-three exit=0 cli_rc=0 elapsed=33s out=91113 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_def931a18ffemoj1zTLx23702C applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-gsd-spec-discuss\",\"judge\":\"opencode:router-env/my-referee-three\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":17,\"D2\":13,\"D3\":14,\"D4\":14,\"D5\":12,\"D6\":13,\"D7\":14,\"D8\":12},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":109,\"max_total\":125,\"percent\":87.2,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":180,\"evidence\":\"Where the workflow shows a trade-off table before a group, relay it as one header per option with pros and cons bullets, never a table.\",\"fix\":\"This relay-format rule appears again at line 224. Keep it once, in references/relay-and-summary.md, and leave a one-line pointer at each call site.\"},{\"id\":\"D1-2\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":400,\"evidence\":\"## Evidence\\n- One real run scored the same item 0.74, then 0.67.\",\"fix\":\"§3 line 285 already says jev is not deterministic. Merge this measured example into that bullet as its evidence, and drop the separate one-line section.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":232,\"evidence\":\"**End of range, in this one order:** (1) with a prompt to prepare ... (7) a fresh where-am-I and the end report.\",\"fix\":\"The Process pattern fits this skill. Its most fragile sequence, the seven ordered end-of-range steps, is one prose paragraph. Turn it into a numbered checklist with a checkpoint after each step: start, guard and the branch check pass, then commit, restack and the fresh where-am-I.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":357,\"evidence\":\"## NEVER list covers discuss flags, jev and CONTEXT, but not the branch hazards stated in §6 (\\\"never move a branch, check one out by hand or edit `.git/ai-kit-stack.json`\\\")\",\"fix\":\"Add a NEVER item: 'NEVER switch branches by hand or edit .git/ai-kit-stack.json — use start/guard only; a manual checkout desynchronises the stack record and the next restack rewrites the wrong unit.'\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":3,\"evidence\":\"description: \\\"Chains GSD /gsd-spec-phase then /gsd-discuss-phase ... with logged decisions, a deferred ledger, cross-phase amendments and a best-over-easy design rule. ...\\\"\",\"fix\":\"Use this skill to run GSD /gsd-spec-phase then /gsd-discuss-phase over a range of phases (writes NN-SPEC.md, NN-CONTEXT.md and NN-DISCUSSION-LOG.md), one stacked branch unit per phase. Use when asked to spec and discuss several GSD phases unattended or in one run (\\\"spec/discuss phases 17-24\\\", \\\"run spec-phase and discuss-phase for every undiscussed phase\\\", \\\"--analyze --all --batch --assumptions\\\"), to resume such a chain, or to settle GSD gray areas with jev advisory answers, even without naming the skill. Runs in auto or interactive mode, chosen once; works without jev-fast-decision installed. Not for plan-phase, execute-phase, a single quick spec edit, or rendering a goal prompt alone (ai-kit-spec-goal-prompt).\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":73,\"evidence\":\"**Branch checks, right after the range is known and before the first `fold.py start`** ... (lines 73-94, plus §1 refusal rows 132-150 and §6 lines 323-346)\",\"fix\":\"SKILL.md is 402 lines, and much of that is unit-flow branch handling: the preflight, the deferred-directory slug rules, the refusal rows and the switch recipe. Move these into references/branches.md, which already holds the recipes and is loaded at the first refusal. Keep a short decision list in SKILL.md (stop vs continue per refusal) with the trigger 'read references/branches.md before the branch checks'.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":88,\"evidence\":\"`mkdir <REPO>/.planning/phases/<P>-<slug>`, with ... (Cyrillic letters transliterated to ASCII first, ... cut at 60 characters; no leading or trailing `-`)\",\"fix\":\"The agent rebuilds GSD's slug by hand, which is fragile. Have branch_preflight.py print the exact directory path on its `deferred <N>` line, since it already has gsd_slug, and tell the agent to mkdir that printed path.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-gsd-spec-discuss/evals/evals.json\",\"line\":null,\"evidence\":\"16 evals with assertions and 10/10 trigger queries; tests/test_ai_kit_gsd_spec_discuss.py covers the scripts. No eval covers the interactive-relay subagent stop/resume path (SKILL.md line 224) or the §0 step 9 pre-run summary wait.\",\"fix\":\"Add an eval for an interactive run inside a subagent. Assert that it stops and returns 2-5 owner questions with the recommended option first and no table, and that it writes nothing before the answer.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":224,\"evidence\":\"Claude Code nests (a subagent may spawn subagents, three layers by default); opencode's default nesting depth is one and pi has no built-in subagents ... (opencode documents continuing a child by its `sessionID`, unverified here)\",\"fix\":\"These are version-sensitive host facts with no source URL or check date. Either cite the official doc URL with the date checked for each one, or tell the agent to probe the host live (try spawning a nested subagent and fall back to inline on failure).\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-gsd-spec-discuss/SKILL.md\",\"line\":226,\"evidence\":\"After the range: ... An early stop ... Both `docs(state)` commits ... **End of range, in this one order:** ... A `start` refusal that stops the run (§1) stops before any write ... (lines 226-246 as one block)\",\"fix\":\"Normal end, early stop, unit-flow-off and refusal-stop are tangled in one 20-line paragraph, so it is hard to tell which steps run in each case. Split it into a small decision list: normal end → steps 1-7; early stop → record-session plus a docs(state) commit on the lowest open unit; start refusal → no write, report only; unit flow off → skip start, guard and restack.\"}]}"
+  }
+ ],
+ "digest": "2eebacadf8655a6c00335d3d93081acca8bcf2c9786583ed80dba78091b758e7",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "6ea8501f787b45784deeb066b2a9c0b2e473e656d03aa342f54e4153130d889f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-three",
+ "loop": "39.2",
+ "modules": [
+  "tests/test_ai_kit_caller_text.py",
+  "tests/test_ai_kit_gsd_spec_discuss.py",
+  "tests/test_ai_kit_gsd_spec_discuss_e2e.py",
+  "tests/test_ai_kit_spec_goal_prompt_common.py",
+  "tests/test_ai_kit_spec_goal_prompt_golden.py",
+  "tests/test_ai_kit_spec_gsd_tools.py",
+  "tests/test_arch.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_arch_no_grok_runtime.py",
+  "tests/test_check_dogfood.py",
+  "tests/test_flow_docs.py",
+  "tests/test_gate_scope.py",
+  "tests/test_jev_fast_decision.py",
+  "tests/test_skill_text_history.py"
+ ],
+ "prompt_sha256": "bd2ee99456823936a9d72ec0d95f855e5ca8f18b0714f09a677a4e6fdb1855f5",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "ai-kit-gsd-spec-discuss",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "Where the workflow shows a trade-off table before a group, relay it as one header per option with pros and cons bullets, never a table.",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "This relay-format rule appears again at line 224. Keep it once, in references/relay-and-summary.md, and leave a one-line pointer at each call site.",
+    "id": "D1-1",
+    "line": 180,
+    "severity": "low"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "## Evidence\n- One real run scored the same item 0.74, then 0.67.",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "§3 line 285 already says jev is not deterministic. Merge this measured example into that bullet as its evidence, and drop the separate one-line section.",
+    "id": "D1-2",
+    "line": 400,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "**End of range, in this one order:** (1) with a prompt to prepare ... (7) a fresh where-am-I and the end report.",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "The Process pattern fits this skill. Its most fragile sequence, the seven ordered end-of-range steps, is one prose paragraph. Turn it into a numbered checklist with a checkpoint after each step: start, guard and the branch check pass, then commit, restack and the fresh where-am-I.",
+    "id": "D2-1",
+    "line": 232,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "## NEVER list covers discuss flags, jev and CONTEXT, but not the branch hazards stated in §6 (\"never move a branch, check one out by hand or edit `.git/ai-kit-stack.json`\")",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "Add a NEVER item: 'NEVER switch branches by hand or edit .git/ai-kit-stack.json — use start/guard only; a manual checkout desynchronises the stack record and the next restack rewrites the wrong unit.'",
+    "id": "D3-1",
+    "line": 357,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "description: \"Chains GSD /gsd-spec-phase then /gsd-discuss-phase ... with logged decisions, a deferred ledger, cross-phase amendments and a best-over-easy design rule. ...\"",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "Use this skill to run GSD /gsd-spec-phase then /gsd-discuss-phase over a range of phases (writes NN-SPEC.md, NN-CONTEXT.md and NN-DISCUSSION-LOG.md), one stacked branch unit per phase. Use when asked to spec and discuss several GSD phases unattended or in one run (\"spec/discuss phases 17-24\", \"run spec-phase and discuss-phase for every undiscussed phase\", \"--analyze --all --batch --assumptions\"), to resume such a chain, or to settle GSD gray areas with jev advisory answers, even without naming the skill. Runs in auto or interactive mode, chosen once; works without jev-fast-decision installed. Not for plan-phase, execute-phase, a single quick spec edit, or rendering a goal prompt alone (ai-kit-spec-goal-prompt).",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "**Branch checks, right after the range is known and before the first `fold.py start`** ... (lines 73-94, plus §1 refusal rows 132-150 and §6 lines 323-346)",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "SKILL.md is 402 lines, and much of that is unit-flow branch handling: the preflight, the deferred-directory slug rules, the refusal rows and the switch recipe. Move these into references/branches.md, which already holds the recipes and is loaded at the first refusal. Keep a short decision list in SKILL.md (stop vs continue per refusal) with the trigger 'read references/branches.md before the branch checks'.",
+    "id": "D5-1",
+    "line": 73,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "`mkdir <REPO>/.planning/phases/<P>-<slug>`, with ... (Cyrillic letters transliterated to ASCII first, ... cut at 60 characters; no leading or trailing `-`)",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "The agent rebuilds GSD's slug by hand, which is fragile. Have branch_preflight.py print the exact directory path on its `deferred <N>` line, since it already has gsd_slug, and tell the agent to mkdir that printed path.",
+    "id": "D6-1",
+    "line": 88,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "16 evals with assertions and 10/10 trigger queries; tests/test_ai_kit_gsd_spec_discuss.py covers the scripts. No eval covers the interactive-relay subagent stop/resume path (SKILL.md line 224) or the §0 step 9 pre-run summary wait.",
+    "file": "skills/ai-kit-gsd-spec-discuss/evals/evals.json",
+    "fix": "Add an eval for an interactive run inside a subagent. Assert that it stops and returns 2-5 owner questions with the recommended option first and no table, and that it writes nothing before the answer.",
+    "id": "D7-1",
+    "line": null,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "Claude Code nests (a subagent may spawn subagents, three layers by default); opencode's default nesting depth is one and pi has no built-in subagents ... (opencode documents continuing a child by its `sessionID`, unverified here)",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "These are version-sensitive host facts with no source URL or check date. Either cite the official doc URL with the date checked for each one, or tell the agent to probe the host live (try spawning a nested subagent and fall back to inline on failure).",
+    "id": "D8-1",
+    "line": 224,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "After the range: ... An early stop ... Both `docs(state)` commits ... **End of range, in this one order:** ... A `start` refusal that stops the run (§1) stops before any write ... (lines 226-246 as one block)",
+    "file": "skills/ai-kit-gsd-spec-discuss/SKILL.md",
+    "fix": "Normal end, early stop, unit-flow-off and refusal-stop are tangled in one 20-line paragraph, so it is hard to tell which steps run in each case. Split it into a small decision list: normal end → steps 1-7; early stop → record-session plus a docs(state) commit on the lowest open unit; start refusal → no write, report only; unit flow off → skip start, guard and restack.",
+    "id": "D8-2",
+    "line": 226,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-three",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 87.2,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 17,
+   "D2": 13,
+   "D3": 14,
+   "D4": 14,
+   "D5": 12,
+   "D6": 13,
+   "D7": 14,
+   "D8": 12
+  },
+  "skill": "ai-kit-gsd-spec-discuss",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 109
+ }
+}

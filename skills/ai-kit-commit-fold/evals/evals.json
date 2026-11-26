@@ -102,6 +102,50 @@
         "The agent does not start the merge chain for a hotfix unit or for any unit the owner did not name.",
         "The final answer reports the unit where the chain stopped, taken from the outcome line of the flow report."
       ]
+    },
+    {
+      "id": "precise-show-all-units",
+      "prompt": "Which units does the unit flow have in this repository, and which of their branches still exist? Do not change anything.",
+      "expected_output": "The agent runs fold.py show --all (adding --repo only for another repository) and relays its lines: one line per recorded unit in stack order with id, branch, parent, state, exists and tip, or units: none.",
+      "files": [],
+      "assertions": [
+        "The agent runs fold.py show --all with no other selector; --repo is optional for the current repository.",
+        "The agent relays one line per recorded unit in stack order, including the exists and tip fields.",
+        "The agent does not read or edit .git/ai-kit-stack.json by hand and moves no branch."
+      ]
+    },
+    {
+      "id": "precise-restack-after-lower-commit",
+      "prompt": "I committed a fix directly on the bottom unit branch of my stack. Bring the units above it up to date.",
+      "expected_output": "The agent runs fold.py restack, which rebases the units above the bottom unit onto its new tip locally without a push; on a conflict it follows the cascade-conflict steps.",
+      "files": [],
+      "assertions": [
+        "The agent runs fold.py restack rather than a hand-written git rebase of the units above.",
+        "The agent states that the restack is local and pushes nothing; a later push needs push consent.",
+        "On a conflict the agent resolves through restack --continue with notes, or restack --abort, never by moving a branch by hand."
+      ]
+    },
+    {
+      "id": "edge-unrecorded-head-refusal",
+      "prompt": "fold.py start for my new unit printed refused unrecorded_head: HEAD branch side is not a recorded unit and holds 1 commit(s) the trunk lacks: 0123456789ab feat: side work. What now?",
+      "expected_output": "The agent shows the listed commits to the owner and stops; it does not move, rebase or drop the commits and does not switch branch to get around the check.",
+      "files": [],
+      "assertions": [
+        "The agent shows the unrecorded_head report with the listed commit to the owner and stops the start.",
+        "The agent does not cherry-pick, rebase, reset or delete the listed commit and moves no branch by hand.",
+        "The agent re-runs start only after the owner has moved the commits or switched branch."
+      ]
+    },
+    {
+      "id": "edge-stale-parent-refusal",
+      "prompt": "fold.py start for my new phase printed refused stale_parent: unit phase-07 branch feature/phase-07-x does not exist; it is the newest unmerged unit in the stack record. What now?",
+      "expected_output": "The agent shows the report to the owner and stops; it does not recreate the branch, edit the stack record or retry with another selector.",
+      "files": [],
+      "assertions": [
+        "The agent shows the stale_parent report to the owner and stops the start.",
+        "The agent does not recreate the deleted branch and does not edit .git/ai-kit-stack.json.",
+        "The agent does not treat stale_parent as no_trunk and does not fetch and retry as if the trunk were missing."
+      ]
     }
   ]
 }

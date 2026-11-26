@@ -383,7 +383,13 @@ class TestPropertySweep(unittest.TestCase):
             if not block or not block[0].startswith("/gsd-autonomous"):
                 continue
             self.assertRegex(block[0], FLAGS_LINE)
-            self.assertFalse(any(re.search(r"--[a-zA-Z]", line) for line in block[1:]))
+            self.assertFalse(
+                any(
+                    re.search(r"--[a-zA-Z]", line)
+                    for line in block[1:]
+                    if line != "- " + gp_sections.RAIL_BACK
+                )
+            )
             rules = _rule_lines(block[1:])
             self.assertLessEqual(len(rules), gp_render.RULE_CAP)
             self.assertTrue(all(len(line) <= gp_render.LINE_CAP for line in rules))
@@ -547,6 +553,45 @@ class TestFlow09Rails(unittest.TestCase):
 
     def test_progress_ping_rail_in_every_family(self):
         self._assert_rail_everywhere(gp_sections.RAIL_PING)
+
+    def test_back_to_earlier_phase_rail_only_in_gsd_families(self):
+        for scn in SCENARIOS:
+            kind = scn.answers["work_set"]["kind"]
+            text = self.texts[scn.name]
+            with self.subTest(scenario=scn.name):
+                if kind == "phases":
+                    carriers = self._carriers(text)
+                    self.assertTrue(carriers)
+                    for carrier in carriers:
+                        self.assertIn("- " + gp_sections.RAIL_BACK, carrier)
+                else:
+                    self.assertNotIn(gp_sections.RAIL_BACK, text)
+
+    def test_back_rail_pins_order_and_both_prohibitions(self):
+        rail = gp_sections.RAIL_BACK
+        self.assertLess(
+            rail.index("fold.py start --phase <N>"),
+            rail.index("fold.py guard --phase <N>"),
+        )
+        self.assertIn("never move a branch", rail)
+        self.assertIn("edit the stack record by hand", rail)
+
+        def _pin_problems(text: str) -> list[str]:
+            problems = []
+            start = text.find("fold.py start --phase <N>")
+            guard = text.find("fold.py guard --phase <N>")
+            if start < 0 or guard < 0 or not start < guard:
+                problems.append("order")
+            if "never move a branch" not in text:
+                problems.append("branch")
+            if "edit the stack record by hand" not in text:
+                problems.append("stack")
+            return problems
+
+        self.assertEqual(_pin_problems(rail), [])
+        self.assertNotEqual(
+            _pin_problems(rail.replace(" or edit the stack record by hand", "")), []
+        )
 
 
 if __name__ == "__main__":

@@ -447,6 +447,23 @@ Pruned entries from STATE.md. Recoverable but no longer loaded into agent contex
 | Phase 38 P25 | 25min | 3 tasks | 33 files |
 | Phase 38 P26 | 30min | 3 tasks | 7 files |
 
+## Per-plan metric rows (Archived 2026-11-24 (phase 38.1, STATE.md under 300 lines))
+
+| Phase 38.1 P01 | 12min | 2 tasks | 8 files |
+| Phase 38.1 P02 | 10min | 2 tasks | 3 files |
+| Phase 38.1 P03 | 16min | 3 tasks | 10 files |
+| Phase 38.1 P04 | 16min | 3 tasks | 4 files |
+| Phase 38.1 P05 | 22min | 3 tasks | 13 files |
+| Phase 38.1 P06 | 36min | 3 tasks | 6 files |
+| Phase 38.1 P07 | 8min | 2 tasks | 2 files |
+| Phase 38.1 P08 | 16min | 2 tasks | 3 files |
+| Phase 38.1 P09 | 17min | 3 tasks | 7 files |
+| Phase 38.1 P10 | 9min | 2 tasks | 4 files |
+| Phase 38.1 P11 | 12min | 3 tasks | 9 files |
+| Phase 38.1 P12 | 25min | 3 tasks | 19 files |
+| Phase 38.1 P13 | 35min | 2 tasks | 10 files |
+| Phase 38.1 P14 | 25min | 2 tasks | 0 files |
+
 ## Blockers/Concerns (Archived 2026-11-22 (phase 38 close))
 
 

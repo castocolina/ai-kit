@@ -270,6 +270,143 @@ def _spec_section(text):
     return text[start:end] if start >= 0 and end > start else ""
 
 
+_BRANCHES = _REPO / "skills" / "ai-kit-gsd-spec-discuss" / "references" / "branches.md"
+_HAND_MOVES = (
+    "git switch",
+    "git checkout",
+    "branch -f",
+    "git reset",
+    "update-ref",
+    "git branch -D",
+)
+# Action cells copied from plan 39.2-05 Task 1, keyed by the start of the symptom cell.
+_EXPECTED_ACTIONS = {
+    "paused restack": (
+        "Follow the fold skill's cascade-conflict steps: resolve only the listed files, then "
+        "`restack --continue --note <path>=<how>`; when the paused command was a `start`, "
+        "re-run that `start` with its `guard` and branch check after the continue succeeds, "
+        "before any write. Or `restack --abort` (it returns every branch to its tip at "
+        "command entry) and stop."
+    ),
+    "`stale_lease`": (
+        "A push inside `start`'s catch-up failed or was not allowed. Show the report to the "
+        "owner and stop; never force or push by hand."
+    ),
+    "inserted phase": (
+        "Ask the owner. Number it after the top open unit; there is no insert-below command."
+    ),
+    "a phase's documents": (
+        "Run `start --phase <N>` and `guard --phase <N>` for the owning unit and read them "
+        "there; never copy files between branches by hand."
+    ),
+    "`gsd_branch_mismatch`": (
+        "From `branch_preflight.py`: GSD's phase branch differs from the unit branch. Stop "
+        "before the first `start`; change nothing and write no config. Show both names; the "
+        "owner aligns `git.phase_branch_template` or the branching strategy."
+    ),
+    "`stale_parent`": (
+        "The newest unmerged unit's branch is gone. Show the report to the owner and stop "
+        "the run. Never append a `unit flow off` line for it and never recreate the branch."
+    ),
+    "`unrecorded_head`": (
+        "HEAD is an unrecorded branch with commits the trunk lacks. Show the listed commits "
+        "to the owner and stop; the owner moves them or switches branch, then re-run."
+    ),
+    "`restack_pending`": (
+        "A restack is paused. Resolve it with the fold skill's cascade-conflict steps "
+        "(`restack --continue --note <path>=<how>`), or `restack --abort`, then re-run the "
+        "refused command once (a `start` again with its `guard` and branch check). When a "
+        "later restack pass was refused without a conflict, `restack --continue` refuses "
+        "`restack_not_paused`: run `restack --abort` (it restores every branch and the record "
+        "to the command-entry state), fix the cause the refusal named, then re-run the "
+        "refused command once."
+    ),
+    "`detached_head`": (
+        "HEAD is detached. Show the report to the owner and wait; after the owner checks out "
+        "a branch, retry `start --phase <N>` once. A second `detached_head`: stop."
+    ),
+    "`no_trunk`": (
+        "From `start`: run `git -C <REPO> fetch` once, then re-run `start`; still refused: "
+        "append the ledger line `unit flow off for phase <N>: no_trunk` and continue on the "
+        "current branch (SKILL.md §1). From `restack`: run `git -C <REPO> fetch` once and "
+        "retry `restack` once; still refused: show the report and stop (the commits stay on "
+        "their owner unit)."
+    ),
+    "`no_remote`": (
+        "From `start`: append the ledger line `unit flow off for phase <N>: no_remote` and "
+        "continue on the current branch. From `restack`: show the report and stop."
+    ),
+    "`dirty_tree`": (
+        "From `start` or `restack`: run the branch check first. Only when "
+        "`git -C <REPO> branch --show-current` prints the owner unit's branch of every "
+        "modified file this step wrote, commit those files and retry the refused command "
+        "once. A modified file whose owner unit is not checked out, or any file this step "
+        "did not write: show it to the owner and stop; never commit, stash or discard it."
+    ),
+    "`branch_in_worktree`": (
+        "Another worktree holds the branch. Ask the owner to switch it away and wait. Then, "
+        "from `start`: retry it once; from `restack`: run `restack --abort` (it returns "
+        "every branch to its tip at command entry), then retry plain `restack` once."
+    ),
+}
+
+
+def _contract_reasons():
+    text = _read(_REFS / "unit-contract.md")
+    start = text.find("## Reason codes (refused)")
+    end = text.find("and every fold", start)
+    return re.findall(r"`([a-z_]+)`", text[start:end])
+
+
+def _recipe_section(text):
+    start = text.find("## Recipe")
+    end = text.find("\n## ", start + 1) if start >= 0 else -1
+    return text[start:end] if start >= 0 and end > start else ""
+
+
+def _recipe_rows(text):
+    rows = {}
+    for line in _recipe_section(text).splitlines():
+        if not line.startswith("| ") or line.startswith("| Refusal") or line.startswith("|---"):
+            continue
+        cells = line.split("|")
+        action = cells[2].strip()
+        for name in re.findall(r"`([a-z_]+)`", cells[1]):
+            rows[name] = action
+    return rows
+
+
+def _never_list(text):
+    start = text.find("## Reasons that never reach spec-discuss")
+    end = text.find("\n## ", start + 1) if start >= 0 else -1
+    part = text[start:end] if start >= 0 and end > start else ""
+    return re.findall(r"`([a-z_]+)`", part)
+
+
+def _uncovered(text, reasons):
+    rows = _recipe_rows(text)
+    never = set(_never_list(text))
+    return [reason for reason in reasons if not rows.get(reason) and reason not in never]
+
+
+def _symptom_cells(text):
+    return {
+        line.split("|")[1].strip(): line.split("|")[2].strip()
+        for line in _recipe_section(text).splitlines()
+        if line.startswith("| ") and not line.startswith("| Refusal")
+    }
+
+
+def _row_mismatches(text):
+    cells = _symptom_cells(text)
+    bad = []
+    for key, want in _EXPECTED_ACTIONS.items():
+        got = [action for symptom, action in cells.items() if symptom.startswith(key)]
+        if got != [want]:
+            bad.append(key)
+    return bad
+
+
 class TestAdapterSkillText(unittest.TestCase):
     def setUp(self):
         skill = _read(_SP_DIR / "SKILL.md")
@@ -354,6 +491,290 @@ class TestAdapterSkillText(unittest.TestCase):
         self.assertEqual(lines["GOAL_MD"],
                          str(_REPO / "skills" / "ai-kit-spec-goal-prompt" / "SKILL.md"))
         self.assertEqual(os.path.realpath(lines["REPO"]), want_repo)
+
+
+class TestSpecDiscussBranchRules(unittest.TestCase):
+    def setUp(self):
+        self.spec = _read(_SPEC_DISCUSS)
+        self.flat = " ".join(self.spec.split())
+
+    def test_branch_checks_run_before_the_first_start(self):
+        needles = (
+            "Branch checks, right after the range is known and before the first `fold.py start`",
+            "show --all --repo <REPO>",
+            "branch_preflight.py",
+            "adding ` --ws <name>` when the run is workstream-scoped",
+            "move no branch, edit no stack record, write no config",
+        )
+        self.assertTrue(_in_order(self.flat, needles))
+        self.assertLess(
+            self.flat.index("branch_preflight.py"), self.flat.index("query phase.mvp-mode <N>"))
+        self.assertLess(
+            self.flat.index("confirm or trim the proposed range"),
+            self.flat.index("Branch checks, right after the range is known"))
+        self.assertNotIn("write no config", self.flat.replace("write no config", ""))
+
+    def test_where_am_i_runs_before_each_phase_read_only(self):
+        flat = " ".join(_spec_section(self.spec).split())
+        self.assertIn("run the where-am-I step again", flat)
+        self.assertIn(
+            "it is read-only and never edits the stack record or moves a branch", flat)
+        self.assertLess(
+            flat.index("it is read-only and never edits the stack record or moves a branch"),
+            flat.index("fold.py start --phase"))
+
+    def test_stale_parent_is_shown_to_the_owner_not_ledgered(self):
+        flat = " ".join(_spec_section(self.spec).split())
+        row = (
+            "`refused stale_parent`: the newest unmerged unit's branch is gone. "
+            "Show the report to the owner and stop the whole run; never append a "
+            "`unit flow off` ledger line for it"
+        )
+        self.assertIn(row, flat)
+        self.assertLess(flat.index(row), flat.index("Any other refusal"))
+        self.assertIn("`refused unrecorded_head`", flat)
+        weakened = flat.replace(
+            "never append a `unit flow off` ledger line for it",
+            "append a `unit flow off` ledger line")
+        self.assertNotIn(row, weakened)
+
+    def test_first_refusal_points_to_the_recipe(self):
+        flat = " ".join(_spec_section(self.spec).split())
+        pointer = "At the first refusal of any fold command, read `references/branches.md`"
+        self.assertIn(pointer, flat)
+        self.assertLess(flat.index(pointer), flat.index("`refused no_trunk`: run"))
+
+    def test_start_guard_and_branch_check_before_phase_files(self):
+        flat = " ".join(_spec_section(self.spec).split())
+        self.assertTrue(_in_order(flat, (
+            "run the where-am-I step again",
+            "Before the workflow's first read or write of phase N's files, "
+            "run `fold.py start --phase <N>`",
+            "guard --phase <N> --repo <REPO>",
+            "branch --show-current",
+            "Only then does the workflow read or write phase N's files",
+        )))
+        self.assertNotIn("Before the phase's first commit, run", flat)
+        self.assertLess(
+            self.flat.index("branch_preflight.py"),
+            self.flat.index("Before the workflow's first read or write"))
+
+    def test_deferred_order_directory_then_recheck_then_start(self):
+        needles = (
+            "create only the directory, `mkdir <REPO>/.planning/phases/<P>-<slug>`",
+            "write nothing in it",
+            "then the where-am-I step again, the script again for phase N",
+            "`start`, `guard` and the branch check of §1, then the first write",
+        )
+        self.assertTrue(_in_order(self.flat, needles))
+        self.assertFalse(_in_order(self.flat, tuple(reversed(needles))))
+        self.assertIn("A second `deferred`, exit 1 or exit 2 stops the run", self.flat)
+        self.assertNotIn("$S/branch_preflight.py", self.spec)
+        self.assertNotIn("let the spec workflow create only the directory", self.flat)
+
+    def test_ownership_rule_replaces_the_old_amendment_wording(self):
+        self.assertIn(
+            "Each file is committed on the branch of the lowest open unit that owns it, "
+            "then the units above are restacked",
+            self.flat,
+        )
+        self.assertNotIn("in K's commit", self.spec)
+        self.assertNotIn("<every cross-phase amended", self.flat)
+        self.assertIn(
+            "in K's commit",
+            self.spec + " amends them **in K's commit**",
+        )
+
+    def test_one_switch_and_one_restack_per_step_in_order(self):
+        needles = (
+            "start --phase <J> --repo <REPO>",
+            "guard --phase <J> --repo <REPO>",
+            "must print J's unit branch",
+            "query commit",
+            "restack --repo <REPO>",
+            "pushes nothing in that run, its trunk cascade included",
+            "start --phase <K> --repo <REPO>",
+            "guard --phase <K> --repo <REPO>",
+            "the same check for K's unit branch",
+        )
+        part = self.flat[self.flat.index("One switch per owner unit"):]
+        self.assertTrue(_in_order(part, needles))
+        self.assertFalse(_in_order(part, tuple(reversed(needles))))
+        self.assertNotIn("(local, nothing pushed)", self.flat)
+
+    def test_going_back_uses_start_then_guard_only(self):
+        part = self.flat[self.flat.index("Going to an earlier phase J"):]
+        self.assertTrue(_in_order(part, (
+            "start --phase <J> --repo <REPO>",
+            "guard --phase <J> --repo <REPO>",
+            "These two commands are the only way to switch",
+            "never move a branch",
+        )))
+
+    def test_end_report_names_five_fields_in_order(self):
+        part = self.flat[self.flat.index("**End report.**"):]
+        needles = (
+            "`checkout:`",
+            "`stack:`",
+            "`docs <N>:`",
+            "`goal file: <path> on <branch>`",
+            "`unit flow off:`",
+        )
+        self.assertTrue(_in_order(part, needles))
+        self.assertIn("`goal file: none`", part)
+        self.assertIn("`unit flow off: none`", part)
+        self.assertFalse(_in_order(part, tuple(reversed(needles))))
+
+    def test_shared_files_go_on_the_lowest_open_unit(self):
+        self.assertIn(
+            "Both `docs(state)` commits, after the range and at an early stop, "
+            "go on the lowest open unit (§6).",
+            self.flat,
+        )
+        self.assertIn(
+            "committed with STATE in step (4) of that order, on the lowest open unit",
+            self.flat,
+        )
+        self.assertNotIn("lowest open unit of the range", self.flat)
+        self.assertIn(
+            "whose unit id starts with `phase-` and whose state is `open`",
+            self.flat,
+        )
+        self.assertNotIn("whose state is not `merged`", self.flat)
+
+    def test_branches_reference_exists_and_is_listed(self):
+        self.assertIn("- `references/branches.md` —", self.spec)
+        self.assertTrue((_SPEC_DISCUSS.parent / "references" / "branches.md").is_file())
+
+    def test_end_of_range_switches_before_the_shared_writes(self):
+        steps = (
+            "End of range, in this one order:",
+            "for the top phase of the range, then render the goal file there without committing it",
+            "(2) `start`, `guard` and the branch check for the lowest open unit",
+            "(3) `state.record-session`",
+            "(4) one `docs(state)` commit of the `state_path` file and the goal file",
+            "(5) `restack`",
+            "(6) `start --phase <lowest>`, `guard` and the branch check",
+            "(7) a fresh where-am-I and the end report",
+        )
+        self.assertTrue(_in_order(self.flat, steps))
+        self.assertFalse(_in_order(self.flat, tuple(reversed(steps))))
+        self.assertEqual(self.flat.count("End of range, in this one order:"), 1)
+        self.assertIn("`checkout: <current branch> (unit flow off)`", self.flat)
+        self.assertNotIn("After the range's `docs(state)` commit, prepare", self.flat)
+        self.assertIn("`goal file: none` and the report is still printed", self.flat)
+        self.assertIn("`unit flow off: fold not installed`", self.flat)
+
+
+class TestSpecDiscussBranchesDoc(unittest.TestCase):
+    def setUp(self):
+        self.text = _read(_BRANCHES)
+        self.flat = " ".join(self.text.split())
+
+    def test_every_contract_reason_has_an_action_or_never_reaches(self):
+        reasons = _contract_reasons()
+        self.assertIn("stale_parent", reasons)
+        self.assertIn("unrecorded_head", reasons)
+        self.assertEqual(_uncovered(self.text, reasons), [])
+
+    def test_a_dropped_reason_is_reported(self):
+        dropped = self.text.replace("`wrong_parent`", "`gone_reason`")
+        self.assertEqual(_uncovered(dropped, _contract_reasons()), ["wrong_parent"])
+
+    def test_symptom_rows_have_actions(self):
+        self.assertEqual(_row_mismatches(self.text), [])
+        # Non-vacuity: an emptied inserted-phase cell fails for exactly that row.
+        emptied = self.text.replace(
+            "| inserted phase that must sit below open units | " + _EXPECTED_ACTIONS[
+                "inserted phase"] + " |",
+            "| inserted phase that must sit below open units |  |",
+        )
+        self.assertNotEqual(emptied, self.text)
+        self.assertEqual(_row_mismatches(emptied), ["inserted phase"])
+
+    def test_unknown_failure_stops(self):
+        self.assertIn("A refusal or failure not in this table: show the report and stop.",
+                      self.flat)
+        self.assertIn("retry once after the stated change, wait for the owner, or stop",
+                      self.flat)
+
+    def test_no_action_edits_the_record_or_moves_a_branch(self):
+        def _violations(text):
+            found = []
+            for action in _recipe_rows(text).values():
+                if "ai-kit-stack.json" in action:
+                    found.append(action)
+            for move in _HAND_MOVES:
+                if move in text:
+                    found.append(move)
+            for line in text.splitlines():
+                if "ai-kit-stack.json" in line and "Never edit" not in line:
+                    found.append(line)
+            return found
+
+        self.assertEqual(_violations(self.text), [])
+        marker = "## Reasons that never reach spec-discuss"
+        record_row = "| `x_reason` | edit .git/ai-kit-stack.json by hand |\n"
+        planted_record = self.text.replace(marker, record_row + marker, 1)
+        self.assertTrue(any("ai-kit-stack.json" in hit for hit in _violations(planted_record)))
+        self.assertTrue(any("ai-kit-stack.json" in action
+                            for action in _recipe_rows(planted_record).values()))
+        switch_row = "| `y_reason` | run git switch to the unit branch |\n"
+        planted_switch = self.text.replace(marker, switch_row + marker, 1)
+        self.assertIn("git switch", _violations(planted_switch))
+
+    def test_where_am_i_shape(self):
+        shape = (
+            "current: <branch, or (detached)>",
+            "stack:",
+            "unit <id> branch <branch> parent <parent> state <state> exists <yes|no> tip "
+            "<sha12|none>",
+            "phase <N> unit <id|none> docs <branch|none|split>",
+        )
+        self.assertTrue(_in_order(self.text, shape))
+        self.assertIn("show --all --repo <REPO>", self.text)
+        self.assertIn("moves no branch", self.flat)
+        self.assertIn("ls-tree --name-only refs/heads/<unit branch> .planning/phases/", self.flat)
+        self.assertNotIn("query find-phase", self.text)
+        self.assertIn("<P>-SPEC.md", self.text)
+        self.assertIn("<P>-CONTEXT.md", self.text)
+        self.assertIn("<D>/CONTEXT.md", self.text)
+        self.assertIn("`docs split`: exactly one of them is", self.flat)
+        self.assertIn("(SPEC on <branch>, CONTEXT none)", self.flat)
+
+    def test_write_steps_in_order(self):
+        needles = (
+            "start --phase <J> --repo <REPO>",
+            "guard --phase <J> --repo <REPO>",
+            "must print J's unit branch",
+            "query commit",
+            "restack --repo <REPO>",
+            "start --phase <K> --repo <REPO>",
+            "guard --phase <K> --repo <REPO>",
+            "must print K's unit branch",
+        )
+        self.assertTrue(_in_order(self.text, needles))
+        self.assertFalse(_in_order(self.text, tuple(reversed(needles))))
+        self.assertIn("it pushes nothing in that run, its trunk cascade included", self.flat)
+        self.assertNotIn("(local; it pushes nothing)", self.flat)
+        self.assertIn("on the branch of the lowest open unit that owns it", self.flat)
+        self.assertIn("whose unit id starts with `phase-` and whose state is `open`", self.flat)
+        self.assertIn("a `finished` or `ready` unit never receives them", self.flat)
+        self.assertNotIn("whose state is not `merged`", self.flat)
+
+    def test_end_report_has_five_fields_in_order(self):
+        fields = (
+            "checkout: <branch>",
+            "stack:",
+            "docs <N>: <branch>",
+            "goal file: <path> on <branch>",
+            "unit flow off: <ledger line>",
+        )
+        part = self.text[self.text.index("## End report"):]
+        self.assertTrue(_in_order(part, fields))
+        self.assertFalse(_in_order(part, tuple(reversed(fields))))
+        self.assertIn("goal file: none", part)
+        self.assertIn("unit flow off: none", part)
 
 
 if __name__ == "__main__":

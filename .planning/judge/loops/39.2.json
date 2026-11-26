@@ -1,0 +1,75 @@
+{
+ "counts": {
+  "ai-kit-commit-fold": {
+   "count": 2,
+   "jev": {
+    "asked": false,
+    "item": null,
+    "level": null,
+    "note": "not asked (deterministic two)"
+   },
+   "last_v4": null,
+   "reasons": [
+    "no rubric-v4 verdict"
+   ]
+  },
+  "ai-kit-gsd-spec-discuss": {
+   "count": 1,
+   "jev": {
+    "asked": true,
+    "item": {
+     "context": "the last score sat just outside judge variation, above the pass mark; no critical or high findings; a large SKILL.md change; reference files: several files; script files: one or two files; eval files: several files.",
+     "criteria": [
+      "no change likely to move the score",
+      "a small move within run-to-run variation is possible",
+      "a move past run-to-run variation is likely",
+      "a move past run-to-run variation is near certain"
+     ],
+     "id": "judge-count",
+     "instructions": "How likely is it that the change since the last judged version moves a skill-judge score past normal run-to-run variation?",
+     "type": "score"
+    },
+    "level": null,
+    "note": "jev needs_fallback (own reasoning)"
+   },
+   "last_v4": {
+    "critical": 0,
+    "high": 0,
+    "judged_at": "16153d6",
+    "percent": 88.0,
+    "source": ".planning/phases/29.1-stacked-phase-branches-chained-prs-and-the-merge-chain-inserted/29.1-JUDGE.md:82"
+   },
+   "reasons": [
+    "no deterministic trigger",
+    "jev needs_fallback (own reasoning)"
+   ]
+  }
+ },
+ "loop": "39.2",
+ "pool": {
+  "judges": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "members": [
+   "opencode:router-env/my-referee-one",
+   "opencode:router-env/my-referee-two"
+  ],
+  "native": "native:opus-high",
+  "probes": [
+   {
+    "judge": "opencode:router-env/my-referee-one",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=15s out=2168 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_def960221ffe5S94EUEcEb3akT applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+    "usable": true
+   },
+   {
+    "judge": "opencode:router-env/my-referee-two",
+    "reason": "",
+    "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=25s out=2340 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_def960220ffea7I3ElqvYsO1Fq applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+    "usable": true
+   }
+  ],
+  "substitutes": []
+ }
+}

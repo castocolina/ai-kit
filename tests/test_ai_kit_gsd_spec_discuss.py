@@ -11,6 +11,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -24,8 +25,14 @@ from tests.test_jev_fast_decision import closed_port_url
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "ai-kit-gsd-spec-discuss" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+import branch_preflight
 import edge_floor
 import phase_range
+
+_FOLD_SCRIPTS = (Path(__file__).resolve().parent.parent / "skills"
+                 / "ai-kit-commit-fold" / "scripts")
+sys.path.insert(0, str(_FOLD_SCRIPTS))
+import fold_adapters
 
 
 class _TmpHome(unittest.TestCase):
@@ -167,6 +174,27 @@ class TestPhaseRange(_TmpHome):
         os.utime(untracked, (int(later), int(later)))
         self.assertEqual(phase_range.git_time(str(untracked)), float(later))
         self.assertEqual(phase_range.undiscussed_reason(str(other), phase_range.git_time),
+                         "SPEC newer than CONTEXT")
+
+    def test_artifact_pick_follows_gsd_bare_context_and_requirements_spec(self):
+        # Judge loop 39.2 D8-3: GSD reads a bare CONTEXT.md and never takes an AI- or UI-SPEC as
+        # the requirements SPEC (gsd-core planning-workspace findContextMdIn, isPhaseSpecFile).
+        phase = self.tmp / "21-z"
+        phase.mkdir()
+        (phase / "CONTEXT.md").write_text("context")
+        (phase / "21-UI-SPEC.md").write_text("ui spec")
+        stamps = {"CONTEXT.md": 1.0, "21-UI-SPEC.md": 2.0}
+
+        def timer(path):
+            return stamps.get(os.path.basename(path))
+
+        self.assertIsNone(phase_range.undiscussed_reason(str(phase), timer))
+        (phase / "21-AI-SPEC.md").write_text("ai spec")
+        stamps["21-AI-SPEC.md"] = 3.0
+        self.assertIsNone(phase_range.undiscussed_reason(str(phase), timer))
+        (phase / "21-SPEC.md").write_text("spec")
+        stamps["21-SPEC.md"] = 4.0
+        self.assertEqual(phase_range.undiscussed_reason(str(phase), timer),
                          "SPEC newer than CONTEXT")
 
 
@@ -582,8 +610,8 @@ class TestPhase324Contract(unittest.TestCase):
     def test_handoff_runs_after_the_state_commit(self):
         skill = _flat(self.read("SKILL.md"))
         self.assertIn("Hand off to goal-prompt (auto path only)", skill)
-        self.assertIn("After the range's `docs(state)` commit, prepare the autonomous-run prompt "
-                      "for the discussed range", skill)
+        self.assertIn("At step (1) of the end-of-range order above, prepare the "
+                      "autonomous-run prompt for the discussed range", skill)
         self.assertLess(skill.index("query state.record-session"),
                         skill.index("Hand off to goal-prompt"))
 
@@ -597,7 +625,8 @@ class TestPhase324Contract(unittest.TestCase):
 
     def test_handoff_not_installed_and_empty_range_stop(self):
         skill = _flat(self.read("SKILL.md"))
-        for needle in ("Empty `GOAL_MD`: say goal-prompt is not installed and stop.",
+        for needle in ("Empty `GOAL_MD`: say goal-prompt is not installed and end the run "
+                       "with the end report.",
                        "stop earlier only on a blocker",
                        "A range in which no phase was discussed prepares no prompt "
                        "and says so."):
@@ -697,10 +726,479 @@ class TestPhase324Contract(unittest.TestCase):
                         skill.index("## 1. Per phase: spec"))
 
 
+class TestBranchPreflight(_TmpHome):
+    """Read-only branch checks before the first unit start of a spec-discuss run."""
+
+    def setUp(self):
+        super().setUp()
+        self.env["AI_KIT_REFUSE_REAL_HOME"] = "1"
+        self.env["GIT_CONFIG_NOSYSTEM"] = "1"
+        self.env["GIT_CONFIG_GLOBAL"] = os.devnull
+
+    def _git(self, *args):
+        subprocess.run(["git", *args], check=True, capture_output=True, env=self.env)
+
+    def _repo(self, remote=True, config='{"git": {"branching_strategy": "phase"}}'):
+        repo = self.tmp / "repo"
+        repo.mkdir()
+        self._git("init", "-q", "-b", "main", str(repo))
+        self._git("-C", str(repo), "config", "user.email", "t@example.invalid")
+        self._git("-C", str(repo), "config", "user.name", "t")
+        (repo / "README.md").write_text("init\n", encoding="utf-8")
+        if config is not None:
+            planning = repo / ".planning"
+            planning.mkdir()
+            (planning / "config.json").write_text(config, encoding="utf-8")
+        self._git("-C", str(repo), "add", "-A")
+        self._git("-C", str(repo), "commit", "-q", "-m", "init")
+        if remote:
+            bare = self.tmp / "remote.git"
+            self._git("init", "-q", "--bare", "-b", "main", str(bare))
+            self._git("-C", str(repo), "remote", "add", "origin", str(bare))
+            self._git("-C", str(repo), "push", "-q", "origin", "main")
+        return repo
+
+    def _phase_dir(self, repo, name):
+        directory = repo / ".planning" / "phases" / name
+        directory.mkdir(parents=True)
+        (directory / "CONTEXT.md").write_text("context\n", encoding="utf-8")
+
+    def _stub_gsd(self, data):
+        (self.tmp / "fake_gsd.json").write_text(json.dumps(data), encoding="utf-8")
+        script = self.tmp / "fake_gsd.py"
+        script.write_text(
+            "import json\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "\n"
+            "root = Path(__file__).resolve().parent\n"
+            "log = root / \"fake_gsd.log\"\n"
+            "with log.open(\"a\", encoding=\"utf-8\") as handle:\n"
+            "    handle.write(\" \".join(sys.argv[1:]) + \"\\n\")\n"
+            "print(\"note: stub warning\", file=sys.stderr)\n"
+            "print(\"stub header\")\n"
+            "data = json.loads((root / \"fake_gsd.json\").read_text(encoding=\"utf-8\"))\n"
+            "argv = sys.argv[1:]\n"
+            "head = argv[:2] == [\"query\", \"config-get\"] and argv[3:4] == [\"--default\"]\n"
+            "if head and argv[-1] == \"--raw\":\n"
+            "    print(data.get(argv[2], argv[4]))\n"
+            "sys.exit(data.get(\"fail\", 0))\n",
+            encoding="utf-8")
+        return shlex.join([sys.executable, str(script)])
+
+    def _stub_fold(self):
+        script = self.tmp / "fake_fold.py"
+        script.write_text(
+            "import sys\n"
+            "from pathlib import Path\n"
+            "\n"
+            "argv = sys.argv[1:]\n"
+            "root = Path(__file__).resolve().parent\n"
+            "log = root / \"fake_fold.log\"\n"
+            "with log.open(\"a\", encoding=\"utf-8\") as handle:\n"
+            "    handle.write(\" \".join(argv) + \"\\n\")\n"
+            "if argv[:2] == [\"settings\", \"show\"] and argv[2:3] == [\"--repo\"]:\n"
+            "    print(\"remote: origin\")\n"
+            "    print(\"targets: main\")\n"
+            "    print(\"gates: none\")\n"
+            "    sys.exit(0)\n"
+            "sys.exit(9)\n",
+            encoding="utf-8")
+        return str(script)
+
+    def _units(self, text):
+        path = self.tmp / "units.txt"
+        path.write_text(text, encoding="utf-8")
+        return str(path)
+
+    def _run_cli(self, repo, gsd, phases, units, *extra):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "branch_preflight.py"), "--repo", str(repo),
+             "--gsd", gsd, "--fold-py", self._stub_fold(), "--phases", phases,
+             "--units", units, *extra],
+            capture_output=True, text=True, check=False, timeout=60, env=self.env)
+
+    def _state(self, repo):
+        config = repo / ".planning" / "config.json"
+        stack = repo / ".git" / "ai-kit-stack.json"
+        refs = subprocess.run(
+            ["git", "-C", str(repo), "for-each-ref", "--format=%(refname) %(objectname)"],
+            check=True, capture_output=True, text=True, env=self.env).stdout
+        head = subprocess.run(
+            ["git", "-C", str(repo), "branch", "--show-current"],
+            check=True, capture_output=True, text=True, env=self.env).stdout
+        config_bytes = config.read_bytes() if config.is_file() else None
+        stack_bytes = stack.read_bytes() if stack.is_file() else None
+        return config_bytes, stack_bytes, refs, head
+
+    def test_strategy_none_proceeds_without_name_calls(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({"git.branching_strategy": "none"})
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.splitlines(),
+                         ["deferred 5: no phase directory yet", "preflight: ok"])
+        log = (self.tmp / "fake_gsd.log").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(log), 2)
+        self.assertTrue(log[0].startswith("query config-get branching_strategy"))
+        self.assertTrue(log[1].startswith("query config-get git.branching_strategy"))
+        fold = (self.tmp / "fake_fold.log").read_text(encoding="utf-8").splitlines()
+        self.assertTrue(fold)
+        self.assertTrue(all(line.startswith("settings show") for line in fold))
+
+    def test_padding_only_difference_is_refused(self):
+        line = branch_preflight.mismatch_line("5", "gsd/phase-5-x", "gsd/phase-05-x")
+        self.assertEqual(
+            line,
+            "refused gsd_branch_mismatch: phase 5: GSD branch gsd/phase-5-x "
+            "differs from unit branch gsd/phase-05-x (strategy phase)")
+        self.assertIsNone(
+            branch_preflight.mismatch_line("5", "gsd/phase-05-x", "gsd/phase-05-x"))
+
+    def test_unrecorded_head_with_a_local_commit_is_refused(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({"git.branching_strategy": "none"})
+        self._git("-C", str(repo), "switch", "-q", "-c", "side")
+        (repo / "side.txt").write_text("side\n", encoding="utf-8")
+        self._git("-C", str(repo), "add", "side.txt")
+        self._git("-C", str(repo), "commit", "-q", "-m", "feat: side ghp_" + "a" * 36)
+        tip = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "side"],
+            check=True, capture_output=True, text=True, env=self.env).stdout.strip()
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        expected = ("refused unrecorded_head: HEAD branch side is not a recorded unit and "
+                    f"holds 1 commit(s) the trunk lacks: {tip[:12]} feat: side [redacted]")
+        self.assertIn(expected, out.stdout)
+        self.assertNotIn("ghp_", out.stdout)
+
+    def test_script_stays_read_only_and_shell_free(self):
+        source = (SCRIPTS / "branch_preflight.py").read_text(encoding="utf-8")
+        self.assertNotIn("shell=True", source)
+        self.assertNotIn("ai-kit-commit-fold", source)
+        self.assertNotIn("fold_adapters", source)
+        self.assertNotIn('"init"', source)
+        self.assertNotIn('"guard"', source)
+        self.assertNotIn('"execute-phase"', source)
+        self.assertIsNone(re.search(r'open\([^)]*["\'][wa]', source))
+        self.assertNotIn('"gh" +', source)
+
+    def test_matching_names_proceed(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({"git.branching_strategy": "phase"})
+        self._phase_dir(repo, "05-x")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertTrue(out.stdout.endswith("preflight: ok\n"), out.stdout)
+        self.assertNotIn("stub header", out.stdout)
+
+    def test_milestone_strategy_is_refused(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({"git.branching_strategy": "milestone"})
+        self._phase_dir(repo, "05-x")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn(
+            "refused gsd_branch_mismatch: phase 5: strategy milestone puts the phase "
+            "on one milestone branch, not unit branch gsd/phase-05-x",
+            out.stdout)
+
+    def test_repeated_phase_token_is_refused(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({
+            "git.branching_strategy": "phase",
+            "git.phase_branch_template": "gsd/{phase}/phase-{phase}-{slug}",
+        })
+        self._phase_dir(repo, "05-x")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn(
+            "GSD branch gsd/05/phase-{phase}-x differs from unit branch gsd/05/phase-05-x",
+            out.stdout)
+
+    def test_project_token_is_refused(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({
+            "git.branching_strategy": "phase",
+            "git.phase_branch_template": "{project}-gsd/phase-{phase}-{slug}",
+        })
+        self._phase_dir(repo, "05-x")
+        self._phase_dir(repo, "02.1-y")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5,2.1", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        refused = [line for line in out.stdout.splitlines() if line.startswith("refused")]
+        self.assertEqual(
+            refused,
+            ["refused gsd_branch_mismatch: template has a token the unit flow "
+             "cannot render: {project}"])
+
+    def test_decimal_phase_renders_alike(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({"git.branching_strategy": "phase"})
+        self._phase_dir(repo, "02.1-y")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "2.1", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_fold_rule_matches_fold_adapters(self):
+        repo = self._repo(
+            config='{"git": {"branching_strategy": "phase", '
+                   '"phase_branch_template": "gsd/phase-{phase}-{slug}"}}')
+        self._phase_dir(repo, "05-alpha")
+        self._phase_dir(repo, "02.1-beta")
+        self._phase_dir(repo, "123-gamma")
+        template = "gsd/phase-{phase}-{slug}"
+        for phase, slug in (("5", "alpha"), ("2.1", "beta"), ("123", "gamma")):
+            self.assertEqual(
+                branch_preflight.fold_name(template, phase, slug),
+                fold_adapters.gsd_unit(str(repo), phase)["branch"])
+            self.assertEqual(branch_preflight.phase_slug(str(repo), phase), slug)
+
+    def test_no_phase_directory_is_deferred_and_two_are_not(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({"git.branching_strategy": "phase"})
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "7", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(
+            out.stdout.splitlines(),
+            ["deferred 7: no phase directory yet", "preflight: ok"])
+        self._phase_dir(repo, "07-a")
+        self._phase_dir(repo, "07-b")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "7", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 2, out.stdout)
+        self.assertTrue(
+            out.stderr.startswith("preflight: cannot check: 2 directories for phase 7"),
+            out.stderr)
+
+    def test_head_on_a_recorded_branch_proceeds(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({"git.branching_strategy": "none"})
+        self._git("-C", str(repo), "switch", "-q", "-c", "side")
+        (repo / "side.txt").write_text("side\n", encoding="utf-8")
+        self._git("-C", str(repo), "add", "side.txt")
+        self._git("-C", str(repo), "commit", "-q", "-m", "feat: side work")
+        units = self._units(
+            "unit phase-05 branch side parent main state open exists yes "
+            "tip 000000000000\n")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", units)
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_both_reasons_are_printed(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({"git.branching_strategy": "milestone"})
+        self._phase_dir(repo, "05-x")
+        self._git("-C", str(repo), "switch", "-q", "-c", "side")
+        (repo / "side.txt").write_text("side\n", encoding="utf-8")
+        self._git("-C", str(repo), "add", "side.txt")
+        self._git("-C", str(repo), "commit", "-q", "-m", "feat: side work")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        refused = [line for line in out.stdout.splitlines() if line.startswith("refused")]
+        self.assertEqual(len(refused), 2, out.stdout)
+        self.assertIn("gsd_branch_mismatch", refused[0])
+
+    def test_bad_input_cannot_check(self):
+        repo = self._repo()
+        cases = [
+            (self._stub_gsd({"fail": 3}), "5", self._units("units: none\n"), ()),
+            (self._stub_gsd({"git.branching_strategy": ""}), "5",
+             self._units("units: none\n"), ()),
+            (self._stub_gsd({"git.branching_strategy": "branch"}), "5",
+             self._units("units: none\n"), ()),
+            (self._stub_gsd({"git.branching_strategy": "none"}), "5;rm",
+             self._units("units: none\n"), ()),
+            (self._stub_gsd({"git.branching_strategy": "none"}), ",",
+             self._units("units: none\n"), ()),
+            (shlex.join([sys.executable]) + ' "unbalanced', "5",
+             self._units("units: none\n"), ()),
+            (self._stub_gsd({"git.branching_strategy": "none"}), "5",
+             self._units("units: none\n"), ("--ws", "../x")),
+            (self._stub_gsd({"git.branching_strategy": "none"}), "5",
+             str(self.tmp / "missing-units.txt"), ()),
+            (self._stub_gsd({"git.branching_strategy": "none"}), "5",
+             self._units("unit phase-05 branch side\n"), ()),
+        ]
+        for gsd, phases, units, extra in cases:
+            before = self._state(repo)
+            out = self._run_cli(repo, gsd, phases, units, *extra)
+            self.assertEqual(self._state(repo), before)
+            self.assertEqual(out.returncode, 2, out.stdout + out.stderr)
+            self.assertTrue(
+                out.stderr.startswith("preflight: cannot check:"), out.stderr)
+
+    def test_no_configured_remote_skips_the_head_check(self):
+        repo = self._repo(remote=False)
+        gsd = self._stub_gsd({"git.branching_strategy": "none"})
+        self._git("-C", str(repo), "switch", "-q", "-c", "side")
+        (repo / "side.txt").write_text("side\n", encoding="utf-8")
+        self._git("-C", str(repo), "add", "side.txt")
+        self._git("-C", str(repo), "commit", "-q", "-m", "feat: side work")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("preflight: ok", out.stdout)
+        self.assertNotIn("unrecorded_head", out.stdout)
+        self._git("-C", str(repo), "switch", "-q", "main")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_configured_remote_without_a_tracking_ref_still_checks_head(self):
+        repo = self._repo()
+        self._git("-C", str(repo), "update-ref", "-d", "refs/remotes/origin/main")
+        gsd = self._stub_gsd({"git.branching_strategy": "none"})
+        self._git("-C", str(repo), "switch", "-q", "-c", "side")
+        (repo / "side.txt").write_text("side\n", encoding="utf-8")
+        self._git("-C", str(repo), "add", "side.txt")
+        self._git("-C", str(repo), "commit", "-q", "-m", "feat: side work")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn(
+            "refused unrecorded_head: HEAD branch side is not a recorded unit and holds",
+            out.stdout)
+        self.assertIn("feat: side work", out.stdout)
+
+    def test_unnormalized_directory_suffix_is_refused(self):
+        self.assertEqual(branch_preflight.gsd_slug("Intro_V2.x"), "intro-v2-x")
+        self.assertEqual(branch_preflight.gsd_slug("demo-slice"), "demo-slice")
+        self.assertEqual(branch_preflight.gsd_slug("Привет_мир"), "privet-mir")
+        self.assertEqual(branch_preflight.gsd_slug("Объём"), "obem")  # the hard sign drops
+        repo = self._repo()
+        gsd = self._stub_gsd({"git.branching_strategy": "phase"})
+        self._phase_dir(repo, "05-Intro_V2.x")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn(
+            "refused gsd_branch_mismatch: phase 5: GSD branch gsd/phase-05-intro-v2-x "
+            "differs from unit branch gsd/phase-05-Intro_V2.x (strategy phase)",
+            out.stdout)
+
+    def test_legacy_flat_keys_follow_gsd_precedence(self):
+        repo = self._repo()
+        self._phase_dir(repo, "05-x")
+        units = self._units("units: none\n")
+        gsd = self._stub_gsd({"branching_strategy": "milestone"})
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", units)
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn(
+            "refused gsd_branch_mismatch: phase 5: strategy milestone puts the phase "
+            "on one milestone branch, not unit branch gsd/phase-05-x",
+            out.stdout)
+        gsd = self._stub_gsd({
+            "branching_strategy": "milestone", "git.branching_strategy": "none"})
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", units)
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        gsd = self._stub_gsd({
+            "git.branching_strategy": "phase",
+            "phase_branch_template": "flat/{phase}-{slug}",
+        })
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", units)
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn(
+            "GSD branch flat/05-x differs from unit branch gsd/phase-05-x", out.stdout)
+
+    def test_workstream_phase_directory_is_refused(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({"git.branching_strategy": "none"})
+        directory = repo / ".planning" / "workstreams" / "demo" / "phases" / "05-x"
+        directory.mkdir(parents=True)
+        units = self._units("units: none\n")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", units, "--ws", "demo")
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn(
+            "refused gsd_branch_mismatch: phase 5: unit flow cannot see the phase "
+            "directory under .planning/workstreams/demo/phases",
+            out.stdout)
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", units)
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("deferred 5: no phase directory yet", out.stdout)
+
+    def test_local_commit_on_the_trunk_is_refused(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({"git.branching_strategy": "none"})
+        (repo / "trunk.txt").write_text("trunk\n", encoding="utf-8")
+        self._git("-C", str(repo), "add", "trunk.txt")
+        self._git("-C", str(repo), "commit", "-q", "-m", "feat: local trunk work")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", self._units("units: none\n"))
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn(
+            "refused unrecorded_head: HEAD branch main is not a recorded unit and holds "
+            "1 commit(s) the trunk lacks: ",
+            out.stdout)
+        self.assertIn("feat: local trunk work", out.stdout)
+
+    def test_commits_of_a_recorded_unit_are_not_counted(self):
+        repo = self._repo()
+        gsd = self._stub_gsd({"git.branching_strategy": "none"})
+        self._git("-C", str(repo), "switch", "-q", "-c", "unit-a-branch")
+        (repo / "a.txt").write_text("a\n", encoding="utf-8")
+        self._git("-C", str(repo), "add", "a.txt")
+        self._git("-C", str(repo), "commit", "-q", "-m", "feat: unit a work")
+        self._git("-C", str(repo), "switch", "-q", "-c", "side2")
+        (repo / "side.txt").write_text("side\n", encoding="utf-8")
+        self._git("-C", str(repo), "add", "side.txt")
+        self._git("-C", str(repo), "commit", "-q", "-m", "feat: side work")
+        units = self._units(
+            "unit phase-05 branch unit-a-branch parent main state open exists yes "
+            "tip 000000000000\n"
+            "unit phase-06 branch gone-branch parent unit-a-branch state open exists no "
+            "tip none\n")
+        before = self._state(repo)
+        out = self._run_cli(repo, gsd, "5", units)
+        self.assertEqual(self._state(repo), before)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn(
+            "refused unrecorded_head: HEAD branch side2 is not a recorded unit and holds "
+            "1 commit(s) the trunk lacks: ",
+            out.stdout)
+        self.assertIn("feat: side work", out.stdout)
+        self.assertNotIn("feat: unit a work", out.stdout)
+
+
 # ─── no ladder left in this skill ─────────────────────────────────────────────
 
+# only the fold reason name no_consent may appear; the word itself may not.
 FORBIDDEN_PATTERNS = (r"\blaya\b", r"typesafe", r"opencode zen", r"\bzen\b", r"system one",
-                      r"consent", r"--probe", r"missing_api_key", r"backend_unavailable",
+                      r"(?<!no_)consent", r"--probe", r"missing_api_key", r"backend_unavailable",
                       r"key_check", r"key_source", r"JEV_(BACKEND|ALLOW_REMOTE|MIN_CONFIDENCE)",
                       r"decide\.py")
 
@@ -711,12 +1209,13 @@ class TestNoLadderHere(unittest.TestCase):
     ROOT = Path(__file__).resolve().parent.parent / "skills" / "ai-kit-gsd-spec-discuss"
     LADDER_NAMES = {"client_candidates", "find_client", "client_ok", "run_ladder", "call_client"}
 
-    def test_scripts_folder_holds_only_the_two_helpers(self):
+    def test_scripts_folder_holds_the_three_helpers_and_the_shapes_copy(self):
         names = sorted(name for name in os.listdir(SCRIPTS) if name != "__pycache__")
-        self.assertEqual(names, ["edge_floor.py", "phase_range.py"])
+        self.assertEqual(
+            names, ["branch_preflight.py", "edge_floor.py", "phase_range.py", "secret_shapes.py"])
 
     def test_scripts_define_no_ladder_or_client_lookup(self):
-        for name in ("edge_floor.py", "phase_range.py"):
+        for name in ("branch_preflight.py", "edge_floor.py", "phase_range.py"):
             tree = ast.parse((SCRIPTS / name).read_text(encoding="utf-8"))
             defined = {node.name for node in ast.walk(tree)
                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
@@ -750,6 +1249,12 @@ class TestNoLadderHere(unittest.TestCase):
             for pattern in FORBIDDEN_PATTERNS:
                 with self.subTest(file=path.name, pattern=pattern):
                     self.assertIsNone(re.search(pattern, body, re.IGNORECASE))
+
+    def test_consent_pattern_allows_only_the_reason_name(self):
+        pattern = next(p for p in FORBIDDEN_PATTERNS if "consent" in p)
+        self.assertIsNone(re.search(pattern, "`no_consent`", re.IGNORECASE))
+        self.assertIsNotNone(re.search(pattern, "ask for remote consent", re.IGNORECASE))
+        self.assertIsNotNone(re.search(pattern, "x_consent", re.IGNORECASE))
 
 
 if __name__ == "__main__":

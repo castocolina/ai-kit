@@ -1,7 +1,6 @@
 {
  "schema": 1,
  "excluded": {
-  "ai-kit-commit-fold": "temporary; Phase 45 absorbs it (RULE-27)",
   "ai-kit-project-rules-agents": "being replaced in Phases 45-47",
   "ai-kit-project-rules-all": "being replaced in Phases 45-47",
   "ai-kit-project-rules-arch": "being replaced in Phases 45-47",
@@ -86,6 +85,7 @@
    "batch": "32.4",
    "last_v4": {"percent": 84.0, "critical": 0, "high": 1, "judged_at": null, "source": ".planning/phases/31-removals-and-small-defects/31-VERIFICATION.md:71"},
    "old_score": {"value": "old 106/120 (88.3%) PASS, 2026-10-25, phase 25.1", "source": ".planning/research/2026-11-02-next-milestone/15-skills-vs-new-judge.md:104-129"}
-  }
+  },
+  "ai-kit-commit-fold": {"batch": "39.2", "last_v4": null, "old_score": {"value": "none: excluded until Phase 39.2", "source": ".planning/phases/39.2-spec-discuss-branch-strategy-for-stacked-units/39.2-SPEC.md"}}
  }
 }

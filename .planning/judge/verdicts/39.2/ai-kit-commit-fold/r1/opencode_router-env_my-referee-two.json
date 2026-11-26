@@ -1,0 +1,196 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=85s out=310877 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_def9321dcffesVD3vxGscKi3eI applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-commit-fold\",\"judge\":\"opencode:router-env/my-referee-two\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":19,\"D2\":15,\"D3\":14,\"D4\":14,\"D5\":14,\"D6\":15,\"D7\":13,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":117,\"max_total\":125,\"percent\":93.6,\"grade\":\"A\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-commit-fold/SKILL.md\",\"line\":208,\"evidence\":\"Features are grouped by rule. When the jev-fast-decision skill is installed, the grouping choice can be proposed through its entry point. A needs_fallback answer or no answer means the rule-based grouping decides. Nothing needs configuring.\",\"fix\":\"Keep the fallback rule in SKILL.md and move the jev entry-point detail into references/folding-policy.md, loaded only when jev-fast-decision is installed; record that move.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-commit-fold/SKILL.md\",\"line\":213,\"evidence\":\"The NEVER list has no Gotchas heading for environment facts such as a bare relative capability path being read as a registry name, and a step command not being a PATH program.\",\"fix\":\"Add a short Gotchas section that restates those two already-documented traps with their reasons, without dropping the NEVER list.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-commit-fold/SKILL.md\",\"line\":3,\"evidence\":\"The description names fold, status, unit flow, boundary, checkpoint, ready, restack, hotfix and merge-chain, but not the status form or the boundary command a user can ask for without saying fold.\",\"fix\":\"Folds a finished GSD or superpowers plan's commits into one commit per logical feature (backup tag, tree-equality check), reports which plans are still unfolded with fold.py status, and runs ai-kit's unit flow for stacked phase branches: start a unit branch, run fold.py boundary (codebase-memory-mcp and graphify refresh, unit brief), fold and push checkpoints under push consent, mark the draft PR ready, restack, start a hotfix unit, run the owner's merge chain, install the GSD hooks. Use when a plan's task commits should be regrouped into feature commits, when asked which plans are unfolded or for fold status, before plan-phase or execute-phase of a GSD phase in a unit-flow repo, or when a GSD phase or superpowers plan there needs its branch started, briefed, pushed, readied, restacked or merged, even without the word fold. Not for squashing a branch, interactive rebases, a plain git push or gh pr create outside a recorded unit, a bare codebase-memory-mcp or graphify run, or an ordinary hotfix commit.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"low\",\"file\":\"skills/ai-kit-commit-fold/references/adapter-guide.md\",\"line\":1,\"evidence\":\"SKILL.md loads adapter-guide.md only when wiring a planning system other than GSD or superpowers, but the file's GSD and superpowers hook order is also the procedure those runs need.\",\"fix\":\"Change the SKILL.md load line to: read references/adapter-guide.md when wiring another planning system, or when a GSD or superpowers run needs its hook point or command order; do not load it for a plain fold.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-commit-fold/evals/trigger-queries.json\",\"line\":1,\"evidence\":\"13 should-trigger and 11 should-not-trigger queries, above the 8-10 band, and the negatives omit near-misses for a bare graphify refresh, an ordinary hotfix commit, and a push or PR outside a recorded unit.\",\"fix\":\"Cut the set to about 20 and replace the easy negatives (conventional commit, revert, cherry-pick, GSD model profile) with near-misses: a bare graphify refresh, an ordinary hotfix commit, and a git push or gh pr create that is not part of a recorded unit.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-commit-fold/scripts/fold.py\",\"line\":4,\"evidence\":\"The module docstring documents the forms and exit codes, and argparse supplies --help, but the unit-flow subcommands are only named, not given usage examples.\",\"fix\":\"Add three examples to the fold.py docstring: fold.py checkpoint --phase 7 --final, fold.py restack --continue --note path=how, and fold.py show --all.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-commit-fold/references/adapter-guide.md\",\"line\":56,\"evidence\":\"start sets worktree.baseRef to head. The GSD start path in gsd/ai-kit-commit-fold/ai-kit-fold.cjs calls gsd-tools worktree set-baseref, whose no-clobber write leaves an existing non-head baseRef unchanged.\",\"fix\":\"Replace that sentence with: when workflow.use_worktrees is true, the GSD start command runs gsd-tools worktree set-baseref, which writes worktree.baseRef head only when that key is absent; an existing different value is left as-is.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"low\",\"file\":\"skills/ai-kit-commit-fold/references/unit-contract.md\",\"line\":206,\"evidence\":\"The first line is flow <command> <unit>: <branch>. The last line is outcome:. Between them at most six lines, plus one skipped: line per skipped push. SKILL.md's Read the report section instead fixes the fold report at five lines, so a flow report with skipped pushes and notes exceeds what an agent using only SKILL.md expects.\",\"fix\":\"In SKILL.md under Unit flow, state that a flow report is not the five-line fold report: first line flow <command> <unit>: <branch>, last line outcome:, and extra skipped: and note: lines are part of the report to relay.\"}]}"
+  }
+ ],
+ "digest": "3e428683887740442e7a465d018a7143d6ef9cc5f354e1c9acfc96279b5511d8",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "6ea8501f787b45784deeb066b2a9c0b2e473e656d03aa342f54e4153130d889f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-two",
+ "loop": "39.2",
+ "modules": [
+  "tests/test_ai_kit_caller_text.py",
+  "tests/test_ai_kit_commit_fold.py",
+  "tests/test_ai_kit_commit_fold_adapters.py",
+  "tests/test_ai_kit_commit_fold_e2e.py",
+  "tests/test_ai_kit_gsd_spec_discuss.py",
+  "tests/test_ai_kit_gsd_spec_discuss_e2e.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_arch_no_grok_runtime.py",
+  "tests/test_check_dogfood.py",
+  "tests/test_config_design_record.py",
+  "tests/test_flow_boundary.py",
+  "tests/test_flow_brief.py",
+  "tests/test_flow_checkpoint.py",
+  "tests/test_flow_checkpoint_2.py",
+  "tests/test_flow_contract.py",
+  "tests/test_flow_contract_2.py",
+  "tests/test_flow_contract_3.py",
+  "tests/test_flow_docs.py",
+  "tests/test_flow_index.py",
+  "tests/test_flow_index_e2e.py",
+  "tests/test_flow_show_all.py",
+  "tests/test_flow_stack.py",
+  "tests/test_flow_stack_2.py",
+  "tests/test_flow_stack_3.py",
+  "tests/test_flow_stack_4.py",
+  "tests/test_flow_unit_refusals.py",
+  "tests/test_jev_config.py",
+  "tests/test_secret_shapes_copy_install.py",
+  "tests/test_setup.py",
+  "tests/test_setup_dev.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_spec_discuss_branch_flow.py"
+ ],
+ "prompt_sha256": "3d20e6c9889ddacd8b5e99ee025d28efed16c831d97fe7370d68ab9a6f175bac",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "ai-kit-commit-fold",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "Features are grouped by rule. When the jev-fast-decision skill is installed, the grouping choice can be proposed through its entry point. A needs_fallback answer or no answer means the rule-based grouping decides. Nothing needs configuring.",
+    "file": "skills/ai-kit-commit-fold/SKILL.md",
+    "fix": "Keep the fallback rule in SKILL.md and move the jev entry-point detail into references/folding-policy.md, loaded only when jev-fast-decision is installed; record that move.",
+    "id": "D1-1",
+    "line": 208,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "The NEVER list has no Gotchas heading for environment facts such as a bare relative capability path being read as a registry name, and a step command not being a PATH program.",
+    "file": "skills/ai-kit-commit-fold/SKILL.md",
+    "fix": "Add a short Gotchas section that restates those two already-documented traps with their reasons, without dropping the NEVER list.",
+    "id": "D3-1",
+    "line": 213,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description names fold, status, unit flow, boundary, checkpoint, ready, restack, hotfix and merge-chain, but not the status form or the boundary command a user can ask for without saying fold.",
+    "file": "skills/ai-kit-commit-fold/SKILL.md",
+    "fix": "Folds a finished GSD or superpowers plan's commits into one commit per logical feature (backup tag, tree-equality check), reports which plans are still unfolded with fold.py status, and runs ai-kit's unit flow for stacked phase branches: start a unit branch, run fold.py boundary (codebase-memory-mcp and graphify refresh, unit brief), fold and push checkpoints under push consent, mark the draft PR ready, restack, start a hotfix unit, run the owner's merge chain, install the GSD hooks. Use when a plan's task commits should be regrouped into feature commits, when asked which plans are unfolded or for fold status, before plan-phase or execute-phase of a GSD phase in a unit-flow repo, or when a GSD phase or superpowers plan there needs its branch started, briefed, pushed, readied, restacked or merged, even without the word fold. Not for squashing a branch, interactive rebases, a plain git push or gh pr create outside a recorded unit, a bare codebase-memory-mcp or graphify run, or an ordinary hotfix commit.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "SKILL.md loads adapter-guide.md only when wiring a planning system other than GSD or superpowers, but the file's GSD and superpowers hook order is also the procedure those runs need.",
+    "file": "skills/ai-kit-commit-fold/references/adapter-guide.md",
+    "fix": "Change the SKILL.md load line to: read references/adapter-guide.md when wiring another planning system, or when a GSD or superpowers run needs its hook point or command order; do not load it for a plain fold.",
+    "id": "D5-1",
+    "line": 1,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "13 should-trigger and 11 should-not-trigger queries, above the 8-10 band, and the negatives omit near-misses for a bare graphify refresh, an ordinary hotfix commit, and a push or PR outside a recorded unit.",
+    "file": "skills/ai-kit-commit-fold/evals/trigger-queries.json",
+    "fix": "Cut the set to about 20 and replace the easy negatives (conventional commit, revert, cherry-pick, GSD model profile) with near-misses: a bare graphify refresh, an ordinary hotfix commit, and a git push or gh pr create that is not part of a recorded unit.",
+    "id": "D7-1",
+    "line": 1,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The module docstring documents the forms and exit codes, and argparse supplies --help, but the unit-flow subcommands are only named, not given usage examples.",
+    "file": "skills/ai-kit-commit-fold/scripts/fold.py",
+    "fix": "Add three examples to the fold.py docstring: fold.py checkpoint --phase 7 --final, fold.py restack --continue --note path=how, and fold.py show --all.",
+    "id": "D7-2",
+    "line": 4,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "start sets worktree.baseRef to head. The GSD start path in gsd/ai-kit-commit-fold/ai-kit-fold.cjs calls gsd-tools worktree set-baseref, whose no-clobber write leaves an existing non-head baseRef unchanged.",
+    "file": "skills/ai-kit-commit-fold/references/adapter-guide.md",
+    "fix": "Replace that sentence with: when workflow.use_worktrees is true, the GSD start command runs gsd-tools worktree set-baseref, which writes worktree.baseRef head only when that key is absent; an existing different value is left as-is.",
+    "id": "D8-1",
+    "line": 56,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The first line is flow <command> <unit>: <branch>. The last line is outcome:. Between them at most six lines, plus one skipped: line per skipped push. SKILL.md's Read the report section instead fixes the fold report at five lines, so a flow report with skipped pushes and notes exceeds what an agent using only SKILL.md expects.",
+    "file": "skills/ai-kit-commit-fold/references/unit-contract.md",
+    "fix": "In SKILL.md under Unit flow, state that a flow report is not the five-line fold report: first line flow <command> <unit>: <branch>, last line outcome:, and extra skipped: and note: lines are part of the report to relay.",
+    "id": "D8-2",
+    "line": 206,
+    "severity": "low"
+   }
+  ],
+  "grade": "A",
+  "judge": "opencode:router-env/my-referee-two",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 93.6,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 19,
+   "D2": 15,
+   "D3": 14,
+   "D4": 14,
+   "D5": 14,
+   "D6": 15,
+   "D7": 13,
+   "D8": 13
+  },
+  "skill": "ai-kit-commit-fold",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 117
+ }
+}

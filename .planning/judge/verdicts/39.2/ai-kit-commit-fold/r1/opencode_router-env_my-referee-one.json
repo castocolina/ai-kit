@@ -1,0 +1,232 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": null,
+   "status_line": "AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=529s out=1007705 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0 session=ses_def8b8cdbffeFpP57w4wTXnkKS applied=model,provider,role,host ignored=- unknown=- escalate=- coverage=- findings=-",
+   "verdict_line": "{\"skill\":\"ai-kit-commit-fold\",\"judge\":\"opencode:router-env/my-referee-one\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":19,\"D2\":15,\"D3\":14,\"D4\":14,\"D5\":13,\"D6\":13,\"D7\":12,\"D8\":8},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":108,\"max_total\":125,\"percent\":86.4,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-commit-fold/SKILL.md\",\"line\":148,\"evidence\":\"“fold.py hotfix branches a hotfix unit off its target” repeats the command and behavior at line 85 without adding a decision rule.\",\"fix\":\"Keep the branching behavior in the command list at line 85. In this section, retain the requirement to choose a configured target and explain how the resulting hotfix ID is used for a single-unit merge.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-commit-fold/SKILL.md\",\"line\":221,\"evidence\":\"“Never remove the Ai-Kit-Fold: trailer from a folded commit” omits the non-obvious consequence: the GSD adapter uses it to recognize already-folded commits.\",\"fix\":\"Explain that removing the trailer can make status or a later fold misclassify an already-folded commit.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-commit-fold/SKILL.md\",\"line\":3,\"evidence\":\"The description specifies when to fold and advance a unit, but “install the GSD hooks” appears only in the capability list, and the activation sentence omits read-only stack inspection and refusal diagnosis.\",\"fix\":\"Use when asked to regroup a finished GSD or superpowers plan's task commits into one commit per logical feature, or to report which plans are unfolded. The fold preserves the tested Git tree and tags the old tip. In an ai-kit unit-flow repo, use before GSD plan-phase or execute-phase, or to install GSD hooks, start a unit branch, refresh the unit brief and indexes, checkpoint and push with owner consent, ready a draft PR, inspect or restack units, diagnose a flow refusal, start a hotfix unit, or run the owner-authorized merge chain. Not for ordinary Git pushes, PR creation, hotfix commits, branch squashes, interactive rebases, or standalone indexing.\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-commit-fold/SKILL.md\",\"line\":12,\"evidence\":\"“Read references/adapter-guide.md only when wiring a planning system other than GSD or superpowers” blocks the guide when a built-in adapter needs its hook order. The guide also holds the start/checkpoint/ready sequence for inline superpowers runs.\",\"fix\":\"At the unit-flow entry point, direct inline superpowers runs to the Superpowers adapter section and GSD hook-order questions to the GSD adapter section. Keep the third-system section gated to integration work and skip the guide for a plain fold.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-commit-fold/SKILL.md\",\"line\":66,\"evidence\":\"The checkpoint entry says to “push the branch, and open the draft PR at the first push.” For an MVP unit with no unmerged unit below it, the contract instead permits a direct fast-forward and push of the target branch. The main workflow has no preflight for that higher-impact branch.\",\"fix\":\"Before an MVP checkpoint, require the agent to identify the actual push destination and verify that the owner's existing authorization covers a direct update to that target. If authorization covers only a unit branch and draft PR, stop and ask before running the checkpoint.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-commit-fold/evals/evals.json\",\"line\":8,\"evidence\":\"The first GSD fold eval supplies “07-01-PLAN.md” and “git-log-07-01.txt,” but the CLI reads a live phase directory, a companion SUMMARY, and Git history. Those two files cannot produce the successful fold the eval expects on their own; the superpowers eval likewise supplies no fixture that establishes its base SHA.\",\"fix\":\"Use an isolated Git fixture or a deterministic setup recipe that creates the phase directory, SUMMARY, branch history, and named base. Assert that the tip tree is unchanged and that the backup tag points to the old tip.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-commit-fold/evals/evals.json\",\"line\":103,\"evidence\":\"The merge-chain assertion asks for the stop unit “taken from the outcome line.” The implementation puts that information on a separate “stopped at” line and can end with “outcome: - done.”\",\"fix\":\"Seed a chain with a known blocker and assert that the answer identifies its unit and reason from the “stopped at” line. Separately verify that earlier eligible units merged and later ones did not.\"},{\"id\":\"D7-3\",\"dimension\":\"D7\",\"severity\":\"low\",\"file\":\"skills/ai-kit-commit-fold/evals/trigger-queries.json\",\"line\":11,\"evidence\":\"The 12 positive and 11 negative queries mostly exercise fold phrasing and generic Git near-misses. For example, “the way the fold skill does it” names the mechanism, while no positive query tests implicit restacking after a lower unit moves and no negative tests a standalone index refresh.\",\"fix\":\"Replace two overlapping fold positives and one overlapping rebase negative with an implicit restack request, a stack or refusal inspection request, and a standalone graphify refresh. Retain the ordinary push and PR near-misses.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-commit-fold/SKILL.md\",\"line\":31,\"evidence\":\"“A refusal changes nothing, so the branch stays where it was” is not true of a whole GSD phase invocation. In scripts/fold.py:199–221, the first plan can fold and print its report before the next plan refuses.\",\"fix\":\"Say that the five-line report and no-rewrite guarantee apply to the individual fold that refused. For a GSD phase, relay every report in order and identify earlier plans that already folded; do not advise returning the branch to its pre-command tip.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-commit-fold/SKILL.md\",\"line\":102,\"evidence\":\"“The report lists them” is not reliable for completed work before a flow refusal. A checkpoint can push a pending tip during catch-up and then refuse on the current checkout or fold; scripts/flow_unit.py:197–208 renders only the exception and loses the accumulated catch-up lines.\",\"fix\":\"Carry completed-step notes into refusal reports, and tell the agent not to infer that an unlisted action did not happen. Until the report guarantees those notes, reconcile the unit's local tip, remote tip, and PR state with read-only checks before retrying.\"},{\"id\":\"D8-3\",\"dimension\":\"D8\",\"severity\":\"high\",\"file\":\"skills/ai-kit-commit-fold/SKILL.md\",\"line\":139,\"evidence\":\"“A bad_resolution refusal keeps the stack paused” holds for unresolved files, but a saved resolution whose branch tip has since moved takes the restore path in scripts/flow_stack.py:590–594. The test at tests/test_flow_stack_3.py:160 confirms that this also clears the paused state.\",\"fix\":\"Split the recovery instructions: for file errors in a still-paused rebase, correct only the named paths and continue; for a moved tip after a saved resolution, report the restoration and ask the owner before starting a new restack. Do not retry --continue on cleared state.\"},{\"id\":\"D8-4\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-commit-fold/SKILL.md\",\"line\":156,\"evidence\":\"The GSD install procedure hard-codes the vendor CLI's project-scope and approval flags without a live interface check or a dated official source. The local command router supports the documented flags, but the skill gives no check for other installed GSD versions.\",\"fix\":\"Before installation, verify the installed project-local GSD's capability-install scope and approval syntax against its own command help or a dated official source for that version. Preserve the first attempt without approval and the requirement for an explicit yes.\"}]}"
+  }
+ ],
+ "digest": "3e428683887740442e7a465d018a7143d6ef9cc5f354e1c9acfc96279b5511d8",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "6ea8501f787b45784deeb066b2a9c0b2e473e656d03aa342f54e4153130d889f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "opencode:router-env/my-referee-one",
+ "loop": "39.2",
+ "modules": [
+  "tests/test_ai_kit_caller_text.py",
+  "tests/test_ai_kit_commit_fold.py",
+  "tests/test_ai_kit_commit_fold_adapters.py",
+  "tests/test_ai_kit_commit_fold_e2e.py",
+  "tests/test_ai_kit_gsd_spec_discuss.py",
+  "tests/test_ai_kit_gsd_spec_discuss_e2e.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_arch_no_grok_runtime.py",
+  "tests/test_check_dogfood.py",
+  "tests/test_config_design_record.py",
+  "tests/test_flow_boundary.py",
+  "tests/test_flow_brief.py",
+  "tests/test_flow_checkpoint.py",
+  "tests/test_flow_checkpoint_2.py",
+  "tests/test_flow_contract.py",
+  "tests/test_flow_contract_2.py",
+  "tests/test_flow_contract_3.py",
+  "tests/test_flow_docs.py",
+  "tests/test_flow_index.py",
+  "tests/test_flow_index_e2e.py",
+  "tests/test_flow_show_all.py",
+  "tests/test_flow_stack.py",
+  "tests/test_flow_stack_2.py",
+  "tests/test_flow_stack_3.py",
+  "tests/test_flow_stack_4.py",
+  "tests/test_flow_unit_refusals.py",
+  "tests/test_jev_config.py",
+  "tests/test_secret_shapes_copy_install.py",
+  "tests/test_setup.py",
+  "tests/test_setup_dev.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_spec_discuss_branch_flow.py"
+ ],
+ "prompt_sha256": "7a1dac8ad8e39a4d4a134e255a5f599bd0f384587f9cf3286fd6abc297d5b607",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": true,
+ "skill": "ai-kit-commit-fold",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": null,
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "“fold.py hotfix branches a hotfix unit off its target” repeats the command and behavior at line 85 without adding a decision rule.",
+    "file": "skills/ai-kit-commit-fold/SKILL.md",
+    "fix": "Keep the branching behavior in the command list at line 85. In this section, retain the requirement to choose a configured target and explain how the resulting hotfix ID is used for a single-unit merge.",
+    "id": "D1-1",
+    "line": 148,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "“Never remove the Ai-Kit-Fold: trailer from a folded commit” omits the non-obvious consequence: the GSD adapter uses it to recognize already-folded commits.",
+    "file": "skills/ai-kit-commit-fold/SKILL.md",
+    "fix": "Explain that removing the trailer can make status or a later fold misclassify an already-folded commit.",
+    "id": "D3-1",
+    "line": 221,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "The description specifies when to fold and advance a unit, but “install the GSD hooks” appears only in the capability list, and the activation sentence omits read-only stack inspection and refusal diagnosis.",
+    "file": "skills/ai-kit-commit-fold/SKILL.md",
+    "fix": "Use when asked to regroup a finished GSD or superpowers plan's task commits into one commit per logical feature, or to report which plans are unfolded. The fold preserves the tested Git tree and tags the old tip. In an ai-kit unit-flow repo, use before GSD plan-phase or execute-phase, or to install GSD hooks, start a unit branch, refresh the unit brief and indexes, checkpoint and push with owner consent, ready a draft PR, inspect or restack units, diagnose a flow refusal, start a hotfix unit, or run the owner-authorized merge chain. Not for ordinary Git pushes, PR creation, hotfix commits, branch squashes, interactive rebases, or standalone indexing.",
+    "id": "D4-1",
+    "line": 3,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "“Read references/adapter-guide.md only when wiring a planning system other than GSD or superpowers” blocks the guide when a built-in adapter needs its hook order. The guide also holds the start/checkpoint/ready sequence for inline superpowers runs.",
+    "file": "skills/ai-kit-commit-fold/SKILL.md",
+    "fix": "At the unit-flow entry point, direct inline superpowers runs to the Superpowers adapter section and GSD hook-order questions to the GSD adapter section. Keep the third-system section gated to integration work and skip the guide for a plain fold.",
+    "id": "D5-1",
+    "line": 12,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "The checkpoint entry says to “push the branch, and open the draft PR at the first push.” For an MVP unit with no unmerged unit below it, the contract instead permits a direct fast-forward and push of the target branch. The main workflow has no preflight for that higher-impact branch.",
+    "file": "skills/ai-kit-commit-fold/SKILL.md",
+    "fix": "Before an MVP checkpoint, require the agent to identify the actual push destination and verify that the owner's existing authorization covers a direct update to that target. If authorization covers only a unit branch and draft PR, stop and ask before running the checkpoint.",
+    "id": "D6-1",
+    "line": 66,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The first GSD fold eval supplies “07-01-PLAN.md” and “git-log-07-01.txt,” but the CLI reads a live phase directory, a companion SUMMARY, and Git history. Those two files cannot produce the successful fold the eval expects on their own; the superpowers eval likewise supplies no fixture that establishes its base SHA.",
+    "file": "skills/ai-kit-commit-fold/evals/evals.json",
+    "fix": "Use an isolated Git fixture or a deterministic setup recipe that creates the phase directory, SUMMARY, branch history, and named base. Assert that the tip tree is unchanged and that the backup tag points to the old tip.",
+    "id": "D7-1",
+    "line": 8,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The merge-chain assertion asks for the stop unit “taken from the outcome line.” The implementation puts that information on a separate “stopped at” line and can end with “outcome: - done.”",
+    "file": "skills/ai-kit-commit-fold/evals/evals.json",
+    "fix": "Seed a chain with a known blocker and assert that the answer identifies its unit and reason from the “stopped at” line. Separately verify that earlier eligible units merged and later ones did not.",
+    "id": "D7-2",
+    "line": 103,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The 12 positive and 11 negative queries mostly exercise fold phrasing and generic Git near-misses. For example, “the way the fold skill does it” names the mechanism, while no positive query tests implicit restacking after a lower unit moves and no negative tests a standalone index refresh.",
+    "file": "skills/ai-kit-commit-fold/evals/trigger-queries.json",
+    "fix": "Replace two overlapping fold positives and one overlapping rebase negative with an implicit restack request, a stack or refusal inspection request, and a standalone graphify refresh. Retain the ordinary push and PR near-misses.",
+    "id": "D7-3",
+    "line": 11,
+    "severity": "low"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“A refusal changes nothing, so the branch stays where it was” is not true of a whole GSD phase invocation. In scripts/fold.py:199–221, the first plan can fold and print its report before the next plan refuses.",
+    "file": "skills/ai-kit-commit-fold/SKILL.md",
+    "fix": "Say that the five-line report and no-rewrite guarantee apply to the individual fold that refused. For a GSD phase, relay every report in order and identify earlier plans that already folded; do not advise returning the branch to its pre-command tip.",
+    "id": "D8-1",
+    "line": 31,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“The report lists them” is not reliable for completed work before a flow refusal. A checkpoint can push a pending tip during catch-up and then refuse on the current checkout or fold; scripts/flow_unit.py:197–208 renders only the exception and loses the accumulated catch-up lines.",
+    "file": "skills/ai-kit-commit-fold/SKILL.md",
+    "fix": "Carry completed-step notes into refusal reports, and tell the agent not to infer that an unlisted action did not happen. Until the report guarantees those notes, reconcile the unit's local tip, remote tip, and PR state with read-only checks before retrying.",
+    "id": "D8-2",
+    "line": 102,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "“A bad_resolution refusal keeps the stack paused” holds for unresolved files, but a saved resolution whose branch tip has since moved takes the restore path in scripts/flow_stack.py:590–594. The test at tests/test_flow_stack_3.py:160 confirms that this also clears the paused state.",
+    "file": "skills/ai-kit-commit-fold/SKILL.md",
+    "fix": "Split the recovery instructions: for file errors in a still-paused rebase, correct only the named paths and continue; for a moved tip after a saved resolution, report the restoration and ask the owner before starting a new restack. Do not retry --continue on cleared state.",
+    "id": "D8-3",
+    "line": 139,
+    "severity": "high"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "The GSD install procedure hard-codes the vendor CLI's project-scope and approval flags without a live interface check or a dated official source. The local command router supports the documented flags, but the skill gives no check for other installed GSD versions.",
+    "file": "skills/ai-kit-commit-fold/SKILL.md",
+    "fix": "Before installation, verify the installed project-local GSD's capability-install scope and approval syntax against its own command help or a dated official source for that version. Preserve the first attempt without approval and the requirement for an explicit yes.",
+    "id": "D8-4",
+    "line": 156,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "opencode:router-env/my-referee-one",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 86.4,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 19,
+   "D2": 15,
+   "D3": 14,
+   "D4": 14,
+   "D5": 13,
+   "D6": 13,
+   "D7": 12,
+   "D8": 8
+  },
+  "skill": "ai-kit-commit-fold",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 108
+ }
+}

@@ -99,6 +99,29 @@ class TestStartKeepsLocalPlan(_FlowCase):
         self.assertEqual(self.ref_sha("refs/heads/main"), plan_commit)
         f.run_git(self.repo, self.env, "merge-base", "--is-ancestor", wip, "main")
 
+    def test_plan_commit_on_an_unrecorded_branch_is_carried(self):
+        self.grant()
+        f.run_git(self.repo, self.env, "switch", "-q", "-c", "side", "main")
+        self.commit({f.SP_PLAN: f.SP_PLAN_TEXT.encode()}, "docs: add plan (local)")
+        code, text = self.fold("start", "--plan", f.SP_PLAN)
+        self.assertEqual(code, 0, text)
+        self.assertIn("docs: add plan (local)", self._log(PLAN_BRANCH))
+        self.assertEqual(
+            f.run_git(self.repo, self.env, "branch", "--show-current").strip(), PLAN_BRANCH)
+
+    def test_unrelated_commit_on_an_unrecorded_branch_is_refused_with_the_plan(self):
+        self.grant()
+        f.run_git(self.repo, self.env, "switch", "-q", "-c", "side", "main")
+        self.commit({"wip.py": b"wip\n"}, "wip: unrelated local work")
+        self.commit({f.SP_PLAN: f.SP_PLAN_TEXT.encode()}, "docs: add plan (local)")
+        code, text = self.fold("start", "--plan", f.SP_PLAN)
+        self.assertEqual(code, 1, text)
+        self.assertIn("refused unrecorded_head", text)
+        self.assertIn("wip: unrelated local work", text)
+        self.assertNotIn("docs: add plan (local)", text)
+        self.assertEqual(
+            f.run_git(self.repo, self.env, "branch", "--show-current").strip(), "side")
+
     def _spec_then_plan(self, between=None):
         """superpowers' order: the spec committed alone, then the plan naming it (**Spec:**)."""
         f.run_git(self.repo, self.env, "switch", "-q", "main")

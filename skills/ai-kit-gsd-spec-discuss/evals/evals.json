@@ -93,6 +93,116 @@
         "The agent does not create a unit branch or call fold.py start when the fold skill is missing.",
         "The agent still runs the spec-phase workflow for phase 13 as usual."
       ]
+    },
+    {
+      "id": "precise-amend-earlier-phase",
+      "prompt": "Spec and discuss phases 21 to 23 in auto mode; the owner has given the go-ahead for the run. While discussing phase 23 you find that a requirement in phase 21's SPEC is wrong. The stack is in the attached show --all output.",
+      "expected_output": "The amendment of phase 21's SPEC is committed on phase 21's unit branch (start --phase 21, guard --phase 21, branch check, commit), then one fold.py restack brings phases 22 and 23 onto it with no conflict, then start --phase 23 and guard --phase 23 return to the phase-23 unit; the amended SPEC line is present on gsd/phase-21-alpha, gsd/phase-22-beta and gsd/phase-23-gamma.",
+      "files": [
+        "evals/files/show-all-three-units.txt"
+      ],
+      "assertions": [
+        "The amendment commit is made while gsd/phase-21-alpha is checked out, not in phase 23's commit.",
+        "The agent runs fold.py start --phase 21, fold.py guard --phase 21 and checks git branch --show-current before writing phase 21's SPEC.",
+        "After the one fold.py restack, the amended line is shown present on all three unit branches.",
+        "The restack reports no conflict; a conflict would stop the run instead of being resolved silently.",
+        "start --phase 23 and guard --phase 23 run last, and no branch is moved by hand and .git/ai-kit-stack.json is never edited."
+      ]
+    },
+    {
+      "id": "precise-where-am-i",
+      "prompt": "Before phase 23 of my spec-discuss run over phases 21 to 23, tell me where I am: which branch is checked out, the stack, and which branch holds each phase's SPEC and CONTEXT. Phase 22's SPEC is committed on its unit but its CONTEXT is not written yet. The fold tool printed the attached lines.",
+      "expected_output": "The agent runs the read-only where-am-I step (git branch --show-current, fold.py show --all, find-phase for the padded phase and directory, separate SPEC and CONTEXT checks per phase) and prints current:, stack: with the four unit lines verbatim including the merged and ready states, and one phase <N> unit <id> docs <branch|none|split> line per phase, with docs split for phase 22.",
+      "files": [
+        "evals/files/show-all-mixed-states.txt"
+      ],
+      "assertions": [
+        "The output has a current: line with the checked-out branch.",
+        "The stack: section lists phase-20 merged, phase-21 ready, phase-22 open and phase-23 open in that order.",
+        "Phase 22's line says docs split because its SPEC is on the unit branch and its CONTEXT is not.",
+        "The SPEC and the CONTEXT are checked separately, not inferred from the SPEC alone.",
+        "The step moves no branch and does not edit the stack record."
+      ]
+    },
+    {
+      "id": "precise-resume-to-plan-first-phase",
+      "prompt": "The spec-discuss chain for phases 21 to 23 finished and the checkout is on the phase-23 branch. Now plan phase 21.",
+      "expected_output": "Spec-discuss does not plan: the orchestrator hands phase 21 to the GSD plan-phase workflow. Before that hand-off reads any phase-21 file, fold.py start --phase 21, fold.py guard --phase 21 and the branch check run, and phase 21's documents are read only from gsd/phase-21-alpha, never from the top branch.",
+      "files": [
+        "evals/files/show-all-three-units.txt"
+      ],
+      "assertions": [
+        "The answer says spec-discuss does not plan and names the orchestrator's hand-off to the GSD plan-phase workflow.",
+        "fold.py start --phase 21 then fold.py guard --phase 21 run before any phase-21 file is read.",
+        "git branch --show-current is checked to print gsd/phase-21-alpha before planning.",
+        "Nothing for phase 21 is read from the phase-23 branch, and no branch is checked out by hand."
+      ]
+    },
+    {
+      "id": "precise-end-report-branches",
+      "prompt": "The auto-mode spec-discuss run over phases 21 to 23 is done. Phase 22 logged the ledger line unit flow off for phase 22: no_remote. The goal file is .planning/goal-21-23.md. Write the end report.",
+      "expected_output": "The end report holds the branch block with five fields in this order: checkout: <current branch> (unit flow off), with no final switch because the ledger holds a unit flow off line, stack: with the three show --all lines in order with tips, docs 21/22/23 lines, goal file: .planning/goal-21-23.md on gsd/phase-21-alpha, and unit flow off: unit flow off for phase 22: no_remote.",
+      "files": [
+        "evals/files/show-all-three-units.txt"
+      ],
+      "assertions": [
+        "The five fields appear in the order checkout:, stack:, docs, goal file:, unit flow off:.",
+        "checkout: names the current branch followed by (unit flow off), and the run makes no final start or switch, because a unit flow off ledger line exists.",
+        "The stack lists the three units in order with each unit's tip.",
+        "goal file: names .planning/goal-21-23.md and its branch.",
+        "unit flow off: repeats the ledger line unit flow off for phase 22: no_remote."
+      ]
+    },
+    {
+      "id": "precise-shared-files-on-open-unit",
+      "prompt": "Spec and discuss phases 22 to 23 in auto mode; the owner has given the go-ahead. The stack is attached: phase 21 is ready, phases 22 and 23 are open. No phase turns the unit flow off. Where do STATE.md, REQUIREMENTS.md and the goal file go, and what does the end report say about the unit flow?",
+      "expected_output": "The shared files go on gsd/phase-22-beta, the lowest unit whose state is open; the ready phase-21 unit never receives them, and the units above get them by one restack. The end report prints unit flow off: none.",
+      "files": [
+        "evals/files/show-all-mixed-states.txt"
+      ],
+      "assertions": [
+        "STATE.md, REQUIREMENTS.md and the goal file are committed on gsd/phase-22-beta, not on the ready gsd/phase-21-alpha.",
+        "The merged phase-20 unit and the ready phase-21 unit are skipped because only an open unit receives shared files.",
+        "One restack carries the shared files to gsd/phase-23-gamma.",
+        "The end report prints unit flow off: none because no ledger line of that kind exists."
+      ]
+    },
+    {
+      "id": "edge-gsd-branching-on",
+      "prompt": "Spec and discuss phases 5 to 6. The project's GSD config sets git.branching_strategy to phase and its template renders gsd/phase-5-intro, while the fold unit for phase 5 is gsd/phase-05-intro.",
+      "expected_output": "branch_preflight.py refuses gsd_branch_mismatch for phase 5 before any fold.py start; the agent shows both names and stops; HEAD, .git/ai-kit-stack.json and .planning/config.json are unchanged.",
+      "files": [],
+      "assertions": [
+        "branch_preflight.py runs and refuses before any fold.py start is run.",
+        "The run stops with the gsd_branch_mismatch reason naming both branch names.",
+        "HEAD, the stack record and .planning/config.json are unchanged after the stop; git.branching_strategy is not edited.",
+        "No fold.py start runs and no branch is created."
+      ]
+    },
+    {
+      "id": "edge-unrecorded-head-branch",
+      "prompt": "Spec and discuss phases 21 to 22. The checkout is on a branch called experiment that is not a unit and holds two local commits that are on no remote.",
+      "expected_output": "branch_preflight.py refuses unrecorded_head before any fold.py start and lists the two commits; the agent shows them to the owner and stops. HEAD, the stack record and the config are unchanged. A fold start refusal of the same reason is only a backstop and never the expected path.",
+      "files": [],
+      "assertions": [
+        "The unrecorded_head refusal comes from branch_preflight.py before any fold.py start runs.",
+        "The agent shows the two local commits to the owner and stops.",
+        "HEAD stays on experiment, the stack record and .planning/config.json are unchanged.",
+        "The agent does not move, reset or delete the experiment branch and does not cherry-pick its commits."
+      ]
+    },
+    {
+      "id": "edge-stale-parent-unit",
+      "prompt": "fold.py start --phase 23 printed refused: stale_parent: unit phase-22 branch gsd/phase-22-beta does not exist; it is the newest unmerged unit in the stack record, and a last line refused stale_parent. The stack is attached.",
+      "expected_output": "The agent shows the report to the owner and stops the whole run; it appends no unit flow off ledger line, does not recreate the branch and does not edit the stack record.",
+      "files": [
+        "evals/files/show-all-stale-unit.txt"
+      ],
+      "assertions": [
+        "The agent shows the stale_parent report to the owner and stops the whole run.",
+        "The agent appends no unit flow off ledger line for this refusal.",
+        "The agent does not recreate gsd/phase-22-beta and does not edit .git/ai-kit-stack.json."
+      ]
     }
   ]
 }

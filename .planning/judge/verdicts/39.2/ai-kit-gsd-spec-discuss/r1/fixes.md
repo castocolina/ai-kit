@@ -1,0 +1,11 @@
+# Loop 39.2 round 1 fixes: ai-kit-gsd-spec-discuss
+
+Decide row: `fix`. Validated count 3 (referee-one 3, referee-three 0; judge count 1 after the jev re-count) plus the extra advisory lane (referee-two, not in the validated count) 0: combined 3 critical, important or high findings. No further round (AGENTS.md fix rule); the skill's digest is stale by design until its next loop.
+
+- referee-one D8-1 (SKILL.md:87): a `deferred <N>` preflight line no longer creates the directory or runs `start` during §0's branch checks; N is noted, steps 6 to 9 run first (the auto path's go-ahead before any write or branch change), and the directory, re-check, `start`, `guard` and branch check happen when the run reaches phase N in §1. File: skills/ai-kit-gsd-spec-discuss/SKILL.md (§0 branch checks).
+- referee-one D8-2 (SKILL.md:55): the `--phases-root` source now covers a roadmap phase with no directory: `init.phase-op` gives `phase_dir: null` and `expected_phase_dir` (gsd-core bin/lib/init.cjs), so the parent of `expected_phase_dir` is used; with neither set the run stops with the init output. File: skills/ai-kit-gsd-spec-discuss/SKILL.md (§0 step 2).
+- referee-one D8-3 (scripts/phase_range.py:65): `first_match` replaced by `find_context` (a bare `CONTEXT.md` first, else the first `*-CONTEXT.md`, as gsd-core `findContextMdIn`) and `find_spec` (the first `*-SPEC.md` that is not an `-AI-SPEC.md` or `-UI-SPEC.md`, as gsd-core `isPhaseSpecFile`). Files: skills/ai-kit-gsd-spec-discuss/scripts/phase_range.py; regression test tests/test_ai_kit_gsd_spec_discuss.py `TestPhaseRange.test_artifact_pick_follows_gsd_bare_context_and_requirements_spec`.
+
+Red/green:
+- Red (test added, code unchanged): `python3 tools/run_unittest_parallel.py tests.test_ai_kit_gsd_spec_discuss`: FAILED, 79 tests, 1 failure: `AssertionError: 'no CONTEXT' is not None` in the new test.
+- Green (after the change): `python3 tools/run_unittest_parallel.py tests.test_skill_evals_shape tests.test_skill_text_history tests.test_skill_frontmatter tests.test_flow_docs tests.test_ai_kit_gsd_spec_discuss tests.test_check_dogfood tests.test_spec_discuss_branch_flow`: 7/7 modules passed (test_ai_kit_gsd_spec_discuss 79 tests ok).

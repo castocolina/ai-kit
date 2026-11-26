@@ -352,7 +352,8 @@ class TestTemplateAndSections(unittest.TestCase):
         for _heading, lines in built_sections():
             for line in lines:
                 self.assertLessEqual(len(line), 200, line)
-                self.assertNotRegex(line, FLAG_RE)
+                if line != gp_sections.RAIL_BACK:
+                    self.assertNotRegex(line, FLAG_RE)
 
 
 def clean_document():
@@ -429,6 +430,14 @@ class TestGuards(unittest.TestCase):
         problems = self._problems(insert_in_block(clean_document(), "- Run again with --from 3."))
         self.assertTrue(any("flag-like token" in problem for problem in problems))
         self.assertTrue(any(", in " in problem for problem in problems))
+
+    def test_the_go_back_rail_is_the_only_flag_exemption(self):
+        problems = self._problems(insert_in_block(clean_document(), "- " + gp_sections.RAIL_BACK))
+        self.assertFalse(any("flag-like token" in p for p in problems))
+        problems = self._problems(
+            insert_in_block(clean_document(), "- " + gp_sections.RAIL_BACK + " now")
+        )
+        self.assertTrue(any("flag-like token" in p for p in problems))
 
     def test_home_path_flagged(self):
         problems = self._problems(insert_in_block(clean_document(), "- see " + fx.FAKE_HOME))
@@ -1055,6 +1064,7 @@ class TestCapsWithEveryField(unittest.TestCase):
             gp_sections.RAIL_ASK,
             gp_sections.RAIL_WAIT,
             gp_sections.RAIL_PING,
+            gp_sections.RAIL_BACK,
             "Push only after the fold.",
             "Fold the commits, push the working branch, then merge it into the main checkout and "
             "push that.",
@@ -1085,7 +1095,12 @@ class TestCapsWithEveryField(unittest.TestCase):
     def test_no_field_set_fits_the_three_caps(self):
         text = self._render()
         self._assert_caps(text)
-        for rail in (gp_sections.RAIL_ASK, gp_sections.RAIL_WAIT, gp_sections.RAIL_PING):
+        for rail in (
+            gp_sections.RAIL_ASK,
+            gp_sections.RAIL_WAIT,
+            gp_sections.RAIL_PING,
+            gp_sections.RAIL_BACK,
+        ):
             self.assertIn(rail, text)
 
     def test_a_cross_ai_render_with_every_field_set_names_the_line_cap(self):
