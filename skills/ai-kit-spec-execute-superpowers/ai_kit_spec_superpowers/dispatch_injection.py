@@ -6,13 +6,17 @@ replacement for it, and dispatch_superpowers_task is the ONLY place an external_
 actually runs a subprocess -- always through the existing, live-verified
 ai_kit_spec.execute_dispatch.dispatch_execute path, never a second supervisor and
 never a target_dir placeholder baked in ahead of the real dispatch call (HIGH finding)."""
+import contextlib
 import os
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 
+from ai_kit_spec import host_config, jev_names, lane_order, lane_settings
 from ai_kit_spec.config_io import cfg_resolve
+from ai_kit_spec.detection import detect_current_runtime
 from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
 from ai_kit_spec.execute_selection import (
     ExecuteResolveOptions,
@@ -20,6 +24,7 @@ from ai_kit_spec.execute_selection import (
     resolve_execute_candidates,
     screen_execute_clis,
 )
+from ai_kit_spec.lane_settings import escalation_candidates, lane_session_fallback
 from ai_kit_spec.quota import entry_reason, resolve_ladder_pick
 from ai_kit_spec.role_orders import role_order
 from ai_kit_spec.routing import (
@@ -68,10 +73,14 @@ class SuperpowersDispatchGuidance(NamedTuple):
     tool_availability: dict | None = None
     agents_tooling_path: str | None = None
     code_index_registered: bool = False
+    gates_text: str | None = None
+    guard_text: str | None = None
+    owner_config_paths: tuple = ()
 
 
 class SuperpowersDispatchSeams(NamedTuple):
     dispatch_execute_fn: Callable[..., dict] = dispatch_execute
+    env_fn: Callable[[], dict] = lambda: dict(os.environ)
 
 
 def reasons_summary(reasons: dict) -> dict:
@@ -185,9 +194,79 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
             "task_affinity": r.get("task_affinity"), "context_limit": r.get("context_limit"),
             "purpose": r.get("purpose"),
             "effort": r.get("effort"), "service_tier": r.get("service_tier"),
+            "pool": lane_settings.lane_free_pool(r),
+            "roster_entry": r,
         })
     top_n_keys = role_order(resolved, "execute")
     return candidates, top_n_keys
+
+
+# jev's advisory pick of the session model for the session-model fallback: words and numbers
+# only, never code.
+# the Claude Code Agent tool's model words the owner named; they must stay in the claude row's
+# native_selectors
+SESSION_PICKS = ("haiku", "sonnet")
+
+PICK_QUESTION = (
+    "Which model fits this task best? haiku: light and fast, for a small, well-specified "
+    "change; sonnet: stronger, for a multi-file or tricky change."
+)
+
+
+def pick_session_model(summary: str, env, run=subprocess.run) -> tuple[str, str]:
+    """Return (model, note); an empty model means the session model."""
+    if detect_current_runtime(env) != "claude":
+        return "", "host takes no model"
+    entry = jev_names.find_jev(env)
+    if entry is None:
+        return "", "jev absent"
+    # Hand-built on purpose: this item is the locked contract; jev_names.class_item would add a
+    # model-name prefix and catalog criteria that must not reach this request.
+    item = {
+        "id": "k0",
+        "type": "choice",
+        "instructions": PICK_QUESTION,
+        "context": summary[: jev_names.CONTEXT_CHARS],
+        "criteria": {pick: pick for pick in SESSION_PICKS},
+    }
+    choice, top, reason = jev_names.ask_items(entry, [item], env, run, strict=True).get(
+        "k0", (None, None, "no answer")
+    )
+    confident = top is not None and top >= lane_order.STABLE_TOP
+    if reason == "" and choice in SESSION_PICKS and confident:
+        return choice, f"jev {choice} ({top:.2f})"
+    return "", "jev low: session model kept"
+
+
+def session_fallback_injection(
+    config: dict, ladder_keys: list, summary: str, env, run=subprocess.run,
+) -> dict | None:
+    """The session-model injection when the owner turned the fallback on; None when it is off."""
+    if not lane_session_fallback(config):
+        return None
+    model, note = pick_session_model(summary, env, run)
+    return {
+        "mode": "native", "key": "", "runtime": "", "model": model,
+        "ladder_keys": ladder_keys, "fallback": "session", "fallback_note": note,
+    }
+
+
+def escalation_gate(execute_lanes: list, anchor_key: str, ladder_keys: list) -> dict:
+    """The rounds 4-5 gate: which keys a fix round may move to, read from the stuck lane's own
+    escalation flags."""
+    roster = {lane["key"] for lane in execute_lanes if isinstance(lane, dict) and lane.get("key")}
+    # an anchor gone from the live roster is a changed config: the owner-pick stop
+    if not anchor_key or anchor_key not in ladder_keys or anchor_key not in roster:
+        raise ValueError("empty or unknown anchor")
+    above = ladder_keys[:ladder_keys.index(anchor_key)]
+    allowed = escalation_candidates(execute_lanes, anchor_key, above)
+    every = roster | set(ladder_keys)
+    if not allowed:
+        return {"escalate": False, "allowed": [anchor_key],
+                "exclude": sorted(every - {anchor_key}),
+                "reason": "off" if allowed is None else "no-target"}
+    return {"escalate": True, "allowed": allowed,
+            "exclude": sorted(every - set(allowed)), "reason": "flags"}
 
 
 _LINE_QUALIFIER = re.compile(r":\d+(?:-\d+)?$")
@@ -305,6 +384,7 @@ def _injection_for(candidate: dict, decision: str) -> dict:
         "mode": "external_cli", "key": candidate["key"], "runtime": candidate.get("runtime"),
         "model": candidate["model"], "effort": candidate.get("effort"),
         "service_tier": candidate.get("service_tier"),
+        "pool": candidate.get("pool"),
     }
 
 
@@ -348,6 +428,9 @@ def _walk_ladder_for_injection(
     raise QuotaExhaustedError(task_type, tried, reasons)
 
 
+NO_CANDIDATE_PREFIX = "no execute candidate survived"
+
+
 def build_dispatch_injection(request: BuildInjectionRequest,
                               options: BuildInjectionOptions | None = None) -> dict:
     opts = options or BuildInjectionOptions()
@@ -355,7 +438,7 @@ def build_dispatch_injection(request: BuildInjectionRequest,
     task_type, required_context, ranked = _narrow_and_rank(request, routes)
     if not ranked:
         raise ValueError(
-            f"no execute candidate survived affinity/context narrowing for "
+            f"{NO_CANDIDATE_PREFIX} affinity/context narrowing for "
             f"task_type={task_type!r}, required_context={required_context} -- cannot build a "
             f"dispatch injection"
         )
@@ -382,19 +465,40 @@ def dispatch_superpowers_task(request: DispatchTaskRequest,
     seam = seams or SuperpowersDispatchSeams()
     injection = request.injection
     candidate = {"runtime": injection["runtime"], "model": injection["model"],
-                 "effort": injection.get("effort"), "service_tier": injection.get("service_tier")}
-    return seam.dispatch_execute_fn(
-        ExecuteDispatchSpec(
-            candidate,
-            request.prompt,
-            request.target_dir,
-            request.timeout,
-            format_block=guide.format_block,
-            tool_availability=guide.tool_availability,
-            agents_tooling_path=guide.agents_tooling_path,
-            code_index_registered=guide.code_index_registered,
+                 "effort": injection.get("effort"), "service_tier": injection.get("service_tier"),
+                 "pool": injection.get("pool")}
+    env = seam.env_fn()
+    before = host_config.snapshot(env)
+    result = None
+    try:
+        result = seam.dispatch_execute_fn(
+            ExecuteDispatchSpec(
+                candidate,
+                request.prompt,
+                request.target_dir,
+                request.timeout,
+                format_block=guide.format_block,
+                tool_availability=guide.tool_availability,
+                agents_tooling_path=guide.agents_tooling_path,
+                code_index_registered=guide.code_index_registered,
+                gates_text=guide.gates_text,
+                guard_text=guide.guard_text,
+                owner_config_paths=guide.owner_config_paths,
+            )
         )
-    )
+    finally:
+        after = host_config.snapshot(env)
+        paths = host_config.changed(before, after)
+        for line in host_config.observation_lines(
+                env, paths, host_config.unavailable(before, after)):
+            if sys.stderr is not None:
+                with contextlib.suppress(OSError, ValueError):  # a closed stream raises ValueError
+                    print(line, file=sys.stderr)
+        if isinstance(result, dict):
+            result["host_config_changed"] = [
+                os.path.join(host_config.home(env), rel) for rel in paths]
+    assert result is not None
+    return result
 
 
 # A whole line declaring one status: `STATUS: DONE`, or the bare word, optionally followed by
@@ -467,3 +571,12 @@ def dispatch_classification(dispatch_result: dict) -> dict:
     else:
         cls = "real_error"
     return {"class": cls, "retry_after_s": retry, "cycle": cycle}
+
+
+def quota_evidence(dispatch_result: dict) -> bool:
+    """True only on positive quota evidence in a saved dispatch result: the runner's status says
+    quota, or the result's reason is quota. A transient failure is never quota evidence, even
+    where dispatch_classification groups it with quota for the wait-or-stop decision."""
+    raw = dispatch_result.get("status")
+    status = raw if isinstance(raw, dict) else {}
+    return status.get("status") == "quota" or dispatch_result.get("reason") == "quota"

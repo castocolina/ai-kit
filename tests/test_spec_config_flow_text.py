@@ -52,8 +52,7 @@ UNKNOWN_FIELDS_LINE = "An alias row or a model the owner names has no price or e
 PLANTED_BAD_PURPOSE = "- Run: `propose-lanes --purpose both --catalog-path c --detect`"
 PLANTED_OTHER_COMMAND = "- Run: `catalog-report --catalog-path c --detect`"
 NO_EFFORT_LINE = "the runner has no effort flag for <runtime> yet, so no effort is stored"
-ESCALATION_LINE = ("stored and informational: dispatch passes them to the runner, which reports "
-                   "them as ignored and never starts another lane from them")
+ESCALATION_LINE = "the superpowers execute adapter reads them at fix rounds 4 and 5"
 ALLOWANCE_LINE = "This test call spends part of the lane's allowance."
 HERDR_LINE = "never in a herdr pane or by another agent"
 PROPOSAL_KEYS = ("default_view", "pool", "wider", "zero_price", "aliases", "empty", "message",
@@ -79,6 +78,7 @@ POOL_WARNING = ("Free models of <provider> appear to share one pool (reported by
 FLAG_LINE = "Only a yes writes `usage_limited = true`"
 FALLBACK_LINE = ("A usage-limited lane's fallback is the first lane of the same role, in that"
                  " role's order, that is neither usage-limited nor in the same pool")
+FLAG_READERS = "the review run and the execute adapter"
 
 
 def run_line_problems(text, allowed) -> list[str]:
@@ -152,8 +152,13 @@ class TestWizardFlowText(unittest.TestCase):
         order = section(self.flow, FLOW_HEADINGS[8])
         self.assertIn("[lanes.policy.review]", order)
         self.assertIn("[lanes.policy.execute]", order)
+        self.assertIn("run the task on this session's own model?", order)
+        self.assertIn("Only a yes writes `session_fallback = true`", order)
+        self.assertIn("keep the fallback answer already given", order)
         escalation = section(self.flow, FLOW_HEADINGS[9])
         self.assertIn(ESCALATION_LINE, escalation)
+        self.assertIn("may it move from `<key>` to a more capable lane ranked above it", escalation)
+        self.assertIn("for review lanes they are recorded only", escalation)
         self.assertIn("two or more lanes", escalation)
 
     def test_proposal_keys_named(self):
@@ -224,6 +229,12 @@ class TestFreeLanesText(unittest.TestCase):
         self.assertIn(FLAG_LINE, text)
         self.assertIn("pool_key", section(self.free, FREE_HEADINGS[2]))
 
+    def test_usage_limited_names_its_readers(self):
+        for path in (FREE, CONFIG_FILE):
+            text = path.read_text(encoding="utf-8").lower()
+            self.assertIn(FLAG_READERS, text)
+            self.assertNotIn("no run reads", text)
+
     def test_fallback_and_alternative(self):
         self.assertIn(FALLBACK_LINE, section(self.free, FREE_HEADINGS[3]))
         text = section(self.free, FREE_HEADINGS[4])
@@ -265,6 +276,7 @@ class TestSkillSkeleton(unittest.TestCase):
         for phrase in ('ai-kit-spec-config cannot ask here; no config, cache or trust record '
                        'was written.',
                        'Installed runtimes:', 'Questions it would ask:',
+                       "run on this session's own model when no execute lane is available",
                        'A person must run ai-kit-spec-config.'):
             self.assertIn(phrase, self.headless)
         self.assertNotIn('--save', self.headless)
@@ -275,8 +287,8 @@ class TestSkillSkeleton(unittest.TestCase):
         for phrase in ("Never let the proposal's order stand as the owner's pick",
                        'Never ask a wizard question in a herdr pane or of another agent',
                        'Never write a lane whose data-use confirmation was declined or skipped',
-                       "Never set `usage_limited`, `escalate_runtime` or `escalate_model` "
-                       "without the owner's explicit yes"):
+                       "Never set `usage_limited`, `escalate_runtime`, `escalate_model` "
+                       "or `session_fallback` without the owner's explicit yes"):
             self.assertIn(phrase, text)
 
     def test_description_names_both_callers(self):
@@ -294,8 +306,10 @@ class TestSkillSkeleton(unittest.TestCase):
     def test_per_role_orders_replace_the_shared_ladder(self):
         self.assertNotIn('policy.ladder', self.skill)
         text = between(self.skill, '### Step 3 —', '### Step 4 —')
-        for phrase in ('"review": {"ladder"', '"execute": {"ladder"', '[--keep-backup]'):
+        for phrase in ('"review": {"ladder"', '"execute": {"ladder"', '[--keep-backup]',
+                       '"session_fallback": true', "only a yes adds `session_fallback`"):
             self.assertIn(phrase, text)
+        self.assertNotIn('"execute": {"ladder": ["<key>"], "session_fallback": true}', text)
         for role in ('review', 'execute'):
             self.assertIn(f'[lanes.policy.{role}]', self.skill[self.skill.index('### Step 4 —'):])
 

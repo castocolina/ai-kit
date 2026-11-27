@@ -319,7 +319,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### Execute
 
-- [ ] **EXE-01**: The superpowers execute adapter keeps one pinned-resume path and one owner-stop path, and hands off
+- [x] **EXE-01**: The superpowers execute adapter keeps one pinned-resume path and one owner-stop path, and hands off
   to spec-config when no config exists (one phase changes this code once). *(amended 2026-11-16, 36 D-03: the
   adapter's no-config entry check and ask are added with HUB-01 in Phase 36; this phase keeps them and owns the resume
   and stop paths)*
@@ -331,11 +331,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   models, haiku or sonnet at low, medium or high effort on native Claude, composer on Cursor, or a cheap Copilot
   model; when a lighter executor is picked, the plan-writing instructions adapt to it (plans written for a lite
   executor follow lite instructions).
-- [ ] **EXE-04**: When no configured executor is available, an opt-in fallback runs on the session's own model with
+- [x] **EXE-04**: When no configured executor is available, an opt-in fallback runs on the session's own model with
   jev choosing haiku or sonnet; with the flag off, the error names spec-config as the fix.
-- [ ] **EXE-05**: Every executor brief lists the unit and arch gates and the commit guard block, and verify lines
+- [x] **EXE-05**: Every executor brief lists the unit and arch gates and the commit guard block, and verify lines
   tolerate tool version banners; clean-tree checks ignore the owner's own config file, the progress counter matches
-  the tasks actually done, and the agent-branch allow-list is applied the same way on every path.
+  the tasks actually done, and the agent-branch allow-list is applied the same way on every path. *(amended 2026-11-25
+  after research, 41-SPEC amendments 1 and 6: the brief is ai-kit's shared dispatch guidance, the runner's preamble is
+  unchanged pending the owner; a gate is judged by its exit code; the commit guard names the owner's config paths; a
+  superpowers dispatch reports `coverage=n/a` by design; no ai-kit agent-branch regex, one guard block on every path)*
 - [ ] **EXE-06**: Lane transport is chosen per lane (subprocess, resumed session, herdr pane) for execute,
   spec-review and code-review lanes, reused within a plan and renewed after a set number of rounds, after a spike on
   session ids and headless resume; a herdr lane returns its result through a report file, its pane closes at plan
@@ -346,15 +349,15 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   an execute result as done, partial or needing another round; a review finding by whether its severity fits the
   kind of problem, the test tier, reproducibility, end-user reach and MVP versus production. Without jev a
   deterministic default decides, and the run log shows which one did.
-- [ ] **EXE-08**: In an ai-kit checkout every executor lane (the runner's execute role and the superpowers adapter)
+- [x] **EXE-08**: In an ai-kit checkout every executor lane (the runner's execute role and the superpowers adapter)
   runs with the real-home guard on (`AI_KIT_REFUSE_REAL_HOME=1`), and the execute flow compares the real host-config
   modification times before and after the lane and reports any change; a fake-lane test proves both.
-- [ ] **EXE-09**: When an execute lane stops on a quota error, the superpowers adapter reads the lane's `lane_usage_limit`,
+- [x] **EXE-09**: When an execute lane stops on a quota error, the superpowers adapter reads the lane's `lane_usage_limit`,
   `lane_fallback` and the pool's blocked-until record (RUN-14): a flagged lane moves at once to a fallback lane of a different
   pool, a lane whose blocked-until time has not passed is skipped at selection, the first selection after that time tries it
   once, and an unflagged lane keeps stopping and reporting; a fake-lane fixture covers each case. *(added 2026-11-16,
-  free-lane pool study, PROVISIONAL, needs owner confirmation; 36 D-16 handed the executor reading to Phase 41 without a
-  criterion)*
+  free-lane pool study; confirmed by the owner 2026-11-25 (was PROVISIONAL); 36 D-16 handed the executor reading to Phase 41
+  without a criterion)*
 
 ### Shared runner
 
@@ -1113,15 +1116,15 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | REV-06 | Phase 40 | Complete |
 | REV-07 | Phase 40 | Complete |
 | REV-08 | Phase 40 | Complete |
-| EXE-01 | Phase 41 | Pending |
+| EXE-01 | Phase 41 | Complete |
 | EXE-02 | Phase 42 | Pending |
 | EXE-03 | Phase 42 | Pending |
-| EXE-04 | Phase 41 | Pending |
-| EXE-05 | Phase 41 | Pending |
+| EXE-04 | Phase 41 | Complete |
+| EXE-05 | Phase 41 | Complete |
 | EXE-06 | Phase 42 | Pending |
 | EXE-07 | Phase 42 | Pending |
-| EXE-08 | Phase 41 | Pending |
-| EXE-09 | Phase 41 | Pending |
+| EXE-08 | Phase 41 | Complete |
+| EXE-09 | Phase 41 | Complete |
 | RUN-01 | Phase 37 | Complete |
 | RUN-02 | Phase 37 | Complete |
 | RUN-03 | Phase 38 | Complete |

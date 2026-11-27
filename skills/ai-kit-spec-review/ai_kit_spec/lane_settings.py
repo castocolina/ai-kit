@@ -9,6 +9,8 @@ from typing import NamedTuple
 from ai_kit_spec import lane_data_use
 
 LANE_FLAG_KEYS = ("escalate_runtime", "escalate_model", "usage_limited")
+# role-table flag of [lanes.policy.execute]; kept out of LANE_FLAG_KEYS, which are lane-entry flags
+SESSION_FALLBACK_KEY = "session_fallback"
 # Settings for one pair are dropped on a pair change unless restated.
 MODEL_BOUND = ("effort", "effort_source", "usage_limited", "usage_limit_note", "pool",
                "escalate_runtime", "escalate_model", *lane_data_use.DATA_USE_KEYS)
@@ -107,6 +109,15 @@ def lane_usage_limit(entry: dict) -> UsageLimit:
                       clean_note(note) if isinstance(note, str) else "")
 
 
+def lane_session_fallback(config: dict) -> bool:
+    """The owner's opt-in to run a task on the session model when no execute lane is available."""
+    policy = config.get("policy")
+    table = policy.get("execute") if isinstance(policy, dict) else None
+    if not isinstance(table, dict):
+        return False
+    return _bool_setting({**table, "key": "policy.execute"}, SESSION_FALLBACK_KEY)
+
+
 def lane_escalation(entry: dict) -> Escalation:
     """36 D-06 / SPEC R5: read escalation flags; non-booleans raise a named error."""
     return Escalation(_bool_setting(entry, "escalate_runtime"),
@@ -167,6 +178,14 @@ def lane_fallback(role_lanes: list, key: str) -> str | None:
     return _fallback_from(base, lanes) if base is not None else None
 
 
+def _kind_matches(base: dict, lane: dict, kind: str) -> bool:
+    """True when `lane` is a step of `kind` from `base`: another runtime, or the same runtime
+    with another model."""
+    same = lane.get("runtime") == base.get("runtime")
+    return (kind == "runtime" and not same) or (kind == "model" and same
+                                                and lane.get("model") != base.get("model"))
+
+
 def escalation_target(role_lanes: list, key: str, kind: str) -> str | None:
     """36 D-06 / SPEC R5: find the next configured lane matching the escalation kind."""
     if kind not in ("runtime", "model"):
@@ -176,12 +195,25 @@ def escalation_target(role_lanes: list, key: str, kind: str) -> str | None:
     if index is None:
         return None
     base = lanes[index]
-    for lane in lanes[index + 1:]:
-        same = lane.get("runtime") == base.get("runtime")
-        if (kind == "runtime" and not same) or (kind == "model" and same
-                                                and lane.get("model") != base.get("model")):
-            return lane["key"]
-    return None
+    return next((lane["key"] for lane in lanes[index + 1:] if _kind_matches(base, lane, kind)),
+                None)
+
+
+def escalation_candidates(role_lanes: list, anchor_key: str, above_keys: list) -> list[str] | None:
+    """Keys above the anchor that the anchor lane's escalation flags allow, in the given order;
+    None when both flags are off."""
+    lanes = _keyed(role_lanes)
+    by_key = {lane["key"]: lane for lane in lanes}
+    anchor = by_key.get(anchor_key)
+    if anchor is None:
+        raise LaneSettingError(f"{anchor_key}: not an execute lane")
+    flags = lane_escalation(anchor)
+    if not flags.runtime and not flags.model:
+        return None
+    if flags.runtime and flags.model:
+        return list(above_keys)
+    kind = "runtime" if flags.runtime else "model"
+    return [k for k in above_keys if k in by_key and _kind_matches(anchor, by_key[k], kind)]
 
 
 def fallback_warnings(roles: dict, orders: dict) -> list[str]:

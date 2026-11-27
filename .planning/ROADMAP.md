@@ -130,7 +130,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 39.1: Remove the grok runtime (INSERTED)** - The grok CLI runtime leaves detection, command building, the runner table, profiles, docs and tests; its models stay reachable through opencode, pi and cursor-agent *(inserted 2026-11-19, owner decision)*
 - [x] **Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)** - The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks *(inserted 2026-11-23, owner decision)*
 - [x] **Phase 40: Resilient review sized by jev** - A failing lane no longer ends a review; jev sizes and classifies
-- [ ] **Phase 41: Superpowers adapter refactor with spec-config handoff** - One resume path, one stop path, session-model fallback, complete executor briefs
+- [x] **Phase 41: Superpowers adapter refactor with spec-config handoff** - One resume path, one stop path, session-model fallback, complete executor briefs
 - [ ] **Phase 42: Code review after execution and jev-picked executors** - Implementation is reviewed in a capped loop; jev picks the executor and lane transport
 - [ ] **Phase 43: curated-config reads docs at the installed tag** - Version-pinned open-gsd docs and a grouped question cascade
 - [ ] **Phase 44: curated-config writes the agreed settings** - Profile, routing, models, effort, skills and graphify flags written through gsd-tools
@@ -1093,18 +1093,32 @@ Plans:
 ### Phase 41: Superpowers adapter refactor with spec-config handoff
 
 **Goal**: The superpowers execute adapter has one resume path and one stop path, hands off to spec-config when unconfigured, and every executor brief carries the gates.
-**Depends on**: Phase 36, Phase 37
-**Requirements**: EXE-01, EXE-04, EXE-05, EXE-08, EXE-09 *(EXE-09 added 2026-11-16, free-lane pool study, PROVISIONAL)*
+**Depends on**: Phase 36, Phase 37, Phase 40 *(amended 2026-11-23, 41 D-07: the executor switch of EXE-09 reuses the flagged-lane switch module that Phase 40 builds)*
+**Requirements**: EXE-01, EXE-04, EXE-05, EXE-08, EXE-09 *(EXE-09 added 2026-11-16, free-lane pool study; confirmed by the owner 2026-11-25, was PROVISIONAL)*
 **Code anchors**: `skills/ai-kit-spec-execute-superpowers/ai_kit_spec_superpowers/dispatch_injection.py` (`compute_resume_exclusions`, `dispatch_superpowers_task`, `classify_dispatch_failure`, `implementer_status`), `cli.py`, `ai-kit-spec-superpowers.py`; `ai_kit_spec/execute_dispatch.py`, `execute_selection.py`; executor brief template (file unknown until research); real-home guard `AI_KIT_REFUSE_REAL_HOME` in `tools/setup.py`; the runner's execute argv in `cross-ai.mjs` (`runCli`) and `ai_kit_spec/runner_dispatch.py` (`RunnerSpec`); new: before-and-after audit of real host-config modification times; docs: superpowers `SKILL.md` and `references/`
 **Success Criteria** (what must be TRUE):
   1. The adapter keeps one pinned-resume path and one owner-stop path, and with no config it hands off to spec-config (this code changes once, in this phase). *(amended 2026-11-16, 36 D-03: the adapter's first step already holds the shared `config-status` check and the three-answer ask after Phase 36 (HUB-01); this phase keeps that block while it refactors the resume and stop paths, and decides whether the escalation flags of Phase 36 gate rounds 4 and 5)*
   2. With no configured executor available and the fallback flag on, a task runs on the session's own model with jev choosing haiku or sonnet; with the flag off, the error names spec-config as the fix.
-  3. Every executor brief lists the unit and arch gates and the commit guard block, and its verify lines pass when a tool prints a version banner; clean-tree checks ignore the owner's config file, the progress counter matches the tasks done, and the agent-branch allow-list applies the same way on every path.
+  3. Every executor brief lists the unit and arch gates and the commit guard block, and its verify lines pass when a tool prints a version banner; clean-tree checks ignore the owner's config file, the progress counter matches the tasks done, and the agent-branch allow-list applies the same way on every path. *(amended 2026-11-25 after research, 41-SPEC amendments 1 and 6: "executor brief" is ai-kit's shared `dispatch_guidance.py`, while the runner's `EXEC_PREAMBLE` is unchanged and returned to the owner; the gates block judges a gate by its exit code so a banner never fails it; the caller-fed commit guard names the owner's config paths for clean-tree checks; a superpowers dispatch reports `coverage=n/a` by design because its prompt carries no `<task>` block, so no counter claims progress it cannot see; no ai-kit code holds an agent-branch regex, and one caller-fed guard block reaches the first, fix-round, resumed and native dispatch identically)*
   4. In an ai-kit checkout every executor lane runs with `AI_KIT_REFUSE_REAL_HOME=1`, and a fake lane that touches a real host config is reported from the before-and-after modification times.
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
-  6. When an execute lane stops on a quota error, the superpowers adapter reads `lane_usage_limit` and `lane_fallback` of Phase 36 and the pool's blocked-until record of Phase 38.1: a flagged lane moves at once to a fallback lane of a different pool, a lane whose blocked-until time has not passed is skipped at selection, the first selection after that time tries it once, and an unflagged lane keeps stopping and reporting; each case is covered by a fake-lane fixture. *(added 2026-11-16, free-lane pool study, PROVISIONAL, needs owner confirmation; this criterion was missing: 36 D-16 handed the executor reading to this phase without a criterion)*
+  6. When an execute lane stops on a quota error, the superpowers adapter reads `lane_usage_limit` and `lane_fallback` of Phase 36 and the pool's blocked-until record of Phase 38.1: a flagged lane moves at once to a fallback lane of a different pool, a lane whose blocked-until time has not passed is skipped at selection, the first selection after that time tries it once, and an unflagged lane keeps stopping and reporting; each case is covered by a fake-lane fixture. *(added 2026-11-16, free-lane pool study; confirmed by the owner 2026-11-25, was PROVISIONAL; this criterion was missing: 36 D-16 handed the executor reading to this phase without a criterion)*
 
-**Plans**: TBD
+**Plans**: 14/14 plans complete in 14 waves *(planned 2026-11-25; the plans run one after another because nearly every plan touches the adapter's `cli.py`, its SKILL.md or a shared lane module; 41-07 changes the runner template and 41-08, an orchestrator action, re-records the self-test times, bumps the template version and re-renders the live runner copy, with no checkpoint between them; 41-13, the judge loop, and 41-14, the closing gate with the final `make test`, are orchestrator actions)*
+- [x] 41-01-PLAN.md
+- [x] 41-02-PLAN.md
+- [x] 41-03-PLAN.md
+- [x] 41-04-PLAN.md
+- [x] 41-05-PLAN.md
+- [x] 41-06-PLAN.md
+- [x] 41-07-PLAN.md
+- [x] 41-08-PLAN.md
+- [x] 41-09-PLAN.md
+- [x] 41-10-PLAN.md
+- [x] 41-11-PLAN.md
+- [x] 41-12-PLAN.md
+- [x] 41-13-PLAN.md
+- [x] 41-14-PLAN.md
 
 ### Phase 42: Code review after execution and jev-picked executors
 
@@ -1397,7 +1411,7 @@ Plans:
 | 38.1. Runner error classification and retry policy | 14/14 | Complete    | 2026-11-23 |
 | 39. Lane capability blocks and lens skills | 19/19 | Complete    | 2026-11-23 |
 | 40. Resilient review sized by jev | 13/13 | Complete    | 2026-11-25 |
-| 41. Superpowers adapter refactor with spec-config handoff | 0/TBD | Not started | - |
+| 41. Superpowers adapter refactor with spec-config handoff | 14/14 | Complete    | 2026-11-26 |
 | 42. Code review after execution and jev-picked executors | 0/TBD | Not started | - |
 | 43. curated-config reads docs at the installed tag | 0/TBD | Not started | - |
 | 44. curated-config writes the agreed settings | 0/TBD | Not started | - |
@@ -1611,6 +1625,16 @@ Plans:
 ### Phase 999.34: A consented checkpoint never publishes a lower unit's unpushed commits (BACKLOG)
 
 **Goal:** [Captured for future planning] Phase 39.2 made `start`'s catch-up keep an upper unit pending while an open unit below it is not pushed at its local tip, and stopped a restack from making a first push. `fold.py checkpoint` with push consent still pushes an upper unit's folded tip while the unit below holds plain, unfolded commits, so those commits reach the remote inside the upper branch; the cascade does the same when a middle unit is folded and the units above it are pushed. The 39.2 SPEC kept checkpoint behaviour out of scope. The checkpoint and the cascade apply the catch-up rule (hold the push, keep the tip pending, report the unit below that holds it), a fixture test with consent on shows the remote unchanged, and `references/unit-contract.md` states the rule once for all three paths. Found 2026-11-24 in the phase 39.2 code-review fixes (reading only, not run).
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.35: ai-kit-spec-config reaches grade A with the stricter judge (BACKLOG)
+
+**Goal:** [Captured for future planning] The owner's central skill ai-kit-spec-config meets the AGENTS.md judge bar but not the owner's grade-A target: loop 41.1 (2026-11-26) scored it B 86.4 from referee-one and A 92.8 from referee-three, after a no-loss trim (6,295 to 5,126 body words, 418 to 256 lines) and two fixed high findings. The owner accepted B for phase 41. A later phase resolves referee-one's six medium findings of loop 41.1 without losing behaviour (body size; the trust preview; check-only eval fixtures; the catalog return path; the free-lane pool check; the pool claim wording; verdicts under `.planning/judge/verdicts/41.1/ai-kit-spec-config/`), considers renaming Steps 2.3 to 2.8 together with the tests that anchor them, and runs a judge loop on referee-one and referee-three until both give A or the three-round rule ends it.
 **Requirements:** TBD
 **Plans:** 0 plans
 

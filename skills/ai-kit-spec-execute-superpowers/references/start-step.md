@@ -48,5 +48,6 @@ The second boundary line is the wave-point run before the first task: `start` al
   and no PR. On no, stop.
 - Any other refusal (`dirty_tree`, `plan_not_carried`, `wrong_parent`, ...): show the report with
   the fold skill's next step for that reason (its `SKILL.md` tables) and stop before the first
-  task. A refusal changes nothing; never move the branch by hand.
+  task. A refusal does not undo steps it already finished (a catch-up push after the sync); never
+  move the branch by hand.
 - `ERROR: ... left the tree after start`: an older fold skill is installed. Stop and tell the user.

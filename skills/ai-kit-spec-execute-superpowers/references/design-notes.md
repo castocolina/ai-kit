@@ -78,10 +78,14 @@ is itself a declaration, and reads a missing or conflicting declaration as `BLOC
 Codex runs under `--codex-sandbox workspace-write`, Codex's workspace-write sandbox mode rather than
 a fixed path list: by default its writes stay inside the target dir plus `/tmp` and `$TMPDIR`, and
 the owner's codex configuration can add writable roots or exclude the temp locations (the sandbox
-is therefore not an unconditional boundary); whether `.git` is
-writable under that sandbox is unverified. Every other exec target runs with full permissions and gets only the
-soft-confinement sentence, which is guidance, not a boundary. `claude` has no exec formula in the runner, so it is an
-exec target only as a native Claude Code alias on a Claude Code host (otherwise route `no_formula`). pi exec uses the runner's pi formula, verified by its hermetic self-test only until
+is therefore not an unconditional boundary). The writable roots and the protected paths inside
+them are defined at
+https://developers.openai.com/codex/agent-approvals-security, so a task that must commit checks
+the lane's effective policy first and stops for the owner when Git metadata is read-only. Every other exec target runs with full permissions and gets only the
+soft-confinement sentence, which is guidance, not a boundary. A `claude` lane takes the route the shim returns:
+a supported alias on a Claude Code host can be native; any other `claude` pair runs as a subprocess or is
+skipped with the route the shim names (`no_formula` only when the runner's recorded `--describe` facts give
+it no exec formula; check the runner's live `--describe` output when in doubt). pi exec uses the runner's pi formula, verified by its hermetic self-test only until
 live verification, which is still open.
 
 ## Why `--timeout 1800` is a fixed constant

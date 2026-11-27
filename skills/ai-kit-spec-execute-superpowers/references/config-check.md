@@ -1,14 +1,15 @@
 # No-config check (Step 1, before the start step)
 
-MANDATORY: read this file in full before the start step and run its block 1 once per plan start. Do NOT load it at any
-other point.
+MANDATORY: read this file in full before the start step and run its block 1 once per plan start. Load it at exactly
+three points: in full before the start step (blocks 1 and 2); block 3 only when `CONFIG_CHECK` is `once` or `notice`
+(Step 2, once per task); and the matching notice line only when closing such a run (Step 5). Do NOT load it outside these three points.
 
 The adapter reads the execute lanes, so with no lanes configured it asks the owner once before the first task, and it
 asks before the start step moves any commit. A resumed run of the same plan (a resume state file of the plan exists)
 starts with no memory and the owner may be away: block 1 then finds the `CONFIG_CHECK=` line recorded in the plan's
-scalar file and asks nothing again. A fresh start (no resume state file) clears an old `CONFIG_CHECK=` line, runs
+scalar file and asks nothing again. A fresh start (no resume state file) clears an old `CONFIG_CHECK=` line and `GUIDANCE_READY`, runs
 `config-status` again and asks again, so a config written or removed since the last run counts. The adapter has no
-`--no-cross-ai` flag; answer (2) is its only way to run on the session model.
+`--no-cross-ai` flag; answer (2) is one way to run on the session model, and the owner's session-model fallback (turned on through ai-kit-spec-config, used only when no execute lane is available) is the other.
 
 ## The check
 
@@ -64,6 +65,7 @@ for path in glob.glob(os.path.join(folder, f"superpowers-resume-{key}-task-*.jso
 print(found)
 PY
 )"
+if [ "$RESUMED" != 1 ] && [ -f "$SCALARS" ]; then printf 'GUIDANCE_READY=\n' >> "$SCALARS"; fi  # a fresh start writes each task's gates and guard files anew
 if [ "$RESUMED" = 1 ] && [ -n "${LAST_CHECK#CONFIG_CHECK=}" ]; then
   printf '%s\n' "$LAST_CHECK"; printf 'resumed run, already checked: ask nothing\n'; exit 0
 fi

@@ -5,7 +5,7 @@ result. Do NOT load it for `mode == "native"`. `SKILL.md` Step 3 sends you here;
 below is restored by the scalar loader that opens each `Bash` call (`SKILL.md`, Step 0), and a block
 that prints scalars appends them to `$SCALARS` with `tee -a`. The steps, in order: **Artifact
 setup**, **Compose**, **Status contract**, **Dispatch**, **Classify** (`ok`, `quota_cycle`, `quota`,
-`real_error`), and inside `quota_cycle` and `quota` the named steps **Relay**, **Read tokens**, **Write state** and
+`real_error`), and inside `quota_cycle` and `quota` the named steps **Relay**, **Flagged switch**, **Read tokens**, **Write state** and
 **Schedule-or-stop**. Other files refer to them by these names, never by number.
 
 ## Artifact setup
@@ -42,7 +42,8 @@ holds it from Step 1's loaded skill; brief path, context, report-file path, the 
 only a short status line. Put everything the implementer is asked to do inside one
 `<objective>…</objective>` block, and keep the WRITE/APPEND report sentence below outside it:
 the runner's task digest hashes only the objective text, so a quota wake that changes WRITE to
-APPEND still reuses the session. List the task's repo-relative paths in one comma-separated
+APPEND keeps the same task (whether the CLI session continues depends on the runtime: sandboxed
+codex has no resume form and starts a fresh one). List the task's repo-relative paths in one comma-separated
 `<files>…</files>` block: the runner retries in a new session over a changed tree only when
 every changed path is listed there. The first dispatch says WRITE `$REPORT_FILE`; every later
 one says "APPEND your detailed report to the end of `$REPORT_FILE` — do not overwrite its
@@ -52,6 +53,10 @@ findings verbatim inside the `<objective>` (the digest hashes only the objective
 finding set is a new task; the round start in `SKILL.md` Step 3 has already run).
 
 Inside the `<objective>`, put the unit-brief line from `SKILL.md` Step 3 (it names `.aikit/brief/SKILL.md`) before the task text, so every implementer reads the unit brief.
+
+**Gates and commit guard.** `$RUN_DIR/gates.txt` and `$RUN_DIR/guard.txt` follow the one input recipe in `SKILL.md` Step 3 ("Gates and commit guard"); never write or rewrite them here. `dispatch-task` frames each once in the guidance and says a gate is judged by its exit code alone; `--owner-config .aikit/config.toml` adds an instruction for the implementer (never stage, commit or revert that file; leave it out of a clean-tree check), which nothing enforces.
+
+The runner reports `coverage=n/a` for this prompt by design: its coverage check counts the task blocks in the whole prompt, and ai-kit's own text adds none (wrapping the task would turn a missed commit into a `partial` stop). Gate, guard or verify text the caller supplies is copied verbatim, so a task tag inside it would be counted. No counter here claims progress it cannot see.
 
 ## Status contract
 
@@ -72,10 +77,13 @@ the `.exit` file exists; poll for it in a later call.
 ```bash
 mkdir -p "$(dirname "$DISPATCH_BASE")"  # a long wait may outlive the temp dir
 rm -f "$DISPATCH_BASE.exit"
+GUIDE_ARGS=(--owner-config .aikit/config.toml)
+[ -f "$RUN_DIR/gates.txt" ] && GUIDE_ARGS+=(--gates-file "$RUN_DIR/gates.txt")
+[ -f "$RUN_DIR/guard.txt" ] && GUIDE_ARGS+=(--guard-file "$RUN_DIR/guard.txt")
 python3 "$SHIM" dispatch-task --injection-json "$(cat "$RUN_DIR/INJECTION_JSON.json")" \
   --prompt-file "$PROMPT_FILE" --target-dir "$CWD" --heartbeat-interval 60 --timeout 1800 \
   --format-block-file "$FORMAT_BLOCK_FILE" --report-file "$REPORT_FILE" \
-  --report-mode "$REPORT_MODE" > "$DISPATCH_BASE.json" 2> "$DISPATCH_BASE.err"
+  --report-mode "$REPORT_MODE" "${GUIDE_ARGS[@]}" > "$DISPATCH_BASE.json" 2> "$DISPATCH_BASE.err"
 echo "$?" > "$DISPATCH_BASE.exit"
 ```
 
@@ -106,6 +114,10 @@ If the CLI wrote `$REPORT_FILE` itself, `dispatch-task` leaves it untouched; oth
 appends the captured stdout behind a marker line. Review and the fix loop read `$REPORT_FILE`
 like a native report either way.
 
+## Host-config audit
+
+`dispatch-task` snapshots the modification times of these files under the lane's HOME before and after the lane: `.claude/settings.json`, `.claude.json`, `.config/opencode/opencode.json`, `.config/opencode/opencode.jsonc`, `.codex/config.toml`, `.cursor/cli-config.json`, `.cursor/mcp.json`, `.cursor/hooks.json`, `.copilot/mcp-config.json`, `.gsd/defaults.json` (files only; it never lists a folder). Each changed file prints exactly this line in `$DISPATCH_BASE.err`: `ai-kit-spec: observation: <path> changed during the lane; a host may rewrite its own config, so this does not show the lane changed it` (`<path>` is the absolute path), and its absolute path goes into the result's `host_config_changed`; a file whose modification time could not be read prints `ai-kit-spec: observation: host-config audit unavailable for <path>` instead and is never reported as changed; a dispatch that fails or raises still reports. Relay those lines verbatim right after `dispatch-task` returns, before the empty-result stop (an empty `DISPATCH_RESULT_JSON`), before `## Classify` and whichever class follows (`ok`, `quota_cycle`, `quota` or `real_error`): they are observations (a host may rewrite its own config), never a stop, a retry or a reason to change the classification. Config folders moved by `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `XDG_CONFIG_HOME` or `OPENCODE_CONFIG_DIR` are not checked, and the output says so. A native dispatch runs the same audit through `host-config-audit` (SKILL.md Step 3); there a missing snapshot prints the `audit unavailable` observation, relayed like any other.
+
 ## Classify
 
 ```bash
@@ -135,9 +147,8 @@ printf 'STATUS=%s\n' "$STATUS"
   after an unusable run, so stop and report for the owner's decision.
 - **`"quota_cycle"`** and **`"quota"`** — the runner's hard-tier outcome: `quota_cycle` is a confirmed-router quota stop or an exhausted
   transient ladder carrying whole-number `retry_after_s=` and `cycle=` (exit 75); `quota` is the terminal `RETURNCODE` 69 hard-tier
-  stops and a bare `RETURNCODE` 75; **Schedule-or-stop** below decides wait versus stop. The
-  classifier also returns `"quota"` when `reason == "quota"` at any other `RETURNCODE`; that case
-  is an owner stop too (no re-resolve: NEVER index). In this
+  stops and a bare `RETURNCODE` 75. The
+  classifier also returns `"quota"` when `reason == "quota"` at any other `RETURNCODE`. Whether each case waits once or stops is decided in [`resolution-stops.md#owner-stop`](resolution-stops.md#owner-stop) ("Dispatch-time stops"); **Schedule-or-stop** below holds only the wait and schedule blocks. In this
   order:
 
   **Relay.** Relay the `cross-ai: report`, `cross-ai: upstream` and `AIKIT-XAI` lines verbatim
@@ -163,6 +174,62 @@ printf '%s' "$EXCLUDED_KEYS_JSON" > "$RUN_DIR/EXCLUDED_KEYS_JSON.json"
 printf 'FOLD_REASON=%s\n' "$FOLD_REASON"
 ```
 
+  **Flagged switch.** Runs for every classified "quota_cycle" and "quota", before Read tokens, before the one-shot wait and before any owner stop. Only a lane the owner flagged `usage_limited` whose runner result proves quota moves to its configured fallback of another pool, and only when the replacement resolves; a transient or capacity result, any other lane, and a replacement that does not resolve change nothing. At fix round 4 or 5 the switch stays inside the escalation gate: the block passes the gate's `ESCALATION_EXCLUDE_JSON.json` as a second exclude file, so the fallback must be a lane the gate allowed (above the stuck lane, along its enabled flags; with both flags off, no move to another runtime or model) that the switch rule also accepts; when no lane passes both, executor-fallback answers `no fallback`, `SWITCHED=0`, and the stop rules below report the flagged lane, never a replacement; at round 4 or later with no gate file the block runs no switch at all (`SWITCHED=0`). A switched answer carries the new key and `exclude`, every other key of the task's `ladder_keys`, which the re-resolve passes as its escalation exclusion so it can only return that key.
+
+```bash
+SWITCHED=0
+SWITCH_RC=0
+SWITCH_KEY=""
+rm -f "$RUN_DIR/SWITCH_JSON.json"
+GATE_EXCLUDE=()
+if [ "${FIX_ROUND:-0}" -ge 4 ]; then
+  if [ -f "$RUN_DIR/ESCALATION_EXCLUDE_JSON.json" ]; then GATE_EXCLUDE=(--exclude-keys-file "$RUN_DIR/ESCALATION_EXCLUDE_JSON.json"); else SWITCH_RC=1; fi
+fi
+if [ "$SWITCH_RC" -eq 0 ]; then
+  python3 "$SHIM" executor-fallback --cwd "$CWD" --key "$INJECTION_KEY" --dispatch-result "$DISPATCH_BASE.json" \
+    --exclude-keys-file "$RUN_DIR/EXCLUDED_KEYS_JSON.json" "${GATE_EXCLUDE[@]}" --injection-file "$RUN_DIR/INJECTION_JSON.json" > "$RUN_DIR/SWITCH_JSON.json" || SWITCH_RC=$?
+fi
+if [ "$SWITCH_RC" -eq 0 ]; then
+  SWITCH_KEY="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); k=d.get("key"); print(k if d.get("switched") is True and isinstance(k, str) else "")' "$RUN_DIR/SWITCH_JSON.json" 2>/dev/null)"
+fi
+if [ -n "$SWITCH_KEY" ]; then
+  PRIOR_REASONS_JSON="$(cat "$RUN_DIR/PRIOR_REASONS_JSON.json")"
+  WAVE_REASONS_JSON="$(cat "$RUN_DIR/WAVE_REASONS_JSON.json")"
+  EXCLUDED_KEYS_JSON="$(cat "$RUN_DIR/EXCLUDED_KEYS_JSON.json")"
+  EXCLUDED_REASONS_JSON="$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); a.update(json.loads(sys.argv[2])); print(json.dumps(a))' \
+    "$PRIOR_REASONS_JSON" "$WAVE_REASONS_JSON")"
+  SWITCH_EXCLUDE_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["exclude"]))' "$RUN_DIR/SWITCH_JSON.json" 2>/dev/null)"
+  python3 "$SHIM" resolve-injection --cwd "$CWD" --task-file "$BRIEF_FILE" \
+    --quota-path "$QUOTA_PATH" --exclude-keys-json "$EXCLUDED_KEYS_JSON" \
+    --excluded-reasons-json "$EXCLUDED_REASONS_JSON" \
+    --escalation-excluded-keys-json "$SWITCH_EXCLUDE_JSON" --no-fallback > "$RUN_DIR/SWITCH_INJECTION_JSON.json"
+  RESOLVE_RC=$?
+  if [ "$RESOLVE_RC" -eq 0 ] && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(d, dict) and d.get("mode") in ("external_cli", "native") and d.get("key") == sys.argv[2] else 1)' "$RUN_DIR/SWITCH_INJECTION_JSON.json" "$SWITCH_KEY" 2>/dev/null; then
+    NEW_MODE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mode"])' "$RUN_DIR/SWITCH_INJECTION_JSON.json")"
+    NEW_RUNTIME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("runtime") or "")' "$RUN_DIR/SWITCH_INJECTION_JSON.json")"
+    if cp "$RUN_DIR/INJECTION_JSON.json" "$RUN_DIR/SWITCH_BACKUP_JSON.json" && mv "$RUN_DIR/SWITCH_INJECTION_JSON.json" "$RUN_DIR/INJECTION_JSON.json"; then
+      if printf 'INJECTION_MODE=%s\nINJECTION_KEY=%s\nINJECTION_RUNTIME=%s\n' "$NEW_MODE" "$SWITCH_KEY" "$NEW_RUNTIME" >> "$SCALARS"; then
+        SWITCHED=1
+      else
+        mv "$RUN_DIR/SWITCH_BACKUP_JSON.json" "$RUN_DIR/INJECTION_JSON.json"
+      fi
+    fi
+  fi
+fi
+rm -f "$RUN_DIR/SWITCH_INJECTION_JSON.json" "$RUN_DIR/SWITCH_BACKUP_JSON.json"
+if [ "$SWITCHED" -eq 1 ]; then
+  INJECTION_JSON="$(cat "$RUN_DIR/INJECTION_JSON.json")"
+  INJECTION_MODE="$NEW_MODE"
+  INJECTION_KEY="$SWITCH_KEY"
+  INJECTION_RUNTIME="$NEW_RUNTIME"
+fi
+printf 'SWITCHED=%s\n' "$SWITCHED" | tee -a "$SCALARS"
+```
+
+  `SWITCHED=1` is set only after the move and the scalar write both succeed; a failed copy or move leaves the original in place, and a failed scalar write after the move puts the backup back, so the original injection and classification go on. The block writes no wave file: Relay's fold above already added the failed key to `WAVE_TRIED_JSON.json`, `WAVE_REASONS_JSON.json` (reason `quota`) and `EXCLUDED_KEYS_JSON.json`, and the block never touches `PRIOR_EXCLUDED_KEYS_JSON.json` or `PRIOR_REASONS_JSON.json`, so the switch clears no permanent exclusion.
+
+  With `SWITCHED=1`, tell the owner in one line which lane moved to which fallback and why (its usage_limited flag and the quota the runner reported), then dispatch the new injection in this same round as Step 3 dispatches its mode (`external_cli`: this file's Dispatch step and Classify again; `native`: a fresh native subagent through Step 3's native launch, never a resume of a prior agent, in any fix round: the failed external dispatch left no native agent to resume); `REPORT_MODE` stays as it is. Read tokens, Write state and Schedule-or-stop do not run for the old lane, so no resume file is written for it. The fallback is never itself flagged, so a quota stop on it goes on to Read tokens like any other. With `SWITCHED=0` (an exit 1 or 2 of executor-fallback, a resolve that failed or printed anything but the switched key in `external_cli` or `native` mode, a failed copy, move or scalar write) nothing changed: the original classification and injection go on to Read tokens below. `$RUN_DIR/SWITCH_JSON.json` keeps this round's switch answer for the report; the block deletes one left by an earlier switch before it runs, so a round that ran no switch leaves none.
+
   **Read tokens.** `retry_after_s` and `cycle` are the keys of `$CLASSIFICATION` (the scalar loader restores it): whole numbers or `null`. Never parse the dispatch result by hand.
 
   **Write state.** Runs for every classified `"quota_cycle"` and `"quota"`, owner stops included, so each stop has a
@@ -170,16 +237,10 @@ printf 'FOLD_REASON=%s\n' "$FOLD_REASON"
   variant of the resumable-state bash, shown in full in `references/state-management.md` under
   "Pinned-injection state write": it uses the loaded `RESUME_STATE_PATH` and persists
   `INJECTION_JSON.json` as `injection_json`, so the wake re-dispatches this exact injection. Do not
-  edit the Step 2 block by hand.
+  edit the Step 2 block by hand. If that block exits non-zero, nothing was saved: skip
+  Schedule-or-stop, show the error and stop for the owner (schedule and re-arm nothing).
 
-  **Schedule-or-stop.** Only a classified `"quota_cycle"` (exit 75 with whole-number `retry_after_s` and
-  `cycle` in `$CLASSIFICATION`) gets the one-shot wait and re-dispatch of the same task, lane and
-  model (a hint such as `600s` classifies `real_error` and never reaches this branch). A runner
-  `RETURNCODE` 69 or 75 whose status is `transient` or `quota` with no token or only one of the two
-  (neither malformed) is classified `quota` but is an owner stop: relay, write pinned state, schedule nothing. A `RETURNCODE` 69
-  (`stopped=hard-waits`, `stopped=cap`, or a `cross-ai: lane stopped=` refusal) is an owner stop
-  after relaying the evidence, including that line's state path, whose deletion is the owner's
-  reset; schedule nothing and re-arm nothing. A bare `RETURNCODE` 75 is also an owner stop.
+  **Schedule-or-stop.** **MANDATORY: read [`resolution-stops.md#owner-stop`](resolution-stops.md#owner-stop) ("Dispatch-time stops") before scheduling or stopping**: it decides whether this outcome waits once or stops; on an owner stop, schedule nothing, re-arm nothing and report as that list says.
   On the one-shot wait path only, first re-arm the wake with that state file, using the
   recorded identity (the block calls nothing when `WAKE_OWNED=0`):
 
@@ -198,12 +259,8 @@ fi
   scheduler, or a wait it cannot represent, schedules nothing: it prints `retry_after_s`,
   `$RESUME_STATE_PATH` and that same prompt, marks the printed row unverified, and the owner
   runs it. Never a repeated or fixed-interval job. Either way, pause and end the turn:
-  do not start the next task until the wake's "ok" path has handled this task's report. No
-  other stop (the cap, auth, off-router billing, permission, bad model, `not_installed`, a bare
-  `RETURNCODE` 75) is scheduled; for each, report `$RESUME_STATE_PATH`: an owner re-invoke
-  re-dispatches the pinned injection, or runs the "Owner-named replacement pair" recipe in
-  `references/state-management.md` for a pair the owner names.
-- **`"real_error"`** — a failed external dispatch stops for the owner (NEVER index). Relay the runner's report, upstream and `AIKIT-XAI` lines from `$DISPATCH_BASE.err`
+  do not start the next task until the wake's "ok" path has handled this task's report.
+- **`"real_error"`** — an owner stop decided in [`resolution-stops.md#owner-stop`](resolution-stops.md#owner-stop) ("Dispatch-time stops"; NEVER index); its mechanics follow. Relay the runner's report, upstream and `AIKIT-XAI` lines from `$DISPATCH_BASE.err`
   verbatim first (a pre-spawn refusal has none: relay its `ai-kit-spec:` line), then read
   `$DISPATCH_RESULT_JSON`'s `reason` and report its fix with the reason-to-fix list in
   `references/resolution-stops.md`. Only a `real_error` reason proper (a crash, an empty answer, no change) offers the owner
@@ -231,5 +288,5 @@ printf 'FOLD_REASON=%s\n' "$FOLD_REASON"
 
   Then run the "Pinned-injection state write" block (`references/state-management.md`) and report
   `$RESUME_STATE_PATH`: it keeps the pair, the fix round and the anchor, so a re-invoke after the
-  fix re-dispatches the same injection. For a different pair, the owner names it and you follow
+  fix re-dispatches the same injection ([`state-management.md#pinned-resume`](state-management.md#pinned-resume)). For a different pair, the owner names it and you follow
   state-management.md's "Owner-named replacement pair".

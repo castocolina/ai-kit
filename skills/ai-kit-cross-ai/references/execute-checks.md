@@ -18,7 +18,7 @@ After a spawned execute run the runner checks the result against the prompt's pl
 | 8. | `baseline_replaced` | info | the stored baseline was replaced; the reason is printed |
 | 9. | `coverage_unchecked` | info | tasks the runner could not check |
 
-`contract_violation` wins over `partial`, and `no_change` (a clean tree) wins over both. `partial` (exit 1) writes no answer to stdout, so GSD cannot record it as a summary. An execute run that ends with another status still prints its findings: they are the missing list for the resume. Files the owner left dirty and never touched are never the lane's. A lane hosted in a herdr tab is checked by the same rules on the same inputs.
+The Result column applies only to an otherwise successful attempt: there `contract_violation` wins over `partial`, and `no_change` (a clean tree) and unavailable Git evidence (`git_error` or `git_timeout`) win over both. `partial` (exit 1) writes no answer to stdout, so GSD cannot record it as a summary. An execute run that ends with another status, a failed attempt included, keeps that status and exit and still prints its findings: they are evidence and the missing list for the resume, never a reason to take the `partial` path. Files the owner left dirty and never touched are never the lane's. A lane hosted in a herdr tab is checked by the same rules on the same inputs.
 
 ## Baked defaults
 

@@ -1,0 +1,15 @@
+[lanes.policy.execute]
+ladder = ["execute-primary", "execute-backup"]
+
+[[lanes.execute]]
+key = "execute-primary"
+runtime = "opencode"
+model = "fake/placeholder-model-2"
+purpose = "execute"
+usage_limited = true
+
+[[lanes.execute]]
+key = "execute-backup"
+runtime = "codex"
+model = "fake/placeholder-model-4"
+purpose = "execute"

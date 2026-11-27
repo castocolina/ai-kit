@@ -26,7 +26,7 @@ sys.path.insert(
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute"))
 
 import detect_framework as router_detect_framework
-from ai_kit_spec import capability_block, routing, runner_dispatch
+from ai_kit_spec import capability_block, config_io, lane_settings, routing, runner_dispatch
 from ai_kit_spec_superpowers import cli as superpowers_cli
 from ai_kit_spec_superpowers import dispatch_injection, task_classification
 
@@ -881,14 +881,16 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
                 "timed_out": False,
             }
 
-        result = dispatch_injection.dispatch_superpowers_task(
-            dispatch_injection.DispatchTaskRequest(
-                injection, "do the task", "/real/scratch/dir", 900
-            ),
-            seams=dispatch_injection.SuperpowersDispatchSeams(
-                dispatch_execute_fn=fake_dispatch_execute,
-            ),
-        )
+        with tempfile.TemporaryDirectory() as scratch:
+            result = dispatch_injection.dispatch_superpowers_task(
+                dispatch_injection.DispatchTaskRequest(
+                    injection, "do the task", "/real/scratch/dir", 900
+                ),
+                seams=dispatch_injection.SuperpowersDispatchSeams(
+                    dispatch_execute_fn=fake_dispatch_execute,
+                    env_fn=lambda: {"HOME": scratch},
+                ),
+            )
         self.assertEqual(captured["target_dir"], "/real/scratch/dir")
         self.assertEqual(captured["candidate"]["runtime"], "codex")
         self.assertEqual(captured["candidate"]["effort"], "high")
@@ -941,6 +943,7 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
                 ),
                 seams=dispatch_injection.SuperpowersDispatchSeams(
                     dispatch_execute_fn=dispatch_execute_with_fake_subprocess,
+                    env_fn=lambda: {"HOME": target},
                 ),
             )
         self.assertEqual(captured["spec"].cwd, target)
@@ -3247,18 +3250,19 @@ class TestFixRoundAndWakeScope(unittest.TestCase):
 
     def test_schedule_or_stop_requires_classified_quota_and_numeric_tokens(self):
         flat = self._flat(_SUPER_REFS / "dispatch-external-cli.md")
-        self.assertIn('Only a classified `"quota_cycle"` (exit 75 with whole-number '
-                      '`retry_after_s` and `cycle` in `$CLASSIFICATION`)', flat)
-        self.assertIn("this is the only classifier call", flat)
         skill = " ".join((_SUPER_REFS.parent / "SKILL.md").read_text(encoding="utf-8").split())
         stops = " ".join((_SUPER_REFS / "resolution-stops.md").read_text(encoding="utf-8").split())
+        self.assertIn('Only a classified `"quota_cycle"` (exit 75 with whole-number '
+                      '`retry_after_s` and `cycle` in `$CLASSIFICATION`)', stops)
+        self.assertNotIn('Only a classified `"quota_cycle"`', flat)
+        self.assertIn("this is the only classifier call", flat)
         self.assertIn("`ai-kit-spec: ignoring untrusted project-local config <path>;", skill)
         self.assertIn("ai-kit-spec: ignoring untrusted project-local config", stops)
 
     def test_unknown_anchor_stop_comes_before_the_floor_script(self):
         text = (_SUPER_REFS / "escalation.md").read_text(encoding="utf-8")
         self.assertLess(text.index("**An empty or unknown anchor never dispatches.**"),
-                        text.index("ladder.index(stuck)"))
+                        text.index("escalation-gate --cwd"))
 
     def test_wake_prompt_binds_fourteen_placeholders_with_skill_dir_and_tools_py(self):
         text = (_SUPER_REFS / "quota-wake.md").read_text(encoding="utf-8")
@@ -3297,26 +3301,64 @@ class TestPinnedResumeAndReturnCode69OneRule(unittest.TestCase):
     def _flat(path) -> str:
         return " ".join(path.read_text(encoding="utf-8").split())
 
+    def test_flagged_switch_exception_in_every_rule(self):
+        skill = self._flat(_SUPER_SKILL)
+        stops = self._flat(_SUPER_REFS / "resolution-stops.md")
+        wake = self._flat(_SUPER_REFS / "quota-wake.md")
+        dispatch = (_SUPER_REFS / "dispatch-external-cli.md").read_text(encoding="utf-8")
+        esc = self._flat(_SUPER_REFS / "escalation.md")
+        self.assertIn(
+            "(Step 3; ai-kit-cross-ai sections 6 and 8). The one exception is a lane the owner "
+            "flagged `usage_limited` that stops on quota: it moves to its configured fallback",
+            skill)
+        self.assertIn("Never re-resolve to another candidate after a failed dispatch.", skill)
+        self.assertIn("A failed dispatch gets no same-round re-dispatch, except the flagged-lane "
+                      "switch", skill)
+        owner = stops.index("## Owner stop")
+        self.assertLess(stops.index("**Flagged switch**", owner),
+                        stops.index("a bare 75 and any other quota class are owner stops"))
+        for text in ("For this re-dispatch only: do not resolve a candidate",
+                     "The Flagged switch step of Classify is the one exception.",
+                     "bind BRIEF_FILE to ${REPORT_FILE%-report.md}-brief.md"):
+            self.assertIn(text, wake)
+        self.assertLess(dispatch.index("**Relay.**"), dispatch.index("**Flagged switch.**"))
+        self.assertLess(dispatch.index("**Flagged switch.**"), dispatch.index("**Read tokens.**"))
+        flat = " ".join(dispatch.split())
+        for text in ("SWITCH_INJECTION_JSON.json", "executor-fallback --cwd",
+                     "a fresh native subagent through Step 3's native launch, never a resume "
+                     "of a prior agent"):
+            self.assertIn(text, flat)
+        self.assertIn("a failed dispatch stops (except the flagged-lane switch, which at rounds "
+                      "4–5 moves only to a lane this round's gate allowed, of", esc)
+
     def test_pinned_injection_never_re_enters_step_two_at_any_round(self):
         skill = " ".join(_super_text().split())
         esc = self._flat(_SUPER_REFS / "escalation.md")
         state = self._flat(_SUPER_REFS / "state-management.md")
-        self.assertIn("`injection_json` is pinned: it re-dispatches unchanged at any "
-                      "`$FIX_ROUND`", skill)
+        self.assertIn("references/state-management.md#pinned-resume", skill)
+        self.assertNotIn("re-dispatches unchanged at any", skill)
+        self.assertIn(
+            "A restored `injection_json` is pinned: it re-dispatches unchanged at any "
+            "`$FIX_ROUND`", state
+        )
         self.assertIn("a resume with no pinned `injection_json`", skill)
         self.assertNotIn("a resume that re-enters Step 2", skill)
-        self.assertIn(
-            "a restored `injection_json` always re-dispatches unchanged at any round", esc
-        )
+        self.assertIn("(state-management.md#pinned-resume)", esc)
+        self.assertNotIn("re-dispatches unchanged at any", esc)
         self.assertIn("with a restored `$FIX_ROUND >= 4` and no `injection_json`", state)
         self.assertIn("that always goes to Step 3, at any `$FIX_ROUND`", state)
 
     def test_return_code_69_is_an_owner_stop_never_a_wait(self):
         dispatch = self._flat(_SUPER_REFS / "dispatch-external-cli.md")
+        stops = self._flat(_SUPER_REFS / "resolution-stops.md")
         self.assertNotIn("reaches it as an owner stop", dispatch)
         self.assertIn("is classified `quota` but is an owner stop: relay, write pinned state, "
-                      "schedule nothing", dispatch)
-        self.assertIn("every `RETURNCODE` 69", " ".join(_super_text().split()))
+                      "schedule nothing", stops)
+        self.assertNotIn("is classified `quota` but is an owner stop", dispatch)
+        self.assertIn("every `RETURNCODE` 69", stops)
+        self.assertNotIn("every `RETURNCODE` 69", " ".join(_super_text().split()))
+        self.assertIn("references/resolution-stops.md#owner-stop", " ".join(_super_text().split()))
+        self.assertIn("(resolution-stops.md#owner-stop)", dispatch)
 
     def test_cross_ai_contract_has_a_do_not_load_clause_and_pair_rule_is_a_pointer(self):
         skill = " ".join(_super_text().split())
@@ -3332,14 +3374,17 @@ class TestRound21OneRule(unittest.TestCase):
     def _flat(path) -> str:
         return " ".join(path.read_text(encoding="utf-8").split())
 
-    def test_rounds_four_five_re_entry_has_one_rule_in_all_three_files(self):
+    def test_rounds_four_five_re_entry_has_one_home(self):
         pick = "is only the source of `ladder_keys`: never act on its mode or dispatch it"
         floor = "before any dispatch, compute the floor from the restored `$ESCALATION_ANCHOR_KEY`"
-        for path in (_SUPER_SKILL, _SUPER_REFS / "state-management.md",
-                     _SUPER_REFS / "escalation.md"):
-            flat = self._flat(path)
-            self.assertIn(pick, flat, path.name)
-            self.assertIn(floor, flat, path.name)
+        state = self._flat(_SUPER_REFS / "state-management.md")
+        self.assertIn(pick, state)
+        self.assertIn(floor, state)
+        for path in (_SUPER_SKILL, _SUPER_REFS / "escalation.md"):
+            self.assertNotIn(pick, self._flat(path), path.name)
+        self.assertIn("references/state-management.md#pinned-resume", self._flat(_SUPER_SKILL))
+        self.assertIn("(state-management.md#pinned-resume)",
+                      self._flat(_SUPER_REFS / "escalation.md"))
         self.assertIn("yet at 4 or more still take the floor below", self._flat(_SUPER_SKILL))
 
     def test_quoted_expansion_keeps_hostile_json_whole(self):
@@ -3422,6 +3467,185 @@ class TestJsonFilesAndOwnerNamedPair(unittest.TestCase):
             [self.bash_bin, "-c", block], cwd=self.root, capture_output=True, text=True,
             env={**os.environ, "RUN_DIR": self.run_dir, **env}, timeout=60, check=False)
 
+    _SWITCH_SEED = {
+        "INJECTION_JSON": {"mode": "external_cli", "key": "lane-a", "runtime": "codex",
+                           "ladder_keys": ["lane-a", "lane-b"]},
+        "PRIOR_EXCLUDED_KEYS_JSON": ["lane-x"],
+        "PRIOR_REASONS_JSON": {"lane-x": "auth"},
+        "WAVE_REASONS_JSON": {"lane-a": "quota"},
+        "WAVE_TRIED_JSON": ["lane-a"],
+        "EXCLUDED_KEYS_JSON": ["lane-a", "lane-x"],
+    }
+    _SWITCH_FILES = ("SWITCH_INJECTION_JSON.json", "SWITCH_EXCLUDE_JSON.json",
+                     "SWITCH_BACKUP_JSON.json")
+
+    def _raw(self, name):
+        with open(os.path.join(self.run_dir, name + ".json"), "rb") as handle:
+            return handle.read()
+
+    def _scalar_lines(self):
+        with open(os.path.join(self.root, "scalars.env"), encoding="utf-8") as handle:
+            return handle.read().splitlines()
+
+    def _switch_run(self, fallback_out, fallback_rc, resolve_out, resolve_rc, mv_fails=False,
+                    fix_round="0"):
+        log_path = os.path.join(self.root, "calls.log")
+        shim = ("import sys\n"
+                f"with open({log_path!r}, 'a') as log:\n"
+                "    log.write(' '.join(sys.argv[1:]) + '\\n')\n"
+                "if sys.argv[1] == 'executor-fallback':\n"
+                f"    sys.stdout.write({fallback_out!r})\n    sys.exit({fallback_rc})\n"
+                "if sys.argv[1] == 'resolve-injection':\n"
+                f"    sys.stdout.write({resolve_out!r})\n    sys.exit({resolve_rc})\n")
+        with open(os.path.join(self.root, "shim.py"), "w", encoding="utf-8") as handle:
+            handle.write(shim)
+        for name, value in self._SWITCH_SEED.items():
+            self._put(name, value)
+        for name in ("brief.md", "dispatch.json"):
+            with open(os.path.join(self.root, name), "w", encoding="utf-8") as handle:
+                handle.write("")
+        path = os.environ.get("PATH", "")
+        if mv_fails:
+            bin_dir = os.path.join(self.root, "bin")
+            os.makedirs(bin_dir)
+            stub = os.path.join(bin_dir, "mv")
+            with open(stub, "w", encoding="utf-8") as handle:
+                handle.write("#!/bin/sh\nexit 1\n")
+            os.chmod(stub, 0o755)
+            path = bin_dir + os.pathsep + path
+        block = _ref_block("dispatch-external-cli.md", "executor-fallback --cwd")
+        return self._bash(
+            block, SHIM=os.path.join(self.root, "shim.py"), CWD=self.root,
+            INJECTION_KEY="lane-a", DISPATCH_BASE=os.path.join(self.root, "dispatch"),
+            BRIEF_FILE=os.path.join(self.root, "brief.md"),
+            QUOTA_PATH=os.path.join(self.root, "quota.json"),
+            SCALARS=os.path.join(self.root, "scalars.env"), PATH=path, FIX_ROUND=fix_round)
+
+    def _assert_original_kept(self, seed):
+        self.assertEqual(seed, self._raw("INJECTION_JSON"))
+        for name in self._SWITCH_FILES:
+            self.assertFalse(os.path.exists(os.path.join(self.run_dir, name)), name)
+        self.assertEqual("SWITCHED=0", self._scalar_lines()[-1])
+
+    def test_flagged_switch_keeps_the_original_when_the_replacement_cannot_resolve(self):
+        switched = json.dumps({"switched": True, "key": "lane-b", "exclude": ["lane-a"]})
+        outcomes = {
+            "exit 2": ("", 2),
+            "empty": ("", 0),
+            "no_candidate": (json.dumps({"mode": "no_candidate"}), 0),
+            "quota_exhausted": (json.dumps({"mode": "quota_exhausted"}), 0),
+            "session fallback": (json.dumps({"mode": "native", "fallback": "session"}), 0),
+            "another key": (json.dumps({"mode": "external_cli", "key": "lane-c",
+                                        "runtime": "codex"}), 0),
+        }
+        for label, (resolve_out, resolve_rc) in outcomes.items():
+            with self.subTest(label):
+                proc = self._switch_run(switched, 0, resolve_out, resolve_rc)
+                self.assertEqual(0, proc.returncode, proc.stderr)
+                seed = json.dumps(self._SWITCH_SEED["INJECTION_JSON"]).encode()
+                self._assert_original_kept(seed)
+                self.assertEqual(["lane-a"], self._get("WAVE_TRIED_JSON"))
+                shutil.rmtree(self.run_dir)
+                os.makedirs(self.run_dir)
+                os.remove(os.path.join(self.root, "scalars.env"))
+                os.remove(os.path.join(self.root, "calls.log"))
+        with self.subTest("unflagged"):
+            proc = self._switch_run(json.dumps({"switched": False, "reason": "unflagged"}), 1,
+                                    "", 0)
+            self.assertEqual(0, proc.returncode, proc.stderr)
+            with open(os.path.join(self.root, "calls.log"), encoding="utf-8") as handle:
+                self.assertNotIn("resolve-injection", handle.read())
+            self.assertEqual("SWITCHED=0", self._scalar_lines()[-1])
+
+    def test_flagged_switch_moves_a_validated_replacement_into_place(self):
+        replacement = {"mode": "external_cli", "key": "lane-b", "runtime": "codex",
+                       "ladder_keys": ["lane-a", "lane-b"]}
+        proc = self._switch_run(json.dumps({"switched": True, "key": "lane-b",
+                                            "exclude": ["lane-a"]}), 0,
+                                json.dumps(replacement), 0)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual("lane-b", self._get("INJECTION_JSON")["key"])
+        lines = self._scalar_lines()
+        for line in ("INJECTION_MODE=external_cli", "INJECTION_KEY=lane-b",
+                     "INJECTION_RUNTIME=codex"):
+            self.assertIn(line, lines)
+        self.assertEqual("SWITCHED=1", lines[-1])
+        for name in ("WAVE_TRIED_JSON", "WAVE_REASONS_JSON", "EXCLUDED_KEYS_JSON",
+                     "PRIOR_EXCLUDED_KEYS_JSON"):
+            self.assertEqual(json.dumps(self._SWITCH_SEED[name]).encode(), self._raw(name), name)
+        with open(os.path.join(self.root, "calls.log"), encoding="utf-8") as handle:
+            calls = handle.read().splitlines()
+        fallback = next(c for c in calls if c.startswith("executor-fallback"))
+        self.assertIn("--injection-file " + os.path.join(self.run_dir, "INJECTION_JSON.json"),
+                      fallback)
+        resolve = next(c for c in calls if c.startswith("resolve-injection"))
+        self.assertIn('--escalation-excluded-keys-json ["lane-a"]', resolve)
+        self.assertIn("--no-fallback", resolve)
+        for name in self._SWITCH_FILES:
+            self.assertFalse(os.path.exists(os.path.join(self.run_dir, name)), name)
+
+    def test_flagged_switch_failed_move_keeps_the_original(self):
+        replacement = {"mode": "external_cli", "key": "lane-b", "runtime": "codex",
+                       "ladder_keys": ["lane-a", "lane-b"]}
+        proc = self._switch_run(json.dumps({"switched": True, "key": "lane-b",
+                                            "exclude": ["lane-a"]}), 0,
+                                json.dumps(replacement), 0, mv_fails=True)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self._assert_original_kept(json.dumps(self._SWITCH_SEED["INJECTION_JSON"]).encode())
+        self.assertNotIn("INJECTION_KEY=lane-b", self._scalar_lines())
+
+    def test_flagged_switch_native_replacement_in_a_fix_round(self):
+        replacement = {"mode": "native", "key": "lane-b", "runtime": "",
+                       "ladder_keys": ["lane-a", "lane-b"]}
+        proc = self._switch_run(json.dumps({"switched": True, "key": "lane-b",
+                                            "exclude": ["lane-a"]}), 0,
+                                json.dumps(replacement), 0, fix_round="2")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        lines = self._scalar_lines()
+        self.assertIn("INJECTION_MODE=native", lines)
+        self.assertIn("INJECTION_KEY=lane-b", lines)
+        self.assertEqual("SWITCHED=1", lines[-1])
+
+    def test_flagged_switch_passes_the_gate_exclusion_at_rounds_four_and_five(self):
+        gate = os.path.join(self.run_dir, "ESCALATION_EXCLUDE_JSON.json")
+        excluded = "--exclude-keys-file " + os.path.join(self.run_dir, "EXCLUDED_KEYS_JSON.json")
+        answer = json.dumps({"switched": False, "reason": "no fallback"})
+        log = os.path.join(self.root, "calls.log")
+        for fix_round, with_gate, expected in (("3", True, "free"), ("4", True, "gated"),
+                                               ("5", True, "gated"), ("4", False, "skipped")):
+            with self.subTest(fix_round=fix_round, with_gate=with_gate):
+                if with_gate:
+                    self._put("ESCALATION_EXCLUDE_JSON", ["lane-b"])
+                elif os.path.exists(gate):
+                    os.remove(gate)
+                proc = self._switch_run(answer, 1, "", 0, fix_round=fix_round)
+                self.assertEqual(0, proc.returncode, proc.stderr)
+                calls = []
+                if os.path.exists(log):
+                    with open(log, encoding="utf-8") as handle:
+                        calls = handle.read().splitlines()
+                    os.remove(log)
+                fallback = [c for c in calls if c.startswith("executor-fallback")]
+                if expected == "skipped":
+                    self.assertEqual([], fallback)
+                else:
+                    self.assertEqual(1, len(fallback), calls)
+                    self.assertIn(excluded, fallback[0])
+                    self.assertEqual(expected == "gated",
+                                     ("--exclude-keys-file " + gate) in fallback[0])
+                self.assertEqual("SWITCHED=0", self._scalar_lines()[-1])
+
+    def test_flagged_switch_without_a_gate_file_leaves_no_earlier_answer(self):
+        stale = os.path.join(self.run_dir, "SWITCH_JSON.json")
+        with open(stale, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"switched": True, "key": "lane-b"}))
+        proc = self._switch_run(json.dumps({"switched": True, "key": "lane-b",
+                                            "exclude": ["lane-a"]}), 0, "", 0,
+                                fix_round="4")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertFalse(os.path.exists(stale))
+        self.assertEqual("SWITCHED=0", self._scalar_lines()[-1])
+
     def test_no_block_pastes_json_into_a_command(self):
         for name in ("SKILL.md", "dispatch-external-cli.md", "state-management.md",
                      "escalation.md"):
@@ -3479,6 +3703,14 @@ class TestJsonFilesAndOwnerNamedPair(unittest.TestCase):
         self.assertEqual(["a/one"], self._get("WAVE_TRIED_JSON"))
         self.assertEqual({"a/one": "auth"}, self._get("WAVE_REASONS_JSON"))
         self.assertEqual(["a/one", "z/old"], self._get("EXCLUDED_KEYS_JSON"))
+
+    def test_owner_named_pair_removes_a_stale_allowed_file(self):
+        self._seed_pair()
+        self._put("ESCALATION_ALLOWED_JSON", ["a/one"])
+        proc = self._bash(self._pair_block("c/three"))
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(["a/one", "b/two"], self._get("ESCALATION_EXCLUDE_JSON"))
+        self.assertFalse(os.path.exists(os.path.join(self.run_dir, "ESCALATION_ALLOWED_JSON.json")))
 
     def test_owner_named_key_in_the_prior_permanent_set_is_resolved(self):
         self._seed_pair()
@@ -3629,9 +3861,11 @@ class TestScalarFile(unittest.TestCase):
         skill = " ".join((_SUPER_REFS / "resolution-stops.md").read_text(encoding="utf-8").split())
         self.assertIn('`"capacity"` included, is saved as a permanent exclusion', skill)
         self.assertNotIn("later retry on the same lane", skill)
-        for name in ("escalation.md", "state-management.md"):
+        for name in ("state-management.md",):
             text = " ".join((_SUPER_REFS / name).read_text(encoding="utf-8").split())
             self.assertIn("permanent exclusion", text, name)
+        self.assertIn("(resolution-stops.md#owner-stop)", " ".join(
+            (_SUPER_REFS / "escalation.md").read_text(encoding="utf-8").split()))
 
 
 class TestProgressiveDisclosure(unittest.TestCase):
@@ -3649,10 +3883,14 @@ class TestProgressiveDisclosure(unittest.TestCase):
                 self.assertIn("Do NOT load", body + text, name)
             self.assertIn(f"references/{name}", text + _super_dispatch_ref(), name)
 
-    def test_empty_anchor_stop_is_named_in_step_three(self):
+    def test_empty_anchor_stop_lives_in_the_owner_stop(self):
+        phrase = ("An empty anchor, or one missing from `ladder_keys` or from the live execute "
+                  "roster, dispatches nothing")
+        stops = " ".join((_SUPER_REFS / "resolution-stops.md").read_text(encoding="utf-8").split())
+        self.assertIn(phrase, stops)
         flat = " ".join(_super_text().split())
-        self.assertIn("An empty anchor, or one missing from `ladder_keys`, dispatches nothing",
-                      flat)
+        self.assertNotIn(phrase, flat)
+        self.assertIn("references/resolution-stops.md#owner-stop", flat)
 
 
 
@@ -3737,19 +3975,44 @@ class TestRound23OnePath(unittest.TestCase):
                           DISPATCH_BASE=os.path.join(self.root, "none"))
         self.assertEqual("real_error", proc.stdout)
 
-    def test_the_floor_script_stops_on_an_empty_or_unknown_anchor(self):
+    def test_the_gate_block_writes_only_after_a_successful_gate(self):
         block = _ref_block("escalation.md", "ESCALATION_EXCLUDE_JSON saved")
+        env = {"HOME": os.path.join(self.root, "home"),
+               "XDG_CONFIG_HOME": os.path.join(self.root, "xdg"),
+               "XDG_CACHE_HOME": os.path.join(self.root, "cache")}
+        flags = {lane_settings.LANE_FLAG_KEYS[0]: True, lane_settings.LANE_FLAG_KEYS[1]: True}
+        lane_list = [
+            {"key": "a/one", "runtime": "opencode", "model": "fake/placeholder-model-1"},
+            {"key": "b/two", "runtime": "codex", "model": "placeholder-model-2", **flags},
+            {"key": "c/three", "runtime": "codex", "model": "placeholder-model-3"},
+        ]
+        config_path = config_io.cfg_global_path(env)
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as handle:
+            handle.write(config_io.cfg_render_lanes({
+                "policy": {"execute": {"ladder": ["a/one", "b/two", "c/three"]}},
+                "lanes": [{**lane, "purpose": "execute"} for lane in lane_list]}))
         run_dir = os.path.join(self.root, "run")
         os.makedirs(run_dir)
         with open(os.path.join(run_dir, "INJECTION_JSON.json"), "w", encoding="utf-8") as handle:
             json.dump({"ladder_keys": ["a/one", "b/two", "c/three"]}, handle)
-        target = os.path.join(run_dir, "ESCALATION_EXCLUDE_JSON.json")
+        exclude = os.path.join(run_dir, "ESCALATION_EXCLUDE_JSON.json")
+        allowed = os.path.join(run_dir, "ESCALATION_ALLOWED_JSON.json")
+        shim = str(_SUPER_SKILL.parent / "ai-kit-spec-superpowers.py")
+
+        def run(anchor):
+            return self._bash(block, RUN_DIR=run_dir, SHIM=shim, CWD=self.root,
+                              ESCALATION_ANCHOR_KEY=anchor, **env)
+
         for anchor in ("", "z/gone"):
-            proc = self._bash(block, RUN_DIR=run_dir, ESCALATION_ANCHOR_KEY=anchor)
-            self.assertEqual(1, proc.returncode, anchor)
+            proc = run(anchor)
+            self.assertEqual(3, proc.returncode, (anchor, proc.stderr))
             self.assertIn("STOP", proc.stderr)
-            self.assertFalse(os.path.exists(target))
-        proc = self._bash(block, RUN_DIR=run_dir, ESCALATION_ANCHOR_KEY="b/two")
+            self.assertFalse(os.path.exists(exclude))
+            self.assertFalse(os.path.exists(allowed))
+        proc = run("b/two")
         self.assertEqual(0, proc.returncode, proc.stderr)
-        with open(target, encoding="utf-8") as handle:
+        with open(exclude, encoding="utf-8") as handle:
             self.assertEqual(["b/two", "c/three"], json.load(handle))
+        with open(allowed, encoding="utf-8") as handle:
+            self.assertEqual(["a/one"], json.load(handle))

@@ -1,0 +1,208 @@
+{
+ "attempts": [
+  {
+   "error": null,
+   "lane_ok": true,
+   "note": "native Opus high, substitute for referee-three",
+   "status_line": null,
+   "verdict_line": "{\"skill\":\"ai-kit-cross-ai\",\"judge\":\"native:opus-high\",\"rubric_version\":5,\"spec_sha\":\"69ef37e9424c0a7ea9dd2293b559e43ec8176379\",\"scores\":{\"D1\":15,\"D2\":14,\"D3\":14,\"D4\":14,\"D5\":11,\"D6\":14,\"D7\":13,\"D8\":13},\"max\":{\"D1\":20,\"D2\":15,\"D3\":15,\"D4\":15,\"D5\":15,\"D6\":15,\"D7\":15,\"D8\":15},\"total\":108,\"max_total\":125,\"percent\":86.4,\"grade\":\"B\",\"findings\":[{\"id\":\"D1-1\",\"dimension\":\"D1\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":139,\"evidence\":\"The locked remedy 'report it, or start the run after the other run's own exit' is restated at lines 139, 197, 206-208 and 280, and the never-switch rule at lines 37-39, 246, 360-362 and again in references/subprocess-quota-policy.md 'What a skill does on a stop'; Pitfalls lines 369-370 repeat section 3\",\"fix\":\"State the locked rule once in the section 2 run-lock bullet and the never-switch rule once in section 8. Replace every other occurrence with a pointer such as '(section 8)'. Nothing is lost, because each rule keeps its one full statement.\"},{\"id\":\"D1-2\",\"dimension\":\"D1\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":26,\"evidence\":\"## When to use / When a run, a review or an execution step calls an external AI CLI and acts on the result.\",\"fix\":\"The description already carries this trigger, and the body is invisible before activation. Delete the section and add a drop row for it to docs/audit/recovery/ai-kit-cross-ai/record.md.\"},{\"id\":\"D2-1\",\"dimension\":\"D2\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":80,\"evidence\":\"Section 2 packs its preconditions (resolve $RUNNER, the line-2 template=14 header check, a scratch dir outside the tree, settling the role, verified write containment, the legacy-migration check, a separate checkout for a no-write review) into prose paragraphs at lines 80-123, with no checkpoints\",\"fix\":\"Fit the Process pattern: open section 2 with a short ordered pre-launch checklist (runner resolved and header >= 14; lane dir ignored or outside the tree; role settled, else ask; containment verified for a no-write review; no legacy config for an untouched review). Keep the existing paragraphs as the reasons under it.\"},{\"id\":\"D3-1\",\"dimension\":\"D3\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":369,\"evidence\":\"- Two timeouts, not one; the runner's 300 s fallback applies only when `workflow.cross_ai_timeout` is absent ... (line 370 likewise restates the section 3 idle watchdog; a stray blank line at 367 splits the list)\",\"fix\":\"Keep Pitfalls for landmines the body does not already state. Replace lines 369-370 with a pointer to section 3, or with a non-obvious fact and its reason, and remove the blank line at 367 so the list stays one list.\"},{\"id\":\"D4-1\",\"dimension\":\"D4\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":4,\"evidence\":\"Use when you run, wait for, read, retry or chain an external AI CLI ... through ai-kit's cross-AI runner (cross-ai.mjs): the triggers are mechanism-led, there is no user-intent trigger for a request that never names the runner, and there is no boundary against the session-wake neighbour\",\"fix\":\"Use when you run, wait for, read, retry or chain an external AI CLI (pi, opencode, codex, cursor, copilot, claude) through ai-kit's cross-AI runner cross-ai.mjs, including when the user only asks for a second opinion, review or execution from another model or CLI: pick one runtime and model, pass the call's settings (role, effort, session id, skills, MCP servers), read the exit code, the setting report and the last AIKIT-XAI stderr line, resume a session, answer a stop. Also use when a lane hits quota, a rate limit or a 429, exits 75 or 69, ends locked or partial, prints retry_after_s= or a finding, reports a setting ignored, or needs --argv-file. Covers the hard-tier wait, the owner notice, GSD's retry/skip/abort answer and never switching harness, provider or model. Not for reviewer setup or GSD config (ai-kit-spec-config, ai-kit-gsd-curated-config), rendering the runner, or waking this session after its own usage limit (ai-kit-session-wake).\"},{\"id\":\"D5-1\",\"dimension\":\"D5\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":307,\"evidence\":\"SKILL.md has 404 lines, with very long lines at 59, 133, 145, 185, 278, 280, 307 and 346, an estimated well over the spec's 5000-token body budget. The hard-tier schedule paragraph (307) and the [runner.retry] key table (309-316) duplicate references/subprocess-quota-policy.md (Hard tier, Configuration), and the supervision flags table (65-74) is reference material\",\"fix\":\"Keep in SKILL.md the caller rules: wait exactly retry_after_s once, the two wait forms, and the stop notice. Move the schedule paragraph and the key table into references/subprocess-quota-policy.md Hard tier, behind the existing 'read it when you configure [runner.retry]' trigger. Move the supervision flags table into references/execute-checks.md, read when a supervision flag is passed.\"},{\"id\":\"D6-1\",\"dimension\":\"D6\",\"severity\":\"low\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":160,\"evidence\":\"Off unless the call passes `--idle-timeout` or `CONFIG.idleTimeoutS` is above 0 ... keep 900 s or more there\",\"fix\":\"Give a default with its reason. Either say when a caller passes `--idle-timeout default` (for example on execute lanes, never below 900 s on a review lane whose host buffers output), or say outright that only the owner turns the watchdog on and a caller never adds the flag.\"},{\"id\":\"D7-1\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/files/session-ok/lane.err\",\"line\":4,\"evidence\":\"The fixture status line ends at 'escalate=-' with no 'coverage=- findings=-', but the runner always emits that group (cross-ai.mjs line 1678 default 'coverage=- findings=-'), as SKILL.md line 172 and references/launch-and-wait.md line 37 show. The auth-stop fixture report line also lacks 'check=-' (SKILL.md line 178)\",\"fix\":\"Regenerate evals/files/session-ok, auth-stop and hard-tier lane.err from hermetic runs of the current runner template, so the eval inputs match the documented line format.\"},{\"id\":\"D7-2\",\"dimension\":\"D7\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/evals/evals.json\",\"line\":null,\"evidence\":\"No eval covers the high-consequence stops in SKILL.md lines 100-102 (role not settled: stop and ask, never default to execute) or 108-109 (a no-write review without verified containment is not launched)\",\"fix\":\"Add an edge eval such as 'send docs/plan.md to pi with fake/ok through the runner' with no role. Assertions: it asks for the role before launching; it never passes --role execute by default.\"},{\"id\":\"D8-1\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":197,\"evidence\":\"| 75 | ... | a bare 75, every `locked` included, is an owner stop: report it, or start the run after the other run's own exit |\",\"fix\":\"Split the remedy by cause: 'a bare 75 is an owner stop: report it. Only for status=locked may the caller start the run again after the other run's own exit. A quota stop off a router lane, the dirty-tree gate or an unwritable state file is never re-launched by the caller.' Followed literally, the current row lets an agent re-launch a quota-stopped lane, where no other run exists.\"},{\"id\":\"D8-2\",\"dimension\":\"D8\",\"severity\":\"medium\",\"file\":\"skills/ai-kit-cross-ai/SKILL.md\",\"line\":160,\"evidence\":\"A host that prints nothing until the end (`pi -p`) gives a review lane no activity signal. This vendor-CLI output behaviour is stated as fact with no source or date, while references/hosting-and-locks.md line 22 says pi text mode output timing was not measured\",\"fix\":\"Label the pi -p behaviour as observed and unverified, with the date, matching the reference. Or cite pi's official documentation URL and the date checked.\"}]}"
+  }
+ ],
+ "digest": "8b02a887a04e4ed5097b56cf3bd7db9d2ee416767c2e3af68e91936711c3ff6b",
+ "embedded": [
+  {
+   "path": "SKILL.md",
+   "sha256": "6ea8501f787b45784deeb066b2a9c0b2e473e656d03aa342f54e4153130d889f"
+  },
+  {
+   "path": "references/rubric.md",
+   "sha256": "57215d2c35085c53587d2f3a8467c0a04ca1a5711588c9cdc4d2f3dd9500a4eb"
+  },
+  {
+   "path": "references/agentskills/best-practices.md",
+   "sha256": "e8e04ac73e97e6dea1ebbf4541508157d408ef38624800389f64a2a4c5f94805"
+  },
+  {
+   "path": "references/agentskills/specification.md",
+   "sha256": "a59238cc2d552f184f7f472c10611f680a3da74ae4565d7d4146bf7d09335d88"
+  },
+  {
+   "path": "references/agentskills/optimizing-descriptions.md",
+   "sha256": "e8e5c26b50b96406d89d6d70f275d540a3a055d06169eb3912f13afc282008ee"
+  },
+  {
+   "path": "references/agentskills/evaluating-skills.md",
+   "sha256": "c25cbbd465e048b78ccea0baa110b7f4cc1e5c3a9f776030394c1b5841bfdcf8"
+  },
+  {
+   "path": "references/agentskills/using-scripts.md",
+   "sha256": "beaa60112245e5256aeb38cb27e7333782c59486217e02ea782d78be2d8f2fe3"
+  },
+  {
+   "path": "references/verdict.schema.json",
+   "sha256": "616568aa143b706cc6363220b0906a9c15bae4ccc998ad1be0cf887569817e4d"
+  }
+ ],
+ "judge": "native:opus-high",
+ "loop": "41",
+ "modules": [
+  "tests/test_ai_kit_spec.py",
+  "tests/test_ai_kit_spec_goal_prompt_cli.py",
+  "tests/test_ai_kit_spec_goal_prompt_render.py",
+  "tests/test_ai_kit_spec_superpowers.py",
+  "tests/test_arch.py",
+  "tests/test_arch_hardcoded_models.py",
+  "tests/test_arch_no_grok_runtime.py",
+  "tests/test_cross_ai_docs_text.py",
+  "tests/test_cross_ai_settings_text.py",
+  "tests/test_cross_ai_skill_text.py",
+  "tests/test_curated_config_script.py",
+  "tests/test_lane_failure_text.py",
+  "tests/test_quota_policy_text.py",
+  "tests/test_setup.py",
+  "tests/test_skill_text_history.py",
+  "tests/test_staged_mapper.py"
+ ],
+ "prompt_sha256": "ab0061e36b83cb0c68deb1d093b1ecc1ead6ba222473431adfcf2b4135a83fe6",
+ "round": 1,
+ "rubric_version": 5,
+ "schema": 1,
+ "ships_code": false,
+ "skill": "ai-kit-cross-ai",
+ "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+ "substitute": {
+  "reason": "referee-three failed after its one retry: ingest refused both attempts (verdict judge with a zero-width joiner)",
+  "replaces": "opencode:router-env/my-referee-three"
+ },
+ "verdict": {
+  "findings": [
+   {
+    "dimension": "D1",
+    "evidence": "The locked remedy 'report it, or start the run after the other run's own exit' is restated at lines 139, 197, 206-208 and 280, and the never-switch rule at lines 37-39, 246, 360-362 and again in references/subprocess-quota-policy.md 'What a skill does on a stop'; Pitfalls lines 369-370 repeat section 3",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "State the locked rule once in the section 2 run-lock bullet and the never-switch rule once in section 8. Replace every other occurrence with a pointer such as '(section 8)'. Nothing is lost, because each rule keeps its one full statement.",
+    "id": "D1-1",
+    "line": 139,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D1",
+    "evidence": "## When to use / When a run, a review or an execution step calls an external AI CLI and acts on the result.",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "The description already carries this trigger, and the body is invisible before activation. Delete the section and add a drop row for it to docs/audit/recovery/ai-kit-cross-ai/record.md.",
+    "id": "D1-2",
+    "line": 26,
+    "severity": "low"
+   },
+   {
+    "dimension": "D2",
+    "evidence": "Section 2 packs its preconditions (resolve $RUNNER, the line-2 template=14 header check, a scratch dir outside the tree, settling the role, verified write containment, the legacy-migration check, a separate checkout for a no-write review) into prose paragraphs at lines 80-123, with no checkpoints",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Fit the Process pattern: open section 2 with a short ordered pre-launch checklist (runner resolved and header >= 14; lane dir ignored or outside the tree; role settled, else ask; containment verified for a no-write review; no legacy config for an untouched review). Keep the existing paragraphs as the reasons under it.",
+    "id": "D2-1",
+    "line": 80,
+    "severity": "low"
+   },
+   {
+    "dimension": "D3",
+    "evidence": "- Two timeouts, not one; the runner's 300 s fallback applies only when `workflow.cross_ai_timeout` is absent ... (line 370 likewise restates the section 3 idle watchdog; a stray blank line at 367 splits the list)",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Keep Pitfalls for landmines the body does not already state. Replace lines 369-370 with a pointer to section 3, or with a non-obvious fact and its reason, and remove the blank line at 367 so the list stays one list.",
+    "id": "D3-1",
+    "line": 369,
+    "severity": "low"
+   },
+   {
+    "dimension": "D4",
+    "evidence": "Use when you run, wait for, read, retry or chain an external AI CLI ... through ai-kit's cross-AI runner (cross-ai.mjs): the triggers are mechanism-led, there is no user-intent trigger for a request that never names the runner, and there is no boundary against the session-wake neighbour",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Use when you run, wait for, read, retry or chain an external AI CLI (pi, opencode, codex, cursor, copilot, claude) through ai-kit's cross-AI runner cross-ai.mjs, including when the user only asks for a second opinion, review or execution from another model or CLI: pick one runtime and model, pass the call's settings (role, effort, session id, skills, MCP servers), read the exit code, the setting report and the last AIKIT-XAI stderr line, resume a session, answer a stop. Also use when a lane hits quota, a rate limit or a 429, exits 75 or 69, ends locked or partial, prints retry_after_s= or a finding, reports a setting ignored, or needs --argv-file. Covers the hard-tier wait, the owner notice, GSD's retry/skip/abort answer and never switching harness, provider or model. Not for reviewer setup or GSD config (ai-kit-spec-config, ai-kit-gsd-curated-config), rendering the runner, or waking this session after its own usage limit (ai-kit-session-wake).",
+    "id": "D4-1",
+    "line": 4,
+    "severity": "low"
+   },
+   {
+    "dimension": "D5",
+    "evidence": "SKILL.md has 404 lines, with very long lines at 59, 133, 145, 185, 278, 280, 307 and 346, an estimated well over the spec's 5000-token body budget. The hard-tier schedule paragraph (307) and the [runner.retry] key table (309-316) duplicate references/subprocess-quota-policy.md (Hard tier, Configuration), and the supervision flags table (65-74) is reference material",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Keep in SKILL.md the caller rules: wait exactly retry_after_s once, the two wait forms, and the stop notice. Move the schedule paragraph and the key table into references/subprocess-quota-policy.md Hard tier, behind the existing 'read it when you configure [runner.retry]' trigger. Move the supervision flags table into references/execute-checks.md, read when a supervision flag is passed.",
+    "id": "D5-1",
+    "line": 307,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D6",
+    "evidence": "Off unless the call passes `--idle-timeout` or `CONFIG.idleTimeoutS` is above 0 ... keep 900 s or more there",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Give a default with its reason. Either say when a caller passes `--idle-timeout default` (for example on execute lanes, never below 900 s on a review lane whose host buffers output), or say outright that only the owner turns the watchdog on and a caller never adds the flag.",
+    "id": "D6-1",
+    "line": 160,
+    "severity": "low"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "The fixture status line ends at 'escalate=-' with no 'coverage=- findings=-', but the runner always emits that group (cross-ai.mjs line 1678 default 'coverage=- findings=-'), as SKILL.md line 172 and references/launch-and-wait.md line 37 show. The auth-stop fixture report line also lacks 'check=-' (SKILL.md line 178)",
+    "file": "skills/ai-kit-cross-ai/evals/files/session-ok/lane.err",
+    "fix": "Regenerate evals/files/session-ok, auth-stop and hard-tier lane.err from hermetic runs of the current runner template, so the eval inputs match the documented line format.",
+    "id": "D7-1",
+    "line": 4,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D7",
+    "evidence": "No eval covers the high-consequence stops in SKILL.md lines 100-102 (role not settled: stop and ask, never default to execute) or 108-109 (a no-write review without verified containment is not launched)",
+    "file": "skills/ai-kit-cross-ai/evals/evals.json",
+    "fix": "Add an edge eval such as 'send docs/plan.md to pi with fake/ok through the runner' with no role. Assertions: it asks for the role before launching; it never passes --role execute by default.",
+    "id": "D7-2",
+    "line": null,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "| 75 | ... | a bare 75, every `locked` included, is an owner stop: report it, or start the run after the other run's own exit |",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Split the remedy by cause: 'a bare 75 is an owner stop: report it. Only for status=locked may the caller start the run again after the other run's own exit. A quota stop off a router lane, the dirty-tree gate or an unwritable state file is never re-launched by the caller.' Followed literally, the current row lets an agent re-launch a quota-stopped lane, where no other run exists.",
+    "id": "D8-1",
+    "line": 197,
+    "severity": "medium"
+   },
+   {
+    "dimension": "D8",
+    "evidence": "A host that prints nothing until the end (`pi -p`) gives a review lane no activity signal. This vendor-CLI output behaviour is stated as fact with no source or date, while references/hosting-and-locks.md line 22 says pi text mode output timing was not measured",
+    "file": "skills/ai-kit-cross-ai/SKILL.md",
+    "fix": "Label the pi -p behaviour as observed and unverified, with the date, matching the reference. Or cite pi's official documentation URL and the date checked.",
+    "id": "D8-2",
+    "line": 160,
+    "severity": "medium"
+   }
+  ],
+  "grade": "B",
+  "judge": "native:opus-high",
+  "max": {
+   "D1": 20,
+   "D2": 15,
+   "D3": 15,
+   "D4": 15,
+   "D5": 15,
+   "D6": 15,
+   "D7": 15,
+   "D8": 15
+  },
+  "max_total": 125,
+  "percent": 86.4,
+  "rubric_version": 5,
+  "scores": {
+   "D1": 15,
+   "D2": 14,
+   "D3": 14,
+   "D4": 14,
+   "D5": 11,
+   "D6": 14,
+   "D7": 13,
+   "D8": 13
+  },
+  "skill": "ai-kit-cross-ai",
+  "spec_sha": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "total": 108
+ }
+}

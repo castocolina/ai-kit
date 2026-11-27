@@ -50,7 +50,9 @@ locked out after a resume. Track the inputs separately for the task's whole life
 
 Neither derived union is ever persisted; always recompute it from its inputs.
 
-## Initial and resume values
+## Pinned resume
+
+A restored `injection_json` is pinned: it re-dispatches unchanged at any `$FIX_ROUND`. `RESUME_FOUND=0` runs "Seed a new task"; `RESUME_FOUND=1` runs "Restore". A pinned injection goes straight to Step 3 (`SKILL.md` Step 2 says how it reuses `$PROMPT_FILE`). Step 3 deletes a finished task's file on a successful dispatch; an owner restarting the plan deletes any other.
 
 **Seed a new task:** `FIX_ROUND=0`, `LAST_DISPATCHED_KEY=''`, `ESCALATION_ANCHOR_KEY=''` and the
 JSON files empty. The scalar file is per plan, so a task is marked `SEEDED_TASK=<TASK_N>` and the
@@ -122,7 +124,7 @@ stop before any dispatch, where selection along the ladder is still pre-dispatch
 `resolve-injection`, so no recovered or different candidate replaces the lane. Only an owner
 who names a replacement pair re-enters Step 2, with that choice ("Owner-named replacement pair"). After the 4-hour cap the
 pinned lane refuses with exit 69 until its last attempt is about 4 hours old or the owner
-deletes the state file the refusal names; report that instead of re-resolving.
+deletes the state file the refusal names; report that instead of re-resolving. A pinned `native` injection with `"fallback": "session"` instead keeps the saved injection and goes through Step 3's native branch with its session-fallback exception, with no `resolve-injection` and no jev.
 
 ## Resumable state: writing it
 
@@ -131,9 +133,7 @@ the task-paths block alone sets `PROJECT_KEY` and `RESUME_STATE_PATH` and append
 `$SCALARS`, so the last line is always the current task's. A block here never assigns either name
 and exits non-zero on an empty `$RESUME_STATE_PATH`.
 
-When `INJECTION_MODE == "quota_exhausted"` and `any_quota_recoverable == True`: write resumable
-state, then STOP this wave and report the reasons per key and the state path (the owner
-re-invokes to resume). Nothing is scheduled. Do not dispatch this task. One `Bash` call.
+The recoverable `quota_exhausted` stop ([`resolution-stops.md#owner-stop`](resolution-stops.md#owner-stop)) runs the block below in one `Bash` call and dispatches nothing.
 
 Only a `"quota"` key is dropped from the saved exclusions and gets a fresh chance on resume. Every
 other co-tried key, `"capacity"` included, is persisted as a permanent exclusion
@@ -178,12 +178,15 @@ print(json.dumps({"framework": "superpowers", "plan_path": sys.argv[1], "task_in
                    "last_dispatched_key": sys.argv[7], "escalation_anchor_key": sys.argv[8]}))' \
   "$PLAN_FILE" "$TASK_N" "$FIX_ROUND" "$RESUME_EXCLUDED_KEYS_JSON" "$WAVE_TRIED_JSON" \
   "$PERSIST_REASONS_JSON" "$LAST_DISPATCHED_KEY" "$ESCALATION_ANCHOR_KEY")"
-python3 "$SHIM" write-resumable-state --path "$RESUME_STATE_PATH" --state-json "$STATE_JSON"
+python3 "$SHIM" write-resumable-state --path "$RESUME_STATE_PATH" --state-json "$STATE_JSON" \
+  || { echo "ERROR: write-resumable-state failed: no state saved -- stop, schedule nothing"; exit 1; }
 printf 'RESUME_STATE_PATH=%s\n' "$RESUME_STATE_PATH"
 ```
 
-Then STOP this wave and report the reasons per key and `$RESUME_STATE_PATH`. Nothing is
-scheduled; the owner re-invokes to resume.
+A non-zero exit of either state-write block saved nothing: show its error, schedule and re-arm no
+wake, and stop for the owner without naming a state path.
+
+On exit 0, stop as [`resolution-stops.md#owner-stop`](resolution-stops.md#owner-stop) says, naming `$RESUME_STATE_PATH`.
 
 ## Pinned-injection state write
 
@@ -213,7 +216,8 @@ print(json.dumps({"framework": "superpowers", "plan_path": sys.argv[1], "task_in
                    "injection_json": json.loads(sys.argv[9])}))' \
   "$PLAN_FILE" "$TASK_N" "$FIX_ROUND" "$RESUME_EXCLUDED_KEYS_JSON" "$WAVE_TRIED_JSON" \
   "$PERSIST_REASONS_JSON" "$LAST_DISPATCHED_KEY" "$ESCALATION_ANCHOR_KEY" "$INJECTION_JSON")"
-python3 "$SHIM" write-resumable-state --path "$RESUME_STATE_PATH" --state-json "$STATE_JSON"
+python3 "$SHIM" write-resumable-state --path "$RESUME_STATE_PATH" --state-json "$STATE_JSON" \
+  || { echo "ERROR: write-resumable-state failed: no state saved -- stop, schedule nothing"; exit 1; }
 printf 'RESUME_STATE_PATH=%s\n' "$RESUME_STATE_PATH"
 ```
 
@@ -255,13 +259,27 @@ put("PRIOR_EXCLUDED_KEYS_JSON", sorted(prior))
 put("PRIOR_REASONS_JSON", {k: v for k, v in get("PRIOR_REASONS_JSON").items() if k != owner})
 put("EXCLUDED_KEYS_JSON", sorted((prior | set(tried)) - {owner}))
 put("ESCALATION_EXCLUDE_JSON", sorted(set(ladder) - {owner}))
+# an owner-directed pick is checked against the owner's key, never a stale gate result
+allowed = os.path.join(run_dir, "ESCALATION_ALLOWED_JSON.json")
+if os.path.exists(allowed):
+    os.remove(allowed)
 PY
 ```
 
 Then run `references/escalation.md`'s "Re-running resolve-injection with the floor" block unchanged
 (it reads `ESCALATION_EXCLUDE_JSON` from the file; at any `$FIX_ROUND` that set is just every key but the
 owner's, so no capability floor applies and the owner's key is excluded from neither channel), handle the result as Step 2 does, and confirm
-`$INJECTION_KEY` equals `$OWNER_KEY`. A different key, `quota_exhausted` or `no_candidate` means
+`$INJECTION_KEY` equals `$OWNER_KEY`. A different key, `quota_exhausted` or `no_candidate`, or an injection with `"fallback": "session"`, means
 the owner's pair is not eligible right now: STOP and report `reasons`/`detail`, never dispatch
 another key. The fix round, `$LAST_DISPATCHED_KEY` and `$ESCALATION_ANCHOR_KEY` stay as they are,
 `REPORT_MODE` stays `append`, and the new pick is dispatched and pinned like any other.
+
+## Gates and guard inputs
+
+SKILL.md Step 3 writes these at a task's first actual dispatch: whenever the loaded scalar `GUIDANCE_READY` is not `$TASK_N`, whatever `$FIX_ROUND` and `RESUME_FOUND` say, so the first dispatch after a resume that saved no injection writes them too.
+
+- `$RUN_DIR/gates.txt`: the project's gate commands, one per line, from its instruction file (its unit and arch gate lines), else from the plan's verify lines for this task; with neither, delete an old `gates.txt` and write none.
+- `$RUN_DIR/guard.txt`: the caller's commit-guard text; with none, delete an old one and write none.
+- Right after, record `printf 'GUIDANCE_READY=%s\n' "$TASK_N" | tee -a "$SCALARS"`, also when neither file was written.
+
+A fix round, a quota wake and a pinned re-dispatch find `GUIDANCE_READY` equal to `$TASK_N` and reuse both files as they are, never rewriting them, so every dispatch composes the same blocks. A fresh start clears `GUIDANCE_READY` (block 1 of [config-check.md](config-check.md)), so a re-run writes both files anew. `--owner-config .aikit/config.toml` tells the implementer never to stage, commit or revert that file; it is an instruction, not enforcement.

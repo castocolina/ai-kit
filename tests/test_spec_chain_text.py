@@ -409,8 +409,9 @@ SESSION_MODE_SENTENCE = (
     "unchanged, so the task dispatches natively with `model` omitted (the session model)."
 )
 NO_LADDER_SENTENCE = (
-    "In session-model mode rounds 4–5 run on the session model with no ladder escalation and "
-    "no model bump; the escalation rule above applies to every other mode."
+    "In session-model mode, or when the task's injection carries the session fallback, "
+    "rounds 4–5 run on the session model with no ladder escalation and no model bump; "
+    "the escalation rule above applies to every other mode."
 )
 
 

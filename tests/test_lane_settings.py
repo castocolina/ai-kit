@@ -3,18 +3,20 @@
 import ast
 import copy
 import io
+import json
 import os
 import sys
 import tempfile
 import tomllib
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import config_io, lane_data_use, lane_effort, lane_settings
+from ai_kit_spec import cli, config_io, lane_data_use, lane_effort, lane_settings, skill_classify
 
 FULL_DATA_USE = {"data_use": "may_be_kept_or_trained",
                  "data_use_line": "The provider's page says prompts may be kept.",
@@ -232,15 +234,18 @@ class TestModelBoundMerge(unittest.TestCase):
 REPO = Path(__file__).resolve().parents[1]
 SCANNED = (REPO / "skills" / "ai-kit-spec-review" / "ai_kit_spec",
            REPO / "skills" / "ai-kit-spec-execute-superpowers" / "ai_kit_spec_superpowers")
-FLAGS = frozenset(lane_settings.LANE_FLAG_KEYS)
+FLAGS = frozenset(lane_settings.LANE_FLAG_KEYS) | {lane_settings.SESSION_FALLBACK_KEY}
 READERS = frozenset({"lane_escalation", "escalation_target", "lane_usage_limit", "lane_fallback",
-                     "lane_free_pool"})
+                     "lane_free_pool", "escalation_candidates", "lane_session_fallback"})
 # the readers each module may call; every other module stays reader-free
 ALLOWED_READERS = {"runner_dispatch.py": frozenset({"lane_escalation"}),
                    "lane_switch.py": frozenset({"lane_fallback", "lane_usage_limit",
                                                 "lane_free_pool"}),
                    "reviewer_dispatch.py": frozenset({"lane_free_pool"}),
-                   "quota.py": frozenset({"lane_free_pool"})}
+                   "quota.py": frozenset({"lane_free_pool"}),
+                   "dispatch_injection.py": frozenset({"escalation_candidates",
+                                                        "lane_session_fallback",
+                                                        "lane_free_pool"})}
 
 
 def _flag_literal_lines(text: str, *, runner_table: bool = False) -> list[int]:
@@ -469,6 +474,92 @@ class TestEscalationTarget(unittest.TestCase):
             lane_settings.escalation_target([_lane("a")], "a", "vendor")
 
 
+KEY = lane_settings.SESSION_FALLBACK_KEY
+
+
+class TestSessionFallback(_ScratchLayers):
+    @staticmethod
+    def _exec_lane():
+        return {**_lane("e1"), "purpose": "execute"}
+
+    def test_true_round_trips(self):
+        text, _ = _render({"policy": {"execute": {"ladder": ["e1"], KEY: True}},
+                           "lanes": [self._exec_lane()]})
+        self.assertIn("session_fallback = true", text)
+        self.write_user(text)
+        self.assertTrue(lane_settings.lane_session_fallback(
+            config_io.cfg_resolve(self.cwd, self.env)))
+
+    def test_false_is_not_written(self):
+        text, err = _render({"policy": {"execute": {"ladder": ["e1"], KEY: False}},
+                             "lanes": [self._exec_lane()]})
+        self.assertNotIn(KEY, text)
+        self.assertNotIn("must be true or false", err)
+
+    def test_non_boolean_is_refused_with_the_key(self):
+        text, err = _render({"policy": {"execute": {"ladder": ["e1"], KEY: "yes"}},
+                             "lanes": [self._exec_lane()]})
+        self.assertNotIn(KEY, text)
+        self.assertIn("policy.execute.session_fallback: must be true or false; not written", err)
+
+    def test_absent_table_reads_false(self):
+        self.assertFalse(lane_settings.lane_session_fallback({}))
+        self.assertFalse(lane_settings.lane_session_fallback(
+            {"policy": {"execute": {"ladder": ["e1"]}}}))
+
+    def test_hand_written_non_boolean_raises(self):
+        for table in ({KEY: "yes"}, {"key": "other", KEY: "yes"}):
+            with self.subTest(table=table), self.assertRaises(
+                    lane_settings.LaneSettingError) as ctx:
+                lane_settings.lane_session_fallback({"policy": {"execute": table}})
+            self.assertEqual(str(ctx.exception),
+                             "policy.execute: 'session_fallback' must be a boolean")
+
+    def test_no_execute_lane_writes_no_fallback(self):
+        text, _ = _render({"policy": {"review": {"ladder": ["r1"]},
+                                      "execute": {"ladder": [], KEY: True}},
+                           "lanes": [{**_lane("r1"), "purpose": "review"}]})
+        self.assertNotIn(KEY, text)
+
+    def _run_render(self, config, path, *extra):
+        src = str(self.root / f"src{len(extra)}.json")
+        Path(src).write_text(json.dumps(config))
+        with (mock.patch.dict(os.environ, self.env),
+              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO())):
+            return cli.main(["render-toml", "--json-config", src, "--out", path, *extra],
+                            env_fn=lambda: dict(self.env))
+
+    def test_replace_drops_the_fallback_and_keeps_other_tables(self):
+        path = config_io.cfg_global_path(self.env)
+        skill_classify.confirm_role(path, "lens-a", "review_lens")
+        lanes = [self._exec_lane()]
+        on = {"policy": {"execute": {"ladder": ["e1"], KEY: True}}, "lanes": lanes}
+        self.assertEqual(self._run_render(on, path), 0)
+        self.assertTrue(lane_settings.lane_session_fallback(
+            config_io.cfg_resolve(self.cwd, self.env)))
+        off = {"policy": {"execute": {"ladder": ["e1"]}}, "lanes": lanes}
+        self.assertEqual(self._run_render(off, path, "--replace"), 0)
+        with open(path, "rb") as stream:
+            parsed = tomllib.load(stream)
+        self.assertNotIn(KEY, parsed["lanes"]["policy"]["execute"])
+        self.assertEqual(parsed["skills"]["roles"], {"lens-a": "review_lens"})
+        self.assertFalse(lane_settings.lane_session_fallback(
+            config_io.cfg_resolve(self.cwd, self.env)))
+
+    def test_project_table_replaces_the_users(self):
+        lane = self._exec_lane()
+        on = _render({"policy": {"execute": {"ladder": ["e1"], KEY: True}}, "lanes": [lane]})[0]
+        off = _render({"policy": {"execute": {"ladder": ["e1"]}}, "lanes": [lane]})[0]
+        self.write_user(off)
+        self.write_project(on)
+        self.assertTrue(lane_settings.lane_session_fallback(
+            config_io.cfg_resolve(self.cwd, self.env)))
+        self.write_user(on)
+        self.write_project(off)
+        self.assertFalse(lane_settings.lane_session_fallback(
+            config_io.cfg_resolve(self.cwd, self.env)))
+
+
 class TestNoFlagSetter(unittest.TestCase):
     def test_only_lane_settings_holds_a_flag_literal(self):
         files = _scanned_files()
@@ -490,6 +581,8 @@ class TestNoFlagSetter(unittest.TestCase):
         self.assertEqual(_flag_literal_lines('entry["usage_limited"] = True', runner_table=True),
                          [1])
         self.assertEqual(_flag_literal_lines('"""usage_limited is the owner\'s yes."""'), [])
+        self.assertEqual(_flag_literal_lines('policy["session_fallback"] = True'), [1])
+        self.assertEqual(_reader_lines('lane_session_fallback({})'), [1])
         self.assertEqual(_reader_lines('from ai_kit_spec import lane_settings\n'
                                        'lane_settings.lane_fallback([], "k")'), [2])
         self.assertEqual(_reader_lines('from ai_kit_spec.lane_settings import lane_usage_limit'),
@@ -507,6 +600,19 @@ class TestNoFlagSetter(unittest.TestCase):
             allowed=ALLOWED_READERS.get("lane_ping.py", frozenset())), [1])
         self.assertEqual(_reader_lines('lane_free_pool({})',
                                        allowed=ALLOWED_READERS["runner_dispatch.py"]), [1])
+        self.assertEqual(_reader_lines('escalation_candidates([], "k", [])',
+                                       allowed=ALLOWED_READERS["dispatch_injection.py"]), [])
+        self.assertEqual(_reader_lines('escalation_candidates([], "k", [])',
+                                       allowed=ALLOWED_READERS["runner_dispatch.py"]), [1])
+        self.assertEqual(_reader_lines('lane_session_fallback({})',
+                                       allowed=ALLOWED_READERS["dispatch_injection.py"]), [])
+        self.assertEqual(_reader_lines('lane_session_fallback({})',
+                                       allowed=ALLOWED_READERS["lane_switch.py"]), [1])
+        self.assertEqual(_reader_lines('lane_free_pool({})',
+                                       allowed=ALLOWED_READERS["dispatch_injection.py"]), [])
+        self.assertEqual(_reader_lines(
+            'lane_free_pool({})',
+            allowed=ALLOWED_READERS.get("execute_dispatch.py", frozenset())), [1])
         planted = 'from ai_kit_spec import lane_settings\nlane_settings.lane_free_pool({})'
         for name in ("lane_order.py", "propose_cmds.py"):
             with self.subTest(name=name):

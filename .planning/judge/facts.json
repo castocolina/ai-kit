@@ -154,6 +154,7 @@
   "ai-kit-spec-config": {
    "evals": 21,
    "modules": [
+    "tests/test_adapter_session_fallback.py",
     "tests/test_ai_kit_spec_check_providers.py",
     "tests/test_ai_kit_spec_runtimes_table.py",
     "tests/test_ai_kit_spec_superpowers.py",
@@ -185,8 +186,12 @@
    "queries": 16
   },
   "ai-kit-spec-execute-superpowers": {
-   "evals": 14,
+   "evals": 18,
    "modules": [
+    "tests/test_adapter_escalation_flags.py",
+    "tests/test_adapter_executor_switch.py",
+    "tests/test_adapter_session_fallback.py",
+    "tests/test_adapter_single_definitions.py",
     "tests/test_ai_kit_caller_text.py",
     "tests/test_ai_kit_spec_execute_router.py",
     "tests/test_ai_kit_spec_legacy_config.py",
@@ -197,8 +202,11 @@
     "tests/test_arch_hardcoded_models.py",
     "tests/test_arch_no_grok_runtime.py",
     "tests/test_cross_ai_skill_text.py",
+    "tests/test_dispatch_guidance_gates.py",
     "tests/test_flow_docs.py",
     "tests/test_fold_check.py",
+    "tests/test_host_config_audit.py",
+    "tests/test_lane_failure_text.py",
     "tests/test_lane_settings.py",
     "tests/test_lens_delivery.py",
     "tests/test_quota_policy_text.py",
@@ -273,6 +281,9 @@
   "ai-kit-spec-review": {
    "evals": 19,
    "modules": [
+    "tests/test_adapter_escalation_flags.py",
+    "tests/test_adapter_executor_switch.py",
+    "tests/test_adapter_session_fallback.py",
     "tests/test_ai_kit_commit_fold.py",
     "tests/test_ai_kit_commit_fold_adapters.py",
     "tests/test_ai_kit_commit_fold_e2e.py",
@@ -362,6 +373,7 @@
     "tests/test_curated_config_script.py",
     "tests/test_curated_config_skills.py",
     "tests/test_cursor_agents.py",
+    "tests/test_dispatch_guidance_gates.py",
     "tests/test_edit_pass.py",
     "tests/test_effort_probe.py",
     "tests/test_flow_boundary.py",
@@ -382,6 +394,7 @@
     "tests/test_fold_check.py",
     "tests/test_gate_scope.py",
     "tests/test_gsd_curated_eval.py",
+    "tests/test_host_config_audit.py",
     "tests/test_jev_config_parity.py",
     "tests/test_jev_review.py",
     "tests/test_lane_data_use.py",

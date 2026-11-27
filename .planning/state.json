@@ -116,7 +116,7 @@
     {
       "number": "41",
       "name": "Superpowers adapter refactor with spec-config handoff",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "42",
@@ -201,8 +201,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (plan phase 41)",
-    "reason": "Phase 25 of 41 — needs a plan"
+    "label": "Advance to the next step (plan phase 42)",
+    "reason": "Phase 26 of 41 — needs a plan"
   },
-  "updated_at": "2026-11-25T23:59:25.682Z"
+  "updated_at": "2026-11-27T01:20:55.173Z"
 }

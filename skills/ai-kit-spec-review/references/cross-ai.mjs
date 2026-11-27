@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=13 sha256=UNSTAMPED
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=14 sha256=UNSTAMPED
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v13).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v14).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
@@ -5318,6 +5318,18 @@ function inGitTree(cwd) {
   }
 }
 
+// An ai-kit checkout holds both files; an exec lane started inside one gets the real-home guard.
+const AI_KIT_MARKERS = Object.freeze(['skills/ai-kit-spec-review/ai_kit_spec/detection.py', 'tools/setup.py']);
+function aiKitCheckout(dir) {
+  let d = path.resolve(dir);
+  for (;;) {
+    if (fs.existsSync(path.join(d, '.git'))) return AI_KIT_MARKERS.every((rel) => fs.existsSync(path.join(d, rel)));
+    const parent = path.dirname(d);
+    if (parent === d) return false;
+    d = parent;
+  }
+}
+
 // 38 D-29: exclude only the runner's own state subtree, even when state home is the checkout.
 // Anchored at the checkout top (the lock's root), so a start in a subdirectory excludes it too:
 // `pathspec` for git add, `local` (relative to cwd, as ls-files prints) for the ignored listing.
@@ -5749,6 +5761,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   // A pinned chosen row continues through its create-or-continue form with the same id.
   const sameArgv = (sid, input) => sameSessionArgv(name, rt, model, ctx, sid, mode, input) || (pinned && chosen && sid === pinned ? newSessionArgv(name, rt, model, ctx, mode, input, true) : null);
   const env = childEnv(rt.env, process.env);
+  if (mode === 'exec' && aiKitCheckout(ctx.cwd)) env.AI_KIT_REFUSE_REAL_HOME = '1';
   // A resume argv is checked against the runtime's own resume formula, so its session flag is
   // trusted and only extras beyond the formula count as a widening.
   const reviewProblem = (argv, sid = null) => {
