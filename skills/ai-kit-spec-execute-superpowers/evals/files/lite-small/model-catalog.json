@@ -1,0 +1,26 @@
+{
+  "fake/placeholder-model-1": {
+    "runtimes": {
+      "opencode": {
+        "model_id": "fake/placeholder-model-1"
+      }
+    },
+    "facts": {
+      "class": {
+        "value": "coding"
+      }
+    }
+  },
+  "fake/placeholder-model-2": {
+    "runtimes": {
+      "opencode": {
+        "model_id": "fake/placeholder-model-2"
+      }
+    },
+    "facts": {
+      "class": {
+        "value": "small"
+      }
+    }
+  }
+}

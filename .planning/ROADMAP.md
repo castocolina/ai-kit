@@ -131,7 +131,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 39.2: Spec-discuss branch strategy for stacked units (INSERTED)** - The spec-discuss skill and the fold tool give an orchestrator a clear way to know which branch holds which phase's documents and how to return to it, with checks *(inserted 2026-11-23, owner decision)*
 - [x] **Phase 40: Resilient review sized by jev** - A failing lane no longer ends a review; jev sizes and classifies
 - [x] **Phase 41: Superpowers adapter refactor with spec-config handoff** - One resume path, one stop path, session-model fallback, complete executor briefs
-- [ ] **Phase 42: Code review after execution and jev-picked executors** - Implementation is reviewed in a capped loop; jev picks the executor and lane transport
+- [x] **Phase 42: Code review after execution and jev-picked executors** - Implementation is reviewed in a capped loop; jev picks the executor and lane transport (completed 2026-11-27)
 - [ ] **Phase 43: curated-config reads docs at the installed tag** - Version-pinned open-gsd docs and a grouped question cascade
 - [ ] **Phase 44: curated-config writes the agreed settings** - Profile, routing, models, effort, skills and graphify flags written through gsd-tools
 - [ ] **Phase 45: Project rules, one skill and AGENTS.md only** - `ai-kit-project-rules` replaces seven skills, adapts to the model and migrates Claude files into AGENTS.md for every host
@@ -1129,12 +1129,47 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. After implementation, superpowers' `requesting-code-review` runs and ai-kit's capped loop iterates with the same review lanes until the review passes or the cap stops it; jev classifies the gray areas at `receiving-code-review`'s stop-and-discuss point before the owner is asked.
   2. jev picks the executor for a plan or task from what is available (router lite or strong coding models, haiku or sonnet at low, medium or high effort, composer on Cursor, a cheap Copilot model), and the run log shows the pick and why; plans written for a lite executor follow lite instructions.
-  3. A spike on session ids and headless resume is recorded; each lane's transport (subprocess, resumed session, herdr pane) is chosen per lane, reused within a plan and renewed after a set number of rounds; this covers execute, spec-review and code-review lanes; a herdr lane reports through a result file, its pane closes at plan close, and a start-of-run sweep closes leftover ai-kit panes. *(amended 2026-11-16, re-run 2, 37 D-27: this transport covers the interactive-agent, TUI-app and e2e cases and pane reuse within a plan; a runner-hosted headless lane (Phase 37 RUN-12) already closes its own tab per call, so this phase reads Phase 37's protocol (the `aikit:<role>:<runtime>:<token>` label, the run directory files, the exit file or result file as the only verdict) instead of defining a second one; live facts for the interactive form: opencode's TUI takes no model flag, `agent prompt --wait` returns a state and no reply, and a free lane's limit event is visible only to the headless command)* *(amended 2026-11-16, re-run 2, 38 D-25 and D-27: the "start-of-run sweep" already exists in the runner, Phase 38 RUN-13, and the runner's `--sweep` serves it; this phase writes the same `run.json` record and label for every pane it opens and calls `--sweep` instead of a second sweep, and the pane reuse it adds needs its own record rule)*
+  3. A spike on session ids and headless resume is recorded; each lane's transport (subprocess, resumed session, herdr pane) is chosen per lane, reused within a plan and renewed after a set number of rounds; this covers execute, spec-review and code-review lanes; a herdr lane reports through a result file, its pane closes at plan close, and a start-of-run sweep closes leftover ai-kit panes. *(amended 2026-11-16, re-run 2, 37 D-27: this transport covers the interactive-agent, TUI-app and e2e cases and pane reuse within a plan; a runner-hosted headless lane (Phase 37 RUN-12) already closes its own tab per call, so this phase reads Phase 37's protocol (the `aikit:<role>:<runtime>:<token>` label, the run directory files, the exit file or result file as the only verdict) instead of defining a second one; live facts for the interactive form: opencode's TUI takes no model flag, `agent prompt --wait` returns a state and no reply, and a free lane's limit event is visible only to the headless command)* *(amended 2026-11-16, re-run 2, 38 D-25 and D-27: the "start-of-run sweep" already exists in the runner, Phase 38 RUN-13, and the runner's `--sweep` serves it; this phase writes the same `run.json` record and label for every pane it opens and calls `--sweep` instead of a second sweep, and the pane reuse it adds needs its own record rule)* *(amended 2026-11-27, owner decision: the resume spike was skipped; every resume label stays unverified and no runner label flips; the spike is backlog Phase 999.36)*
   4. The post-execution code review loads `ponytail-review`, and `impeccable` when the diff touches UI, from the role-keyed table on the same lanes as spec review; with a lens absent the review still runs and notes it.
   5. jev classifies each lane result (execute: done, partial or another round; review: severity fit by kind, test tier, reproducibility, end-user reach, MVP versus production) before the loop continues; without jev a deterministic default decides and the log says which did.
   6. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 
-**Plans**: TBD
+**Plans**: 12/12 plans complete in 12 waves *(planned 2026-11-27; the plans run one after another because nearly every plan touches the adapter's `cli.py`, its SKILL.md or a shared `ai_kit_spec` module; 42-01, which records the owner's skip of the resume spike (2026-11-27), 42-11, the judge loop, and 42-12, the closing gate, are orchestrator actions)*
+**Wave 1**
+- [x] 42-01-PLAN.md
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 42-02-PLAN.md
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 42-03-PLAN.md
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [x] 42-04-PLAN.md
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [x] 42-05-PLAN.md
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [x] 42-06-PLAN.md
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [x] 42-07-PLAN.md
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [x] 42-08-PLAN.md
+
+**Wave 9** *(blocked on Wave 8 completion)*
+- [x] 42-09-PLAN.md
+
+**Wave 10** *(blocked on Wave 9 completion)*
+- [x] 42-10-PLAN.md
+
+**Wave 11** *(blocked on Wave 10 completion)*
+- [x] 42-11-PLAN.md
+
+**Wave 12** *(blocked on Wave 11 completion)*
+- [x] 42-12-PLAN.md
 
 ### Phase 43: curated-config reads docs at the installed tag
 
@@ -1412,7 +1447,7 @@ Plans:
 | 39. Lane capability blocks and lens skills | 19/19 | Complete    | 2026-11-23 |
 | 40. Resilient review sized by jev | 13/13 | Complete    | 2026-11-25 |
 | 41. Superpowers adapter refactor with spec-config handoff | 14/14 | Complete    | 2026-11-26 |
-| 42. Code review after execution and jev-picked executors | 0/TBD | Not started | - |
+| 42. Code review after execution and jev-picked executors | 12/12 | Complete    | 2026-11-27 |
 | 43. curated-config reads docs at the installed tag | 0/TBD | Not started | - |
 | 44. curated-config writes the agreed settings | 0/TBD | Not started | - |
 | 45. Project rules, one skill and AGENTS.md only | 0/TBD | Not started | - |
@@ -1435,7 +1470,7 @@ Open entries only. An entry a v2.0 requirement absorbs moves to **Absorbed into 
 (moved there 2026-11-07: 999.2, 999.5, 999.7 to 999.17 and 999.19), with the requirement and phase
 that track it. 999.6 stays open (secondary runtime); 999.20 (Claude extra-usage segment) was added
 2026-11-07, 999.21 (runner temp directories) at the Phase 32 close-out, and 999.22 (headless installer agents) at the
-32.1 discuss, 999.23 (the checklist's open judge notes) at the 32.2 close-out, and 999.24 (whether codebase-memory-mcp makes graphify redundant) at the 32.5 plan; 999.26 and 999.27 (two CLI checks behind skill-text limits) came from loop 39.1 round 3 on 2026-11-24; 999.30 to 999.33 (fold push stderr, `--checkpoint` with `--phase`, record re-sync after an outside push, glob-reached doc scans at commit) came from the phase 39.1 ship on 2026-11-24; 999.34 (checkpoint and cascade publish a lower unit's unpushed commits) came from the phase 39.2 code-review fixes on 2026-11-24. The Playwright MCP Chrome path row in 999.1 is
+32.1 discuss, 999.23 (the checklist's open judge notes) at the 32.2 close-out, and 999.24 (whether codebase-memory-mcp makes graphify redundant) at the 32.5 plan; 999.26 and 999.27 (two CLI checks behind skill-text limits) came from loop 39.1 round 3 on 2026-11-24; 999.30 to 999.33 (fold push stderr, `--checkpoint` with `--phase`, record re-sync after an outside push, glob-reached doc scans at commit) came from the phase 39.1 ship on 2026-11-24; 999.34 (checkpoint and cascade publish a lower unit's unpushed commits) came from the phase 39.2 code-review fixes on 2026-11-24. 999.36 (the resume spike per host) came from the owner's skip of the phase 42 spike on 2026-11-27. The Playwright MCP Chrome path row in 999.1 is
 the FEAT-06 owner decision; the whole-tree layering suite once named 999.3 is ARCH-01 (Phase 52).
 Finished entries move to **Done** at the end of this section, with the date and what delivered them.
 
@@ -1635,6 +1670,16 @@ Plans:
 ### Phase 999.35: ai-kit-spec-config reaches grade A with the stricter judge (BACKLOG)
 
 **Goal:** [Captured for future planning] The owner's central skill ai-kit-spec-config meets the AGENTS.md judge bar but not the owner's grade-A target: loop 41.1 (2026-11-26) scored it B 86.4 from referee-one and A 92.8 from referee-three, after a no-loss trim (6,295 to 5,126 body words, 418 to 256 lines) and two fixed high findings. The owner accepted B for phase 41. A later phase resolves referee-one's six medium findings of loop 41.1 without losing behaviour (body size; the trust preview; check-only eval fixtures; the catalog return path; the free-lane pool check; the pool claim wording; verdicts under `.planning/judge/verdicts/41.1/ai-kit-spec-config/`), considers renaming Steps 2.3 to 2.8 together with the tests that anchor them, and runs a judge loop on referee-one and referee-three until both give A or the three-round rule ends it.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.36: The consent-gated resume spike verifies resume labels per host (BACKLOG)
+
+**Goal:** [Captured for future planning] Run the consent-gated resume spike per installed host with the owner's chosen authentication (a scratch HOME has no host login, so the owner picks how each host authenticates), recording per host whether a session id can be obtained and a headless resume answers on it (version, date, result and a verified or unverified label), then flip only the verified runner session labels (template version bump and live re-render), so the lane transport chooser can offer a resumed session for those hosts. Claude and copilot carry no version in the runtimes snapshot and stay unverified until it records one. Skipped by the owner on 2026-11-27 in phase 42, which ships the chooser with every resume label unverified.
 **Requirements:** TBD
 **Plans:** 0 plans
 

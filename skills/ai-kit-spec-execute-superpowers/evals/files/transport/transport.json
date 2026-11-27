@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "lanes": {
+    "execute:0:execute-strong": {
+      "transport": "subprocess",
+      "session_id": "fake-session-1",
+      "rounds": 2,
+      "pane": null,
+      "runtime": "opencode",
+      "model": "fake/placeholder-model-1",
+      "mode": "execute",
+      "busy_pid": null
+    }
+  }
+}

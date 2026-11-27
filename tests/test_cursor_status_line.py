@@ -1,6 +1,7 @@
 """Synthetic payload and cache tests for the Cursor status-line host."""
 
 import contextlib
+import fcntl
 import json
 import os
 import pathlib
@@ -18,9 +19,11 @@ from unittest import mock
 from tests.cursor_fakes import run_like_cursor
 from tools.cursor_quota import (
     QuotaResult,
+    core_needs_refresh,
     core_quota_state,
     core_synthetic_cache,
     probe_cache_paths,
+    probe_read_cache,
     probe_write_cache,
 )
 
@@ -154,6 +157,12 @@ class TestCursorStatusLine(unittest.TestCase):
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline and not (cache_root / "usage.json").exists():
                 time.sleep(0.02)
+            lock_path = cache_root / "usage.lock"
+            if lock_path.exists():
+                # The refresher writes only while it holds this lock, so once we hold it the
+                # detached child no longer writes into the temporary directory.
+                with lock_path.open("rb") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX)
             self.assertEqual(
                 sorted(path.name for path in cache_root.iterdir()), ["usage.json", "usage.lock"]
             )
@@ -1227,6 +1236,16 @@ class TestCursorNoInventedValues(unittest.TestCase):
             empty_cache = root / "empty-cache"
             home.mkdir()
             empty_cache.mkdir()
+            # no data plus a recent failed attempt reads "absent" like an empty cache, and the
+            # negative-cache window keeps the entry from starting a detached refresher that would
+            # write into this temp dir while it is removed
+            cache_path, _lock = probe_cache_paths(str(empty_cache / "ai-kit"))
+            self.assertTrue(probe_write_cache(cache_path, {
+                "data": None, "data_fetched_at": None, "last_attempt_at": time.time(),
+                "last_error": None, "last_error_kind": "test_seed"}))
+            self.assertFalse(core_needs_refresh(probe_read_cache(cache_path), time.time()))
+            self.assertEqual(core_quota_state(probe_read_cache(cache_path), time.time()).state,
+                             "absent")
             env = {
                 "HOME": str(home),
                 "XDG_CONFIG_HOME": str(root / "xdg"),

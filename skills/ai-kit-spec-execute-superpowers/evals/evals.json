@@ -28,12 +28,12 @@
     },
     {
       "id": "precise-fold-after-review",
-      "prompt": "Both tasks of the plan are done and the final whole-branch review passed. The scalar file records FOLD_BASE as the commit before Task 1. Finish the plan's run now.",
+      "prompt": "Both tasks of the plan are done, the final whole-branch review passed and the code review step passed. The scalar file records FOLD_BASE as the commit before Task 1. Finish the plan's run now.",
       "expected_output": "The agent reads references/fold-step.md in full, runs its block once: fold.py checkpoint --plan PLAN_FILE --base FOLD_BASE --final, then fold.py ready --plan PLAN_FILE. It relays both flow reports verbatim and stops at the last outcome line without using superpowers' finishing step to merge, push or open a PR.",
       "files": [],
       "assertions": [
         "The agent reads references/fold-step.md in full before it runs the fold block.",
-        "The fold block runs fold.py checkpoint --plan \"$PLAN_FILE\" --base \"$FOLD_BASE\" --final after the final review and before any finishing step, then fold.py ready --plan \"$PLAN_FILE\".",
+        "The fold block runs fold.py checkpoint --plan \"$PLAN_FILE\" --base \"$FOLD_BASE\" --final after the code review step passes and before any finishing step, then fold.py ready --plan \"$PLAN_FILE\".",
         "The flow report from fold.py is relayed verbatim: its first line starts with flow checkpoint, and its last line is the outcome line.",
         "The agent does not merge, push or open a pull request through superpowers' finishing step for this unit."
       ]
@@ -46,7 +46,7 @@
       "assertions": [
         "The agent runs fold.py start --plan \"$PLAN_FILE\" before the first task's implementer dispatch.",
         "The agent records FOLD_BASE after start, so the start commit sits on the unit branch.",
-        "The agent does not run fold.py checkpoint or fold.py ready before the final review passes.",
+        "The agent does not run fold.py checkpoint or fold.py ready before the code review step passes.",
         "The agent checks that the plan file is still in the tree after start, and on a refusal other than no_remote or no_trunk it shows the report and stops before the first task instead of moving the branch by hand."
       ]
     },
@@ -123,10 +123,10 @@
     {
       "id": "edge-no-way-to-ask-notice",
       "prompt": "Run the plan at evals/files/plan-two-features.md under subagent-driven-development from a subagent that cannot ask the user anything. No lanes are configured.",
-      "expected_output": "The agent runs config-status (none), cannot ask, prints no cross-AI config: run ai-kit-spec-config; continuing on the session model, no config written at the start, records CONFIG_CHECK=notice in the scalar file, runs the tasks natively on the session model with the model omitted (no resolve-injection call, no escalation in fix rounds 4 and 5) and prints the same line again after the final review.",
+      "expected_output": "The agent runs config-status (none), cannot ask, prints no cross-AI config: run ai-kit-spec-config; continuing on the session model, no config written at the start, records CONFIG_CHECK=notice in the scalar file, runs the tasks natively on the session model with the model omitted (no resolve-injection call, no escalation in fix rounds 4 and 5) and prints the same line again after the fold block.",
       "files": ["evals/files/plan-two-features.md"],
       "assertions": [
-        "Prints the line no cross-AI config: run ai-kit-spec-config; continuing on the session model, no config written at the start and again after the final review",
+        "Prints the line no cross-AI config: run ai-kit-spec-config; continuing on the session model, no config written at the start and again after the fold block",
         "Records CONFIG_CHECK=notice in the scalar file and writes no config",
         "Dispatches every task natively on the session model with the model omitted and no escalation in fix rounds 4 and 5"
       ]
@@ -144,10 +144,10 @@
     {
       "id": "precise-no-config-once-native",
       "prompt": "Run the plan at evals/files/plan-two-features.md under subagent-driven-development. No lanes are configured; when you ask about setup I pick the second option.",
-      "expected_output": "After config-status prints none and the second answer, the agent records CONFIG_CHECK=once, prints no cross-AI config: ran on the session model at the start and again after the final review, and dispatches each task natively on the session model with the model omitted: no resolve-injection call and no capability escalation in fix rounds 4 and 5.",
+      "expected_output": "After config-status prints none and the second answer, the agent records CONFIG_CHECK=once, prints no cross-AI config: ran on the session model at the start and again after the fold block, and dispatches each task natively on the session model with the model omitted: no resolve-injection call and no capability escalation in fix rounds 4 and 5.",
       "files": ["evals/files/plan-two-features.md"],
       "assertions": [
-        "After config-status prints none, records CONFIG_CHECK=once and prints the line no cross-AI config: ran on the session model at the start and again after the final review",
+        "After config-status prints none, records CONFIG_CHECK=once and prints the line no cross-AI config: ran on the session model at the start and again after the fold block",
         "Dispatches every task natively on the session model with the model omitted, with no resolve-injection call and no escalation in fix rounds 4 and 5"
       ]
     },
@@ -202,6 +202,56 @@
       "assertions": [
         "Relays both observation lines verbatim with the lane report",
         "Continues the task; never stops, retries or reclassifies on the audit lines"
+      ]
+    },
+    {
+      "id": "precise-code-review-loop-caps-at-three",
+      "prompt": "All tasks of the attached plan are done and the final whole-branch review passed. The world: two review lanes are configured, and the attached round-outcomes file scripts every code review round, every fix and every owner answer (the HIGH finding is never fixed; at the cap the owner answers stop). Run the plan's code review.",
+      "expected_output": "The agent reads references/code-review.md in full, runs exactly three review rounds, writes a merged report for each, dispatches the fix implementer twice (after rounds 1 and 2) with the last task's pinned injection, lists the MEDIUM finding without blocking on it, records state cap_stop after round 3, stops for the owner with the round 3 report, runs no fourth review and no fold block.",
+      "files": ["evals/files/plan-two-features.md", "evals/files/code-review/review-round-high.md", "evals/files/code-review/round-outcomes.md"],
+      "assertions": [
+        "Exactly three code review rounds run, each leaving a merged report file.",
+        "Exactly two fix dispatches run, one after round 1 and one after round 2, each with the last task's pinned injection.",
+        "No fourth review round starts.",
+        "The code review state file reads cap_stop after round 3 and the agent stops for the owner showing the open HIGH finding.",
+        "The MEDIUM finding is listed and never blocks.",
+        "The fold block of references/fold-step.md does not run."
+      ]
+    },
+    {
+      "id": "precise-executor-pick-logs-why",
+      "prompt": "Resolve the injection for Task 1 of the attached plan and dispatch its implementer. Setup: copy evals/files/executor-pick/project to a scratch project root, rename its aikit/ folder to .aikit/, copy evals/files/plan-two-features.md to docs/superpowers/plans/demo.md inside that root, and run from that root. The world: the attached config has two execute lanes, both live, and jev is a fake client entry that prints the attached jev-answer.json on stdout for every call.",
+      "expected_output": "The agent runs resolve-injection once for the plain first resolution; jev is asked the executor pick once (after the dispatch it is asked again, to classify the lane result); stderr holds ai-kit-spec: executor pick: execute-lite (jev, 0.91); the injection's key is execute-lite and its pick field is {\"decided_by\": \"jev\", \"confidence\": 0.91, \"note\": \"\"}; the agent dispatches execute-lite, the lane the log line names.",
+      "files": ["evals/files/plan-two-features.md", "evals/files/executor-pick/project/aikit/config.toml", "evals/files/executor-pick/jev-answer.json"],
+      "assertions": [
+        "stderr holds exactly one line ai-kit-spec: executor pick: execute-lite (jev, 0.91).",
+        "The injection JSON's key is execute-lite and its pick field reads decided_by jev with confidence 0.91.",
+        "The fake jev was asked the executor pick question exactly once (a later call that classifies the lane result is not a pick) and the dispatched lane is execute-lite, the key the pick line names."
+      ]
+    },
+    {
+      "id": "edge-lite-block-only-for-lite-pick",
+      "prompt": "Before the superpowers plan is written, run the lite block step and hand the plan writer its brief. Setup: copy evals/files/lite-small/project to a scratch project root, rename its aikit/ folder to .aikit/, and run from that root. The world: the attached config has two execute lanes, the attached catalog gives execute-small class small and execute-strong class coding, the attached runtimes.json is the cached runtimes snapshot (opencode installed with both models, so both lanes route), jev is a fake client entry that prints the attached jev-answer.json on stdout for every call, and .aikit/brief/SKILL.md exists.",
+      "expected_output": "The agent runs the adapter shim's lite-block --cwd . command; its stdout JSON reads lite true, key execute-small, decided_by jev; .aikit/brief/lite-executor.md now exists and starts with # Lite executor block (unverified); the agent hands both .aikit/brief/SKILL.md and .aikit/brief/lite-executor.md to the plan writer; .aikit/brief/SKILL.md keeps its bytes.",
+      "files": ["evals/files/lite-small/project/aikit/config.toml", "evals/files/lite-small/model-catalog.json", "evals/files/lite-small/jev-answer.json", "evals/files/lite-small/runtimes.json"],
+      "assertions": [
+        "The agent runs lite-block --cwd . through the adapter shim before the plan is written.",
+        "The stdout JSON reads lite true and key execute-small.",
+        ".aikit/brief/lite-executor.md exists after the step and starts with # Lite executor block (unverified).",
+        ".aikit/brief/SKILL.md is byte-for-byte unchanged and no superpowers file is edited."
+      ]
+    },
+    {
+      "id": "edge-transport-subprocess-without-verified-resume",
+      "prompt": "Dispatch Task 2's implementer of the attached plan on the lane Task 1 used. Setup: copy evals/files/executor-pick/project to a scratch project root, rename its aikit/ folder to .aikit/, copy evals/files/plan-two-features.md to docs/superpowers/plans/demo.md inside that root, and run from that root. The world: the attached config is the project roster (execute-strong, the first execute lane, on opencode with fake/placeholder-model-1), Task 2's pinned injection is the attached injection.json, the plan's transport record is the attached transport.json, the cached runtimes snapshot is the attached runtimes.json (its runner describe fact is current for the installed runner template and reads the opencode session label unverified), and the runner is a fake that records its argv.",
+      "expected_output": "The agent runs dispatch-task with --transport-record naming the plan's record; stderr holds ai-kit-spec: transport execute:0:execute-strong: subprocess (no verified resume); the fake runner's argv holds no --session-id; afterwards the record's execute:0:execute-strong entry reads transport subprocess and rounds 1; no herdr pane opens.",
+      "files": ["evals/files/plan-two-features.md", "evals/files/executor-pick/project/aikit/config.toml", "evals/files/transport/transport.json", "evals/files/transport/runtimes.json", "evals/files/transport/injection.json"],
+      "assertions": [
+        "dispatch-task is called with --transport-record naming the plan's transport record.",
+        "stderr holds ai-kit-spec: transport execute:0:execute-strong: subprocess (no verified resume).",
+        "The fake runner's argv holds no --session-id.",
+        "The record entry reads rounds 1 after the dispatch (it read 2 before).",
+        "No herdr pane is opened."
       ]
     }
   ]

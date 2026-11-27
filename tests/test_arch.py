@@ -1371,6 +1371,29 @@ def check_no_wake_import(tree):
     return violations
 
 
+# 42-08: the pane round's own entry points; only herdr_pane may name them.
+_PANE_ROUND_NAMES = frozenset({"run_round", "read_verdict", "PaneRound"})
+
+
+def check_pane_round_boundary(tree):
+    """A lane launch into a pane goes through run_runner: no module outside herdr_pane
+    names run_round, read_verdict or PaneRound."""
+    violations = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in _PANE_ROUND_NAMES:
+            violations.append(
+                f"line {node.lineno}: pane round outside the runner boundary: {node.id}")
+        elif isinstance(node, ast.Attribute) and node.attr in _PANE_ROUND_NAMES:
+            violations.append(
+                f"line {node.lineno}: pane round outside the runner boundary: {node.attr}")
+        elif isinstance(node, ast.ImportFrom) and node.module == "ai_kit_spec.herdr_pane":
+            for alias in node.names:
+                if alias.name in _PANE_ROUND_NAMES:
+                    violations.append(f"line {node.lineno}: pane round outside the runner "
+                                      f"boundary: {alias.name}")
+    return violations
+
+
 def _parse_path(path):
     """Parse any repo file into an AST (never import or execute it)."""
     return _read_tree(path)[0]
@@ -2381,6 +2404,29 @@ class TestArchitecture(unittest.TestCase):
         self.assertEqual([], violations)
         self.assertGreater(guarded, 0)
 
+    def test_pane_rounds_run_behind_the_runner_boundary(self):
+        # 42-08: a pane round is a run_runner call with the pane as its spawn seam, so no
+        # module outside herdr_pane names the round's own entry points.
+        skip = "skills/ai-kit-spec-review/ai_kit_spec/herdr_pane.py"
+        scanned, violations = 0, []
+        for top in ("skills", "tools"):
+            for dirpath, dirnames, filenames in os.walk(os.path.join(_REPO_ROOT, top)):
+                dirnames[:] = sorted(d for d in dirnames if d != "__pycache__")
+                for filename in sorted(filenames):
+                    if not filename.endswith(".py"):
+                        continue
+                    path = os.path.join(dirpath, filename)
+                    rel = os.path.relpath(path, _REPO_ROOT).replace(os.sep, "/")
+                    if rel == skip:
+                        continue
+                    scanned += 1
+                    violations.extend(
+                        f"{rel}: {problem}"
+                        for problem in check_pane_round_boundary(_parse_path(path))
+                    )
+        self.assertGreater(scanned, 0)
+        self.assertEqual([], violations)
+
     def test_no_test_reads_planning(self):
         # SPEC R9: every direct tests/*.py file; tests/fixtures/ is data and is not walked.
         tests_root = os.path.dirname(os.path.abspath(__file__))
@@ -3379,6 +3425,25 @@ class TestArchNonVacuity(unittest.TestCase):
             [], check_no_wake_import(ast.parse("from ai_kit_session_wake import fire\n"))
         )
         self.assertEqual([], check_no_wake_import(ast.parse("import json\n")))
+
+    def test_pane_round_boundary_flags_direct_rounds(self):
+        # Each direct pane-round form the 42-08 rule exists to catch, plus the two
+        # sanctioned shapes that stay clean: closing a pane and launching through
+        # run_runner with the pane as its spawn seam.
+        flagged = (
+            "herdr_pane.run_round(p, j)\n",
+            "from ai_kit_spec.herdr_pane import read_verdict\n",
+            'herdr_pane.PaneRound([], "", ".", 1)\n',
+        )
+        for source in flagged:
+            self.assertNotEqual([], check_pane_round_boundary(ast.parse(source)))
+        clean = (
+            "herdr_pane.close_pane(p)\n",
+            'runner_dispatch.run_runner(s, "p", '
+            "runner_dispatch.RunnerSeams(spawn_fn=herdr_pane.pane_spawn(p)))\n",
+        )
+        for source in clean:
+            self.assertEqual([], check_pane_round_boundary(ast.parse(source)))
 
     @staticmethod
     def _xs_hits(source):

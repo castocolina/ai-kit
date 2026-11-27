@@ -16,6 +16,10 @@ MARKERS = {
     "## Pinned resume": "state-management.md",
     "## Owner stop": "resolution-stops.md",
     "## Host-config audit": "dispatch-external-cli.md",
+    "## Lane transport": "dispatch-external-cli.md",
+    "## Executor pick": "dispatch-external-cli.md",
+    "<!-- lite-block:start -->": "lite-block.md",
+    "## Code review (after the final review, before Step 5)": "SKILL.md",
 }
 RULES = {
     "re-dispatches unchanged at any": "state-management.md",
@@ -38,6 +42,8 @@ RULES = {
         "before and after the lane"
     ): "dispatch-external-cli.md",
     "**Flagged switch.** Runs for every classified": "dispatch-external-cli.md",
+    "renewed after three rounds, before a round starts": "dispatch-external-cli.md",
+    "executor pick: <dispatched key> (default: ": "dispatch-external-cli.md",
 }
 # The links SKILL.md must hold.
 LINKS = (
@@ -45,6 +51,8 @@ LINKS = (
     "references/resolution-stops.md#owner-stop",
     "references/escalation.md",
     "references/dispatch-external-cli.md#host-config-audit",
+    "references/code-review.md",
+    "references/lite-block.md",
 )
 # The sibling-relative links each reference file must hold.
 SOURCE_LINKS = {

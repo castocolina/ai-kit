@@ -4,8 +4,9 @@ MANDATORY: read this file in full before running its block; do NOT load it at an
 
 Closes the plan's unit: `fold.py checkpoint --plan "$PLAN_FILE" --base "$FOLD_BASE" --final` folds
 the plan's commits (`FOLD_BASE..HEAD`) into one commit per logical feature and marks the unit
-finished, then `fold.py ready --plan "$PLAN_FILE"` marks its PR ready. Run it once, after the final
-whole-branch review passes. The folding policy is the fold skill's `references/folding-policy.md`;
+finished, then `fold.py ready --plan "$PLAN_FILE"` marks its PR ready. Run it once, after the code
+review step (`code-review.md`) passes; the block refuses unless that review passed for the tree of
+the current HEAD. The folding policy is the fold skill's `references/folding-policy.md`;
 the unit flow is its `references/adapter-guide.md`.
 
 ## The block
@@ -16,8 +17,15 @@ task-paths block printed.
 ```bash
 SCALARS="<SCALARS path printed by the task-paths block>"
 while IFS== read -r k v; do [[ $k =~ ^[A-Z][A-Z0-9_]*$ ]] || continue; printf -v "$k" '%s' "$v"; done < "$SCALARS"
-for n in SKILL_DIR PLAN_FILE FOLD_BASE CWD; do case "${!n}" in ""|"<"*)
+for n in SKILL_DIR PLAN_FILE FOLD_BASE CWD SHIM QUOTA_PATH PROJECT_KEY; do case "${!n}" in ""|"<"*)
   printf 'ERROR: %s is empty or a placeholder -- fill it from the scalar file\n' "$n"; exit 1 ;; esac; done
+CR_STATE="$(dirname "$QUOTA_PATH")/superpowers-run-${PROJECT_KEY}-code-review/state.json"
+CR_HEAD="$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(s["reviewed_head"] if s.get("state") in ("pass", "owner_accepted") else "")' "$CR_STATE" 2>/dev/null)"
+CR_TREE="$(git -C "$CWD" rev-parse -q --verify "${CR_HEAD:-none}^{tree}" 2>/dev/null)"
+if [ -z "$CR_TREE" ] || [ "$CR_TREE" != "$(git -C "$CWD" rev-parse 'HEAD^{tree}')" ]; then
+  printf 'ERROR: the code review has not passed for HEAD (%s) -- STOP and tell the user\n' "$CR_STATE"; exit 1
+fi
+python3 "$SHIM" close-transports --transport-record "$(dirname "$QUOTA_PATH")/superpowers-run-${PROJECT_KEY}-transport.json" > "$(dirname "$QUOTA_PATH")/superpowers-run-${PROJECT_KEY}-close-transports.json" 2>&1 || printf 'WARNING: close-transports exited %s; the runner sweep closes leftovers at its next start\n' "$?" >&2
 FOLD_PY=""
 for d in "$(dirname "$SKILL_DIR")/ai-kit-commit-fold" \
          "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/ai-kit-commit-fold" \
@@ -43,6 +51,7 @@ exit $?
 
 - Where the host has a subagent, dispatch the block to it and relay both flow reports verbatim.
   Otherwise run the block yourself, as written.
+- Before folding, the block closes the plan's recorded lane transports (`close-transports`, see `dispatch-external-cli.md` "Lane transport"); its JSON goes to `superpowers-run-<key>-close-transports.json` and a failure is a warning, never a stop.
 - The block runs `fold.py checkpoint --plan "$PLAN_FILE" --base "$FOLD_BASE" --final`, then
   `fold.py ready --plan "$PLAN_FILE"`. The checkpoint's report is the flow report: its first line is
   `flow checkpoint <unit>:`. Each report's last line is `outcome: <unit> <done | nothing to do |
@@ -60,6 +69,9 @@ exit $?
   the branch by hand. A refused `ready` leaves the PR a draft.
 - With `UNIT_FLOW=0` (Step 1's start was refused `no_remote` or `no_trunk` and the user chose to
   go on), the block folds with `fold.py superpowers --plan` and runs no `ready`; nothing is pushed.
+  Its report's last line is `outcome: <unit> <folded | nothing to fold | refused <reason>>`:
+  `folded` and `nothing to fold` (exit 0) are its successful outcomes, so they clear the run's
+  start scalars exactly as `done` and `nothing to do` do (`SKILL.md` Step 5); a refusal keeps them.
 - superpowers' finishing step is not used to merge, push or open a PR for this unit. A plan run
   inline, without this skill, follows the same three commands: `fold.py start --plan`, then
   `fold.py checkpoint --plan` with `--base` and `--final`, then `fold.py ready --plan`.

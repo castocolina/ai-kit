@@ -151,7 +151,8 @@ def ask_items(entry: str, items: list, env, run=subprocess.run, strict=False) ->
                 timeout=_timeout(len(group)),
                 check=False,
             )
-        except (OSError, subprocess.SubprocessError) as error:
+        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as error:
+            # an undecodable reply is a failed call like any other: advisory never gates
             reason = "timeout" if isinstance(error, subprocess.TimeoutExpired) else "no answer"
             answers.update({item["id"]: (None, None, reason) for item in group})
             continue

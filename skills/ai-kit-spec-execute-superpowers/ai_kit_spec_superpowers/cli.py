@@ -4,6 +4,7 @@ executing agent one concrete, runnable command for every operation: resolve-inje
 candidate resolution), dispatch-task (the actual write-capable dispatch, which preserves an
 implementer-authored report file rather than overwriting it with stdout -- CRITICAL finding),
 classify-dispatch-failure, implementer-status (the status the reply declares on a line of its own),
+runner-facts (the runner's status, findings and coverage from a dispatch result),
 resume-exclusions (computes what's safe to PERSIST as a resumable-state exclusion set without
 permanently excluding a merely quota-exhausted candidate -- CRITICAL finding),
 write-resumable-state. There is no native dispatch subcommand -- that mode is dispatched in-process
@@ -22,15 +23,28 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, NamedTuple, TextIO
 
-from ai_kit_spec import capability_block, host_config, lane_switch, prompt_guard
-from ai_kit_spec.cache import cache_read_json, cache_write_json
+from ai_kit_spec import (
+    capability_block,
+    executor_pick,
+    herdr_pane,
+    host_config,
+    lane_switch,
+    lane_transport,
+    prompt_guard,
+    routing,
+    runner_dispatch,
+)
+from ai_kit_spec.cache import cache_read_json, cache_write_json, cache_write_text
 from ai_kit_spec.config_io import ConfigError, cfg_resolve_quiet
 from ai_kit_spec.detection import (
     CBM_NAME,
     LOOPBACK_URLOPEN,
+    cache_runtimes_path,
     check_cbm_registered,
+    detect_current_runtime,
     detect_tool_availability,
     resolve_agents_tooling_path,
     run_cbm_index,
@@ -41,8 +55,10 @@ from ai_kit_spec.dispatch_guidance import (
     build_gates_guidance,
     checked_owner_config_paths,
 )
+from ai_kit_spec.execute_dispatch import ExecuteSeams, dispatch_execute
 from ai_kit_spec.execute_selection import ExecuteSelectionError
 from ai_kit_spec.lane_settings import LaneSettingError
+from ai_kit_spec.model_catalog import cache_catalog_path, split_catalog_meta
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
 from ai_kit_spec.routing import (
     RuntimesSeams,
@@ -59,6 +75,7 @@ from ai_kit_spec_superpowers.dispatch_injection import (
     DispatchTaskRequest,
     QuotaExhaustedError,
     SuperpowersDispatchGuidance,
+    SuperpowersDispatchSeams,
     assemble_candidates,
     build_dispatch_injection,
     compute_ladder_keys,
@@ -91,6 +108,11 @@ _GATE_NOTES = {
     "no-target": "no lane above it matches the lane's escalation flags",
 }
 
+_LITE_REL = os.path.join(".aikit", "brief", "lite-executor.md")
+_LITE_REF = Path(__file__).resolve().parents[1] / "references" / "lite-block.md"
+_LITE_START = "<!-- lite-block:start -->"
+_LITE_END = "<!-- lite-block:end -->"
+
 
 class CliDeps(NamedTuple):
     assemble_candidates_fn: Callable[..., tuple] = assemble_candidates
@@ -117,7 +139,10 @@ class CliDeps(NamedTuple):
     urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN
     env_fn: Callable[[], dict] = lambda: dict(os.environ)
     stdout: TextIO = sys.stdout
+    pick_executor_fn: Callable[..., Any] = executor_pick.pick_executor
     clock_fn: Callable[[], float] = time.time
+    close_pane_fn: Callable[..., Any] = herdr_pane.close_pane
+    run_sweep_fn: Callable[..., Any] = runner_dispatch.run_sweep
 
 
 class QuotaExhaustionEmitContext(NamedTuple):
@@ -315,6 +340,85 @@ def _blocked_pool_quota(
         lanes, ranked, existing_quota, deps.clock_fn(), lane_switch.blocked_reader(deps))
 
 
+def _catalog_entries(deps: CliDeps) -> dict:
+    """The model catalog's entries; an unreadable cache reads as none."""
+    return split_catalog_meta(deps.cache_read_json_fn(cache_catalog_path(deps.env_fn())))[0]
+
+
+def _pick_fn_for(
+    deps: CliDeps, args: argparse.Namespace, loaded: ResolveTaskLoadResult,
+) -> Callable[[list], executor_pick.Pick] | None:
+    """jev's executor pick, built only for a plain first resolution."""
+    if args.fix_round != 0 or loaded.escalation_exclude:
+        return None
+
+    def pick(eligible: list) -> executor_pick.Pick:
+        labels = executor_pick.candidate_labels(
+            eligible, loaded.routes, loaded.task_type, _catalog_entries(deps))
+        return deps.pick_executor_fn(
+            eligible, labels, deps.env_fn(), functools.partial(deps.run_fn, cwd=args.cwd))
+    return pick
+
+
+def _lite_text() -> str:
+    """The block between the markers of references/lite-block.md."""
+    text = _LITE_REF.read_text(encoding="utf-8")
+    block = text.split(_LITE_START, 1)[1].split(_LITE_END, 1)[0]
+    return block.strip("\n") + "\n"
+
+
+def _cached_routes(deps: CliDeps, candidates: list) -> dict:
+    """Exec routes from the cached runtimes snapshot only: no host probe and no cache write."""
+    env = deps.env_fn()
+    inventory = routing.inventory_from_snapshot(
+        deps.cache_read_json_fn(cache_runtimes_path(env)))
+    host = detect_current_runtime(env)
+    return {c["key"]: routing.route(routing.RouteInput.of(c), host, "exec", inventory)
+            for c in candidates}
+
+
+def _brief_inside(cwd: str) -> bool:
+    """True when <cwd>/.aikit/brief resolves inside the resolved cwd (symlinks followed)."""
+    root = os.path.realpath(cwd)
+    return os.path.commonpath(
+        [root, os.path.realpath(os.path.join(cwd, ".aikit", "brief"))]) == root
+
+
+def _cmd_lite_block(args: argparse.Namespace, deps: CliDeps) -> int:
+    """Write the lite block beside the plan-writer brief when the executor that will run is lite."""
+    if not _brief_inside(args.cwd):
+        print("ai-kit-spec: lite-block: brief folder outside the project", file=sys.stderr)
+        return 2
+    candidates, top_n_keys = deps.assemble_candidates_fn(
+        args.cwd, deps.env_fn(), cfg_resolve_fn=cfg_resolve_quiet)
+    order = {k: i for i, k in enumerate(top_n_keys)}
+    routes = _cached_routes(deps, candidates)
+    ranked = sorted((c for c in candidates if routes[c["key"]] not in routing.SKIP_ROUTES),
+                    key=lambda c: order.get(c["key"], len(order)))
+    entries = _catalog_entries(deps)
+    labels = executor_pick.candidate_labels(ranked, routes, "plan", entries)
+    pick = deps.pick_executor_fn(ranked, labels, deps.env_fn(),
+                                 functools.partial(deps.run_fn, cwd=args.cwd))
+    # no jev pick: the default order decides, so its first lane is the executor that will run
+    picked = next((c for c in ranked if c["key"] == pick.key), ranked[0] if ranked else None)
+    lite = picked is not None and executor_pick.is_lite(entries, picked)
+    path = os.path.join(args.cwd, _LITE_REL)
+    removed = False
+    try:
+        if lite:
+            cache_write_text(path, _lite_text())
+        elif os.path.exists(path):
+            os.remove(path)
+            removed = True
+    except OSError:
+        print(f"ai-kit-spec: lite-block: cannot write {path}", file=sys.stderr)
+        return 2
+    deps.stdout.write(json.dumps({
+        "lite": lite, "key": picked["key"] if picked else None, "decided_by": pick.decided_by,
+        "path": path if lite else None, "removed_stale": removed}))
+    return 0
+
+
 def _run_resolve_injection_build(deps: CliDeps, inputs: ResolveInjectionRunInputs) -> int:
     loaded = inputs.loaded
     request = BuildInjectionRequest(
@@ -325,7 +429,8 @@ def _run_resolve_injection_build(deps: CliDeps, inputs: ResolveInjectionRunInput
         deps, inputs.args.quota_path, loaded.candidates, existing_quota, loaded.routes)
     try:
         result = deps.build_dispatch_injection_fn(
-            request, BuildInjectionOptions(quota=quota, routes=loaded.routes))
+            request, BuildInjectionOptions(quota=quota, routes=loaded.routes,
+                                           pick_fn=_pick_fn_for(deps, inputs.args, loaded)))
         result["ladder_keys"] = loaded.ladder_keys
         deps.stdout.write(json.dumps(result))
         return 0
@@ -445,6 +550,56 @@ def _maybe_write_report_fallback(
     _write_report_fallback(args, _REPORT_FALLBACK_MARKER + result.get("stdout", ""))
 
 
+def _task_round_start(args: argparse.Namespace, deps: CliDeps, injection: dict) -> tuple | None:
+    """The lane's transport round for a --transport-record dispatch: the roster row whose key,
+    runtime and model match the injection exactly, chosen under the record's lock. None (and no
+    roster read) when no record path was given; None too when the roster holds no exact row, so
+    the call runs today's fresh-subprocess path with no record write. A record file that
+    cannot be used prints one stderr line and returns None."""
+    if args.transport_record is None:
+        return None
+    try:
+        lanes, _ = deps.assemble_candidates_fn(
+            args.target_dir, deps.env_fn(), cfg_resolve_fn=cfg_resolve_quiet)
+    except ConfigError:
+        lanes = []
+    for index, candidate in enumerate(lanes):
+        row = candidate["roster_entry"]
+        if candidate["key"] != injection.get("key") \
+                or row.get("runtime") != injection.get("runtime") \
+                or row.get("model") != injection.get("model"):
+            continue
+        entry = {**row, "runtime": injection.get("runtime"), "model": injection.get("model")}
+        start = lane_transport.RoundStart(
+            args.transport_record,
+            lane_transport.lane_request("execute", index, entry, deps.env_fn(),
+                                        deps.which_fn),
+            os.getpid())
+        choice = lane_transport.try_begin_round(start)
+        return None if choice is None else (start, choice)
+    return None
+
+
+def _task_pane_runner(start, target_dir: str):
+    """The pane runner for one execute round: one tier, the request's own timeout."""
+    def fallback(spec, tiers, prompt, seams=None):
+        return runner_dispatch.run_runner(
+            spec._replace(timeout_s=tiers[-1]), prompt, seams)
+
+    return lane_transport.pane_runner(start, target_dir, "execute", fallback)
+
+
+def _task_pane_kwargs(args: argparse.Namespace, round_start) -> dict:
+    """seams only for a pane round, so a fake of shape (request, guidance=None) stays valid."""
+    if round_start is None or round_start[1].transport != "pane":
+        return {}
+    runner = _task_pane_runner(round_start[0], args.target_dir)
+    seams = ExecuteSeams(
+        runner_fn=lambda spec, prompt, seams=None: runner(spec, [spec.timeout_s], prompt, seams))
+    return {"seams": SuperpowersDispatchSeams(
+        dispatch_execute_fn=functools.partial(dispatch_execute, seams=seams))}
+
+
 def _cmd_dispatch_task(args: argparse.Namespace, deps: CliDeps) -> int:
     injection, prompt, format_block = _load_dispatch_task_files(args)
     try:
@@ -454,19 +609,44 @@ def _cmd_dispatch_task(args: argparse.Namespace, deps: CliDeps) -> int:
         return 2
     report_before = _read_report_snapshot(args.report_file)
     guidance = _dispatch_guidance_for_cli(deps, args, injection, format_block, inputs)
+    round_start = _task_round_start(args, deps, injection)
+    session_id = (round_start[1].session_id
+                  if round_start is not None and round_start[1].transport == "resume"
+                  else None)
     dispatch_request = DispatchTaskRequest(
-        injection, prompt, args.target_dir, args.timeout)
+        injection, prompt, args.target_dir, args.timeout, session_id=session_id)
     try:
-        result = deps.dispatch_superpowers_task_fn(dispatch_request, guidance=guidance)
+        result = deps.dispatch_superpowers_task_fn(
+            dispatch_request, guidance=guidance,
+            **_task_pane_kwargs(args, round_start))
     except capability_block.LaneRefused as exc:
         deps.stdout.write(json.dumps({"runtime": injection.get("runtime"),
                                       "model": injection.get("model"), "command": "", "stdout": "",
                                       "returncode": prompt_guard.REFUSED_EXIT, "timed_out": False,
                                       "reason": exc.record["reason"], "status": exc.record}))
         return prompt_guard.REFUSED_EXIT
+    if round_start is not None:
+        lane_transport.try_end_round(round_start[0], round_start[1], result.get("status"))
     _maybe_write_report_fallback(args, result, report_before)
     deps.stdout.write(json.dumps(result))
     return 0
+
+
+def _cmd_close_transports(args: argparse.Namespace, deps: CliDeps) -> int:
+    """Close the plan's recorded panes and run the runner sweep once."""
+    try:
+        outcome = lane_transport.close_record(
+            args.transport_record, deps.close_pane_fn, deps.run_sweep_fn)
+    except ValueError:
+        print(f"close-transports: unreadable transport record {args.transport_record}",
+              file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"close-transports: cannot read transport record {args.transport_record}: {exc}",
+              file=sys.stderr)
+        return 2
+    deps.stdout.write(json.dumps(outcome) + "\n")
+    return 1 if outcome["failed"] else 0
 
 
 def _cmd_print_guidance(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -493,6 +673,18 @@ def _cmd_classify_dispatch_failure(args: argparse.Namespace, deps: CliDeps) -> i
 def _cmd_implementer_status(args: argparse.Namespace, deps: CliDeps) -> int:
     result = json.loads(args.dispatch_result_json)
     deps.stdout.write(implementer_status(result.get("stdout") or ""))
+    return 0
+
+
+def _cmd_runner_facts(args: argparse.Namespace, deps: CliDeps) -> int:
+    """The runner's status, finding codes and coverage from a dispatch result's status line,
+    one word each on one line; `-` for a missing value."""
+    result = json.loads(args.dispatch_result_json)
+    line = result.get("status") if isinstance(result, dict) else None
+    facts = line if isinstance(line, dict) else {}
+    words = ["".join(str(facts.get(key) or "").split()) or "-"
+             for key in ("status", "findings", "coverage")]
+    deps.stdout.write(" ".join(words) + "\n")
     return 0
 
 
@@ -692,6 +884,18 @@ def _add_fallback_parser(sub) -> None:
                                  "task-narrowed candidates")
 
 
+def _add_result_parsers(sub) -> None:
+    p_status = sub.add_parser(
+        "implementer-status",
+        help="the status the dispatch result's stdout declares on a line of its own, else BLOCKED")
+    p_status.add_argument("--dispatch-result-json", required=True)
+
+    p_facts = sub.add_parser(
+        "runner-facts",
+        help="the runner's status, finding codes and coverage from a dispatch result, one line")
+    p_facts.add_argument("--dispatch-result-json", required=True)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ai-kit-spec-execute-superpowers")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -761,6 +965,14 @@ def _build_parser() -> argparse.ArgumentParser:
              "on a fix round destroys the implementer-authored report (and any earlier rounds' "
              "evidence) subagent-driven-development's own task review / re-review reads as the "
              "task's persistent memory.")
+    p_dispatch.add_argument(
+        "--transport-record", default=None,
+        help="the plan's lane-transport record; absent means one fresh subprocess call")
+
+    p_close = sub.add_parser(
+        "close-transports",
+        help="close the plan's recorded panes and run the runner sweep once")
+    p_close.add_argument("--transport-record", required=True)
 
     p_guidance = sub.add_parser(
         "print-guidance",
@@ -770,10 +982,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_classify = sub.add_parser("classify-dispatch-failure")
     p_classify.add_argument("--dispatch-result-json", required=True)
 
-    p_status = sub.add_parser(
-        "implementer-status",
-        help="the status the dispatch result's stdout declares on a line of its own, else BLOCKED")
-    p_status.add_argument("--dispatch-result-json", required=True)
+    _add_result_parsers(sub)
 
     p_resume_excl = sub.add_parser(
         "resume-exclusions",
@@ -809,6 +1018,12 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="the saved INJECTION_JSON.json, never JSON text on argv")
     p_gate.add_argument("--out-dir", required=True, help="the task's run folder")
 
+    p_lite = sub.add_parser(
+        "lite-block",
+        help="write the lite executor block beside the plan-writer brief when the executor pick "
+             "is a lite model")
+    p_lite.add_argument("--cwd", required=True)
+
     _add_fallback_parser(sub)
 
     return parser
@@ -817,14 +1032,17 @@ def _build_parser() -> argparse.ArgumentParser:
 _COMMANDS = {
     "resolve-injection": _cmd_resolve_injection,
     "dispatch-task": _cmd_dispatch_task,
+    "close-transports": _cmd_close_transports,
     "print-guidance": _cmd_print_guidance,
     "classify-dispatch-failure": _cmd_classify_dispatch_failure,
     "implementer-status": _cmd_implementer_status,
+    "runner-facts": _cmd_runner_facts,
     "resume-exclusions": _cmd_resume_exclusions,
     "write-resumable-state": _cmd_write_resumable_state,
     "escalation-gate": _cmd_escalation_gate,
     "executor-fallback": _cmd_executor_fallback,
     "host-config-audit": _cmd_host_config_audit,
+    "lite-block": _cmd_lite_block,
 }
 
 

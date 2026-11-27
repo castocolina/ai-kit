@@ -132,6 +132,64 @@ affinity and context filters and before dispatch; the renewal count is a named c
    - Acceptance: the judge records meet the bar of AGENTS.md and `make check-dogfood` validates them; `evals.json` gains one eval
      each for the review loop, the executor pick, the lite block and the transport choice.
 
+## Amendments (2026-11-26, after research)
+
+Live facts checked on 2026-11-26 (42-RESEARCH.md); the requirement texts above stay as approved, and these notes fix their
+meaning for planning.
+
+1. R8 current state: the adapter carries 18 evals (not 14); the four new evals bring it to 22.
+2. R2 and D-02: `lens_delivery.UI_EXTENSIONS` is already public in `ai_kit_spec`, and `lens_set` detects a UI path from the
+   paths a review lane gets through `dispatch-reviewer --files`; the frozen cross-skill import allowlist forbids an import
+   between the adapter and `ai_kit_spec` in either direction for `task_classification.py`. So the code review passes the
+   diff's changed paths (deleted paths dropped) as `--files`, the adapter's tuple stays private, and the existing pin test that
+   compares the two tuples keeps them one rule.
+3. R1: spec review's pass rule is a report status line and its cap of 3 is skill prose; "no CRITICAL or HIGH open" is new code
+   (a verdict over the parsed findings). Review lanes are asked for ai-kit's report shape; a superpowers code-reviewer report is
+   read with Critical as CRITICAL, Important as HIGH and Minor as LOW.
+4. R4: the adapter skill runs after the plan exists, so the lite file is written by the adapter shim's `lite-block` command,
+   called from the project's own plan-writer rail (in ai-kit, AGENTS.md beside `fold.py boundary --next --point plan`). Lite
+   means the picked model's catalog class is `small` or `fast`; a router alias reads class `router` and is lite only when the
+   owner states its class.
+5. R5 and R6, verified source: shipped code cannot read the spike record, so a resumed session is verified only by the
+   runner's own session label (`--describe` facts) bound to the installed version in the runtimes snapshot; the runner's
+   help-text `FORMULA_LABELS` never count. A verified spike row flips that label in the runner template (version bump and
+   re-render); with no consent line no row runs and nothing flips. No recorded run verifies a herdr pane yet, so no pane is
+   chosen automatically.
+6. R6, pane: Phase 37 D-27 handed the interactive pane to this phase with its protocol (label, run directory files, `run.json`,
+   `rc` or a result file as the only verdict). The pane transport is an `ai_kit_spec` helper on that protocol: one tab per lane
+   per plan, each round a launcher typed into the reused pane, the verdict read from the round's `rc` and output files, the
+   tab closed by id at plan close, and dead leftovers closed by the runner's `--sweep` (no second sweep).
+7. Background facts: the runner template is `skills/ai-kit-spec-review/references/cross-ai.mjs` (cursor's resume form at line
+   1768, its label at 1784).
+8. Edge rows: the engine keeps an `unclassified` row unresolved, so the R2 and R3 rows stay flagged; the plans carry them as
+   backstop truths (R2: an upper-case `.TSX` path loads both lenses, a path list with no UI path never loads `impeccable`, a
+   missing lens is noted and the lane runs, a deleted path is dropped before `--files`; R3: a pick outside the roster is
+   discarded, a filtered candidate is never offered, one candidate means no jev call, the pick is asked once per resolution).
+
+9. R6, verified versions (live fact, 2026-11-27, planning review): the runtimes snapshot records an installed version only
+   for opencode, cursor, codex and pi (`clis.<id>.listed_from.version`), so a resumed session for claude or copilot reads
+   unverified even after its runner label is verified; the shipped transport docs state this limit.
+10. R2, missing lens (live fact, 2026-11-27): an uninstalled lens has no row in the discovered skill table, so the lens note list
+   (`LENS_NOTES`) never fires for it; the code review prints its own note `lens <name> not installed; the review runs without
+   it` from the same discovery, and the lane still runs.
+11. R6, pane lifetime (live fact, 2026-11-27): every runner start sweeps run directories whose runner and launcher are both
+   dead, so a pane reused across rounds keeps a live launcher loop (it exits after an idle limit); the runner's `--sweep`
+   closes a leftover pane only after its launcher exited, and the code review's plan close closes its own panes by id.
+
+## Amendments (2026-11-27, owner)
+
+12. Scope readings the plans build, confirmed by the owner 2026-11-27: (1) review fit (R7's severity-fit classification of
+   review findings) runs only in the code-review loop; spec review's own loop is unchanged; (2) spec-review lanes never get a
+   herdr pane; (3) a pane hosts the lane's headless runner command, not an interactive agent TUI; (4) router aliases are never
+   lite (a confirmed router alias reads catalog class `router`, and an entry the owner restates with another class is no
+   longer a router alias), so `router-env/my-coding` gets no lite block; this replaces amendment 4's "lite only when the owner
+   states its class"; (5) claude and copilot never read a verified resume (amendment 9: the runtimes snapshot records no
+   version for them); (6) native effort goes through the Claude Code `Agent` tool's `effort` parameter.
+
+13. EXE-06 (R5 and R6), resume spike (owner decision, 2026-11-27): the resume spike was skipped by the owner on 2026-11-27; every resume label stays unverified and no runner label flips. No host is probed and no spike record is written in this phase; R5's acceptance (a record row per installed host) moves to backlog Phase 999.36, and the R5 prohibition holds trivially (no probe runs). R6 is unchanged in scope: the chooser reads only the runner's own session label, so with the shipped labels every lane runs as a fresh subprocess, and its resume path is proven by patched-label fixtures.
+
+14. Code-review fixes (2026-11-27): (1) R4, the lite block with no jev pick (owner decision, 2026-11-27, "Use the default-order head"): when jev is absent, low, in error or has one candidate, the block reads the default order's first lane, the lane that will run; a strong or router head adds nothing, a lite head writes the block, and an empty roster adds nothing (`decided_by` stays `default`). This replaces the empty edge row's "no executor picked adds nothing". (2) The shared jev client's fix: an undecodable jev reply now reads as a jev error, so every caller falls back to its documented default. This is a root-cause bug fix in the shared client, not a new backend or a change to its contract; the out-of-scope line on the shared jev client still holds for everything else.
+
 ## Boundaries
 
 **In scope:**
@@ -186,7 +244,7 @@ affinity and context filters and before dispatch; the renewal count is a named c
 | boundary | R4 | 🧪 backstop | Held-out fixture: a model whose catalog class sits exactly at the lite edge is read as the catalog states; a missing class means no lite file. |
 | precision | R4 | ✅ covered | R4 acceptance: the brief file bytes are unchanged and no third-party file changes. |
 | adjacency | R4 | 🧪 backstop | Held-out fixture: a model whose catalog class is unknown gets no lite block. |
-| empty | R4 | 🧪 backstop | Held-out fixture: no executor picked adds nothing to the brief. |
+| empty | R4 | 🧪 backstop | Held-out fixture: no executor picked adds nothing to the brief. *(amended 2026-11-27, amendment 14: with no jev pick the default-order head decides; an empty roster adds nothing)* |
 | encoding | R4 | ⛔ dismissed | The lite block is a fixed ai-kit text; no length or normalization semantics. |
 | ordering | R4 | ⛔ dismissed | The block is appended once at a fixed place. |
 | concurrency | R4 | ⛔ dismissed | The brief is written once per unit by one agent. |

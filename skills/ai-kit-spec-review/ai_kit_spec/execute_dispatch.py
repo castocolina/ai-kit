@@ -108,11 +108,11 @@ def build_execute_guidance(
 
 
 def _runner_spec(candidate: dict, spec: ExecuteDispatchSpec) -> RunnerSpec:
-    """One exec-mode runner spec; runner_flags adds codex's OS write confinement and,
-    for a flagged pooled lane, --pool."""
+    """One exec-mode runner spec; runner_flags adds codex's OS write confinement, a flagged
+    pooled lane's --pool, and a candidate session's --session-id."""
     return spec_with_effort(candidate["runtime"], candidate["model"], "exec", spec.timeout,
                             {**candidate, "cwd": spec.target_dir})._replace(
-        pool=candidate.get("pool"))
+        pool=candidate.get("pool"), session_id=candidate.get("session_id"))
 
 
 def _refuse_candidate(candidate: dict, target_dir: str) -> str:

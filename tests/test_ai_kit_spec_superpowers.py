@@ -26,7 +26,14 @@ sys.path.insert(
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute"))
 
 import detect_framework as router_detect_framework
-from ai_kit_spec import capability_block, config_io, lane_settings, routing, runner_dispatch
+from ai_kit_spec import (
+    capability_block,
+    config_io,
+    executor_pick,
+    lane_settings,
+    routing,
+    runner_dispatch,
+)
 from ai_kit_spec_superpowers import cli as superpowers_cli
 from ai_kit_spec_superpowers import dispatch_injection, task_classification
 
@@ -37,6 +44,11 @@ from tests import fold_fixtures, index_fakes, session_wake_fakes
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
                                  "ai-kit-commit-fold", "scripts"))
 import fold_adapters
+
+
+def _no_pick(_candidates, _labels, _env, _run=None, **_kwargs):
+    """Keep the executor pick off the real jev client."""
+    return executor_pick.Pick(None, "default", None, "jev absent")
 
 
 class TestClassifyTask(unittest.TestCase):
@@ -159,7 +171,7 @@ class TestAssembleCandidates(unittest.TestCase):
             options=dispatch_injection.BuildInjectionOptions(quota={}),
         )
         self.assertEqual(result, {"mode": "native", "key": "claude/opus-5",
-                                  "runtime": None, "model": "opus"})
+                                  "runtime": None, "model": "opus", "effort": ""})
 
     def test_purpose_field_is_threaded_through_from_config(self):
         def fake_cfg_resolve(cwd, env):
@@ -285,7 +297,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
         )
         self.assertEqual(
             result,
-            {"mode": "native", "key": "claude/opus-5", "runtime": None, "model": "opus"},
+            {"mode": "native", "key": "claude/opus-5", "runtime": None, "model": "opus",
+             "effort": ""},
         )
 
     def test_external_cli_mode_when_top_candidate_is_another_cli(self):
@@ -485,6 +498,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
                     refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                     route_all_fn=lambda entries, _ctx: {"claude-cli/opus-5": "no_formula"},
                     env_fn=lambda: {"HOME": tmp, "XDG_CACHE_HOME": tmp},
+                    pick_executor_fn=_no_pick,
                     stdout=out,
                 )
         self.assertEqual(rc, 0, stderr.getvalue())
@@ -515,6 +529,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
                     refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                     route_all_fn=lambda entries, _ctx: {"g": "custom"},
                     env_fn=lambda: {"HOME": tmp, "XDG_CACHE_HOME": tmp},
+                    pick_executor_fn=_no_pick,
                     stdout=out,
                 )
         self.assertEqual(rc, 2)
@@ -544,6 +559,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
                     refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                     route_all_fn=lambda entries, _ctx: {
                         "g": "no_formula", "c": "subprocess"},
+                    pick_executor_fn=_no_pick,
                     stdout=out,
                 )
         self.assertEqual(rc, 0)
@@ -1217,6 +1233,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                 route_all_fn=_session_routes,
+                pick_executor_fn=_no_pick,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1227,8 +1244,10 @@ class TestCliResolveInjection(unittest.TestCase):
                 "mode": "native",
                 "runtime": None,
                 "model": "opus",
+                "effort": "",
                 "key": "claude/opus-5",
                 "ladder_keys": ["claude/opus-5"],
+                "pick": {"decided_by": "default", "confidence": None, "note": "jev absent"},
             },
         )
 
@@ -1276,6 +1295,7 @@ class TestCliResolveInjection(unittest.TestCase):
                     }
                 ),
                 route_all_fn=_session_routes,
+                pick_executor_fn=_no_pick,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1336,6 +1356,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                 route_all_fn=_session_routes,
+                pick_executor_fn=_no_pick,
                 stdout=io.StringIO(),
             )
         self.assertEqual(captured["sizes"], {"big.py": 4000})
@@ -1384,6 +1405,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                 route_all_fn=_session_routes,
+                pick_executor_fn=_no_pick,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1435,6 +1457,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                 route_all_fn=_session_routes,
+                pick_executor_fn=_no_pick,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1509,6 +1532,7 @@ class TestCliResolveInjection(unittest.TestCase):
                     }
                 ),
                 route_all_fn=_session_routes,
+                pick_executor_fn=_no_pick,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1576,6 +1600,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                 route_all_fn=_session_routes,
+                pick_executor_fn=_no_pick,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1615,6 +1640,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
                 route_all_fn=_session_routes,
+                pick_executor_fn=_no_pick,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1715,6 +1741,7 @@ class TestResolveInjectionRouting(unittest.TestCase):
                     refresh_quota_cache_fn=recording_refresh,
                     route_all_fn=_route_all_recording(calls),
                     env_fn=lambda: scratch_env,
+                    pick_executor_fn=_no_pick,
                     stdout=out,
                 )
         return rc, out.getvalue(), stderr.getvalue(), refreshed, calls
@@ -2420,6 +2447,30 @@ class TestImplementerStatus(unittest.TestCase):
         self.assertEqual(out.getvalue(), "BLOCKED")
 
 
+class TestCliRunnerFacts(unittest.TestCase):
+    def _facts(self, result):
+        out = io.StringIO()
+        rc = superpowers_cli.main(
+            ["runner-facts", "--dispatch-result-json", json.dumps(result)], stdout=out)
+        self.assertEqual(rc, 0)
+        return out.getvalue()
+
+    def test_prints_status_findings_and_coverage_from_the_status_line(self):
+        result = {"returncode": 0, "stdout": "STATUS: DONE",
+                  "status": {"status": "ok", "findings": "no_commit,task_uncovered",
+                             "coverage": "1/4", "cli": "pi"}}
+        self.assertEqual(self._facts(result), "ok no_commit,task_uncovered 1/4\n")
+
+    def test_missing_values_print_a_dash(self):
+        self.assertEqual(self._facts({"returncode": 0}), "- - -\n")
+        self.assertEqual(self._facts({"status": "not an object"}), "- - -\n")
+        self.assertEqual(self._facts({"status": {"status": "ok"}}), "ok - -\n")
+
+    def test_each_value_stays_one_word(self):
+        result = {"status": {"status": "o k", "findings": "a, b", "coverage": " 2/3 "}}
+        self.assertEqual(self._facts(result), "ok a,b 2/3\n")
+
+
 class TestCliResumeExclusions(unittest.TestCase):
     def test_prints_only_permanent_exclusions(self):
         # CRITICAL finding: the executable subcommand SKILL.md's resume path calls -- proves
@@ -3029,9 +3080,17 @@ class TestFoldStep(unittest.TestCase):
         self.scalars = self.root / "superpowers-run-scalars.env"
         self.scalars.write_text(
             f"SKILL_DIR={self.skill}\nPLAN_FILE={fold_fixtures.SP_PLAN}\n"
-            f"FOLD_BASE={self.pre_plan}\nCWD={self.repo}\n",
+            f"FOLD_BASE={self.pre_plan}\nCWD={self.repo}\n"
+            f"QUOTA_PATH={self.root / 'quota.json'}\nPROJECT_KEY=fake-key\n"
+            f"SHIM={_SUPER_SKILL.parent / 'ai-kit-spec-superpowers.py'}\n",
             encoding="utf-8",
         )
+        cr_dir = self.root / "superpowers-run-fake-key-code-review"
+        cr_dir.mkdir()
+        self.cr_state = cr_dir / "state.json"
+        self.cr_state.write_text(json.dumps(
+            {"round": 1, "reviewed_head": self._git("rev-parse", "HEAD"), "state": "pass"}),
+            encoding="utf-8")
         text = (_SUPER_SKILL.parent / "references" / "fold-step.md").read_text(encoding="utf-8")
         match = re.search(r"```bash\n(.*?)```", text, re.DOTALL)
         assert match is not None, "fold-step.md has no bash block"
@@ -3046,6 +3105,11 @@ class TestFoldStep(unittest.TestCase):
                               env=self.env if env is None else env, capture_output=True,
                               text=True, timeout=300, check=False)
 
+    def _state(self, **fields):
+        record = {"round": 1, "reviewed_head": self._git("rev-parse", "HEAD"), "state": "pass"}
+        record.update(fields)
+        self.cr_state.write_text(json.dumps(record), encoding="utf-8")
+
     def test_documented_block_folds_the_two_features_above_the_pre_plan_commit(self):
         proc = self._run()
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
@@ -3054,6 +3118,40 @@ class TestFoldStep(unittest.TestCase):
         self.assertEqual(f"outcome: {self.unit['id']} skipped (no consent)", lines[-1])
         self.assertEqual("2", self._git("rev-list", "--count", f"{self.pre_plan}..HEAD"))
         self.assertEqual(self.pre_plan, self._git("rev-parse", "HEAD~2"))
+
+    def test_block_refuses_without_a_passing_code_review(self):
+        for name, fields in (
+            ("state file removed", None),
+            ("owner_wait state", {"state": "owner_wait"}),
+            ("a head that is no commit", {"reviewed_head": "0" * 40}),
+            ("a reviewed head with a different tree", {"reviewed_head": self.pre_plan}),
+        ):
+            with self.subTest(name):
+                if fields is None:
+                    self.cr_state.unlink()
+                else:
+                    self._state(**fields)
+                before = self._git("rev-parse", "HEAD")
+                proc = self._run()
+                self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+                self.assertIn("the code review has not passed for HEAD", proc.stdout)
+                self.assertEqual(before, self._git("rev-parse", "HEAD"))
+
+    def test_owner_accepted_state_folds(self):
+        self._state(state="owner_accepted")
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        lines = proc.stdout.strip().splitlines()
+        self.assertTrue(lines[0].startswith("flow checkpoint "), proc.stdout)
+        self.assertEqual(f"outcome: {self.unit['id']} skipped (no consent)", lines[-1])
+        self.assertEqual("2", self._git("rev-list", "--count", f"{self.pre_plan}..HEAD"))
+        self.assertEqual(self.pre_plan, self._git("rev-parse", "HEAD~2"))
+
+    def test_same_tree_rewrite_still_folds(self):
+        same_tree = self._git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "same tree")
+        self._state(reviewed_head=same_tree)
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
     def test_unit_flow_off_folds_with_the_plain_form_and_runs_no_ready(self):
         with self.scalars.open("a", encoding="utf-8") as handle:
@@ -3099,6 +3197,26 @@ class TestFoldStep(unittest.TestCase):
         step_one = text[text.index("## Step 1:"):text.index("## Task paths")]
         self.assertIn("FOLD_BASE", step_one)
         self.assertIn("ai-kit-commit-fold", step_one)
+
+    def test_close_transports_output_goes_to_its_file(self):
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        written = (self.root / "superpowers-run-fake-key-close-transports.json").read_text(
+            encoding="utf-8")
+        self.assertIn("skipped: no transport record", written)
+        self.assertFalse((self.root / "superpowers-run-fake-key-transport.json").exists())
+
+    def test_close_transports_failure_still_folds(self):
+        text = self.scalars.read_text(encoding="utf-8")
+        self.scalars.write_text(
+            text.replace(
+                f"SHIM={_SUPER_SKILL.parent / 'ai-kit-spec-superpowers.py'}",
+                f"SHIM={self.root / 'missing-shim.py'}"),
+            encoding="utf-8")
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertTrue(proc.stdout.splitlines()[0].startswith("flow checkpoint "), proc.stdout)
+        self.assertIn("WARNING: close-transports exited", proc.stderr)
 
 
 class TestStartStep(unittest.TestCase):
@@ -3255,7 +3373,7 @@ class TestFixRoundAndWakeScope(unittest.TestCase):
         self.assertIn('Only a classified `"quota_cycle"` (exit 75 with whole-number '
                       '`retry_after_s` and `cycle` in `$CLASSIFICATION`)', stops)
         self.assertNotIn('Only a classified `"quota_cycle"`', flat)
-        self.assertIn("this is the only classifier call", flat)
+        self.assertIn("this is the only dispatch-failure classifier call", flat)
         self.assertIn("`ai-kit-spec: ignoring untrusted project-local config <path>;", skill)
         self.assertIn("ai-kit-spec: ignoring untrusted project-local config", stops)
 
@@ -3744,7 +3862,7 @@ class TestJsonFilesAndOwnerNamedPair(unittest.TestCase):
             assemble_candidates_fn=lambda cwd, env: (candidates, keys),
             cache_read_json_fn=lambda path: {}, cache_write_json_fn=lambda path, data: None,
             refresh_quota_cache_fn=lambda config, ks, existing, _ttl: {},
-            route_all_fn=_session_routes, stdout=out)
+            route_all_fn=_session_routes, pick_executor_fn=_no_pick, stdout=out)
         self.assertEqual(0, rc)
         result = json.loads(out.getvalue())
         self.assertEqual(("external_cli", "b/two"), (result["mode"], result["key"]))
@@ -3866,6 +3984,464 @@ class TestScalarFile(unittest.TestCase):
             self.assertIn("permanent exclusion", text, name)
         self.assertIn("(resolution-stops.md#owner-stop)", " ".join(
             (_SUPER_REFS / "escalation.md").read_text(encoding="utf-8").split()))
+
+
+class TestCodeReviewStep(unittest.TestCase):
+    """The code review step: placement, cap, pass rule, lanes, gray areas, round state."""
+
+    @staticmethod
+    def _flat(path) -> str:
+        return " ".join(path.read_text(encoding="utf-8").split())
+
+    REF = _SUPER_REFS / "code-review.md"
+
+    def test_step_sits_between_step_four_and_step_five(self):
+        lines = _super_text().splitlines()
+        step4 = next(i for i, line in enumerate(lines) if line.startswith("## Step 4:"))
+        review = next(i for i, line in enumerate(lines) if line.startswith("## Code review ("))
+        step5 = next(i for i, line in enumerate(lines) if line.startswith("## Step 5:"))
+        self.assertLess(step4, review)
+        self.assertLess(review, step5)
+
+    def test_skill_heading_is_a_pointer(self):
+        lines = _super_text().splitlines()
+        start = next(i for i, line in enumerate(lines) if line.startswith("## Code review ("))
+        end = next(i for i, line in enumerate(lines) if line.startswith("## Step 5:"))
+        self.assertLessEqual(end - start, 4)
+        span = " ".join(lines[start:end])
+        self.assertIn("MANDATORY: read [`references/code-review.md`]", span)
+
+    def test_reference_pins_the_cap_and_the_pass_rule(self):
+        flat = self._flat(self.REF)
+        self.assertIn("in at most 3 rounds", flat)
+        self.assertIn("it passes when no CRITICAL or HIGH finding is open", flat)
+        self.assertIn("MEDIUM and LOW findings are listed and never block", flat)
+        self.assertIn("superpowers' `requesting-code-review`", flat)
+        self.assertIn("superpowers' `receiving-code-review`", flat)
+
+    def test_lane_selection_never_falls_back_on_an_error(self):
+        flat = self._flat(self.REF)
+        self.assertIn("config-status --role review", flat)
+        self.assertIn("probe-quota --cwd", flat)
+        self.assertIn("--source-vendor", flat)
+        self.assertIn("never fall back to the session model", flat)
+
+    def test_reference_runs_spec_reviews_lanes_with_the_changed_paths(self):
+        flat = self._flat(self.REF)
+        for needle in ('code-review-paths --base', '--files "${CR_PATHS[@]}"',
+                       '--role review --native', 'switch-lane --cwd',
+                       'code-review-normalize --report', 'merge-reports --doc-paths',
+                       'code-review-verdict --report'):
+            self.assertIn(needle, flat)
+        self.assertLess(flat.index("ping-lanes --cwd"), flat.index("dispatch-reviewer --cwd"))
+        self.assertLess(flat.index("dispatch-reviewer --cwd"),
+                        flat.index("merge-reports --doc-paths"))
+
+    def test_gray_areas_go_through_jev_with_the_no_jev_path(self):
+        flat = self._flat(self.REF)
+        self.assertIn("classify-disagreements --kind code", flat)
+        self.assertIn("A CRITICAL or HIGH item always reaches the owner.", flat)
+        self.assertIn("Without jev, every item goes to the owner, as today.", flat)
+        self.assertIn("A nonzero `CLASSIFY_EXIT` sends every gray item to the owner.", flat)
+
+    def test_fix_waits_for_the_owner_and_keeps_the_fix_round(self):
+        flat = self._flat(self.REF)
+        self.assertIn("wait for the answers before any fix", flat)
+        self.assertIn("leave `FIX_ROUND` unchanged", flat)
+
+    def test_round_state_is_recorded_and_cleared(self):
+        text = self.REF.read_text(encoding="utf-8")
+        self.assertIn(r"printf 'CODE_REVIEW_ROUND=%s\n' " '"$N" | tee -a "$SCALARS"', text)
+        self.assertIn('mv "$CR_DIR/state.json.tmp" "$CR_DIR/state.json"', text)
+        self.assertIn(r"printf 'FOLD_BASE=\nUNIT_FLOW=\nCODE_REVIEW_ROUND=\n' "
+                      '| tee -a "$SCALARS"', _super_text())
+
+    def test_every_block_parses(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        blocks = re.findall(r"```bash\n(.*?)```", self.REF.read_text(encoding="utf-8"),
+                            re.DOTALL)
+        self.assertGreaterEqual(len(blocks), 7)
+        for block in blocks:
+            proc = subprocess.run([bash_bin, "-n", "-c", block], capture_output=True,
+                                  text=True, timeout=60, check=False)
+            self.assertEqual(0, proc.returncode, proc.stderr)
+
+    def test_step_four_and_five_name_the_review_step(self):
+        flat = self._flat(_SUPER_SKILL)
+        self.assertIn("skill's scope ends at Step 3 until the code review step and Step 5", flat)
+        self.assertIn("run its block once the code review step passes", flat)
+
+    def test_cap_stop_lives_in_the_owner_stop(self):
+        stops = self._flat(_SUPER_REFS / "resolution-stops.md")
+        self.assertIn("### Code review cap stop", stops)
+        self.assertIn("Round 3 still has a CRITICAL or HIGH finding open", stops)
+        self.assertIn("`CODE_REVIEW_NEXT=cap_stop_moved <R>`", stops)
+        self.assertIn("review the new head", stops)
+        self.assertIn("when the code review step stops at its cap (`code-review.md`)", stops)
+        review = self._flat(self.REF).lower()
+        self.assertIn("(resolution-stops.md#owner-stop)", review)
+        self.assertNotIn("round 3 still has a critical or high finding open", review)
+
+    def test_fold_runs_after_the_review_step(self):
+        flat = self._flat(_SUPER_REFS / "fold-step.md")
+        self.assertIn("after the code review step (`code-review.md`) passes", flat)
+        self.assertNotIn("after the final whole-branch review passes", flat)
+
+
+class TestCodeReviewTransitions(unittest.TestCase):
+    """The published code-review blocks run on fake lane reports: rounds, cap, partial
+    report, resume."""
+
+    REF = _SUPER_REFS / "code-review.md"
+    _HIGH = ("## Review: code\n### HIGH\n- **Open bug** — Location: src/app.py:1. "
+             "Required: fix it. Why: it breaks.\n### Status: Issues Found — fix and re-invoke\n")
+    _CLEAN = "## Review: code\n### Status: Approved\n"
+    _NO_STATUS = "## Review: code\nThe reviewer left no verdict line.\n"
+    _FIT_MEDIUM0 = (
+        "## Review: code\n### MEDIUM\n- **Open guard gap** — Location: src/app.py:1. "
+        "Required: add the guard. Why: it lets an unsafe input through. "
+        "Labels: kind=security; tier=unit; repro=yes; reach=user; stage=mvp.\n"
+        "### Status: Issues Found — fix and re-invoke\n")
+    _FIT_MEDIUM1 = (
+        "## Review: code\n### MEDIUM\n- **Style drift** — Location: src/app.py:1. "
+        "Required: align the style. Why: it drifts from the file's shape. "
+        "Labels: kind=style; tier=none; repro=no; reach=internal; stage=mvp.\n"
+        "### Status: Issues Found — fix and re-invoke\n")
+
+    def setUp(self):
+        if shutil.which("bash") is None or shutil.which("git") is None:
+            self.skipTest("bash or git not found")
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p42-05-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        home = self.root / "home"
+        home.mkdir()
+        self.env = fold_fixtures.git_env(home)
+        self.env["AI_KIT_REFUSE_REAL_HOME"] = "1"
+        self.repo, self.fold_base, _shas = fold_fixtures.superpowers_project(self.root, self.env)
+        self.tools_py = self.root / "tools.py"
+        spec_review = str(pathlib.Path(__file__).resolve().parent.parent / "skills"
+                          / "ai-kit-spec-review")
+        self.tools_py.write_text(
+            "import os, sys\n"
+            f"sys.path.insert(0, {spec_review!r})\n"
+            "from ai_kit_spec import cli\n"
+            "def refuse(*_args, **_kwargs): "
+            'raise OSError("jev is not reachable in this test")\n'
+            'if sys.argv[1:2] == ["classify-findings"] and '
+            'os.environ.get("FAKE_FIT_FAIL") == "1": sys.exit(2)\n'
+            "sys.exit(cli.main(sys.argv[1:], run_fn=refuse) "
+            'if sys.argv[1] in ("classify-findings", "classify-disagreements") '
+            "else cli.main(sys.argv[1:]))\n", encoding="utf-8")
+        self.cr_dir = self.root / "superpowers-run-fixture-code-review"
+        self.cr_dir.mkdir()
+        self.scalars = self.root / "superpowers-run-scalars.env"
+        self.scalars.write_text(
+            f"TOOLS_PY={self.tools_py}\nCWD={self.repo}\nPLAN_FILE={fold_fixtures.SP_PLAN}\n"
+            f"FOLD_BASE={self.fold_base}\nQUOTA_PATH={self.root / 'quota.json'}\n"
+            "PROJECT_KEY=fixture\n", encoding="utf-8")
+
+    def _block(self, heading_prefix, index=0):
+        """The `index`-th bash block after the first `heading_prefix` line, placeholders filled."""
+        lines = self.REF.read_text(encoding="utf-8").splitlines()
+        start = next(i for i, line in enumerate(lines) if line.startswith(heading_prefix))
+        blocks = re.findall(r"```bash\n(.*?)```", "\n".join(lines[start:]), re.DOTALL)
+        return blocks[index].replace(
+            "<SCALARS path printed by the task-paths block>", str(self.scalars)
+        ).replace("<one line: what the plan built>", "fixture change")
+
+    def _run(self, block):
+        return subprocess.run(["bash", "-c", block], cwd=self.repo, env=self.env,
+                              capture_output=True, text=True, timeout=120, check=False)
+
+    def _head(self):
+        return fold_fixtures.run_git(self.repo, self.env, "rev-parse", "HEAD").strip()
+
+    def _set_state(self, round_no, reviewed_head, state, fix_head=None):
+        record = {"round": round_no, "reviewed_head": reviewed_head, "state": state}
+        if fix_head is not None:
+            record["fix_head"] = fix_head
+        (self.cr_dir / "state.json").write_text(json.dumps(record), encoding="utf-8")
+
+    def _state(self):
+        return json.loads((self.cr_dir / "state.json").read_text(encoding="utf-8"))
+
+    def _next(self, proc):
+        for line in proc.stdout.splitlines():
+            if line.startswith("CODE_REVIEW_NEXT="):
+                return line.partition("=")[2]
+        self.fail(f"no CODE_REVIEW_NEXT line in stdout: {proc.stdout!r}")
+
+    def _lanes(self, n, reports):
+        (self.cr_dir / "reviewers.json").write_text(
+            json.dumps([{"key": "fake/lane-a"}, {"key": "fake/lane-b"}]), encoding="utf-8")
+        for i, (report, code) in enumerate(reports):
+            if report is not None:
+                (self.cr_dir / f"iter{n}-lane{i}.md").write_text(report, encoding="utf-8")
+            if code is not None:
+                (self.cr_dir / f"iter{n}-lane{i}.exit").write_text(f"{code}\n", encoding="utf-8")
+
+    def test_high_fixed_before_round_two_passes_in_round_two(self):
+        started = self._run(self._block("## Start a round"))
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.assertEqual("review 1", self._next(started))
+        first_head = self._head()
+        self._lanes(1, [(self._HIGH, 0), (self._HIGH, 0)])
+        collected = self._run(self._block("## Lanes", 2))
+        self.assertEqual(0, collected.returncode, collected.stdout + collected.stderr)
+        self.assertIn("MERGE_EXIT=0", collected.stdout)
+        verdict = self._run(self._block("## Verdict"))
+        self.assertEqual(0, verdict.returncode, verdict.stdout + verdict.stderr)
+        self.assertIn("VERDICT_EXIT=1", verdict.stdout)
+        self.assertEqual({"round": 1, "reviewed_head": first_head, "state": "owner_wait"},
+                         self._state())
+        fix_head = fold_fixtures.commit(self.repo, self.env, {"src/app.py": b"fixed\n"},
+                                        "fix: address the review finding")
+        self._set_state(1, first_head, "fix_dispatched", fix_head=fix_head)
+        resumed = self._run(self._block("## Start a round"))
+        self.assertEqual(0, resumed.returncode, resumed.stdout + resumed.stderr)
+        self.assertEqual("review 2", self._next(resumed))
+        self._lanes(2, [(self._CLEAN, 0), (self._CLEAN, 0)])
+        collect2 = self._run(self._block("## Lanes", 2))
+        self.assertEqual(0, collect2.returncode, collect2.stdout + collect2.stderr)
+        report = (self.cr_dir / "iter2-report.md").read_text(encoding="utf-8")
+        self.assertIn("Judged by: fake/lane-a, fake/lane-b", report)
+        self.assertIn("### Status: Approved", report)
+        second = self._run(self._block("## Verdict"))
+        self.assertEqual(0, second.returncode, second.stdout + second.stderr)
+        self.assertIn("VERDICT_EXIT=0", second.stdout)
+        self.assertEqual({"round": 2, "reviewed_head": fix_head, "state": "pass"}, self._state())
+        folded = self._run(self._block("## Start a round"))
+        self.assertEqual(0, folded.returncode, folded.stdout + folded.stderr)
+        self.assertEqual("fold", self._next(folded))
+
+    def test_lanes_are_fitted_before_the_merge(self):
+        started = self._run(self._block("## Start a round"))
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.assertEqual("review 1", self._next(started))
+        self._lanes(1, [(self._FIT_MEDIUM0, 0), (self._FIT_MEDIUM1, 0)])
+        collected = self._run(self._block("## Lanes", 2))
+        self.assertEqual(0, collected.returncode, collected.stdout + collected.stderr)
+        fit0 = json.loads((self.cr_dir / "iter1-lane0.fit.json").read_text(encoding="utf-8"))
+        fit1 = json.loads((self.cr_dir / "iter1-lane1.fit.json").read_text(encoding="utf-8"))
+        self.assertEqual(1, len(fit0))
+        self.assertEqual(1, len(fit1))
+        self.assertEqual("default", fit0[0]["decided_by"])
+        self.assertEqual("default", fit1[0]["decided_by"])
+        combined = json.loads((self.cr_dir / "iter1-fit.json").read_text(encoding="utf-8"))
+        self.assertEqual(2, len(combined))
+        report = (self.cr_dir / "iter1-report.md").read_text(encoding="utf-8")
+        self.assertIn("### MEDIUM", report)
+        self.assertEqual(1, report.count("Location: src/app.py:1"))
+        self.assertIn("(Reviewers: fake/lane-a, fake/lane-b)", report)
+        verdict = self._run(self._block("## Verdict"))
+        self.assertEqual(0, verdict.returncode, verdict.stdout + verdict.stderr)
+        self.assertIn("VERDICT_EXIT=0", verdict.stdout)
+        self.assertEqual({"round": 1, "reviewed_head": self._head(), "state": "pass"},
+                         self._state())
+
+    def test_fit_failure_falls_back(self):
+        started = self._run(self._block("## Start a round"))
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.assertEqual("review 1", self._next(started))
+        self._lanes(1, [(self._HIGH, 0), (self._HIGH, 0)])
+        self.env["FAKE_FIT_FAIL"] = "1"
+        collected = self._run(self._block("## Lanes", 2))
+        self.assertEqual(0, collected.returncode, collected.stdout + collected.stderr)
+        del self.env["FAKE_FIT_FAIL"]
+        self.assertFalse((self.cr_dir / "iter1-fit.json").exists())
+        norm = (self.cr_dir / "iter1-lane0.norm.md").read_text(encoding="utf-8")
+        self.assertIn("### HIGH", norm)
+        self.assertIn("Open bug", norm)
+        verdict = self._run(self._block("## Verdict"))
+        self.assertEqual(0, verdict.returncode, verdict.stdout + verdict.stderr)
+        self.assertIn("VERDICT_EXIT=1", verdict.stdout)
+        self.assertEqual("owner_wait", self._state()["state"])
+
+    def test_clean_round_three_passes(self):
+        self._set_state(2, self.fold_base, "fix_dispatched")
+        started = self._run(self._block("## Start a round"))
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.assertEqual("review 3", self._next(started))
+        self._lanes(3, [(self._CLEAN, 0), (self._CLEAN, 0)])
+        collected = self._run(self._block("## Lanes", 2))
+        self.assertEqual(0, collected.returncode, collected.stdout + collected.stderr)
+        report = (self.cr_dir / "iter3-report.md").read_text(encoding="utf-8")
+        self.assertIn("Judged by: fake/lane-a, fake/lane-b", report)
+        self.assertIn("### Status: Approved", report)
+        verdict = self._run(self._block("## Verdict"))
+        self.assertEqual(0, verdict.returncode, verdict.stdout + verdict.stderr)
+        self.assertIn("VERDICT_EXIT=0", verdict.stdout)
+        self.assertEqual({"round": 3, "reviewed_head": self._head(), "state": "pass"},
+                         self._state())
+
+    def test_cap_stop_at_round_three(self):
+        self._set_state(2, self.fold_base, "fix_dispatched")
+        started = self._run(self._block("## Start a round"))
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.assertEqual("review 3", self._next(started))
+        self._lanes(3, [(self._HIGH, 0), (self._HIGH, 0)])
+        collected = self._run(self._block("## Lanes", 2))
+        self.assertEqual(0, collected.returncode, collected.stdout + collected.stderr)
+        report = (self.cr_dir / "iter3-report.md").read_text(encoding="utf-8")
+        self.assertIn("(Reviewers: fake/lane-a, fake/lane-b)", report)
+        self.assertIn("### Status: Issues Found — fix and re-invoke", report)
+        verdict = self._run(self._block("## Verdict"))
+        self.assertEqual(0, verdict.returncode, verdict.stdout + verdict.stderr)
+        self.assertIn("VERDICT_EXIT=3", verdict.stdout)
+        self.assertIn('"state": "cap_stop"', verdict.stdout)
+        self.assertEqual({"round": 3, "reviewed_head": self._head(), "state": "cap_stop"},
+                         self._state())
+        after = self._run(self._block("## Start a round"))
+        self.assertEqual(0, after.returncode, after.stdout + after.stderr)
+        self.assertEqual("cap_stop 3", self._next(after))
+        self.assertEqual([], list(self.cr_dir.glob("iter4-*")))
+
+    def test_a_moved_head_after_the_cap_stop_offers_a_fresh_review(self):
+        for state in ("cap_stop", "owner_accepted"):
+            with self.subTest(state=state):
+                self._set_state(3, self._head(), state)
+                fold_fixtures.commit(self.repo, self.env,
+                                     {"src/app.py": f"owner fix {state}\n".encode()},
+                                     "fix: the owner's own change")
+                moved = self._run(self._block("## Start a round"))
+                self.assertEqual(0, moved.returncode, moved.stdout + moved.stderr)
+                self.assertEqual("cap_stop_moved 3", self._next(moved))
+                fresh = self._run(self._block("## Review the new head"))
+                self.assertEqual(0, fresh.returncode, fresh.stdout + fresh.stderr)
+                self.assertEqual({"round": 0, "reviewed_head": "-", "state": "none"},
+                                 self._state())
+                restarted = self._run(self._block("## Start a round"))
+                self.assertEqual(0, restarted.returncode, restarted.stdout + restarted.stderr)
+                self.assertEqual("review 1", self._next(restarted))
+
+    def test_an_unmoved_head_keeps_the_cap_stop_and_the_accept(self):
+        self._set_state(3, self._head(), "cap_stop")
+        self.assertEqual("cap_stop 3", self._next(self._run(self._block("## Start a round"))))
+        self._set_state(3, self._head(), "owner_accepted")
+        self.assertEqual("fold", self._next(self._run(self._block("## Start a round"))))
+
+    def test_failed_sibling_gives_a_partial_report(self):
+        started = self._run(self._block("## Start a round"))
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.assertEqual("review 1", self._next(started))
+        self._lanes(1, [(self._CLEAN, 0), (self._HIGH, 1)])
+        collected = self._run(self._block("## Lanes", 2))
+        self.assertEqual(0, collected.returncode, collected.stdout + collected.stderr)
+        self.assertIn("lane fake/lane-b failed: exit 1", collected.stdout)
+        self.assertIn("MERGE_EXIT=0", collected.stdout)
+        report = (self.cr_dir / "iter1-report.md").read_text(encoding="utf-8")
+        self.assertIn("Judged by: fake/lane-a; not judged: fake/lane-b (real_error)", report)
+        self.assertIn("### Status: Approved (partial)", report)
+        verdict = self._run(self._block("## Verdict"))
+        self.assertEqual(0, verdict.returncode, verdict.stdout + verdict.stderr)
+        self.assertIn("VERDICT_EXIT=0", verdict.stdout)
+        self.assertEqual("pass", self._state()["state"])
+
+    def test_incomplete_lane_report_is_a_failed_lane(self):
+        started = self._run(self._block("## Start a round"))
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.assertEqual("review 1", self._next(started))
+        self._lanes(1, [(self._HIGH, 0), (self._NO_STATUS, 0)])
+        collected = self._run(self._block("## Lanes", 2))
+        self.assertEqual(0, collected.returncode, collected.stdout + collected.stderr)
+        self.assertIn("lane fake/lane-b failed: incomplete report", collected.stdout)
+        self.assertFalse((self.cr_dir / "iter1-lane1.norm.md").exists())
+        report = (self.cr_dir / "iter1-report.md").read_text(encoding="utf-8")
+        self.assertIn("(Reviewers: fake/lane-a)", report)
+        verdict = self._run(self._block("## Verdict"))
+        self.assertEqual(0, verdict.returncode, verdict.stdout + verdict.stderr)
+        self.assertIn("VERDICT_EXIT=1", verdict.stdout)
+        self.assertEqual({"round": 1, "reviewed_head": self._head(), "state": "owner_wait"},
+                         self._state())
+
+    def test_resume_ignores_a_stale_exit(self):
+        (self.cr_dir / "iter1-lane0.exit").write_text("0\n", encoding="utf-8")
+        (self.cr_dir / "iter1-lane0.md").write_text(self._CLEAN, encoding="utf-8")
+        started = self._run(self._block("## Start a round"))
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+        self.assertEqual("review 1", self._next(started))
+        self.assertFalse((self.cr_dir / "iter1-lane0.exit").exists())
+        self.assertFalse((self.cr_dir / "iter1-lane0.md").exists())
+        self._set_state(1, self.fold_base, "owner_wait")
+        resumed = self._run(self._block("## Start a round"))
+        self.assertEqual(0, resumed.returncode, resumed.stdout + resumed.stderr)
+        self.assertEqual("fix 1", self._next(resumed))
+        self._set_state(1, self._head(), "fix_dispatched")
+        unchanged = self._run(self._block("## Start a round"))
+        self.assertEqual(1, unchanged.returncode, unchanged.stdout + unchanged.stderr)
+        self.assertIn("left the reviewed tree unchanged", unchanged.stdout)
+
+
+class TestLaneResultJev(unittest.TestCase):
+    """Lane results go through jev, summaries only, with the default named."""
+
+    @staticmethod
+    def _flat(name: str) -> str:
+        return " ".join((_SUPER_REFS / name).read_text(encoding="utf-8").split())
+
+    def test_ok_branch_classifies_the_run(self):
+        flat = self._flat("dispatch-external-cli.md")
+        self.assertIn('classify-execute-result --cwd "$CWD" --status "$STATUS"', flat)
+        self.assertIn("only summaries go to jev, never code, diffs or file contents", flat)
+        self.assertIn('runner-facts --dispatch-result-json "$DISPATCH_RESULT_JSON"', flat)
+        self.assertIn('--runner-status="$RUNNER_STATUS" --findings="$RUNNER_FINDINGS" '
+                      '--coverage="$RUNNER_COVERAGE"', flat)
+        self.assertIn("Only a `DONE` report is asked", flat)
+        self.assertNotIn("from the status token alone", flat)
+        self.assertIn("`ai-kit-spec: lane result: <class> (<jev|default>)`", flat)
+        self.assertIn("with the JSON's `handover` status", flat)
+        self.assertIn("the retry budget is unchanged", flat)
+        self.assertIn("this is the only dispatch-failure classifier call", flat)
+        self.assertLess(flat.index("implementer-status --dispatch-result-json"),
+                        flat.index('classify-execute-result --cwd "$CWD" --status "$STATUS"'))
+
+    def test_native_branch_classifies_the_run(self):
+        flat = self._flat("dispatch-external-cli.md")
+        self.assertIn('classify-execute-result --cwd "$CWD" --status <the reported status>', flat)
+        self.assertIn("hand over its `handover` status", flat)
+        start = flat.index("## Native status")
+        native = flat[start:flat.index("## Classify", start)]
+        self.assertIn("classify-execute-result", native)
+        self.assertIn("except its **Native status** section", flat)
+        self.assertIn(
+            "then classify the reported status: MANDATORY: read only "
+            "[Native status](references/dispatch-external-cli.md#native-status)",
+            " ".join(_super_text().split()))
+
+    def test_code_review_fix_stops_before_task_failure_handling(self):
+        flat = self._flat("code-review.md")
+        self.assertIn("Branch on the `class` of `CLASSIFICATION` right after the Classify block",
+                      flat)
+        self.assertIn("without the task-level failure handling (no Flagged switch", flat)
+
+    def test_plain_fold_success_clears_the_start_scalars(self):
+        self.assertIn("(with `UNIT_FLOW=0`, the plain fold's `folded` or `nothing to fold`)",
+                      " ".join(_super_text().split()))
+        self.assertIn("`folded` and `nothing to fold` (exit 0) are its successful outcomes",
+                      self._flat("fold-step.md"))
+
+    def test_verdict_applies_the_fit_classes(self):
+        flat = self._flat("code-review.md")
+        self.assertIn('classify-findings --cwd "$CWD" '
+                      '--report "$CR_DIR/iter$N-lane$I.norm.md"', flat)
+        self.assertIn('--out "$CR_DIR/iter$N-lane$I.fit.json" '
+                      '--out-report "$CR_DIR/iter$N-lane$I.norm.md"', flat)
+        self.assertIn('classify-findings --cwd "$CWD" '
+                      '--report "$CR_DIR/iter$N-report.md"', flat)
+        self.assertIn('--cap 3 "${FIT_ARGS[@]}"', flat)
+        self.assertIn("from summaries only", flat)
+        self.assertIn("a CRITICAL or HIGH finding is never lowered on jev's word", flat)
+        self.assertIn("each finding keeps the reviewer's severity "
+                       "(`decided_by: default`)", flat)
+        self.assertIn("never stops the loop", flat)
+        self.assertIn("spec review's own loop is unchanged", flat)
+        self.assertLess(flat.index("classify-findings --cwd"),
+                        flat.index("merge-reports --doc-paths"))
+        self.assertLess(flat.index("merge-reports --doc-paths"),
+                        flat.index("code-review-verdict --report"))
+        self.assertEqual(1, flat.count("code-review-verdict --report"))
 
 
 class TestProgressiveDisclosure(unittest.TestCase):

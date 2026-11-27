@@ -1,0 +1,6 @@
+{
+  "mode": "external_cli",
+  "key": "execute-strong",
+  "runtime": "opencode",
+  "model": "fake/placeholder-model-1"
+}

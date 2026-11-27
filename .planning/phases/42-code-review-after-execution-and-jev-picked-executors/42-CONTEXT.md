@@ -40,6 +40,10 @@ switching an unflagged lane.
 - **D-02: UI detection reuses the frontend extension tuple of `task_classification`** (made public, one source) over the diff's
   changed paths; lens delivery goes through `lens_delivery` with the role-keyed table; a missing lens uses `LENS_NOTES`.
   **Own reasoning.** Ledger.
+  - *(amended 2026-11-26, after research: `lens_delivery.UI_EXTENSIONS` is already public and `lens_set` detects UI from the
+    review lane's `--files`; the frozen cross-skill import allowlist forbids an import between the packages, so the changed
+    paths go to the lanes as `--files`, the adapter tuple stays private and the existing pin test keeps the two tuples one rule;
+    SPEC amendment 2)*
 - **D-03: Gray areas at `receiving-code-review`'s stop-and-discuss point go through Phase 40's jev classification module** (same
   classes, same CRITICAL and HIGH exception, same no-jev path). **Own reasoning.** Ledger.
 
@@ -58,7 +62,9 @@ switching an unflagged lane.
 - **D-06: The spike follows the owner's consent rule and AGENTS.md's theory, hypothesis, spike order.** It runs only after a
   consent line, from a script under the phase's `spike/` folder with a scratch HOME and a scratch directory, and records one row
   per installed host (version, date, session id source, headless resume result, label) in the phase's spike record; the chooser
-  plans start after it. **Own reasoning and AGENTS.md.** Ledger.
+  plans start after it. **Own reasoning and AGENTS.md.** Ledger. *(note 2026-11-27, owner decision: the owner skipped the resume
+  spike on 2026-11-27; no host is probed and no spike record is written in this phase, every resume label stays unverified and no
+  runner label flips; the spike is backlog Phase 999.36; SPEC amendment 13)*
 - **D-07: The chooser is a seam next to the runner dispatch** (module name at plan time) with a per-plan record in the run
   directory: resumed session over subprocess for a headless lane, a herdr pane only for a lane the owner marked interactive (a
   lane setting spec-config writes only when true, name at plan time); a transport is offered only when its label is verified for

@@ -19,10 +19,10 @@ scalar file and asks nothing again. A fresh start (no resume state file) clears 
 3. `none`: ask once, with the host's question tool or numbered plain text, and never answer for the user:
    (1) run ai-kit-spec-config now, (2) run once on the session model, (3) stop. An empty or unrecognised answer is (3).
    (1): follow the sibling ai-kit-spec-config skill to its end, run config-status again (it must print `active`), then continue the task.
-   (2): continue on the session default and print the line `no cross-AI config: ran on the session model` now and again after the final review.
+   (2): continue on the session default and print the line `no cross-AI config: ran on the session model` now and again after the fold block.
    (3): stop.
 4. `none` and the host has no way to ask: print `no cross-AI config: run ai-kit-spec-config; continuing on the session model, no config written`,
-   continue on the session default and print that line again after the final review.
+   continue on the session default and print that line again after the fold block.
 5. `none`, the answer is (1) and no ../ai-kit-spec-config/SKILL.md exists beside this skill: stop with
    `ai-kit-spec-config is not installed. Install ai-kit, then run ai-kit-spec-config.`
 6. Exit code 2: show the named error line and stop; any other nonzero exit: show the first stderr line and stop.
@@ -105,4 +105,4 @@ printf 'INJECTION_MODE=native\n' | tee -a "$SCALARS"
 ```
 
 The Task paths block appends to the same scalar file, so every later loader holds `CONFIG_CHECK`; with `once` or
-`notice`, Step 5 prints its line again after the final review.
+`notice`, Step 5 prints its line again after the fold block.

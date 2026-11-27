@@ -532,6 +532,8 @@ class TestGuidanceUniformity(unittest.TestCase):
             "FORMAT_BLOCK_FILE": os.path.join(self.root, "format.md"),
             "REPORT_FILE": os.path.join(self.root, "report.md"),
             "DISPATCH_BASE": os.path.join(self.root, "d", "base"),
+            "QUOTA_PATH": os.path.join(self.root, "quota.json"),
+            "PROJECT_KEY": "fake-key",
         }
         return subprocess.run(
             [self.bash_bin, "-c", block],
@@ -578,6 +580,8 @@ class TestGuidanceUniformity(unittest.TestCase):
                 detect_tool_availability_fn=lambda: {},
                 resolve_agents_tooling_path_fn=lambda: None,
                 cbm_registered_fn=lambda _: False,
+                assemble_candidates_fn=lambda cwd, env, cfg_resolve_fn=None: ([], []),
+                which_fn=lambda _name: None,
                 stdout=io.StringIO(),
             )
         self.assertEqual(rc, 0)
@@ -604,6 +608,9 @@ class TestGuidanceUniformity(unittest.TestCase):
         argv = self._recorded()[-1]
         self.assertEqual(argv[0], "dispatch-task")
         self.assertEqual(argv[argv.index("--report-mode") + 1], mode)
+        self.assertEqual(
+            argv[argv.index("--transport-record") + 1],
+            os.path.join(self.root, "superpowers-run-fake-key-transport.json"),)
         prompt = self._replay_dispatch(argv)
         self.assertIn(objective, prompt)
         self.assertIn(expected, prompt)

@@ -76,6 +76,7 @@ POOL_WARNING = ("Free models of <provider> appear to share one pool (reported by
                 " confirmed by the vendor): another free model of <provider> is not a fallback"
                 " for this one.")
 FLAG_LINE = "Only a yes writes `usage_limited = true`"
+INTERACTIVE_LINE = "Only a lane the owner names gets `interactive = true`"
 FALLBACK_LINE = ("A usage-limited lane's fallback is the first lane of the same role, in that"
                  " role's order, that is neither usage-limited nor in the same pool")
 FLAG_READERS = "the review run and the execute adapter"
@@ -160,6 +161,13 @@ class TestWizardFlowText(unittest.TestCase):
         self.assertIn("may it move from `<key>` to a more capable lane ranked above it", escalation)
         self.assertIn("for review lanes they are recorded only", escalation)
         self.assertIn("two or more lanes", escalation)
+
+    def test_interactive_marker_is_written_only_when_named(self):
+        text = section(self.flow, FLOW_HEADINGS[9])
+        self.assertIn(INTERACTIVE_LINE, text)
+        self.assertIn("until then it runs like any other lane", text)
+        self.assertIn("a lane not marked never gets a pane", text)
+        self.assertIn("(execute and code-review lanes; spec review never uses a pane)", text)
 
     def test_proposal_keys_named(self):
         for key in PROPOSAL_KEYS:
@@ -368,6 +376,12 @@ class TestConfigFileText(unittest.TestCase):
         for phrase in ('`[lanes.policy.review]`', '`[lanes.policy.execute]`', '## Lane settings',
                        *(f'`{key}`' for key in lane_settings.MODEL_BOUND)):
             self.assertIn(phrase, self.text)
+
+    def test_interactive_is_a_lane_setting(self):
+        self.assertIn("`interactive` only as `true`, for a lane the owner named.", self.text)
+        self.assertIn("- `interactive` (written only as `true`, for a lane the owner named"
+                      " in the wizard)", self.text)
+        self.assertIn('"interactive": true', self.text)
 
     def test_migration_default_and_read_only_commands(self):
         self.assertNotIn('stays recoverable', self.text)

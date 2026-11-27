@@ -236,7 +236,8 @@ SCANNED = (REPO / "skills" / "ai-kit-spec-review" / "ai_kit_spec",
            REPO / "skills" / "ai-kit-spec-execute-superpowers" / "ai_kit_spec_superpowers")
 FLAGS = frozenset(lane_settings.LANE_FLAG_KEYS) | {lane_settings.SESSION_FALLBACK_KEY}
 READERS = frozenset({"lane_escalation", "escalation_target", "lane_usage_limit", "lane_fallback",
-                     "lane_free_pool", "escalation_candidates", "lane_session_fallback"})
+                     "lane_free_pool", "escalation_candidates", "lane_session_fallback",
+                     "lane_interactive"})
 # the readers each module may call; every other module stays reader-free
 ALLOWED_READERS = {"runner_dispatch.py": frozenset({"lane_escalation"}),
                    "lane_switch.py": frozenset({"lane_fallback", "lane_usage_limit",
@@ -245,7 +246,8 @@ ALLOWED_READERS = {"runner_dispatch.py": frozenset({"lane_escalation"}),
                    "quota.py": frozenset({"lane_free_pool"}),
                    "dispatch_injection.py": frozenset({"escalation_candidates",
                                                         "lane_session_fallback",
-                                                        "lane_free_pool"})}
+                                                        "lane_free_pool"}),
+                   "lane_transport.py": frozenset({"lane_interactive"})}
 
 
 def _flag_literal_lines(text: str, *, runner_table: bool = False) -> list[int]:
@@ -442,6 +444,32 @@ class TestLaneEscalation(_ScratchLayers):
         self.assertEqual(lane_settings.lane_escalation(self.resolve()["review"][0]), (True, False))
 
 
+class TestLaneInteractive(unittest.TestCase):
+    def test_the_flag_is_last_and_not_model_bound(self):
+        self.assertEqual(lane_settings.LANE_FLAG_KEYS[-1], "interactive")
+        self.assertNotIn("interactive", lane_settings.MODEL_BOUND)
+
+    def test_absent_is_false_and_true_is_true(self):
+        self.assertFalse(lane_settings.lane_interactive({"key": "k"}))
+        self.assertTrue(lane_settings.lane_interactive({"key": "k", "interactive": True}))
+
+    def test_non_boolean_raises_naming_the_key_and_setting(self):
+        with self.assertRaisesRegex(lane_settings.LaneSettingError,
+                                    "k: 'interactive' must be a boolean"):
+            lane_settings.lane_interactive({"key": "k", "interactive": "yes"})
+
+    def test_normalise_drops_a_false_and_validate_refuses_a_non_boolean(self):
+        self.assertEqual(
+            lane_settings.normalise_lane_settings({"key": "k", "interactive": False}),
+            {"key": "k"})
+        self.assertEqual(lane_settings.validate_lane_settings(
+            {"key": "k", "interactive": "yes"}, "k"),
+            "k: 'interactive' must be a boolean")
+
+    def test_the_reader_is_flagged_outside_allowed_readers(self):
+        self.assertEqual(_reader_lines('lane_interactive({})'), [1])
+
+
 class TestLanePool(unittest.TestCase):
     def test_pool_only_for_a_flagged_valid_pool(self):
         self.assertEqual(lane_settings.lane_free_pool(
@@ -583,6 +611,7 @@ class TestNoFlagSetter(unittest.TestCase):
         self.assertEqual(_flag_literal_lines('"""usage_limited is the owner\'s yes."""'), [])
         self.assertEqual(_flag_literal_lines('policy["session_fallback"] = True'), [1])
         self.assertEqual(_reader_lines('lane_session_fallback({})'), [1])
+        self.assertEqual(_reader_lines('lane_interactive({})'), [1])
         self.assertEqual(_reader_lines('from ai_kit_spec import lane_settings\n'
                                        'lane_settings.lane_fallback([], "k")'), [2])
         self.assertEqual(_reader_lines('from ai_kit_spec.lane_settings import lane_usage_limit'),

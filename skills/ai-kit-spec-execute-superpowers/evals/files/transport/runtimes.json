@@ -1,0 +1,31 @@
+{
+  "schema_version": 8,
+  "clis": {
+    "opencode": {
+      "installed": true,
+      "models": [
+        "fake/placeholder-model-1"
+      ],
+      "listed_from": {
+        "command": "fake-cli models",
+        "version": "opencode 1.2.3",
+        "at": "fake-time"
+      }
+    }
+  },
+  "runner": {
+    "template_sha256": "set-by-the-world-builder",
+    "describe": {
+      "runtimes": {
+        "opencode": {
+          "session": {
+            "label": {
+              "state": "unverified",
+              "source": "opencode 1.2.3 fake: no live resume recorded"
+            }
+          }
+        }
+      }
+    }
+  }
+}
