@@ -323,11 +323,11 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   to spec-config when no config exists (one phase changes this code once). *(amended 2026-11-16, 36 D-03: the
   adapter's no-config entry check and ask are added with HUB-01 in Phase 36; this phase keeps them and owns the resume
   and stop paths)*
-- [ ] **EXE-02**: After implementation, superpowers' `requesting-code-review` runs and ai-kit's capped loop iterates
+- [x] **EXE-02**: After implementation, superpowers' `requesting-code-review` runs and ai-kit's capped loop iterates
   with the same review lanes until the review passes; at `receiving-code-review`'s stop-and-discuss point jev
   classifies the gray areas before the user is asked, and lens skills from the role-keyed table help where the model
   must decide.
-- [ ] **EXE-03**: jev picks the executor for a plan or task from what is available: router lite or strong coding
+- [x] **EXE-03**: jev picks the executor for a plan or task from what is available: router lite or strong coding
   models, haiku or sonnet at low, medium or high effort on native Claude, composer on Cursor, or a cheap Copilot
   model; when a lighter executor is picked, the plan-writing instructions adapt to it (plans written for a lite
   executor follow lite instructions).
@@ -339,13 +339,13 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   after research, 41-SPEC amendments 1 and 6: the brief is ai-kit's shared dispatch guidance, the runner's preamble is
   unchanged pending the owner; a gate is judged by its exit code; the commit guard names the owner's config paths; a
   superpowers dispatch reports `coverage=n/a` by design; no ai-kit agent-branch regex, one guard block on every path)*
-- [ ] **EXE-06**: Lane transport is chosen per lane (subprocess, resumed session, herdr pane) for execute,
+- [x] **EXE-06**: Lane transport is chosen per lane (subprocess, resumed session, herdr pane) for execute,
   spec-review and code-review lanes, reused within a plan and renewed after a set number of rounds, after a spike on
   session ids and headless resume; a herdr lane returns its result through a report file, its pane closes at plan
   close, and a start-of-run sweep closes leftover panes ai-kit created. *(amended 2026-11-16, re-run 2, 38 D-25 and D-27: the
   sweep is the runner's (RUN-13, `--sweep` and the start of every real run), and a pane this requirement opens carries the
-  same run record and label so that sweep closes it)*
-- [ ] **EXE-07**: Review and execute flows classify each lane result through jev before the loop continues or stops:
+  same run record and label so that sweep closes it)* *(amended 2026-11-27, owner decision: the resume spike was skipped; every resume label stays unverified and no runner label flips; the spike is backlog Phase 999.36)*
+- [x] **EXE-07**: Review and execute flows classify each lane result through jev before the loop continues or stops:
   an execute result as done, partial or needing another round; a review finding by whether its severity fits the
   kind of problem, the test tier, reproducibility, end-user reach and MVP versus production. Without jev a
   deterministic default decides, and the run log shows which one did.
@@ -942,7 +942,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   an absolute path, and UI review is on because ai-kit ships a TUI. An agent whose lens is missing runs without it
   and says so, and ponytail's smallest-change bias yields to the design rule (DESIGN-01).
   *(amended 2026-11-03, 30 spec: `global:impeccable` resolves on this machine only with `agent_skills_security.trusted_global_roots` holding `~/.agents/skills`, set through gsd-tools; GSD emits plugin lenses without an existence check, so the agent itself names a lens it could not load)*
-- [ ] **LENS-02**: In the superpowers flow, the code review after execution loads `ponytail-review`, and
+- [x] **LENS-02**: In the superpowers flow, the code review after execution loads `ponytail-review`, and
   `impeccable` when the diff touches UI, from the shared role-keyed table, on the same lanes as spec review; a
   missing lens is skipped with a note.
 - [ ] **LENS-03**: curated-config proposes the same lens wiring for a target project from the skills actually
@@ -1117,12 +1117,12 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | REV-07 | Phase 40 | Complete |
 | REV-08 | Phase 40 | Complete |
 | EXE-01 | Phase 41 | Complete |
-| EXE-02 | Phase 42 | Pending |
-| EXE-03 | Phase 42 | Pending |
+| EXE-02 | Phase 42 | Complete |
+| EXE-03 | Phase 42 | Complete |
 | EXE-04 | Phase 41 | Complete |
 | EXE-05 | Phase 41 | Complete |
-| EXE-06 | Phase 42 | Pending |
-| EXE-07 | Phase 42 | Pending |
+| EXE-06 | Phase 42 | Complete |
+| EXE-07 | Phase 42 | Complete |
 | EXE-08 | Phase 41 | Complete |
 | EXE-09 | Phase 41 | Complete |
 | RUN-01 | Phase 37 | Complete |
@@ -1230,7 +1230,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | DESIGN-01 | Phase 30 | Complete |
 | DESIGN-02 | Phase 45.1 | Pending |
 | LENS-01 | Phase 30 | Complete |
-| LENS-02 | Phase 42 | Pending |
+| LENS-02 | Phase 42 | Complete |
 | LENS-03 | Phase 44 | Pending |
 | WIZ-01 | Phase 30.1 | Complete |
 | WIZ-02 | Phase 30.1 | Complete |

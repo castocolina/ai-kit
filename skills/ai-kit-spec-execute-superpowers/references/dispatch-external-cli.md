@@ -1,7 +1,8 @@
 # Step 3 reference: the `external_cli` dispatch
 
 MANDATORY read in full before the first `dispatch-task` of a task and again before acting on its
-result. Do NOT load it for `mode == "native"`. `SKILL.md` Step 3 sends you here; every `$VAR`
+result. Do NOT load it for `mode == "native"`, except its **Native status** section, read alone
+after a native dispatch returns. `SKILL.md` Step 3 sends you here; every `$VAR`
 below is restored by the scalar loader that opens each `Bash` call (`SKILL.md`, Step 0), and a block
 that prints scalars appends them to `$SCALARS` with `tee -a`. The steps, in order: **Artifact
 setup**, **Compose**, **Status contract**, **Dispatch**, **Classify** (`ok`, `quota_cycle`, `quota`,
@@ -83,6 +84,7 @@ GUIDE_ARGS=(--owner-config .aikit/config.toml)
 python3 "$SHIM" dispatch-task --injection-json "$(cat "$RUN_DIR/INJECTION_JSON.json")" \
   --prompt-file "$PROMPT_FILE" --target-dir "$CWD" --heartbeat-interval 60 --timeout 1800 \
   --format-block-file "$FORMAT_BLOCK_FILE" --report-file "$REPORT_FILE" \
+  --transport-record "$(dirname "$QUOTA_PATH")/superpowers-run-${PROJECT_KEY}-transport.json" \
   --report-mode "$REPORT_MODE" "${GUIDE_ARGS[@]}" > "$DISPATCH_BASE.json" 2> "$DISPATCH_BASE.err"
 echo "$?" > "$DISPATCH_BASE.exit"
 ```
@@ -114,9 +116,25 @@ If the CLI wrote `$REPORT_FILE` itself, `dispatch-task` leaves it untouched; oth
 appends the captured stdout behind a marker line. Review and the fix loop read `$REPORT_FILE`
 like a native report either way.
 
+## Executor pick
+
+On a plain first resolution of a task (fix round 0, no escalation keys), `resolve-injection` asks jev once which of the remaining execute candidates should implement the task, from labels only: route kind, effort, catalog class, task affinity and task type; never a key, model name, provider, path or config value. A confident pick moves that candidate to the front of the walk; a skipped or quota-blocked pick falls back to the existing order, and the escalation floor and executor fallback keep the existing order. With no jev, one candidate (jev is not asked), a low answer or a pick outside the roster, the existing order decides. After the walk, a plain first resolution prints exactly one stderr line naming the key actually dispatched, `ai-kit-spec: executor pick: <dispatched key> (jev, <confidence with two decimals>)` when it is jev's pick, else `ai-kit-spec: executor pick: <dispatched key> (default: <note>)` (for example `jev absent`, `one candidate`, `jev low` or `jev pick unavailable`), and the injection JSON carries `"pick": {"decided_by", "confidence", "note"}` agreeing with the line; when every candidate is exhausted no pick line prints. A pinned resume, fix rounds 1 to 5, session-model mode and the session fallback never ask, print no pick line and carry no `pick` field.
+
+## Lane transport
+
+`--transport-record` names the plan's lane-transport record, one file beside the task run folders, shared by the execute and code-review lanes of the plan. Per lane, `dispatch-task` takes a resumed session only when the runner's own session label for that host reads verified for the installed version and the host allows a resume in that mode; otherwise it runs a fresh subprocess, so an unverified transport is never chosen. A verified session is reused for the lane's next round and renewed after three rounds, before a round starts; a lane whose runtime or model changed starts fresh. A herdr pane is used only for a lane the owner marked interactive, and only once a recorded run verifies panes; its verdict is read from the round's exit and output files, never from the screen, and a pane that times out or loses its launcher during a round ends that round as a failed run, while a pane whose launcher has already ended (it exits after 30 idle minutes) is closed and replaced before the next round. The stderr line `ai-kit-spec: transport <lane>: <subprocess|resume|pane> (<reason>)` names each choice; a pane round that runs as a subprocess instead (the pane is busy with another round, or did not open) adds `ai-kit-spec: transport <lane>: subprocess (pane fallback: <why>)`. A record file that is not a transport record, or cannot be read or written, prints `ai-kit-spec: transport record <path> unusable: <why>; <outcome>` once and is left untouched: the round runs as a fresh subprocess, or, when the file turns unusable during the round, the round is not counted. The fold step, and an owner's stop at the code review cap, close every recorded pane that no running round holds (a pane whose run folder is already gone counts as closed) and run the runner's sweep once (`close-transports`); the sweep at every runner start closes leftovers. Without herdr a lane runs as a subprocess. Limit: claude and copilot have no version in the runtimes snapshot, so their sessions read unverified.
+
 ## Host-config audit
 
 `dispatch-task` snapshots the modification times of these files under the lane's HOME before and after the lane: `.claude/settings.json`, `.claude.json`, `.config/opencode/opencode.json`, `.config/opencode/opencode.jsonc`, `.codex/config.toml`, `.cursor/cli-config.json`, `.cursor/mcp.json`, `.cursor/hooks.json`, `.copilot/mcp-config.json`, `.gsd/defaults.json` (files only; it never lists a folder). Each changed file prints exactly this line in `$DISPATCH_BASE.err`: `ai-kit-spec: observation: <path> changed during the lane; a host may rewrite its own config, so this does not show the lane changed it` (`<path>` is the absolute path), and its absolute path goes into the result's `host_config_changed`; a file whose modification time could not be read prints `ai-kit-spec: observation: host-config audit unavailable for <path>` instead and is never reported as changed; a dispatch that fails or raises still reports. Relay those lines verbatim right after `dispatch-task` returns, before the empty-result stop (an empty `DISPATCH_RESULT_JSON`), before `## Classify` and whichever class follows (`ok`, `quota_cycle`, `quota` or `real_error`): they are observations (a host may rewrite its own config), never a stop, a retry or a reason to change the classification. Config folders moved by `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `XDG_CONFIG_HOME` or `OPENCODE_CONFIG_DIR` are not checked, and the output says so. A native dispatch runs the same audit through `host-config-audit` (SKILL.md Step 3); there a missing snapshot prints the `audit unavailable` observation, relayed like any other.
+
+## Native status
+
+The one section a native dispatch (SKILL.md Step 3) reads, after the dispatch returns and the
+resume-state clear: a native dispatch is classified from its reported status alone. Run
+`python3 "$TOOLS_PY" classify-execute-result --cwd "$CWD" --status <the reported status>`, relay its
+`ai-kit-spec: lane result:` line and hand over its `handover` status (the reported status unchanged
+when the command fails). None of the `external_cli` steps (artifacts, runner classes, stops) apply.
 
 ## Classify
 
@@ -126,7 +144,7 @@ CLASSIFICATION="$(python3 "$SHIM" classify-dispatch-failure --dispatch-result-js
 printf 'CLASSIFICATION=%s\n' "$CLASSIFICATION" | tee -a "$SCALARS"
 ```
 
-It prints one JSON object, for example `{"class": "quota_cycle", "retry_after_s": 600, "cycle": 2}`, and this is the only classifier call: branch on its `class` (`ok`, `quota_cycle`, `quota` or `real_error`); `retry_after_s` and `cycle` are whole numbers, or `null` when the runner printed none or a malformed one. The runner statuses `locked` and `partial` always classify `real_error`. An answer that is not that object schedules nothing: stop exactly as the `real_error` branch does.
+It prints one JSON object, for example `{"class": "quota_cycle", "retry_after_s": 600, "cycle": 2}`, and this is the only dispatch-failure classifier call: branch on its `class` (`ok`, `quota_cycle`, `quota` or `real_error`); `retry_after_s` and `cycle` are whole numbers, or `null` when the runner printed none or a malformed one. The runner statuses `locked` and `partial` always classify `real_error`. An answer that is not that object schedules nothing: stop exactly as the `real_error` branch does.
 
 - **`"ok"`** — run `printf 'LAST_DISPATCHED_KEY=%s\n' "$INJECTION_KEY" | tee -a "$SCALARS"` (only an
   `ok` dispatch sets the next round's escalation anchor; `quota_cycle`, `quota` and `real_error` never do), clear
@@ -138,6 +156,10 @@ It prints one JSON object, for example `{"class": "quota_cycle", "retry_after_s"
 DISPATCH_RESULT_JSON="$(cat "$DISPATCH_BASE.json")"
 STATUS="$(python3 "$SHIM" implementer-status --dispatch-result-json "$DISPATCH_RESULT_JSON")"
 printf 'STATUS=%s\n' "$STATUS"
+read -r RUNNER_STATUS RUNNER_FINDINGS RUNNER_COVERAGE <<< \
+  "$(python3 "$SHIM" runner-facts --dispatch-result-json "$DISPATCH_RESULT_JSON")"
+python3 "$TOOLS_PY" classify-execute-result --cwd "$CWD" --status "$STATUS" \
+  --runner-status="$RUNNER_STATUS" --findings="$RUNNER_FINDINGS" --coverage="$RUNNER_COVERAGE"
 ```
 
   `implementer-status` counts only a line that declares a status, never a status word inside
@@ -145,6 +167,22 @@ printf 'STATUS=%s\n' "$STATUS"
   `BLOCKED` from an external CLI, follow the handler's BLOCKED routes in its "2. Handle the report" (1 more context, 3 split,
   4 plan defect) on the same pair, but never its route 2 ("more capable model") on your own: that is a model switch
   after an unusable run, so stop and report for the owner's decision.
+
+  `classify-execute-result` asks jev, when present, whether the run is `done`, `partial` or
+  `another_round`, from the implementer status and the runner's status, finding codes and coverage
+  (`runner-facts` prints them from the dispatch result, `-` for a missing one): only summaries go
+  to jev, never code, diffs or file contents. It prints one JSON object and the stderr line
+  `ai-kit-spec: lane result: <class> (<jev|default>)`; relay that line. Only a `DONE` report is
+  asked; any other status, no jev, or a low answer takes the default: `DONE`
+  is `done`, `DONE_WITH_CONCERNS` is `partial`, anything else is `another_round`. The class starts
+  no dispatch and only changes how a `DONE` report is handed over: continue
+  subagent-driven-development's "2. Handle the report" with the JSON's `handover` status, which is
+  `DONE` for `done` and `DONE_WITH_CONCERNS` for `partial` or `another_round` on a `DONE` (give
+  that line as its concern; the skill's own review decides any further round). A reported
+  `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT` or `BLOCKED` is handed over unchanged, and the retry budget
+  is unchanged. When the command exits nonzero or prints no JSON, hand over the reported status
+  unchanged. Only an `ok` dispatch is classified: `quota_cycle`, `quota` and `real_error` (runner
+  `locked` and `partial` included) keep their stops.
 - **`"quota_cycle"`** and **`"quota"`** — the runner's hard-tier outcome: `quota_cycle` is a confirmed-router quota stop or an exhausted
   transient ladder carrying whole-number `retry_after_s=` and `cycle=` (exit 75); `quota` is the terminal `RETURNCODE` 69 hard-tier
   stops and a bare `RETURNCODE` 75. The

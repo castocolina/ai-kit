@@ -17,12 +17,17 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute-superpowers")
 )
 
-from ai_kit_spec import config_io, detection, jev_names, lane_settings
+from ai_kit_spec import config_io, detection, executor_pick, jev_names, lane_settings
 from ai_kit_spec_superpowers import cli, dispatch_injection
 from ai_kit_spec_superpowers.dispatch_injection import session_fallback_injection
 
 CLAUDE_SIGNAL = detection.RUNTIMES["claude"].host_signals[0][0]
 SUMMARY = "Task type: feature. Files named: 2. Fix round: 0."
+
+
+def _no_pick(_candidates, _labels, _env, _run=None, **_kwargs):
+    """Keep the executor pick off the real jev client."""
+    return executor_pick.Pick(None, "default", None, "jev absent")
 
 
 def jev_run(choice, top=0.9, needs_fallback=False, returncode=0, calls=None):
@@ -234,6 +239,7 @@ class TestResolveInjectionFallback(unittest.TestCase):
                 route_all_fn=lambda entries, _ctx: {e["key"]: "subprocess" for e in entries},
                 run_fn=self._run_fn(),
                 env_fn=lambda: self.env,
+                pick_executor_fn=_no_pick,
                 stdout=out,
             )
         return rc, out.getvalue(), err.getvalue()

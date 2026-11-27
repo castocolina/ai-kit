@@ -316,7 +316,7 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 - In a project without GSD, query `graphify-out/graph.json`.
 - On stacked branches with no local merges GSD's auto-update never fires, so both indexes go stale unless refreshed.
 - The unit flow's boundary step refreshes both indexes and rewrites `.aikit/brief/SKILL.md` at a unit's start (in GSD, the `discuss:pre` start step, so before discussion and research), before its planning (in GSD, the orchestrator's numbered pre-plan step, plus the planner's own first step) and before its first execution wave.
-- Before a superpowers plan exists, run `python3 <fold skill>/scripts/fold.py boundary --next --point plan` (`<fold skill>` is the `ai-kit-commit-fold` folder that the superpowers adapter's `references/start-step.md` finds; in ai-kit, `skills/ai-kit-commit-fold`) and hand `.aikit/brief/SKILL.md` to the plan writer.
+- Before a superpowers plan exists, run `python3 <fold skill>/scripts/fold.py boundary --next --point plan` (`<fold skill>` is the `ai-kit-commit-fold` folder that the superpowers adapter's `references/start-step.md` finds; in ai-kit, `skills/ai-kit-commit-fold`) and hand `.aikit/brief/SKILL.md` to the plan writer; then run `python3 <adapter skill>/ai-kit-spec-superpowers.py lite-block --cwd .` (`<adapter skill>` is the `ai-kit-spec-execute-superpowers` folder; in ai-kit, `skills/ai-kit-spec-execute-superpowers`) and, when it exits 0 with `"lite": true`, hand `.aikit/brief/lite-executor.md` too.
 - Build, refresh, freshness and query steps: [the graphify runbook](docs/run-book/graphify.md).
 
 ## Workflow

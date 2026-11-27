@@ -12,6 +12,7 @@ from ai_kit_spec import (
     capability_block,
     catalog_cmds,
     catalog_fetch,
+    code_review,
     config_migrate,
     config_status,
     edit_pass,
@@ -23,6 +24,7 @@ from ai_kit_spec import (
     lane_ping,
     lane_settings,
     lane_switch,
+    lane_transport,
     optional_sources,
     prompt_guard,
     propose_cmds,
@@ -124,7 +126,12 @@ from ai_kit_spec.review_reports import (
     render_merged_report,
     report_status,
 )
-from ai_kit_spec.reviewer_dispatch import ReviewerDispatchSpec, ReviewerSeams, dispatch_reviewer
+from ai_kit_spec.reviewer_dispatch import (
+    ReviewerDispatchSpec,
+    ReviewerSeams,
+    dispatch_reviewer,
+    row_is_native,
+)
 from ai_kit_spec.routing import RuntimesSeams
 from ai_kit_spec.runner_dispatch import (
     RunnerSpec,
@@ -495,6 +502,9 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
         "--lane-log", default=None,
         help="the review's round log; a failed dispatch is recorded there")
     p_dispatch_reviewer.add_argument("--round", type=int, default=None)
+    p_dispatch_reviewer.add_argument(
+        "--transport-record", default=None,
+        help="the run's lane-transport record; default: transport.json beside --lane-log")
 
     p_check = sub.add_parser("check-reviewer")
     p_check.add_argument("--key", default="candidate")
@@ -534,6 +544,7 @@ def _build_parser() -> argparse.ArgumentParser:
     lane_switch.register_parsers(sub)
     jev_review.register_parsers(sub)
     fold_check.register_parsers(sub)
+    code_review.register_parsers(sub)
     return parser
 
 def _cmd_cache_path(args: argparse.Namespace, deps: CliDeps) -> int:
@@ -1424,6 +1435,42 @@ def _read_dispatch_inputs(args: argparse.Namespace, reviewers: list) -> tuple | 
     return prompt, timeout_tiers
 
 
+def _reviewer_round_start(args: argparse.Namespace, reviewers: list, deps: CliDeps) -> tuple | None:
+    """The review lane's transport round: the record --transport-record names, or
+    transport.json beside --lane-log. None when neither path applies, the row routes native or
+    names no runtime -- no record is read, written or locked."""
+    record = args.transport_record or (
+        os.path.join(os.path.dirname(os.path.abspath(args.lane_log)), "transport.json")
+        if args.lane_log else None)
+    if record is None:
+        return None
+    row = reviewers[args.index]
+    if not row.get("runtime") or row_is_native(row):
+        return None
+    entry = {**(row.get("extra") or {}), "key": row.get("key", ""),
+             "runtime": row.get("runtime"), "model": row.get("model", "")}
+    request = lane_transport.lane_request("review", args.index, entry, deps.env_fn(),
+                                          deps.which_fn)
+    # a spec-review lane's record lives beside a lane log that spec review's own cleanup
+    # removes, so a pane is never offered unless --transport-record names the record
+    if args.transport_record is None:
+        request = request._replace(interactive=False)
+    start = lane_transport.RoundStart(record, request, os.getpid())
+    choice = lane_transport.try_begin_round(start)
+    return None if choice is None else (start, choice)
+
+
+def _reviewer_seams(args: argparse.Namespace, deps: CliDeps, round_start):
+    """The reviewer's seams; an explicit pane record runs the tiers through the reused pane."""
+    tiers_fn = deps.runner_tiers_fn
+    if round_start is not None and args.transport_record is not None \
+            and round_start[1].transport == "pane":
+        tiers_fn = lane_transport.pane_runner(
+            round_start[0], args.cwd or os.getcwd(), "review", deps.runner_tiers_fn)
+    return ReviewerSeams(runner_tiers_fn=tiers_fn, custom_fn=deps.custom_fn,
+                         compose_seams=capability_block.DEFAULT_SEAMS)
+
+
 def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     with open(args.reviewers_json, encoding="utf-8") as f:
         reviewers = json.load(f)
@@ -1438,6 +1485,10 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     if inputs is None:
         return 1
     prompt, timeout_tiers = inputs
+    round_start = _reviewer_round_start(args, reviewers, deps)
+    session_id = (round_start[1].session_id
+                  if round_start is not None and round_start[1].transport == "resume"
+                  else None)
     if args.tool_availability_json is not None:
         print("ai-kit-spec: --tool-availability-json is ignored: the capability block resolves "
               "tools on the lane's own PATH", file=sys.stderr)
@@ -1454,9 +1505,9 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
                 args.agents_tooling_path,
                 cwd=args.cwd,
                 files=None if args.files is None else tuple(args.files),
+                session_id=session_id,
             ),
-            seams=ReviewerSeams(runner_tiers_fn=deps.runner_tiers_fn, custom_fn=deps.custom_fn,
-                                compose_seams=capability_block.DEFAULT_SEAMS),
+            seams=_reviewer_seams(args, deps, round_start),
         )
     except LaneRefused as exc:
         _record_dispatch(args, reviewers[args.index].get("key", ""), "failed", "configuration")
@@ -1471,6 +1522,8 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
         # already handles with no new special-casing.
         print(f"dispatch-reviewer: {exc}", file=sys.stderr)
         return 1
+    if round_start is not None:
+        lane_transport.try_end_round(round_start[0], round_start[1], result.get("status"))
     return _finish_dispatch(args, reviewers[args.index].get("key", ""), result)
 
 
@@ -1562,6 +1615,7 @@ _COMMANDS = {
     **lane_switch.COMMANDS,
     **jev_review.COMMANDS,
     **fold_check.COMMANDS,
+    **code_review.COMMANDS,
 }
 
 def _dispatch(argv: list, deps: CliDeps) -> int:

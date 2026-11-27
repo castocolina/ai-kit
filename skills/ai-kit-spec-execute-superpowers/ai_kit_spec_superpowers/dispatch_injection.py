@@ -14,7 +14,7 @@ import sys
 from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 
-from ai_kit_spec import host_config, jev_names, lane_order, lane_settings
+from ai_kit_spec import executor_pick, host_config, jev_names, lane_order, lane_settings
 from ai_kit_spec.config_io import cfg_resolve
 from ai_kit_spec.detection import detect_current_runtime
 from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
@@ -59,6 +59,7 @@ class BuildInjectionOptions(NamedTuple):
     quota: dict | None = None
     seams: BuildInjectionSeams = BuildInjectionSeams()
     routes: Mapping[str, str] | None = None
+    pick_fn: Callable[[list], executor_pick.Pick] | None = None
 
 
 class DispatchTaskRequest(NamedTuple):
@@ -66,6 +67,8 @@ class DispatchTaskRequest(NamedTuple):
     prompt: str
     target_dir: str
     timeout: int
+    # a resumed session the runner starts from; None starts a fresh run
+    session_id: str | None = None
 
 
 class SuperpowersDispatchGuidance(NamedTuple):
@@ -379,7 +382,7 @@ def _injection_for(candidate: dict, decision: str) -> dict:
                               candidate.get("model", "")), file=sys.stderr)
     if decision == "native":
         return {"mode": "native", "key": candidate["key"], "runtime": candidate.get("runtime"),
-                "model": candidate["model"]}
+                "model": candidate["model"], "effort": candidate.get("effort") or ""}
     return {
         "mode": "external_cli", "key": candidate["key"], "runtime": candidate.get("runtime"),
         "model": candidate["model"], "effort": candidate.get("effort"),
@@ -402,12 +405,15 @@ def _skip_route(candidate: dict, decision: str, tried: list, reasons: dict) -> N
           file=sys.stderr)
 
 
-def _walk_ladder_for_injection(
-    task_type, ranked: list, quota: dict, seams: BuildInjectionSeams, routes: Mapping[str, str],
-) -> dict:
+def _walk_ladder_for_injection(task_type, ranked: list, opts: BuildInjectionOptions,
+                               picked_key: str | None = None) -> dict:
     """Route first, then quota. Skip routes are recorded before the pick, so a cached row can
     never hide one. Native rows are NOT dropped here: the CLI refresh already removed them, and a
-    library caller that passes a quota dict means that dict to be honored."""
+    library caller that passes a quota dict means that dict to be honored. A picked key goes
+    first when it is still in the walk."""
+    quota = dict(opts.quota or {})
+    seams = opts.seams
+    routes = opts.routes or {}
     by_key = {c["key"]: c for c in ranked}
     remaining = candidates_to_ladder(ranked)
     tried: list = []
@@ -417,6 +423,9 @@ def _walk_ladder_for_injection(
         if decision in SKIP_ROUTES:
             _skip_route(candidate, decision, tried, reasons)
             remaining = [k for k in remaining if k != candidate["key"]]
+    # jev's pick goes first; quota-blocked, the walk falls back to today's order
+    if picked_key in remaining:
+        remaining = [picked_key] + [k for k in remaining if k != picked_key]
     visible = quota
     while remaining:
         pick = seams.resolve_ladder_pick_fn(ranked, remaining, skip_vendor="", quota=visible)
@@ -442,8 +451,17 @@ def build_dispatch_injection(request: BuildInjectionRequest,
             f"task_type={task_type!r}, required_context={required_context} -- cannot build a "
             f"dispatch injection"
         )
-    return _walk_ladder_for_injection(
-        task_type, ranked, dict(opts.quota or {}), opts.seams, routes)
+    pick: executor_pick.Pick | None = None
+    if opts.pick_fn is not None:
+        # exactly the candidates the walk can dispatch; the request is already post-exclusion,
+        # so a filtered or excluded lane is never offered
+        pick = opts.pick_fn([c for c in ranked if _route_of(c, routes) not in SKIP_ROUTES])
+    result = _walk_ladder_for_injection(
+        task_type, ranked, opts._replace(routes=routes), pick.key if pick else None)
+    if pick is not None:
+        result["pick"] = executor_pick.dispatch_record(pick, result["key"])
+        print(executor_pick.pick_line(result["key"], result["pick"]), file=sys.stderr)
+    return result
 
 
 def dispatch_superpowers_task(request: DispatchTaskRequest,
@@ -467,6 +485,8 @@ def dispatch_superpowers_task(request: DispatchTaskRequest,
     candidate = {"runtime": injection["runtime"], "model": injection["model"],
                  "effort": injection.get("effort"), "service_tier": injection.get("service_tier"),
                  "pool": injection.get("pool")}
+    if request.session_id is not None:
+        candidate["session_id"] = request.session_id
     env = seam.env_fn()
     before = host_config.snapshot(env)
     result = None

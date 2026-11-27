@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 42
-current_phase_name: Code review after execution and jev-picked executors
+current_phase: 43
+current_phase_name: curated-config reads docs at the installed tag
 status: planning
-stopped_at: Phase 41 complete, ready to plan Phase 42
-last_updated: "2026-11-27T01:20:55.163Z"
-last_activity: 2026-11-26
-last_activity_desc: Phase 41 complete, transitioned to Phase 42
-state_head: 9f1a02d7f78e8a407e2bca4610a58cfa40713281
+stopped_at: Phase 42 complete, ready to plan Phase 43
+last_updated: "2026-11-27T23:25:36.123Z"
+last_activity: 2026-11-27
+last_activity_desc: Phase 42 complete, transitioned to Phase 43
+state_head: 18b2f6af165ae0500d70fc5d4806c0cb6c918e4f
 progress:
   total_phases: 41
-  completed_phases: 23
-  total_plans: 317
-  completed_plans: 317
-  percent: 56
+  completed_phases: 24
+  total_plans: 329
+  completed_plans: 329
+  percent: 59
 ---
 
 # Project State
@@ -29,18 +29,18 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 42 — Code review after execution and jev-picked executors
+Phase: 43 — curated-config reads docs at the installed tag
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-11-26 — Phase 41 complete, transitioned to Phase 42
+Last activity: 2026-11-27 — Phase 42 complete, transitioned to Phase 43
 
-Progress: [██████░░░░] 56%
+Progress: [██████░░░░] 59%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 250
+- Total plans completed: 262
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -84,6 +84,7 @@ Progress: [██████░░░░] 56%
 | 39.2 | 10 | - | - |
 | 40 | 13 | - | - |
 | 41 | 14 | - | - |
+| 42 | 12 | - | - |
 
 **Recent Trend:**
 
@@ -123,6 +124,18 @@ Progress: [██████░░░░] 56%
 | Phase 41 P12 | 14min | 3 tasks | 6 files |
 | Phase 41 P13 | 70min | 2 tasks | 39 files |
 | Phase 41 P14 | 25min | 3 tasks | 2 files |
+| Phase 42 P01 | 6min | 1 tasks | 5 files |
+| Phase 42 P02 | 32min | 2 tasks | 10 files |
+| Phase 42 P03 | 21min | 2 tasks | 9 files |
+| Phase 42 P04 | 39min | 3 tasks | 7 files |
+| Phase 42 P05 | 27min | 3 tasks | 5 files |
+| Phase 42 P06 | 54min | 3 tasks | 8 files |
+| Phase 42 P07 | 26min | 2 tasks | 9 files |
+| Phase 42 P08 | 108min | 4 tasks | 10 files |
+| Phase 42 P09 | 55min | 3 tasks | 14 files |
+| Phase 42 P10 | 15min | 2 tasks | 15 files |
+| Phase 42 P11 | 30min | 2 tasks | 11 files |
+| Phase 42 P12 | 20min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -272,8 +285,8 @@ Phase 16: 4/4 success criteria verified 2026-10-14; the one human item (real cod
 
 ## Session Continuity
 
-Last session: 2026-11-26T20:25:45.903Z
-Stopped at: Phase 41 complete, ready to plan Phase 42
+Last session: 2026-11-27T22:34:31.152Z
+Stopped at: Phase 42 complete, ready to plan Phase 43
 Resume file: None
 
 ## Operator Next Steps

@@ -25,8 +25,10 @@ from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.model_catalog import CATALOG_SCHEMA_VERSION
 from ai_kit_spec.runner_dispatch import (
     CustomSpec,
+    RunnerResult,
     RunnerSeams,
     RunnerSpec,
+    SpawnRequest,
     build_runner_argv,
     parse_status_line,
     review_spec,
@@ -432,6 +434,51 @@ class TestRunRunnerFake(unittest.TestCase):
         self.assertNotIn("--child-pgid-file", result.argv)
         self.assertEqual(len(seen), 1)
         self.assertFalse(os.path.exists(os.path.dirname(seen[0])))
+
+    def test_run_runner_spawn_seam(self):
+        # A pane round rides the same SpawnRequest: one argv with one pgid flag, the
+        # deadline backstop, run_runner's own seams, and the result still validated.
+        self.assertIsNone(RunnerSeams().spawn_fn)  # the default keeps the subprocess path
+        popen = _ScriptedPopen([])
+        lines: list[str] = []
+        calls: list[tuple[SpawnRequest, RunnerSeams]] = []
+        existed: list[bool] = []
+
+        def spawn(request, seams):
+            calls.append((request, seams))
+            pgid_file = request.pgid_file
+            assert pgid_file is not None
+            existed.append(os.path.isdir(os.path.dirname(pgid_file)))
+            return RunnerResult(
+                0, "out", {"status": "ok", "exit": "0", "cli": "codex",
+                           "model": "fake/ok"},
+                None, False, list(request.argv), "")
+
+        active = _seams(popen, lines, [])._replace(spawn_fn=spawn)
+        result = run_runner(_spec(), "hi", active)
+        self.assertEqual(1, len(calls))
+        request, passed = calls[0]
+        self.assertIs(passed, active)
+        pgid_file = request.pgid_file
+        assert pgid_file is not None
+        self.assertEqual(
+            [*build_runner_argv(_spec(), "/runner/cross-ai.mjs", "/usr/bin/node"),
+             "--child-pgid-file", pgid_file], request.argv)
+        self.assertEqual(1, request.argv.count("--child-pgid-file"))
+        self.assertEqual(request.deadline_s, 30 + rd.RUNNER_OUTER_MARGIN_S + rd._KILL_GRACE_S)
+        self.assertEqual([True], existed)
+        self.assertFalse(os.path.exists(os.path.dirname(pgid_file)))
+        self.assertEqual([], popen.argvs)
+        self.assertEqual(0, result.returncode)
+        self.assertIsNone(result.status)  # a trailer naming another cli is dropped
+        self.assertTrue(any("does not match this run" in line for line in lines))
+
+        def boom(_request, _seams):
+            raise OSError("x")
+
+        result = run_runner(_spec(), "hi", active._replace(spawn_fn=boom))
+        self.assertEqual(result.reason, "dispatch_unavailable")
+        self.assertTrue(any(line == "x" for line in lines))
 
     def _forged(self, line, returncode):
         return self._run([line], returncode)

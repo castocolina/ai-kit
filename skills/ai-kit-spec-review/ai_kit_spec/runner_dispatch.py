@@ -305,6 +305,8 @@ class RunnerSeams(NamedTuple):
     runner_path_fn: Callable[[], str | None] = resolve_cross_ai_template_path
     env_fn: Callable[[], dict] = lambda: dict(os.environ)
     route_fn: Callable[[str, str, dict], str | None] = resolve_route
+    # None: the supervised subprocess; a pane passes herdr_pane.pane_spawn(pane)
+    spawn_fn: Callable[..., Any] | None = None
 
 
 def print_argv_lines(spec: RunnerSpec, seams: RunnerSeams | None = None,
@@ -330,6 +332,41 @@ def print_argv_lines(spec: RunnerSpec, seams: RunnerSeams | None = None,
     stdout: str = proc.stdout or ""
     stderr: str = proc.stderr or ""
     return stdout.splitlines() + stderr.splitlines()
+
+
+# The runner's sweep budget is a few seconds per run dir.
+SWEEP_TIMEOUT_S = 30
+
+
+def run_sweep(seams: RunnerSeams | None = None,
+              run_fn: Callable[..., Any] = run_in_own_group) -> RunnerResult:
+    """The runner's own --sweep, once: closes dead hosted-lane tabs and run directories.
+    No model call."""
+    run_fn = bounded_run(run_fn)
+    active = seams or RunnerSeams()
+    node = active.which_fn("node")
+    if not node:
+        return _unavailable([], _NO_NODE_LINE, active)
+    template = active.runner_path_fn()
+    if not template:
+        return _unavailable([], _NO_TEMPLATE_LINE, active)
+    argv = [node, template, "--sweep"]
+    try:
+        proc = run_fn(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                      timeout=SWEEP_TIMEOUT_S, env=child_env(env=active.env_fn()), check=False)
+    except subprocess.TimeoutExpired:
+        return RunnerResult(None, "", None, "timeout", True, argv, "")
+    except OSError as exc:
+        return _unavailable(argv, str(exc), active)
+    stderr = proc.stderr or ""
+    status = None
+    for line in reversed(stderr.splitlines()):
+        status = parse_status_line(line)
+        if status is not None:
+            break
+    return RunnerResult(proc.returncode, proc.stdout or "", status,
+                        None if proc.returncode == 0 else "sweep_failed",
+                        False, argv, stderr[-_STDERR_TAIL_CHARS:])
 
 
 def preview_model_id(lines) -> str | None:
@@ -451,6 +488,12 @@ def _kill_recorded_groups(path: str | None, seams: RunnerSeams) -> None:
         return
     for pgid in _recorded_groups(path):
         _reap_recorded_group(pgid, seams)
+
+
+def reap_recorded_groups(path: str | None, seams: RunnerSeams | None = None) -> None:
+    """Reap every lane group a runner recorded through --child-pgid-file and did not
+    record an exit for."""
+    _kill_recorded_groups(path, seams or RunnerSeams())
 
 
 def _finish_relay(thread: threading.Thread | None, stream, seams: RunnerSeams) -> None:
@@ -664,7 +707,7 @@ def run_runner(spec: RunnerSpec, prompt: str, seams: RunnerSeams | None = None) 
     deadline = spec.timeout_s + RUNNER_OUTER_MARGIN_S + _KILL_GRACE_S
     try:
         try:
-            result = _spawn_supervised(
+            result = (active.spawn_fn or _spawn_supervised)(
                 SpawnRequest([*argv, "--child-pgid-file", pgid_path], prompt, deadline,
                              spec.cwd, pgid_path),
                 active,

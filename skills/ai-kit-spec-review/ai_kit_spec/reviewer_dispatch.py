@@ -48,6 +48,8 @@ class ReviewerDispatchSpec(NamedTuple):
     agents_tooling_path: object = None
     cwd: str | None = None
     files: tuple | None = ()
+    # a resumed session a later lane hands the runner; None starts fresh
+    session_id: str | None = None
 
 
 def row_is_native(row: dict) -> bool:
@@ -116,7 +118,8 @@ def dispatch_reviewer(
         raise ValueError(f"reviewer {key} names runtime {runtime} but no model")
     runner_spec = (review_spec(runtime, entry["model"], entry.get("extra"),
                                spec.timeout_tiers[0], cwd=spec.cwd)._replace(
-        pool=lane_settings.lane_free_pool(entry.get("extra") or {})) if runtime else None)
+        pool=lane_settings.lane_free_pool(entry.get("extra") or {}),
+        session_id=spec.session_id) if runtime else None)
     composed = (_reviewer_full_prompt(spec, active, runner_spec) if spec.prompt.strip()
                 else ComposeResult())
     try:

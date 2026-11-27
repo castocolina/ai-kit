@@ -3,7 +3,8 @@
 MANDATORY read when `resolve-injection` exits non-zero, prints the untrusted-config line, or
 returns `$INJECTION_MODE` `no_candidate` or `quota_exhausted` (`SKILL.md` Step 2), when a rounds 4–5
 re-resolution stops (`escalation.md`), and before acting on any dispatch outcome other than `ok`
-(`dispatch-external-cli.md`, Classify) or on a failed native dispatch. Do NOT load it when the result
+(`dispatch-external-cli.md`, Classify) or on a failed native dispatch,
+and when the code review step stops at its cap (`code-review.md`). Do NOT load it when the result
 is `native` or `external_cli` with a clean stderr and the dispatch classified `ok`. Every `$VAR` is
 restored by the scalar loader (`SKILL.md`, Step 0).
 
@@ -92,3 +93,7 @@ again this run, though the line repeats on every later resolution. Never trust u
 - **`"real_error"`** — stop for the owner with the pinned state written (the relay and fold block: `dispatch-external-cli.md`, `"real_error"`).
 - For every owner stop above, report `$RESUME_STATE_PATH`: an owner re-invoke re-dispatches the pinned injection ([`state-management.md#pinned-resume`](state-management.md#pinned-resume)), or runs the "Owner-named replacement pair" recipe in `state-management.md` for a pair the owner names.
 - A failed native dispatch (for example an `Agent` model error) is subagent-driven-development's own (NEVER index); stop for the owner when that skill has no route.
+
+### Code review cap stop
+
+- **Round 3 still has a CRITICAL or HIGH finding open** (`code-review-verdict` exit 3, `state.json` reads `cap_stop`): show the last merged report and the verdict's `blocking` list verbatim, name the round log, and stop; the fold step does not run. A re-invoke runs no further review: it asks the owner to accept the open findings (recorded as `owner_accepted` at the head of the report shown, then the fold runs) or to stop. When HEAD's tree moved after the cap stop or after the owner's accept (the owner fixed the finding by hand), the start block prints `CODE_REVIEW_NEXT=cap_stop_moved <R>` and the owner is asked to review the new head (a fresh state and a new 3-round budget) or to stop; `code-review.md`, "Review the new head", holds the block.

@@ -198,9 +198,9 @@ ADAPTER_BLOCK_LINES = (
     'the `CONFIG_STATE=` line it prints.',
     *BLOCK_LINES[1:6],
     '   (2): continue on the session default and print the line `no cross-AI config: '
-    'ran on the session model` now and again after the final review.',
+    'ran on the session model` now and again after the fold block.',
     *BLOCK_LINES[7:9],
-    '   continue on the session default and print that line again after the final review.',
+    '   continue on the session default and print that line again after the fold block.',
     *BLOCK_LINES[10:],
 )
 ADAPTER_BLOCK = "\n".join(ADAPTER_BLOCK_LINES)

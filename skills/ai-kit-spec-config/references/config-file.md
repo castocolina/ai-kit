@@ -53,7 +53,7 @@ Every key is kept, `purpose` included. A lane is never shared across roles: a la
 - `vendor` from Step 2.3 on every entry with a `model`, the claude-host alias pair of Step 2.7 included: the `infer-vendor` value, or the owner's answer when it printed null; no `vendor` key when the owner chose to save the lane without one. The reviewer pick treats such a lane's vendor as unknown: the cross-vendor filter never skips it, so in `single` mode it can be seated as the different-vendor reviewer even when its real vendor is the document author's, and when it is the `double` primary the secondary only has to differ from the author's vendor. The session default (no `runtime`, `model = ""`) has none: its vendor is whatever the host runs, and the reviewer pick reads only the stored vendor for its cross-vendor filter.
 - `purpose` (`review`, `execute` or `both`, from Step 2.2 or Step 2.7). Every newly registered entry gets an explicit `purpose`; an absent `purpose` is reserved for a pre-migration entry carried forward unchanged.
 - Its knobs (`effort`, `service_tier`, `cursor_mode`) and `strength`; `effort_source` only after a test call accepted that effort.
-- `is_router` or `fallback_quota` only when confirmed `true`; `escalate_runtime` or `escalate_model` only when `true`; `usage_limited` (and `usage_limit_note`) only on the owner's yes.
+- `is_router` or `fallback_quota` only when confirmed `true`; `escalate_runtime` or `escalate_model` only when `true`; `usage_limited` (and `usage_limit_note`) only on the owner's yes; `interactive` only as `true`, for a lane the owner named.
 - `pool` on every zero-price lane, and the data-use keys on every zero-price lane the owner confirmed (`free-lanes.md`).
 - A flat `timeout_tiers` list on a lane the owner gave its own tiers (SKILL.md Step 2.8); on a custom entry, the fields its `command` template names as placeholders (`references/runtime-ids.md`).
 
@@ -104,7 +104,8 @@ An example only: the keys are the ones the wizard writes; the ids and values are
       "runtime": "pi",
       "model": "placeholder-model-2",
       "vendor": "fake-vendor-b",
-      "purpose": "review"
+      "purpose": "review",
+      "interactive": true
     },
     {
       "key": "review-third",
@@ -154,6 +155,7 @@ These keys sit flat on one lane entry. A project entry that changes a user lane'
 - `effort`: the lane's effort level, on any runtime. The runner passes it in the runtime's own form where it has a path (codex as a flag; pi, cursor and opencode inside the model id); elsewhere every preview and dispatch prints `ignored: <reason>`. `effort_source` (`accepted by a call on <YYYY-MM-DD>`) is written only after a test call with that effort answered.
 - `escalate_runtime`, `escalate_model`: booleans, written only when `true`; at fix rounds 4 and 5 of a stuck task the target is a more capable lane of the same role, ranked above it in that role's order, with another runtime or with the same runtime and another model. The superpowers execute adapter reads them at fix rounds 4 and 5; dispatch also passes them to the runner (`--escalate-runtime`, `--escalate-model`), which reports them as ignored (`recorded_only`) and never starts another lane from them.
 - `usage_limited` (written only as `true`, on the owner's yes) and `usage_limit_note` (display text, never parsed). The review run and the execute adapter read `usage_limited` after that lane's quota stop; `usage_limit_note` stays display text.
+- `interactive` (written only as `true`, for a lane the owner named in the wizard): the lane may run in a herdr pane the owner can watch when it executes a task or reviews code (spec review never uses one), once a recorded run verifies panes; until then it runs like any other lane. Unlike the keys above, a project entry that changes the lane's pair keeps it.
 - `pool`: `<provider>:free`, written on every zero-price lane. A usage-limited lane's fallback is the first lane of the same role, in that role's order, that is neither usage-limited nor in the same pool.
 - The data-use record of a zero-price lane, written only on the owner's yes: `data_use` (`zero_retention`, `may_be_kept_or_trained` or `unknown`), `data_use_line`, `data_use_source`, `data_use_read`, `data_use_label` (`verified` or `reported`, absent for `unknown`) and `data_use_confirmed` (`true`). A declined or skipped confirmation writes no lane.
 

@@ -1,0 +1,11 @@
+{
+  "items": {
+    "x0": {
+      "decided_by": "fake",
+      "fake": {
+        "choice": "c2",
+        "top": 0.91
+      }
+    }
+  }
+}

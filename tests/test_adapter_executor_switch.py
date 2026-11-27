@@ -20,6 +20,7 @@ sys.path.insert(
 
 from ai_kit_spec import (
     config_io,
+    executor_pick,
     lane_settings,
     lane_switch,
     quota,
@@ -39,6 +40,11 @@ NOW = 1_800_000_000.0
 FLAGGED_B = {"key": "lane-b2", "runtime": "codex", "model": "fake/placeholder-model-4",
              "usage_limited": True, "pool": POOL}
 CONFIG = {"execute": [FLAGGED, PLAIN], "orders": {"execute": ["lane-a", "lane-b"]}}
+
+
+def _no_pick(_candidates, _labels, _env, _run=None, **_kwargs):
+    """Keep the executor pick off the real jev client."""
+    return executor_pick.Pick(None, "default", None, "jev absent")
 
 
 def ex_config(*lanes, order=None):
@@ -200,6 +206,7 @@ class TestBlockedAtSelection(unittest.TestCase):
             run_fn=run,
             env_fn=lambda: dict(env or {"HOME": self.tmp}),
             clock_fn=lambda: NOW,
+            pick_executor_fn=_no_pick,
             stdout=out)
         blocked = [a for a in argvs if "--blocked-status" in a]
         return rc, json.loads(out.getvalue()), blocked, (refreshed[0] if refreshed else None)

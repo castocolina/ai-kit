@@ -8,7 +8,7 @@ from typing import NamedTuple
 
 from ai_kit_spec import lane_data_use
 
-LANE_FLAG_KEYS = ("escalate_runtime", "escalate_model", "usage_limited")
+LANE_FLAG_KEYS = ("escalate_runtime", "escalate_model", "usage_limited", "interactive")
 # role-table flag of [lanes.policy.execute]; kept out of LANE_FLAG_KEYS, which are lane-entry flags
 SESSION_FALLBACK_KEY = "session_fallback"
 # Settings for one pair are dropped on a pair change unless restated.
@@ -122,6 +122,12 @@ def lane_escalation(entry: dict) -> Escalation:
     """36 D-06 / SPEC R5: read escalation flags; non-booleans raise a named error."""
     return Escalation(_bool_setting(entry, "escalate_runtime"),
                       _bool_setting(entry, "escalate_model"))
+
+
+def lane_interactive(entry: dict) -> bool:
+    """The owner's interactive marker: the lane may use a verified herdr pane; a non-boolean
+    raises a named error."""
+    return _bool_setting(entry, "interactive")
 
 
 def lane_free_pool(entry: dict) -> str | None:

@@ -153,6 +153,8 @@ E2E_MODULES = frozenset({
     "tests.test_ai_kit_commit_fold_e2e",
     # real gsd-tools and real git worktrees for the index step (30-01)
     "tests.test_flow_index_e2e",
+    # real node: the runner's own --sweep on a herdr_pane record
+    "tests.test_herdr_pane_sweep_e2e",
 })
 # Commit budget (SPEC R1, amended 2026-11-03): an e2e module recorded above this runs at push, not
 # at commit. It equals SPEC R3's push target for the two test hooks (the 2026-11-02 e2e run split
@@ -163,9 +165,11 @@ COMMIT_E2E_BUDGET_SECS = 60
 # These are this machine's times and are not scaled by CPU count. Refresh on a quiet machine with
 # `--group e2e`. A module missing from this table is over the budget. The self-test shard and
 # runner e2e entries come from one parallel run of those 13 modules, and the curated-config matrix
-# entry from one run of that module alone (2026-11-22, phase 38.1 tree).
+# entry from one run of that module alone (2026-11-22, phase 38.1 tree). The herdr sweep
+# entry comes from one run of that module alone (2026-11-27, one-minute load 4.92).
 E2E_RECORDED_SECS = {
     "tests.test_flow_index_e2e": 12,
+    "tests.test_herdr_pane_sweep_e2e": 1,
     "tests.test_ai_kit_commit_fold_e2e": 20,
     "tests.test_ai_kit_gsd_curated_config_matrix": 146,
     "tests.test_ai_kit_gsd_spec_discuss_e2e": 1,

@@ -1,0 +1,12 @@
+{
+  "schema_version": 8,
+  "clis": {
+    "opencode": {
+      "installed": true,
+      "models": [
+        "fake/placeholder-model-1",
+        "fake/placeholder-model-2"
+      ]
+    }
+  }
+}

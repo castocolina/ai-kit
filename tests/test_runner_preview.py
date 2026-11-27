@@ -1,6 +1,7 @@
 """37-14: the runner preview replaces the Python effort composers (D-01, SPEC R3)."""
 
 import hashlib
+import inspect
 import io
 import json
 import os
@@ -26,13 +27,17 @@ from ai_kit_spec.capability_block import (
     lane_facts,
 )
 from ai_kit_spec.runner_dispatch import (
+    _NO_NODE_LINE,
+    _NO_TEMPLATE_LINE,
     PREVIEW_TIMEOUT_S,
+    SWEEP_TIMEOUT_S,
     RunnerSeams,
     RunnerSpec,
     child_env,
     preview_model_id,
     preview_setting,
     print_argv_lines,
+    run_sweep,
     runner_flags,
 )
 
@@ -211,6 +216,45 @@ class TestPreviewReaders(unittest.TestCase):
             for output in ("", "cross-ai: setting effort=high applied\ncross-ai: model-id m\n"):
                 run = Mock(return_value=subprocess.CompletedProcess([], code, output, ""))
                 self.assertIsNone(print_argv_lines(spec, seams, run))
+
+    def test_run_sweep_seams(self):
+        printed: list[str] = []
+        seams = RunnerSeams(which_fn=lambda _: "node", runner_path_fn=lambda: "template",
+                            env_fn=lambda: {"HOME": "fake-home"}, print_fn=printed.append)
+        sweep_line = "cross-ai: sweep: closed 1 tab(s), removed 1 run director(ies), kept 0 (-)\n"
+        run = Mock(return_value=subprocess.CompletedProcess([], 0, "", sweep_line))
+        result = run_sweep(seams, run)
+        run.assert_called_once_with(["node", "template", "--sweep"],
+                                    stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                    timeout=SWEEP_TIMEOUT_S, env={"HOME": "fake-home"},
+                                    check=False)
+        self.assertEqual((result.returncode, result.reason, result.timed_out, result.argv),
+                        (0, None, False, ["node", "template", "--sweep"]))
+        self.assertEqual(result.stderr_tail, sweep_line)
+
+        run = Mock(return_value=subprocess.CompletedProcess([], 1, "", ""))
+        result = run_sweep(seams, run)
+        self.assertEqual((result.returncode, result.reason, result.timed_out),
+                         (1, "sweep_failed", False))
+
+        for missing, line in ((seams._replace(which_fn=lambda _: None), _NO_NODE_LINE),
+                              (seams._replace(runner_path_fn=lambda: None), _NO_TEMPLATE_LINE)):
+            printed.clear()
+            run = Mock()
+            result = run_sweep(missing, run)
+            run.assert_not_called()
+            self.assertEqual((result.returncode, result.reason, result.argv, result.stderr_tail),
+                             (None, "dispatch_unavailable", [], ""))
+            self.assertEqual(printed, [line])
+
+        result = run_sweep(seams, Mock(side_effect=OSError("boom")))
+        self.assertEqual(result.reason, "dispatch_unavailable")
+
+        result = run_sweep(seams, Mock(side_effect=subprocess.TimeoutExpired("node", 30)))
+        self.assertEqual((result.timed_out, result.reason), (True, "timeout"))
+
+        self.assertTrue(all(p.default is not inspect.Parameter.empty
+                            for p in inspect.signature(run_sweep).parameters.values()))
 
 
 def _node_gate_outcome(repo_root: str, path: str) -> unittest.TestResult:

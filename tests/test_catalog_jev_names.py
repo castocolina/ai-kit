@@ -129,6 +129,14 @@ class TestJevNames(unittest.TestCase):
             self.assertEqual(jev_names.ask_items("entry", [item], self.env, run)["n0"],
                              (None, None, "no answer"))
 
+    def test_undecodable_reply_is_no_answer(self):
+        item = jev_names.name_item(0, "placeholder-model-7", ["placeholder-model-71"])
+
+        def run(*_args, **_kwargs):
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        self.assertEqual(jev_names.ask_items("entry", [item], self.env, run, strict=True),
+                         {"n0": (None, None, "no answer")})
+
     def test_batches_respect_size_guard(self):
         payloads = []
 

@@ -5,6 +5,7 @@ import copy
 import io
 import json
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -19,6 +20,7 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 from ai_kit_spec import (
     cache,
     cli,
+    code_review,
     config_io,
     jev_names,
     jev_review,
@@ -97,6 +99,10 @@ def raising_run(*_args, **_kwargs):
     raise AssertionError("jev must not be called")
 
 
+def undecodable_run(*_args, **_kwargs):
+    raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+
 ESCALATED_HIGH = (
     "### Findings escalated\n"
     "- **Missing rollback** — Severity: HIGH. Reason for escalation: needs the author. "
@@ -116,6 +122,18 @@ def report_of(*bullets):
 
 def bullet(title, location, required="name the limit", why="readers guess"):
     return f"- **{title}** — Location: {location}. Required: {required}. Why: {why}.\n"
+
+
+CODE_REPORT = ("## Review: code\n### HIGH\n" + bullet("Retry loop never stops", "src/retry.py:12")
+              + "### MEDIUM\n" + bullet("Rename the helper", "src/retry.py:30")
+              + "### Status: Issues Found — fix and re-invoke\n")
+CODE_DISCUSS = (
+    "### Findings escalated\n"
+    "- **Retry loop never stops** — Severity: HIGH. Reason for escalation: needs a design call. "
+    "Caller decision needed.\n"
+    "- **Rename the helper** — Severity: MEDIUM. Reason for escalation: a style choice. "
+    "Caller decision needed.\n"
+)
 
 
 class TestMergedReportBullets(unittest.TestCase):
@@ -177,7 +195,8 @@ class TestClassifyDisagreements(unittest.TestCase):
             "d6": {"choice": "mechanical", "top": 0.95},
         }
         result = jev_review.classify_disagreements(
-            items, env, answers_run(table, []), own_root=root, limits=(1, 3))
+            items, env, answers_run(table, []),
+            jev_review.ClassifyOptions(own_root=root, limits=(1, 3)))
         self.assertEqual(result.jev, "asked")
         self.assertEqual(routes(result), ["owner", "fixer", "skipped"] + ["owner"] * 4)
         self.assertEqual(result.routes[2].note, "jev: reviewer_wrong (0.91)")
@@ -223,7 +242,8 @@ class TestClassifyDisagreements(unittest.TestCase):
             with self.subTest(limits=limits):
                 run = answers_run({"d0": {"choice": "mechanical", "top": 0.9}}, [])
                 result = jev_review.classify_disagreements(
-                    [f("a", "MEDIUM")], env, run, own_root=root, limits=limits)
+                    [f("a", "MEDIUM")], env, run,
+                    jev_review.ClassifyOptions(own_root=root, limits=limits))
                 self.assertEqual(routes(result), ["owner"])
 
     def test_serious_findings_always_reach_the_owner(self):
@@ -232,7 +252,7 @@ class TestClassifyDisagreements(unittest.TestCase):
                  "d1": {"choice": "mechanical", "top": 0.99}}
         result = jev_review.classify_disagreements(
             [f("a", "CRITICAL"), f("b", "HIGH")], env, answers_run(table, []),
-            own_root=root, limits=(1, 3))
+            jev_review.ClassifyOptions(own_root=root, limits=(1, 3)))
         self.assertEqual(routes(result), ["owner", "owner"])
         self.assertEqual([r.klass for r in result.routes], ["reviewer_wrong", "mechanical"])
 
@@ -248,7 +268,7 @@ class TestClassifyDisagreements(unittest.TestCase):
         calls = []
         run = answers_run({"d0": {"choice": "reviewer_wrong", "top": 0.95}}, calls)
         result = jev_review.classify_disagreements(
-            items, env, run, own_root=root, limits=(1, 3))
+            items, env, run, jev_review.ClassifyOptions(own_root=root, limits=(1, 3)))
         self.assertEqual(routes(result), ["owner"])
         context = calls[0]["payload"]["items"][0]["context"]
         self.assertTrue(context.startswith("Severity: HIGH."))
@@ -261,7 +281,8 @@ class TestClassifyDisagreements(unittest.TestCase):
         self.assertFalse(items[0].matched)
         with mock.patch.object(jev_names, "find_jev", side_effect=AssertionError):
             result = jev_review.classify_disagreements(
-                items, env, raising_run, own_root=root, limits=(1, 3))
+                items, env, raising_run,
+                jev_review.ClassifyOptions(own_root=root, limits=(1, 3)))
         self.assertEqual(result, jev_review.Classified("not needed", [jev_review.Route(
             "Loose wording", "MEDIUM", "skipped", None, None, "owner",
             "no unique report match")]))
@@ -286,7 +307,7 @@ class TestClassifyDisagreements(unittest.TestCase):
             with self.subTest(column=column):
                 result = jev_review.classify_disagreements(
                     [f("a", "MEDIUM")], env, answers_run({"d0": column}, []),
-                    own_root=root, limits=(1, 3))
+                    jev_review.ClassifyOptions(own_root=root, limits=(1, 3)))
                 self.assertEqual(routes(result), ["owner"])
 
         def failing(argv, input="", **_kwargs):
@@ -294,15 +315,16 @@ class TestClassifyDisagreements(unittest.TestCase):
 
         with self.subTest(column="exit 1"):
             result = jev_review.classify_disagreements(
-                [f("a", "MEDIUM")], env, failing, own_root=root, limits=(1, 3))
+                [f("a", "MEDIUM")], env, failing,
+                jev_review.ClassifyOptions(own_root=root, limits=(1, 3)))
             self.assertEqual(routes(result), ["owner"])
 
     def test_absent_jev_sends_everything_to_the_owner(self):
         with tempfile.TemporaryDirectory() as tmp:
             env = {"HOME": os.path.join(tmp, "home")}
             result = jev_review.classify_disagreements(
-                [f("a", "MEDIUM"), f("b", "LOW")], env, raising_run, own_root=tmp,
-                limits=(1, 3))
+                [f("a", "MEDIUM"), f("b", "LOW")], env, raising_run,
+                jev_review.ClassifyOptions(own_root=tmp, limits=(1, 3)))
             self.assertEqual(result.jev, "absent")
             self.assertEqual(routes(result), ["owner", "owner"])
             self.assertEqual({r.note for r in result.routes}, {"jev absent"})
@@ -353,7 +375,7 @@ class TestClassifyDisagreements(unittest.TestCase):
         run = answers_run({"d0": {"choice": "mechanical", "top": 0.95}}, calls)
         jev_review.classify_disagreements(
             jev_review.disagreement_items(text, summary, False), env, run,
-            own_root=root, limits=(1, 3))
+            jev_review.ClassifyOptions(own_root=root, limits=(1, 3)))
         self.assertEqual(len(calls), 1)
         sent = json.dumps(calls[0]["payload"], ensure_ascii=False)
         for item in calls[0]["payload"]["items"]:
@@ -368,7 +390,7 @@ class TestClassifyDisagreements(unittest.TestCase):
 
         token = "ghp_" + "Zqxlmnop" * 2 + "Zqxl"
         self.assertNotEqual(secret_shapes.redact(token, "[redacted]"), token)
-        self.assertIsNone(jev_review._UNSAFE_TOKEN_RE.search(token))
+        self.assertIsNone(code_review._UNSAFE_TOKEN_RE.search(token))
         long_title = "wordy " * 11 + "xyz" + " " + token
         self.assertEqual(long_title.index(token), 70)
         text = merged(report_of(bullet(long_title, "§1")))
@@ -378,10 +400,146 @@ class TestClassifyDisagreements(unittest.TestCase):
         run = answers_run({"d0": {"choice": "mechanical", "top": 0.95}}, calls)
         result = jev_review.classify_disagreements(
             jev_review.disagreement_items(text, summary, False), env, run,
-            own_root=root, limits=(1, 3))
+            jev_review.ClassifyOptions(own_root=root, limits=(1, 3)))
         self.assertEqual(result.jev, "asked")
         self.assertEqual(len(calls), 1)
         self.assertNotIn(token[:12], json.dumps(calls[0]["payload"], ensure_ascii=False))
+
+
+class TestClassifyCodeKind(unittest.TestCase):
+    def run_classify(self, run_or_table, jev_entry: str | None = "fake-entry",
+                     discuss=CODE_DISCUSS, kind: str | None = "code"):
+        """The classify CLI call shape of the fixer test, kind `None` omitting `--kind`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            report = os.path.join(tmp, "report.md")
+            summary = os.path.join(tmp, "summary.md")
+            cwd = os.path.join(tmp, "reviewed")
+            os.mkdir(cwd)
+            with open(report, "w", encoding="utf-8") as handle:
+                handle.write(CODE_REPORT)
+            with open(summary, "w", encoding="utf-8") as handle:
+                handle.write(discuss)
+            calls = []
+            run = (answers_run(run_or_table, calls) if isinstance(run_or_table, dict)
+                   else run_or_table)
+            argv = ["classify-disagreements"]
+            if kind is not None:
+                argv += ["--kind", kind]
+            argv += ["--cwd", cwd, "--report", report, "--fix-summary", summary,
+                     "--iteration", "1", "--cap", "3"]
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(jev_names, "find_jev", return_value=jev_entry), \
+                    redirect_stdout(out), redirect_stderr(err):
+                code = cli.main(argv, run_fn=run)
+        return code, out.getvalue(), err.getvalue(), calls
+
+    def test_default_kind_item_is_unchanged(self):
+        self.assertEqual(jev_review.finding_item(0, f("Loose wording", "MEDIUM")), {
+            "id": "d0", "type": "choice", "instructions": jev_review.CLASSIFY_QUESTION,
+            "context": "Severity: MEDIUM. Finding: Loose wording. "
+                       "Fixer: the limit is named. Source: skipped.",
+            "criteria": dict(jev_review.CLASSES)})
+
+    def test_code_item_holds_severity_title_and_source_only(self):
+        self.assertEqual(
+            jev_review.finding_item(
+                0, f("load(path=x) leaks", "MEDIUM", reason="see src/a.py:3"), "code"),
+            {"id": "d0", "type": "choice", "instructions": jev_review.CODE_CLASSIFY_QUESTION,
+             "context": "Severity: MEDIUM. Finding: [omitted] leaks. Source: skipped.",
+             "criteria": dict(jev_review.CODE_CLASSES)})
+
+    def test_no_jev_sends_both_to_the_owner(self):
+        code, out, _err, calls = self.run_classify(raising_run, jev_entry=None)
+        self.assertEqual(code, 0)
+        printed = json.loads(out)
+        self.assertEqual(printed["jev"], "absent")
+        self.assertEqual([e["title"] for e in printed["owner"]],
+                         ["Retry loop never stops", "Rename the helper"])
+        self.assertEqual([e["reason"] for e in printed["owner"]], ["jev absent"] * 2)
+        self.assertEqual(printed["fixer"] + printed["skipped"], [])
+        self.assertEqual(calls, [])
+
+    def test_a_failed_call_sends_both_to_the_owner(self):
+        def failing(argv, input="", **_kwargs):
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="boom")
+
+        code, out, _err, _calls = self.run_classify(failing)
+        self.assertEqual(code, 0)
+        printed = json.loads(out)
+        self.assertEqual([e["title"] for e in printed["owner"]],
+                         ["Retry loop never stops", "Rename the helper"])
+        self.assertEqual(printed["fixer"] + printed["skipped"], [])
+
+    def test_low_answers_send_both_to_the_owner(self):
+        table = {"d0": {"choice": "mechanical", "top": 0.5},
+                 "d1": {"choice": "mechanical", "top": 0.5}}
+        code, out, _err, _calls = self.run_classify(table)
+        self.assertEqual(code, 0)
+        printed = json.loads(out)
+        self.assertEqual([e["title"] for e in printed["owner"]],
+                         ["Retry loop never stops", "Rename the helper"])
+        self.assertEqual(printed["fixer"] + printed["skipped"], [])
+
+    def test_needs_fallback_answers_send_both_to_the_owner(self):
+        table = {"d0": {"choice": "mechanical", "top": 0.95, "needs_fallback": True},
+                 "d1": {"choice": "mechanical", "top": 0.95, "needs_fallback": True}}
+        code, out, _err, _calls = self.run_classify(table)
+        self.assertEqual(code, 0)
+        printed = json.loads(out)
+        self.assertEqual([e["title"] for e in printed["owner"]],
+                         ["Retry loop never stops", "Rename the helper"])
+        self.assertEqual(printed["fixer"] + printed["skipped"], [])
+
+    def test_confident_reviewer_wrong_skips_only_the_medium(self):
+        table = {"d0": {"choice": "reviewer_wrong", "top": 0.95},
+                 "d1": {"choice": "reviewer_wrong", "top": 0.95}}
+        code, out, _err, calls = self.run_classify(table)
+        self.assertEqual(code, 0)
+        printed = json.loads(out)
+        self.assertEqual([e["title"] for e in printed["owner"]], ["Retry loop never stops"])
+        self.assertEqual([e["title"] for e in printed["skipped"]], ["Rename the helper"])
+        self.assertEqual(printed["skipped"][0]["reason"], "jev: reviewer_wrong (0.95)")
+        items = calls[0]["payload"]["items"]
+        self.assertEqual([item["instructions"] for item in items],
+                         [jev_review.CODE_CLASSIFY_QUESTION] * 2)
+        for item in items:
+            self.assertNotIn("src/", item["context"])
+            self.assertNotIn("needs a design call", item["context"])
+            self.assertNotIn("a style choice", item["context"])
+
+    def test_confident_mechanical_on_the_medium_goes_to_the_fixer(self):
+        table = {"d0": {"choice": "mechanical", "top": 0.95},
+                 "d1": {"choice": "mechanical", "top": 0.95}}
+        code, out, _err, _calls = self.run_classify(table)
+        self.assertEqual(code, 0)
+        printed = json.loads(out)
+        self.assertEqual([e["title"] for e in printed["owner"]], ["Retry loop never stops"])
+        self.assertEqual([e["title"] for e in printed["fixer"]], ["Rename the helper"])
+        self.assertEqual(printed["skipped"], [])
+
+    def test_document_kind_by_default_on_the_cli(self):
+        code, out, _err, calls = self.run_classify(
+            {"d0": {"choice": "mechanical", "top": 0.9}}, kind=None)
+        self.assertEqual(code, 0)
+        printed = json.loads(out)
+        self.assertEqual(printed["jev"], "asked")
+        for item in calls[0]["payload"]["items"]:
+            self.assertEqual(item["instructions"], jev_review.CLASSIFY_QUESTION)
+            self.assertEqual(item["criteria"], dict(jev_review.CLASSES))
+
+    def test_malformed_escalation_exits_3_for_code(self):
+        malformed = CODE_DISCUSS.replace("Severity: MEDIUM. Reason", "Severity: MEDIUM Reason")
+        code, out, err, calls = self.run_classify(raising_run, discuss=malformed)
+        self.assertEqual(code, 3)
+        self.assertEqual(err.strip(), jev_review.NO_MATCH)
+        self.assertEqual(out, "")
+        self.assertEqual(calls, [])
+        code, out, _err, _calls = self.run_classify(
+            {"d0": {"choice": "mechanical", "top": 0.9}}, discuss=malformed, kind=None)
+        self.assertEqual(code, 0)
+        printed = json.loads(out)
+        self.assertEqual([e["title"] for e in printed["owner"]], ["Retry loop never stops"])
+        self.assertEqual(printed["fixer"] + printed["skipped"], [])
 
 
 ROSTER = "".join(
@@ -755,5 +913,349 @@ class TestSizeReview(unittest.TestCase):
                 self.assertIsNot(result.reviewers, rows)
 
 
+class TestClassifyExecuteResult(unittest.TestCase):
+    def test_execute_default_reads_the_status_token(self):
+        direct = {"DONE": "done", "DONE_WITH_CONCERNS": "partial"}
+        for status in (*jev_review.IMPLEMENTER_STATUSES, "SOMETHING_ELSE"):
+            with self.subTest(status=status):
+                self.assertEqual(jev_review.execute_default(status),
+                                 direct.get(status, "another_round"))
+
+    def test_confident_answers_decide(self):
+        root, env = jev_root(self)
+        for klass in jev_review.EXECUTE_CLASSES:
+            with self.subTest(klass=klass):
+                calls = []
+                result = jev_review.classify_execute_result(
+                    jev_review.ExecuteFacts("DONE", "ok", ("no_commit",), "2/3"), env,
+                    answers_run({"e0": {"choice": klass, "top": 0.9}}, calls), own_root=root)
+                self.assertEqual(result, jev_review.LaneClass(klass, "jev", 0.9, ""))
+
+    def test_absent_jev_uses_the_status_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = jev_review.classify_execute_result(
+                jev_review.ExecuteFacts("DONE", "ok", ("no_commit",), "2/3"),
+                {"HOME": os.path.join(tmp, "home")}, raising_run, own_root=tmp)
+        self.assertEqual(result, jev_review.LaneClass("done", "default", None, "jev absent"))
+
+    def test_low_answers_use_the_status_default(self):
+        root, env = jev_root(self)
+        facts = jev_review.ExecuteFacts("DONE", "ok", (), "1/1")
+        cases = (("low top", {"e0": {"choice": "partial", "top": 0.5}}, 0.5),
+                 ("needs fallback", {"e0": {"choice": "partial", "top": 0.95,
+                                          "needs_fallback": True}}, 0.95))
+        for name, table, top in cases:
+            with self.subTest(name=name):
+                calls = []
+                result = jev_review.classify_execute_result(
+                    facts, env, answers_run(table, calls), own_root=root)
+                self.assertEqual(result, jev_review.LaneClass("done", "default", top, "jev low"))
+
+    def test_empty_status_never_calls_jev(self):
+        with mock.patch.object(jev_names, "find_jev", side_effect=AssertionError):
+            result = jev_review.classify_execute_result(
+                jev_review.ExecuteFacts("", "ok", (), ""), {}, raising_run)
+        self.assertEqual(
+            result, jev_review.LaneClass("another_round", "default", None, "no lane result"))
+
+    def test_a_report_that_is_not_done_never_calls_jev(self):
+        for status in ("DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED"):
+            with self.subTest(status=status), \
+                    mock.patch.object(jev_names, "find_jev", side_effect=AssertionError):
+                result = jev_review.classify_execute_result(
+                    jev_review.ExecuteFacts(status, "ok", ("no_commit",), "1/4"), {}, raising_run)
+                self.assertEqual(result, jev_review.LaneClass(
+                    jev_review.execute_default(status), "default", None, "not a DONE report"))
+
+    def test_the_payload_holds_allowlisted_values_only(self):
+        root, env = jev_root(self)
+        calls = []
+        hostile = jev_review.ExecuteFacts(
+            "DONE", "ok; rm -rf /",
+            ("no_commit", "../etc/passwd", "task_uncovered", "made_up_code"), "2/3 secret")
+        jev_review.classify_execute_result(
+            hostile, env, answers_run({"e0": {"choice": "done", "top": 0.9}}, calls),
+            own_root=root)
+        self.assertEqual(
+            calls[0]["payload"]["items"][0]["context"],
+            "Implementer status: DONE. Runner status: none. "
+            "Runner findings: no_commit, task_uncovered. Coverage: none.")
+        sent = json.dumps(calls[0]["payload"])
+        for needle in ("rm -rf", "passwd", "made_up_code", "secret"):
+            self.assertNotIn(needle, sent)
+        jev_review.classify_execute_result(
+            jev_review.ExecuteFacts("DONE", "secretword", (), "2/3"), env,
+            answers_run({"e0": {"choice": "done", "top": 0.9}}, calls), own_root=root)
+        self.assertEqual(
+            calls[1]["payload"]["items"][0]["context"],
+            "Implementer status: DONE. Runner status: none. "
+            "Runner findings: none. Coverage: 2/3.")
+        jev_review.classify_execute_result(
+            jev_review.ExecuteFacts("DONE", "partial", (), ""), env,
+            answers_run({"e0": {"choice": "done", "top": 0.9}}, calls), own_root=root)
+        self.assertIn("Runner status: partial.", calls[2]["payload"]["items"][0]["context"])
+
+    def test_handover_status(self):
+        classes = jev_review.EXECUTE_CLASSES
+        table = [("DONE", "done", "DONE"),
+                 ("DONE", "partial", "DONE_WITH_CONCERNS"),
+                 ("DONE", "another_round", "DONE_WITH_CONCERNS")]
+        table += [(status, klass, status)
+                  for status in ("DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED")
+                  for klass in classes]
+        for status, klass, expected in table:
+            with self.subTest(status=status, klass=klass):
+                self.assertEqual(jev_review.handover_status(status, klass), expected)
+
+    def test_runner_constants_match_the_template(self):
+        text = (pathlib.Path(__file__).resolve().parent.parent / "skills"
+                / "ai-kit-spec-review" / "references" / "cross-ai.mjs").read_text(
+                    encoding="utf-8")
+        line = next(l for l in text.splitlines()
+                    if l.startswith("const FINDING_CODES = Object.freeze(["))
+        body = line[line.index("[") + 1:line.rindex("]")]
+        self.assertEqual(tuple(re.findall(r"'([a-z_]+)'", body)),
+                         jev_review.RUNNER_FINDING_CODES)
+        for word in jev_review.RUNNER_STATUSES:
+            with self.subTest(word=word):
+                self.assertIn(f"reportAndFinish('{word}'", text)
+
+    def test_the_cli_prints_json_and_the_log_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = ["classify-execute-result", "--cwd", tmp, "--status", "DONE",
+                    "--runner-status", "ok", "--findings", "no_commit", "--coverage", "n/a"]
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(jev_names, "find_jev", return_value=None), \
+                    redirect_stdout(out), redirect_stderr(err):
+                code = cli.main(argv, run_fn=raising_run)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            out.getvalue(),
+            '{"class": "done", "decided_by": "default", "confidence": null, '
+            '"note": "jev absent", "handover": "DONE"}\n')
+        self.assertEqual(err.getvalue(), "ai-kit-spec: lane result: done (default)\n")
+
+    def test_an_undecodable_jev_reply_uses_the_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = ["classify-execute-result", "--cwd", tmp, "--status", "DONE"]
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(jev_names, "find_jev", return_value="fake-entry"), \
+                    redirect_stdout(out), redirect_stderr(err):
+                code = cli.main(argv, run_fn=undecodable_run)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.getvalue())["decided_by"], "default")
+        self.assertEqual(err.getvalue(), "ai-kit-spec: lane result: done (default)\n")
+
+
+class TestClassifyFindings(unittest.TestCase):
+    LABELED = ("### HIGH\n- **Leak** — Location: src/a.py:2. Required: close it. "
+               "Why: it leaks. Labels: kind=security; tier=unit; repro=yes; "
+               "reach=user; stage=mvp.\n### MEDIUM\n- **Loose** — Location: src/b.py:3. "
+               "Required: tighten it. Why: it drifts. Labels: kind=bogus.\n"
+               "### Status: Issues Found — fix and re-invoke\n")
+
+    def cr(self, severity, title="Leak"):
+        return {"severity": severity, "title": title, "location": "src/a.py:1",
+                "required": "rewrite the loop",
+                "why": ("the old loop leaks. Labels: kind=logic; tier=unit; "
+                         "repro=yes; reach=user; stage=mvp")}
+
+    def test_an_undecodable_jev_reply_keeps_the_reviewer_severity(self):
+        labeled = {**self.cr("MEDIUM"), "why": "it leaks. Labels: kind=security; tier=unit; "
+                                               "repro=yes; reach=user; stage=mvp"}
+        with mock.patch.object(jev_names, "find_jev", return_value="fake-entry"):
+            status, rows = jev_review.classify_findings([labeled], {}, undecodable_run)
+        self.assertEqual(status, "asked")
+        self.assertEqual([(r["new_severity"], r["decided_by"]) for r in rows],
+                         [("MEDIUM", "default")])
+
+    def test_confident_answers_move_the_severity(self):
+        root, env = jev_root(self)
+        cases = (("LOW", "higher", "MEDIUM", ""),
+                 ("MEDIUM", "lower", "LOW", ""),
+                 ("HIGH", "higher", "CRITICAL", ""),
+                 ("CRITICAL", "higher", "CRITICAL", ""),
+                 ("MEDIUM", "fits", "MEDIUM", ""),
+                 ("HIGH", "lower", "HIGH", "never lowered"))
+        for severity, fit, new, note in cases:
+            with self.subTest(severity=severity, fit=fit):
+                status, rows = jev_review.classify_findings(
+                    [self.cr(severity)], env,
+                    answers_run({"f0": {"choice": fit, "top": 0.9}}, []), own_root=root)
+                self.assertEqual(status, "asked")
+                self.assertEqual(rows, [{
+                    "title": "Leak", "severity": severity, "location": "src/a.py:1",
+                    "new_severity": new, "fit": fit, "decided_by": "jev",
+                    "confidence": 0.9, "note": note}])
+
+    def test_absent_jev_keeps_every_reviewer_severity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            status, rows = jev_review.classify_findings(
+                [self.cr("LOW"), self.cr("HIGH", "Crash")],
+                {"HOME": os.path.join(tmp, "home")}, raising_run, own_root=tmp)
+        self.assertEqual(status, "absent")
+        self.assertEqual([r["decided_by"] for r in rows], ["default", "default"])
+        self.assertEqual([r["new_severity"] for r in rows], ["LOW", "HIGH"])
+        self.assertEqual({r["note"] for r in rows}, {"jev absent"})
+
+    def test_low_or_unusable_answers_use_the_default_row(self):
+        root, env = jev_root(self)
+        cases = (("low top", {"f0": {"choice": "higher", "top": 0.5}}, 0.5),
+                 ("needs fallback", {"f0": {"choice": "higher", "top": 0.95,
+                                           "needs_fallback": True}}, 0.95))
+        for name, table, top in cases:
+            with self.subTest(name=name):
+                status, rows = jev_review.classify_findings(
+                    [self.cr("MEDIUM")], env, answers_run(table, []), own_root=root)
+                self.assertEqual(status, "asked")
+                self.assertEqual(rows, [{
+                    "title": "Leak", "severity": "MEDIUM", "location": "src/a.py:1",
+                    "new_severity": "MEDIUM", "fit": None, "decided_by": "default",
+                    "confidence": top, "note": "jev low"}])
+
+    def test_no_findings_never_calls_jev(self):
+        _root, env = jev_root(self)
+        with mock.patch.object(jev_names, "find_jev", side_effect=AssertionError):
+            self.assertEqual(jev_review.classify_findings([], env, raising_run),
+                             ("not needed", []))
+
+    def test_severities_outside_the_order_stay_default_rows(self):
+        _root, env = jev_root(self)
+        with mock.patch.object(jev_names, "find_jev", side_effect=AssertionError):
+            status, rows = jev_review.classify_findings(
+                [self.cr(None, "Unset"), self.cr("CROSS-DOC", "Cross")], env, raising_run)
+        self.assertEqual(status, "not needed")
+        self.assertEqual([r["new_severity"] for r in rows], [None, "CROSS-DOC"])
+        self.assertEqual([r["decided_by"] for r in rows], ["default", "default"])
+        self.assertEqual({r["note"] for r in rows}, {""})
+
+    def test_a_finding_with_no_labels_is_not_sent(self):
+        root, env = jev_root(self)
+        calls = []
+        bare = {**self.cr("MEDIUM", "Bare"), "why": "it drifts"}
+        status, rows = jev_review.classify_findings(
+            [self.cr("MEDIUM"), bare], env,
+            answers_run({"f0": {"choice": "higher", "top": 0.9},
+                         "f1": {"choice": "higher", "top": 0.9}}, calls), own_root=root)
+        self.assertEqual(status, "asked")
+        self.assertEqual([item["id"] for item in calls[0]["payload"]["items"]], ["f0"])
+        self.assertEqual(rows[0]["new_severity"], "HIGH")
+        self.assertEqual(rows[1], {
+            "title": "Bare", "severity": "MEDIUM", "location": "src/a.py:1",
+            "new_severity": "MEDIUM", "fit": None, "decided_by": "default",
+            "confidence": None, "note": "no labels"})
+
+    def test_only_unlabeled_findings_never_call_jev(self):
+        _root, env = jev_root(self)
+        bare = {**self.cr("HIGH", "Bare"), "why": "it drifts"}
+        with mock.patch.object(jev_names, "find_jev", side_effect=AssertionError("jev asked")):
+            status, rows = jev_review.classify_findings([bare], env, raising_run)
+        self.assertEqual(status, "not needed")
+        self.assertEqual([(r["decided_by"], r["note"]) for r in rows], [("default", "no labels")])
+
+    def test_payload_holds_labels_only(self):
+        root, env = jev_root(self)
+        title = 'Fix "hunter2" in src/app.py near api_key=abc123'
+        calls = []
+        jev_review.classify_findings(
+            [self.cr("MEDIUM", title)], env,
+            answers_run({"f0": {"choice": "fits", "top": 0.9}}, calls), own_root=root)
+        self.assertEqual(len(calls), 1)
+        shape = (r"Severity: [A-Z]+\. Kind: [a-z]+\. Test tier: [a-z0-9]+\. "
+                 r"Reproducible: [a-z]+\. End-user reach: [a-z]+\. Stage: [a-z]+\.")
+        for item in calls[0]["payload"]["items"]:
+            self.assertIsNotNone(re.fullmatch(shape, item["context"]), item["context"])
+        sent = json.dumps(calls[0]["payload"])
+        for needle in ("hunter2", "src/app.py", "src/a.py", "api_key", "abc123",
+                       "Fix", "rewrite the loop", "the old loop leaks"):
+            self.assertNotIn(needle, sent)
+
+    def test_labels_reach_jev_through_the_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = os.path.join(tmp, "report.md")
+            out = os.path.join(tmp, "rows.json")
+            adj = os.path.join(tmp, "adjusted.md")
+            with open(report, "w", encoding="utf-8") as handle:
+                handle.write(self.LABELED)
+            root, env = jev_root(self)
+            calls = []
+            run = answers_run({"f0": {"choice": "fits", "top": 0.9},
+                               "f1": {"choice": "higher", "top": 0.9}}, calls)
+            out_s, err_s = io.StringIO(), io.StringIO()
+            with mock.patch.object(
+                    jev_names, "find_jev",
+                    return_value=jev_names.find_jev(env, root)), \
+                    redirect_stdout(out_s), redirect_stderr(err_s):
+                code = cli.main(["classify-findings", "--cwd", tmp, "--report", report,
+                                 "--out", out, "--out-report", adj], run_fn=run)
+            self.assertEqual(code, 0, err_s.getvalue())
+            items = {item["id"]: item for item in calls[0]["payload"]["items"]}
+            self.assertEqual(list(items), ["f0"])
+            self.assertIn("Kind: security. Test tier: unit. Reproducible: yes. "
+                          "End-user reach: user. Stage: mvp.", items["f0"]["context"])
+            self.assertIn("ai-kit-spec: finding fit: jev 1, default 1", err_s.getvalue())
+            with open(out, encoding="utf-8") as handle:
+                rows = json.load(handle)
+            with open(adj, encoding="utf-8") as handle:
+                adjusted = handle.read()
+        self.assertEqual(rows[1]["note"], "no labels")
+        self.assertEqual(rows[1]["decided_by"], "default")
+        self.assertIn("### HIGH", adjusted)
+        self.assertIn("### MEDIUM", adjusted)
+        self.assertEqual([f["severity"] for f in code_review.normalize_report(adjusted)],
+                         ["HIGH", "MEDIUM"])
+
+    def test_out_report_may_be_the_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = os.path.join(tmp, "report.md")
+            out = os.path.join(tmp, "rows.json")
+            with open(report, "w", encoding="utf-8") as handle:
+                handle.write(self.LABELED)
+            root, env = jev_root(self)
+            run = answers_run({"f0": {"choice": "fits", "top": 0.9},
+                               "f1": {"choice": "higher", "top": 0.9}}, [])
+            out_s, err_s = io.StringIO(), io.StringIO()
+            with mock.patch.object(
+                    jev_names, "find_jev",
+                    return_value=jev_names.find_jev(env, root)), \
+                    redirect_stdout(out_s), redirect_stderr(err_s):
+                code = cli.main(["classify-findings", "--cwd", tmp, "--report", report,
+                                 "--out", out, "--out-report", report], run_fn=run)
+            self.assertEqual(code, 0, err_s.getvalue())
+            with open(report, encoding="utf-8") as handle:
+                adjusted = handle.read()
+        self.assertEqual([f["severity"] for f in code_review.normalize_report(adjusted)],
+                         ["HIGH", "MEDIUM"])
+
+    def test_cli_writes_the_rows(self):
+        text = ("### HIGH\n- **Leak** — Location: src/a.py:2. Required: close it. "
+                "Why: it leaks.\n### Status: Issues Found — fix and re-invoke\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            report = os.path.join(tmp, "report.md")
+            out = os.path.join(tmp, "rows.json")
+            adj = os.path.join(tmp, "adjusted.md")
+            with open(report, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            out_s, err_s = io.StringIO(), io.StringIO()
+            with mock.patch.object(jev_names, "find_jev", return_value=None), \
+                    redirect_stdout(out_s), redirect_stderr(err_s):
+                code = cli.main(["classify-findings", "--cwd", tmp, "--report", report,
+                                 "--out", out, "--out-report", adj], run_fn=raising_run)
+            self.assertEqual(code, 0, err_s.getvalue())
+            self.assertEqual(json.loads(out_s.getvalue()), {"out": out, "jev": "not needed"})
+            with open(out, encoding="utf-8") as handle:
+                rows = json.load(handle)
+            with open(adj, encoding="utf-8") as handle:
+                adjusted = handle.read()
+            self.assertIn("ai-kit-spec: finding fit: jev 0, default 1", err_s.getvalue())
+        self.assertEqual(rows, [{"title": "Leak", "severity": "HIGH",
+                                 "location": "src/a.py:2", "new_severity": "HIGH",
+                                 "fit": None, "decided_by": "default", "confidence": None,
+                                 "note": "no labels"}])
+        self.assertEqual(code_review.normalize_report(adjusted),
+                         code_review.normalize_report(text))
+
+
 if __name__ == "__main__":
+
     unittest.main()

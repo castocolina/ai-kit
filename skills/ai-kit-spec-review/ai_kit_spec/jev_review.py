@@ -12,6 +12,7 @@ import time
 from typing import NamedTuple
 
 from ai_kit_spec import (
+    code_review,
     config_io,
     jev_names,
     lane_switch,
@@ -20,9 +21,9 @@ from ai_kit_spec import (
     review_reports,
     review_signals,
     routing,
-    secret_shapes,
 )
-from ai_kit_spec.cache import cache_read_json
+from ai_kit_spec.cache import cache_read_json, cache_write_text
+from ai_kit_spec.code_review import _summary_text
 from ai_kit_spec.lane_order import STABLE_TOP
 
 CLASSIFY_QUESTION = (
@@ -34,11 +35,19 @@ CLASSES = {
     "mechanical": "a plain text edit can satisfy the finding",
     "reviewer_wrong": "the finding is mistaken or does not apply",
 }
+CODE_CLASSIFY_QUESTION = (
+    "A code fixer did not apply this code review finding. "
+    "Judged only from this summary, which class fits?"
+)
+CODE_CLASSES = {
+    "owner_decision": "a design or scope choice only the code's owner can make",
+    "mechanical": "a plain code change can satisfy the finding",
+    "reviewer_wrong": "the finding is mistaken or does not apply",
+}
 # The only severities jev may route away from the owner.
 SKIPPABLE = ("MEDIUM", "LOW")
 TITLE_CHARS = 80
 REASON_CHARS = 160
-OMITTED = "[omitted]"
 LANES_QUESTION = (
     "How many independent review lanes does this plan need, judged only from these facts?"
 )
@@ -50,9 +59,38 @@ LANE_CRITERIA = {"one": "one review lane is enough",
 ARCHETYPES = ("intent", "requirements", "design", "plan")
 FRAMEWORKS = ("superpowers", "spec-kit", "openspec", "kiro", "gsd", "bmad")
 NO_SECOND = "the roster has no second eligible lane"
-
-_SPAN_RE = re.compile(r"`[^`]*`|\"[^\"]*\"|“[^”]*”|(?<!\w)'[^'\n]*'(?!\w)")
-_UNSAFE_TOKEN_RE = re.compile(r"[/\\=]|:\S|[0-9A-Fa-f]{8,}")
+EXECUTE_QUESTION = (
+    "An implementer lane finished one task run. "
+    "Judged only from these status tokens, which class fits the run?"
+)
+EXECUTE_CLASSES = ("done", "partial", "another_round")
+EXECUTE_CRITERIA = {
+    "done": "the task is finished and goes to review",
+    "partial": "the task is finished with concerns the review must see",
+    "another_round": "the task likely needs more work before it is done",
+}
+IMPLEMENTER_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED")
+# the runner's reported statuses (its reportAndFinish calls); any other word is dropped
+RUNNER_STATUSES = (
+    "bad_model", "contract_violation", "crash", "empty_stdin", "locked",
+    "no_change", "no_model", "not_installed", "ok", "partial", "signal",
+    "timeout", "usage",
+)
+# the runner's FINDING_CODES, in its order; any other code is dropped
+RUNNER_FINDING_CODES = (
+    "no_commit", "task_uncovered", "admits_skipped", "forbidden_path",
+    "no_tree_change", "outside_plan_files", "uncommitted_edits",
+    "baseline_replaced", "coverage_unchecked",
+)
+_COVERAGE_RE = re.compile(r"(\d{1,6})/(\d{1,6})")
+NO_MATCH = "ai-kit-spec: classify-disagreements: no item matched the summary"
+FIT_QUESTION = ("A code reviewer gave this finding a severity. Judged only from this summary "
+                "(the kind of problem, the test tier, whether it reproduces, whether end "
+                "users reach it, MVP or production), does the severity fit?")
+FIT_CLASSES = ("fits", "higher", "lower")
+FIT_CRITERIA = {"fits": "the severity fits the problem",
+                "higher": "the problem deserves a higher severity",
+                "lower": "the problem deserves a lower severity"}
 _SUMMARY_RE = re.compile(r"^- \*\*(.+?)\*\* — Severity: ([A-Za-z-]+)\.\s*(.*)$")
 
 
@@ -79,6 +117,13 @@ class Classified(NamedTuple):
     routes: list
 
 
+class ClassifyOptions(NamedTuple):
+    """Optional classify inputs: jev's root, (iteration, cap) and the finding kind."""
+    own_root: str | None = None
+    limits: tuple = (None, None)
+    kind: str = "document"
+
+
 class SizeInput(NamedTuple):
     config: dict
     reviewers: list
@@ -95,6 +140,20 @@ class SizeInput(NamedTuple):
 class Sizing(NamedTuple):
     reviewers: list
     reason: str
+
+
+class ExecuteFacts(NamedTuple):
+    status: str
+    runner_status: str
+    findings: tuple
+    coverage: str
+
+
+class LaneClass(NamedTuple):
+    klass: str
+    decided_by: str  # "jev" or "default"
+    confidence: float | None
+    note: str
 
 
 def _section(text: str, prefix: str) -> list:
@@ -142,6 +201,14 @@ def summary_bullets(summary_text: str) -> list:
     return out
 
 
+def _unparsed_summary(summary_text: str) -> bool:
+    """True when a non-blank line under the escalated or skipped section is no summary bullet."""
+    return any(
+        line.strip() and not _SUMMARY_RE.match(line)
+        for prefix in ("### Findings escalated", "### Findings skipped")
+        for line in _section(summary_text, prefix))
+
+
 def _match(report: list, title: str, line: str) -> int | None:
     """Index of the unique report finding for a summary bullet, or None."""
     same = [i for i, f in enumerate(report) if f["title"].strip() == title.strip()]
@@ -171,16 +238,16 @@ def disagreement_items(report_text: str, summary_text: str, cap_reached: bool) -
     return items
 
 
-def _summary_text(text: str, limit: int) -> str:
-    text = _SPAN_RE.sub(OMITTED, text)
-    tokens = [OMITTED if _UNSAFE_TOKEN_RE.search(tok) else tok for tok in text.split()]
-    shown = "".join(ch for ch in " ".join(tokens) if ch.isprintable())
-    shown = secret_shapes.redact(shown, "[redacted]")
-    return secret_shapes.redact(shown[:limit], "[redacted]")
-
-
-def finding_item(index: int, finding: Finding) -> dict:
+def finding_item(index: int, finding: Finding, kind: str = "document") -> dict:
     """One jev item built from summaries only."""
+    if kind == "code":
+        title = _summary_text(finding.title, TITLE_CHARS)
+        return {
+            "id": f"d{index}", "type": "choice", "instructions": CODE_CLASSIFY_QUESTION,
+            "context": (f"Severity: {finding.severity}. Finding: {title}. "
+                        f"Source: {finding.source}."),
+            "criteria": dict(CODE_CLASSES),
+        }
     reason = _summary_text(finding.reason, REASON_CHARS) or "none"
     title = _summary_text(finding.title, TITLE_CHARS)
     return {
@@ -213,26 +280,27 @@ def route_for(finding: Finding, answer: tuple, limits: tuple) -> Route:
     return Route(*head, "owner", "")
 
 
-def classify_disagreements(items: list, env, run=subprocess.run, *,
-                           own_root=None, limits=(None, None)) -> Classified:
+def classify_disagreements(items: list, env, run=subprocess.run,
+                           opts: ClassifyOptions | None = None) -> Classified:
     """Route every finding; routes keep the input order."""
+    opts = opts or ClassifyOptions()
     to_send = [f for f in items if f.matched]
     unmatched = {id(f): Route(f.title, f.severity, f.source, None, None, "owner",
                               "no unique report match")
                  for f in items if not f.matched}
     if not to_send:
         return Classified("not needed", [unmatched[id(f)] for f in items])
-    entry = jev_names.find_jev(env, own_root)
+    entry = jev_names.find_jev(env, opts.own_root)
     if entry is None:
         status = "absent"
         by_id = {id(f): Route(f.title, f.severity, f.source, None, None, "owner", "jev absent")
                  for f in to_send}
     else:
         status = "asked"
-        built = [finding_item(i, f) for i, f in enumerate(to_send)]
+        built = [finding_item(i, f, opts.kind) for i, f in enumerate(to_send)]
         answers = jev_names.ask_items(entry, built, env, run, strict=True)
         by_id = {
-            id(f): route_for(f, answers.get(item["id"], (None, None, "no answer")), limits)
+            id(f): route_for(f, answers.get(item["id"], (None, None, "no answer")), opts.limits)
             for f, item in zip(to_send, built, strict=True)
         }
     by_id.update(unmatched)
@@ -259,10 +327,14 @@ def cmd_classify_disagreements(args, deps) -> int:
     except OSError as error:
         print(f"classify-disagreements: {error}", file=sys.stderr)
         return 2
+    if args.kind == "code" and _unparsed_summary(summary):
+        print(NO_MATCH, file=sys.stderr)
+        return 3
     # jev reads its project layer from the reviewed root, so the run starts there.
     result = classify_disagreements(
         disagreement_items(report, summary, args.cap_reached), deps.env_fn(),
-        functools.partial(deps.run_fn, cwd=args.cwd), limits=(args.iteration, args.cap),
+        functools.partial(deps.run_fn, cwd=args.cwd),
+        ClassifyOptions(limits=(args.iteration, args.cap), kind=args.kind),
     )
     out = {"jev": result.jev, "owner": [], "fixer": [], "skipped": []}
     for route in result.routes:
@@ -400,8 +472,144 @@ def cmd_size_review(args, deps) -> int:
     return 0
 
 
+def execute_default(status: str) -> str:
+    """The implementer status read as a lane-result class: the default without jev."""
+    return {"DONE": "done", "DONE_WITH_CONCERNS": "partial"}.get(status, "another_round")
+
+
+def handover_status(status: str, klass: str) -> str:
+    """The status handed to subagent-driven-development: only a DONE report changes,
+    to DONE_WITH_CONCERNS when the class is not done."""
+    return "DONE_WITH_CONCERNS" if status == "DONE" and klass != "done" else status
+
+
+def execute_item(facts: ExecuteFacts) -> dict:
+    """One jev item built from allowlisted values only."""
+    status = facts.status if facts.status in IMPLEMENTER_STATUSES else "other"
+    runner = facts.runner_status if facts.runner_status in RUNNER_STATUSES else "none"
+    codes = ", ".join(sorted({c for c in facts.findings if c in RUNNER_FINDING_CODES})) or "none"
+    m = _COVERAGE_RE.fullmatch(facts.coverage)
+    coverage = f"{int(m.group(1))}/{int(m.group(2))}" if m else "none"
+    return {
+        "id": "e0", "type": "choice", "instructions": EXECUTE_QUESTION,
+        "context": (f"Implementer status: {status}. Runner status: {runner}. "
+                    f"Runner findings: {codes}. Coverage: {coverage}."),
+        "criteria": dict(EXECUTE_CRITERIA),
+    }
+
+
+def classify_execute_result(facts: ExecuteFacts, env, run=subprocess.run,
+                            *, own_root=None) -> LaneClass:
+    """jev's class for one execute result; the status default when jev is absent, low or
+    not asked (any report but DONE)."""
+    default = execute_default(facts.status)
+    if not facts.status:
+        return LaneClass(default, "default", None, "no lane result")
+    if facts.status != "DONE":  # only a DONE report's handover can change
+        return LaneClass(default, "default", None, "not a DONE report")
+    entry = jev_names.find_jev(env, own_root)
+    if entry is None:
+        return LaneClass(default, "default", None, "jev absent")
+    answer = jev_names.ask_items(
+        entry, [execute_item(facts)], env, run, strict=True).get("e0", (None, None, "no answer"))
+    if not _confident(answer) or answer[0] not in EXECUTE_CLASSES:
+        return LaneClass(default, "default", answer[1], "jev low")
+    return LaneClass(answer[0], "jev", answer[1], "")
+
+
+def cmd_classify_execute_result(args, deps) -> int:
+    """Print the advisory lane-result class as JSON and one log line."""
+    facts = ExecuteFacts(args.status, args.runner_status,
+                         tuple(c for c in args.findings.split(",") if c), args.coverage)
+    # jev reads its project layer from the project root, so the run starts there.
+    result = classify_execute_result(
+        facts, deps.env_fn(), functools.partial(deps.run_fn, cwd=args.cwd))
+    print(json.dumps({"class": result.klass, "decided_by": result.decided_by,
+                      "confidence": result.confidence, "note": result.note,
+                      "handover": handover_status(args.status, result.klass)}))
+    print(f"ai-kit-spec: lane result: {result.klass} ({result.decided_by})", file=sys.stderr)
+    return 0
+
+
+def fit_item(index: int, finding: dict) -> dict:
+    """One jev item built from the severity and the five labels only; no title, location,
+    fix or reason text."""
+    labels = code_review.finding_labels(finding)
+    return {
+        "id": f"f{index}", "type": "choice", "instructions": FIT_QUESTION,
+        "context": (f"Severity: {finding.get('severity')}. Kind: {labels['kind']}. "
+                    f"Test tier: {labels['tier']}. Reproducible: {labels['repro']}. "
+                    f"End-user reach: {labels['reach']}. Stage: {labels['stage']}."),
+        "criteria": dict(FIT_CRITERIA),
+    }
+
+
+def _fit_row(finding: dict, fit, decided_by: str, confidence, note: str) -> dict:
+    """One fit row: the reviewer's severity, the fit class, and the severity it gives."""
+    new, rule_note = code_review.fit_severity(finding.get("severity"), fit)
+    return {"title": finding.get("title"), "severity": finding.get("severity"),
+            "location": finding.get("location"), "new_severity": new, "fit": fit,
+            "decided_by": decided_by, "confidence": confidence, "note": note or rule_note}
+
+
+def classify_findings(findings: list, env, run=subprocess.run, *, own_root=None) -> tuple:
+    """(jev status, one fit row per finding); a CRITICAL or HIGH finding is never lowered.
+    A finding with no labels is not sent: the default row decides it."""
+    if not findings:
+        return "not needed", []
+
+    def unsent_note(finding: dict) -> str:
+        # a severity finding is left unsent only when it carries no labels
+        return "no labels" if finding.get("severity") in code_review.SEVERITY_ORDER else ""
+
+    sent = [i for i, f in enumerate(findings)
+            if f.get("severity") in code_review.SEVERITY_ORDER
+            and set(code_review.finding_labels(f).values()) != {"unknown"}]
+    if not sent:
+        return "not needed", [_fit_row(f, None, "default", None, unsent_note(f))
+                              for f in findings]
+    entry = jev_names.find_jev(env, own_root)
+    if entry is None:
+        return "absent", [_fit_row(f, None, "default", None, "jev absent") for f in findings]
+    answers = jev_names.ask_items(
+        entry, [fit_item(i, findings[i]) for i in sent], env, run, strict=True)
+    rows = []
+    for i, finding in enumerate(findings):
+        if i not in sent:
+            rows.append(_fit_row(finding, None, "default", None, unsent_note(finding)))
+            continue
+        answer = answers.get(f"f{i}", (None, None, "no answer"))
+        if _confident(answer) and answer[0] in FIT_CLASSES:
+            rows.append(_fit_row(finding, answer[0], "jev", answer[1], ""))
+        else:
+            rows.append(_fit_row(finding, None, "default", answer[1], "jev low"))
+    return "asked", rows
+
+
+def cmd_classify_findings(args, deps) -> int:
+    """Print the fit rows' path and jev status; write the rows and the adjusted report."""
+    try:
+        with open(args.report, encoding="utf-8") as handle:
+            text = handle.read()
+        findings = code_review.normalize_report(text)
+        status, rows = classify_findings(
+            findings, deps.env_fn(), functools.partial(deps.run_fn, cwd=args.cwd))
+        cache_write_text(args.out, json.dumps(rows, indent=2))
+        # the rows go first: --out-report may name the report file itself
+        cache_write_text(args.out_report, code_review.render_report(
+            [{**f, "severity": r["new_severity"]} for f, r in zip(findings, rows, strict=True)]))
+    except (OSError, ValueError) as error:
+        print(f"classify-findings: {error}", file=sys.stderr)
+        return 2
+    print(json.dumps({"out": args.out, "jev": status}))
+    n_jev = sum(1 for row in rows if row.get("decided_by") == "jev")
+    n_default = sum(1 for row in rows if row.get("decided_by") == "default")
+    print(f"ai-kit-spec: finding fit: jev {n_jev}, default {n_default}", file=sys.stderr)
+    return 0
+
+
 def register_parsers(sub) -> None:
-    """Register the classify-disagreements and size-review commands."""
+    """Register the review loop's jev commands."""
     parser = sub.add_parser(
         "classify-disagreements",
         help="ask jev, when present, to classify escalated, skipped or open findings "
@@ -414,6 +622,8 @@ def register_parsers(sub) -> None:
                         help="also classify every report finding the summary does not name")
     parser.add_argument("--iteration", type=int, default=None)
     parser.add_argument("--cap", type=int, default=None)
+    parser.add_argument("--kind", choices=("code", "document"), default="document",
+                        help="code: a code-review finding; document: a spec or plan finding")
     parser.add_argument("--owner-out", default=None,
                         help="append each owner item as one JSON line to this file "
                              "(the host collects them for the final message)")
@@ -433,9 +643,35 @@ def register_parsers(sub) -> None:
                        help="the value passed to resolve-reviewers")
     sizer.add_argument("--cross-ai", action="store_true",
                        help="the flag passed to resolve-reviewers")
+    executor = sub.add_parser(
+        "classify-execute-result",
+        help="ask jev, when present, whether an execute lane's run is done, partial or needs "
+             "another round (advisory)",
+    )
+    executor.add_argument("--cwd", required=True, help="the project root")
+    executor.add_argument("--status", required=True, help="the implementer status token")
+    executor.add_argument("--runner-status", default="", help="the runner's status token")
+    executor.add_argument("--findings", default="",
+                          help="the runner's finding codes, comma-separated")
+    executor.add_argument("--coverage", default="",
+                          help="the runner's coverage, covered/planned")
+    fitter = sub.add_parser(
+        "classify-findings",
+        help="ask jev, when present, whether each code-review finding's severity fits "
+             "(advisory; CRITICAL and HIGH are never lowered)",
+    )
+    fitter.add_argument("--cwd", required=True, help="the project root")
+    fitter.add_argument("--report", required=True,
+                        help="one normalized report: a lane's or the session model's")
+    fitter.add_argument("--out", required=True, help="the fit rows file")
+    fitter.add_argument("--out-report", required=True,
+                        help="the normalized report with the fit applied; "
+                             "may be the --report file")
 
 
 COMMANDS = {
     "classify-disagreements": cmd_classify_disagreements,
     "size-review": cmd_size_review,
+    "classify-execute-result": cmd_classify_execute_result,
+    "classify-findings": cmd_classify_findings,
 }
