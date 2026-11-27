@@ -134,6 +134,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 42: Code review after execution and jev-picked executors** - Implementation is reviewed in a capped loop; jev picks the executor and lane transport (completed 2026-11-27)
 - [ ] **Phase 43: curated-config reads docs at the installed tag** - Version-pinned open-gsd docs and a grouped question cascade
 - [ ] **Phase 44: curated-config writes the agreed settings** - Profile, routing, models, effort, skills and graphify flags written through gsd-tools
+- [ ] **Phase 44.1: jev falls back to the host advisor on low confidence (INSERTED)** - A low-confidence jev answer (Laya or TypeSafe) goes to the host's advisor tool before the agent decides; scripted callers keep their rule-based default *(inserted 2026-11-23, owner request)*
 - [ ] **Phase 45: Project rules, one skill and AGENTS.md only** - `ai-kit-project-rules` replaces seven skills, adapts to the model and migrates Claude files into AGENTS.md for every host
 - [ ] **Phase 45.1: Project rules, generated top rules and never list (INSERTED)** - The generated block's top rules, owner-talk, run and test rules and the never list, with reasons
 - [ ] **Phase 46: Project rules, area runbooks** - Makefile, CI, README and per-stack runbooks that write working config
@@ -1200,6 +1201,21 @@ Plans:
   6. After an effort change it runs `effort sync --apply` for the checkout and a worktree session's launch directory and reports any agent file left with the old effort (fixture with two agents directories).
   7. It sets the GSD keys that make the plan checker re-read a plan amended by review before execution, citing the installed GSD docs, or records that GSD already does this and writes nothing.
   8. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
+**Plans**: TBD
+
+### Phase 44.1: jev falls back to the host advisor on low confidence (INSERTED)
+
+**Goal**: When jev-fast-decision answers an item with low confidence (from Laya or TypeSafe), the agent that asked consults its host's advisor tool, where the host has one, before it decides, instead of deciding alone. *(inserted 2026-11-23, owner request: "when Laya or jev have low confidence, use the advisor model instead"; no SPEC yet)*
+**Depends on**: Phase 44 *(numbered after the stack top as the unit flow requires; it amends the "no jev or low confidence" wording of Phases 29, 34 and 40 to 44 and the jev skill text, so it needs its own SPEC)*
+**Requirements**: JEV-14
+**Code anchors**: `skills/jev-fast-decision/SKILL.md` (description and result recipe, line 38: "`needs_fallback: true` → you decide that item with your own reasoning"), `reference.md`, `scripts/jev_review.py` and `jev_ladder.py` (the answer shape: `needs_fallback`, `forced`, errors); `skills/ai-kit-gsd-spec-discuss/references/decision-table.md` and `SKILL.md` §3 and §4 ("own reasoning" rows); the callers that treat a low answer as "rule-based default": `skills/ai-kit-spec-goal-prompt/`, `tools/hooks/precompact_core.py`, `skills/ai-kit-commit-fold/` (scripted, no advisor possible); the Phase 40 to 44 SPECs and CONTEXT files (their no-jev and low-answer paths); tests `tests/test_jev_fast_decision.py` and the doc-contract tests of each caller
+**Success Criteria** (what must be TRUE; seeded from the owner's request, the SPEC step finalizes them):
+  1. One rule, stated once in `jev-fast-decision`'s SKILL.md and chained by every agent-run caller: a confident answer is advisory evidence; a low answer (`needs_fallback`, a forced answer, an error or no answer) goes to the host's advisor tool when the host has one, and to the agent's own reasoning only when it has none; the final decision stays the agent's. Test: a doc-contract test pins the rule and the callers' wording.
+  2. A script that runs without an agent (the hooks, the fold tool's ladder, the runner side) keeps its rule-based default and never calls an advisor. Test: a guard test over the scripted callers.
+  3. The decision log records who decided from one closed list (jev confident, advisor, own reasoning, default) and a test locks the list.
+  4. A host with no advisor tool (the hosts other than Claude Code are unverified) is named as a gap, falls back to own reasoning, and an eval covers both cases; no step sends the advisor a code, diff, config value or secret beyond what the session already holds, and the skill text states that the advisor sees the whole conversation.
+  5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 
 **Plans**: TBD
 
